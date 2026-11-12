@@ -27,7 +27,7 @@ export async function checkTagResults(
     while (next < request.nodes.length && !authFailure) {
       signal?.throwIfAborted();
       const index = next++;
-      const id = request.nodes[index].node_id;
+      const { node_id: id, name } = request.nodes[index];
       try {
         const { node, items } = await liveNodeTags(session, id, readSignal);
         rows[index] = {
@@ -46,7 +46,7 @@ export async function checkTagResults(
           controller.abort();
           throw cause;
         }
-        rows[index] = { node_id: id, name: `Document ${id}`, status: "unavailable" };
+        rows[index] = { node_id: id, name: name ?? `Document ${id}`, status: "unavailable" };
       }
       progress(++checked);
     }

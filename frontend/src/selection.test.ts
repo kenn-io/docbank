@@ -103,6 +103,8 @@ describe("document selection", () => {
     const state = reconcileSelection({ selectedIDs: new Set([1, 2, 4]), anchorID: 1 }, visible);
     expect([...state.selectedIDs]).toEqual([2]);
     expect(state.anchorID).toBeUndefined();
-    expect(selectedTargets(visible, state.selectedIDs)).toEqual([{ node_id: 2, revision: 20 }]);
+    expect(selectedTargets(visible, state.selectedIDs)).toEqual([
+      { node_id: 2, revision: 20, name: "/node-2" },
+    ]);
   });
 });

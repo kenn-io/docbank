@@ -5537,6 +5537,7 @@
         disabled={loading}
         onchanged={handleBatchTagsChanged}
         oncreated={() => void loadTagCatalog(false, true)}
+        onchecked={refreshDocumentsView}
         onclose={(recovered) => {
           batchTagsTargets = null;
           if (recovered) refreshAfterTagRecovery();
@@ -5560,6 +5561,7 @@
         onchanged={handleSnapshotSelectionTagged}
         oncreated={() => void loadTagCatalog(false, true)}
         onimport={(bytes) => void snapshot.importAction(bytes)}
+        onchecked={refreshDocumentsView}
         onclose={(recovered) => {
           snapshot.cancelAction();
           if (recovered) refreshAfterTagRecovery();

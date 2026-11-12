@@ -39,6 +39,8 @@
     oncreated?: () => void;
     onimport?: (bytes: Uint8Array) => void;
     onclose: (recovered: boolean) => void;
+    /** Fresh tag results arrived, so the view behind the dialog may be stale. */
+    onchecked?: () => void;
     onauthfailure: (cause: unknown) => void;
     errorMessage?: string;
   }
@@ -56,6 +58,7 @@
     oncreated,
     onimport,
     onclose,
+    onchecked,
     onauthfailure,
     errorMessage = "",
   }: Props = $props();
@@ -118,6 +121,10 @@
       : `${assign ? "Adds a tag to" : "Removes a tag from"} ${documentCount(count)}.`,
   );
 
+  function notFound(cause: unknown): cause is APIError {
+    return cause instanceof APIError && cause.status === 404;
+  }
+
   function apply(): void {
     if (locked || !tag || count === 0) return;
     readFailure = "";
@@ -132,7 +139,7 @@
       assign,
       nodes: captured.map((target) => ({ ...target })),
     };
-    void run.submit(request);
+    void run.submit(request).then((o) => (tagMissing = o.kind === "rejected" && notFound(o.cause)));
   }
 
   async function check(): Promise<void> {
@@ -142,8 +149,7 @@
     checked = 0;
     results = undefined;
     run.failure = "";
-    const controller = new AbortController();
-    checkController = controller;
+    const controller = (checkController = new AbortController());
     try {
       const result = await checkTagResults(
         session,
@@ -157,10 +163,11 @@
       tag = result.tag;
       results = result.rows;
       offset = 0;
+      setTimeout(() => alive && onchecked?.(), 300);
     } catch (cause) {
       if (!alive) return;
       if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
-      else if (cause instanceof APIError && cause.status === 404) {
+      else if (notFound(cause)) {
         tagMissing = true;
         run.failure = cause.message;
       } else run.failure = cause instanceof Error ? cause.message : String(cause);
@@ -345,7 +352,7 @@
           onclick={() => void check()}>{checkedOnce ? "Check again" : "Check tag results"}</Button
         >
       {/if}
-    {:else if stale}
+    {:else if stale || tagMissing}
       <Button surface="soft" disabled={applying} onclick={close}>Close</Button>
     {:else}
       <Button surface="soft" disabled={applying} onclick={close}>Cancel</Button>
