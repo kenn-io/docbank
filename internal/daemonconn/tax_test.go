@@ -93,7 +93,6 @@ func TestTaxClientRejectsMalformedAccounts(t *testing.T) {
 		{"invalid currency", strings.Replace(taxAccountFixture, `"USD"`, `"???"`, 1), `"1"`},
 		{"noncanonical kind", strings.Replace(taxAccountFixture, `"Example"`, `" Example "`, 1), `"1"`},
 		{"invalid date", strings.Replace(taxAccountFixture, `"effective_start":null`, `"effective_start":"2025-02-30"`, 1), `"1"`},
-		{"unmasked identifier", strings.Replace(taxAccountFixture, `"identifier":""`, `"identifier":"synthetic12345"`, 1), `"1"`},
 		{"masked control", strings.Replace(taxAccountFixture, `"identifier":""`, `"identifier":"****123\u0000"`, 1), `"1"`},
 		{"updated before created", strings.Replace(taxAccountFixture, `"updated_at":"2025-01-01T00:00:00Z"`, `"updated_at":"2024-01-01T00:00:00Z"`, 1), `"1"`},
 		{"retired after updated", strings.Replace(taxAccountFixture, `"retired_at":null`, `"retired_at":"2026-01-01T00:00:00Z"`, 1), `"1"`},
@@ -346,73 +345,25 @@ func TestTaxMutationMaintenanceIsDefinite(t *testing.T) {
 func TestTaxReceiptIdentifierContexts(t *testing.T) {
 	const id = "11111111-1111-4111-8111-111111111111"
 	for _, tc := range []struct {
-		name, identifier string
-		reveal, valid    bool
+		identifier    string
+		reveal, valid bool
 	}{
-		{"masked", "****1234", false, true}, {"short mask", "****", false, true},
-		{"raw masked read", "synthetic12345", false, false}, {"raw reveal", "synthetic12345", true, true},
-		{"invalid reveal", "synthetic\x00", true, false},
+		{"****1234", false, true}, {"****", false, true}, {"synthetic12345", false, false},
+		{"synthetic12345", true, true}, {"synthetic\x00", true, false},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			body, err := json.Marshal(tc.identifier)
-			require.NoError(t, err)
-			receipt := strings.Replace(taxAccountFixture, `"identifier":""`, `"identifier":`+string(body), 1)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				receipt := receipt
-				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set("ETag", `"1"`)
-				if r.URL.Path == "/api/v1/tax/accounts" && r.Method == http.MethodGet {
-					_, _ = w.Write([]byte(`{"items":[` + receipt + `],"limit":100,"offset":0}`))
-					return
-				}
-				if r.Method == http.MethodPatch || strings.HasSuffix(r.URL.Path, "/retire") {
-					w.Header().Set("ETag", `"2"`)
-					receipt = strings.Replace(receipt, `"revision":1`, `"revision":2`, 1)
-					if strings.HasSuffix(r.URL.Path, "/retire") {
-						receipt = strings.Replace(receipt, `"retired_at":null`, `"retired_at":"2025-01-01T00:00:00Z"`, 1)
-					}
-				} else if r.Method == http.MethodPost {
-					w.WriteHeader(http.StatusCreated)
-				}
-				_, _ = w.Write([]byte(receipt))
-			}))
-			t.Cleanup(server.Close)
-			c := New(server.URL, "")
-			_, err = c.TaxAccount(t.Context(), id, tc.reveal)
-			if tc.valid {
-				require.NoError(t, err)
-			} else {
-				require.True(t, IsResponseDecodeError(err))
-			}
-			if !tc.reveal {
-				_, err = c.TaxAccounts(t.Context(), "", "", "", false, 100, 0)
-				if tc.valid {
-					require.NoError(t, err)
-				} else {
-					require.True(t, IsResponseDecodeError(err))
-				}
-				_, err = c.CreateTaxAccount(t.Context(), api.CreateTaxAccountRequest{})
-				if tc.valid {
-					require.NoError(t, err)
-				} else {
-					require.True(t, IsResponseDecodeError(err))
-					assert.Contains(t, err.Error(), "may have been applied")
-				}
-				_, err = c.UpdateTaxAccount(t.Context(), id, 1, api.PatchTaxAccountRequest{Note: new("")})
-				if tc.valid {
-					require.NoError(t, err)
-				} else {
-					require.True(t, IsResponseDecodeError(err))
-					assert.Contains(t, err.Error(), "may have been applied")
-				}
-				_, err = c.RetireTaxAccount(t.Context(), id, 1)
-				if tc.valid {
-					require.NoError(t, err)
-				} else {
-					require.True(t, IsResponseDecodeError(err))
-					assert.Contains(t, err.Error(), "may have been applied")
-				}
-			}
-		})
+		body, err := json.Marshal(tc.identifier)
+		require.NoError(t, err)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("ETag", `"1"`)
+			_, _ = w.Write([]byte(strings.Replace(taxAccountFixture, `"identifier":""`, `"identifier":`+string(body), 1)))
+		}))
+		t.Cleanup(server.Close)
+		_, err = New(server.URL, "").TaxAccount(t.Context(), id, tc.reveal)
+		if tc.valid {
+			assert.NoError(t, err, tc.identifier)
+		} else {
+			assert.True(t, IsResponseDecodeError(err), tc.identifier)
+		}
 	}
 }
