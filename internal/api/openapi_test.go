@@ -905,6 +905,11 @@ func TestTaxOpenAPIContract(t *testing.T) {
 	assert.NotContains(t, patch.Properties, "country")
 	assert.NotContains(t, patch.Properties, "clear_effective_start")
 	assert.Equal(t, false, patch.AdditionalProperties)
+	var presence []string
+	for _, option := range patch.AnyOf {
+		presence = append(presence, option.Required...)
+	}
+	assert.ElementsMatch(t, []string{"identifier", "cadence", "period_note", "due_note", "lead_days", "currency", "effective_start", "effective_end", "note"}, presence)
 	for _, field := range []string{"cadence", "currency", "due_note", "identifier", "lead_days", "note", "period_note"} {
 		require.Contains(t, patch.Properties, field)
 		assert.False(t, patch.Properties[field].Nullable, field)

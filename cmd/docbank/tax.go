@@ -71,6 +71,10 @@ func newTaxAccountCommand() *cobra.Command {
 				return err
 			}
 		}
+		if page.Limit > 0 && len(page.Items) == page.Limit {
+			_, err := fmt.Fprintf(cmd.OutOrStdout(), "limit reached: more accounts may exist; repeat this command with --offset %d to continue\n", page.Offset+len(page.Items))
+			return err
+		}
 		return nil
 	}}
 	list.Flags().StringVar(&filters.FilerPartyID, "filer", "", "filter by filer party ID")

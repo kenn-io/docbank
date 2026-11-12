@@ -16,6 +16,16 @@ type taxClientError struct{ cause error }
 
 func (e *taxClientError) Error() string {
 	message := "tax request failed"
+	switch {
+	case errors.Is(e.cause, context.Canceled):
+		message += ": canceled"
+	case errors.Is(e.cause, context.DeadlineExceeded):
+		message += ": deadline exceeded"
+	case IsTransportError(e.cause):
+		message += ": transport failure"
+	case IsResponseDecodeError(e.cause):
+		message += ": invalid response"
+	}
 	if status, ok := ResponseStatus(e.cause); ok {
 		message = fmt.Sprintf("tax request failed (HTTP %d)", status)
 	}
@@ -56,8 +66,28 @@ func safeTaxError(err error) error {
 	}
 	return &taxClientError{cause: err}
 }
+
+type taxMutationError struct{ cause error }
+
+func (e *taxMutationError) Error() string {
+	return e.cause.Error() + "; the change may have been applied; inspect the account list or show the account before trying again"
+}
+func (e *taxMutationError) Unwrap() error { return e.cause }
+func taxMutationFailure(err error) error {
+	if err == nil {
+		return nil
+	}
+	err = safeTaxError(err)
+	if IsRetryableMutationError(err) {
+		return &taxMutationError{cause: err}
+	}
+	return err
+}
+func validTaxAccount(a api.TaxAccount) bool {
+	return validUUIDv4(a.AccountID) && validUUIDv4(a.FilerPartyID) && (a.AuthorityPartyID == nil || validUUIDv4(*a.AuthorityPartyID)) && a.Country != "" && a.TaxKind != "" && a.Cadence != "" && a.Currency != "" && a.Revision > 0 && a.CreatedAt != "" && a.UpdatedAt != ""
+}
 func validateTaxAccountResponse(a *api.TaxAccount, response *http.Response, id string) (api.TaxAccount, error) {
-	if a == nil || response == nil || !validUUIDv4(a.AccountID) || a.Revision < 1 || (id != "" && a.AccountID != id) || response.Header.Get("ETag") != revisionIfMatch(a.Revision) {
+	if a == nil || response == nil || !validTaxAccount(*a) || (id != "" && a.AccountID != id) || response.Header.Get("ETag") != revisionIfMatch(a.Revision) {
 		return api.TaxAccount{}, &responseDecodeError{err: errors.New("invalid tax account response")}
 	}
 	return *a, nil
@@ -75,7 +105,7 @@ func (c *Connection) TaxAccounts(ctx context.Context, o api.TaxAccountListOption
 		return api.TaxAccountPage{}, &responseDecodeError{err: errors.New("invalid tax account page")}
 	}
 	for _, a := range page.Items {
-		if !validUUIDv4(a.AccountID) || a.Revision < 1 {
+		if !validTaxAccount(a) {
 			return api.TaxAccountPage{}, &responseDecodeError{err: errors.New("invalid tax account page")}
 		}
 	}
@@ -96,9 +126,10 @@ func (c *Connection) CreateTaxAccount(ctx context.Context, in api.CreateTaxAccou
 	var response *http.Response
 	a, err := c.apiWithResponse(&response).CreateTaxAccount(ctx, &apiclient.CreateTaxAccountRequestOptions{Body: &in})
 	if err != nil {
-		return api.TaxAccount{}, safeTaxError(mutationRequestError(response, err))
+		return api.TaxAccount{}, taxMutationFailure(mutationRequestError(response, err))
 	}
-	return validateTaxAccountResponse(a, response, "")
+	result, err := validateTaxAccountResponse(a, response, "")
+	return result, taxMutationFailure(err)
 }
 func (c *Connection) UpdateTaxAccount(ctx context.Context, id string, revision int64, in api.PatchTaxAccountRequest) (api.TaxAccount, error) {
 	if !validUUIDv4(id) || revision < 1 {
@@ -107,9 +138,10 @@ func (c *Connection) UpdateTaxAccount(ctx context.Context, id string, revision i
 	var response *http.Response
 	a, err := c.apiWithResponse(&response).UpdateTaxAccount(ctx, &apiclient.UpdateTaxAccountRequestOptions{PathParams: &apiclient.UpdateTaxAccountPath{AccountID: id}, Header: &apiclient.UpdateTaxAccountHeaders{IfMatch: revisionIfMatch(revision)}, Body: &in})
 	if err != nil {
-		return api.TaxAccount{}, safeTaxError(mutationRequestError(response, err))
+		return api.TaxAccount{}, taxMutationFailure(mutationRequestError(response, err))
 	}
-	return validateTaxAccountResponse(a, response, id)
+	result, err := validateTaxAccountResponse(a, response, id)
+	return result, taxMutationFailure(err)
 }
 func (c *Connection) RetireTaxAccount(ctx context.Context, id string, revision int64) (api.TaxAccount, error) {
 	if !validUUIDv4(id) || revision < 1 {
@@ -118,7 +150,8 @@ func (c *Connection) RetireTaxAccount(ctx context.Context, id string, revision i
 	var response *http.Response
 	a, err := c.apiWithResponse(&response).RetireTaxAccount(ctx, &apiclient.RetireTaxAccountRequestOptions{PathParams: &apiclient.RetireTaxAccountPath{AccountID: id}, Header: &apiclient.RetireTaxAccountHeaders{IfMatch: revisionIfMatch(revision)}})
 	if err != nil {
-		return api.TaxAccount{}, safeTaxError(mutationRequestError(response, err))
+		return api.TaxAccount{}, taxMutationFailure(mutationRequestError(response, err))
 	}
-	return validateTaxAccountResponse(a, response, id)
+	result, err := validateTaxAccountResponse(a, response, id)
+	return result, taxMutationFailure(err)
 }

@@ -5,7 +5,9 @@ import (
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/taxrecord"
 )
 
 type taxAccountOutput struct {
@@ -74,6 +76,9 @@ func registerTaxAccountRoutes(api huma.API, d Deps, g *gate) {
 		Limit          int    `query:"limit" default:"100" minimum:"1" maximum:"1000"`
 		Offset         int    `query:"offset" default:"0" minimum:"0"`
 	}) (*taxAccountPageOutput, error) {
+		if in.Filer != "" && canonical.ValidateUUIDv4(in.Filer) != nil {
+			return nil, taxRouteError(&taxrecord.FieldError{Field: "filer", Reason: "invalid value"})
+		}
 		country := []byte(in.Country)
 		for i, c := range country {
 			if c >= 'a' && c <= 'z' {

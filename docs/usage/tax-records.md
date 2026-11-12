@@ -30,12 +30,15 @@ identifiers stay empty; one to four Unicode characters become `****`, and
 longer identifiers show `****` followed by the last four characters. List
 filters combine with AND; `--include-retired` includes retired accounts.
 `--limit` defaults to 100 and accepts 1–1000; `--offset` is nonnegative.
+A full text page gives the next offset when more accounts may exist.
 Dates can be cleared with `--clear-effective-start` and `--clear-effective-end`.
 Identity fields cannot be edited.
 
 Edit and retire inspect the current revision once before writing unless you
 supply `--revision`. A stale revision fails without retry; inspect again before
-deciding what to do. The CLI replaces an incompatible older daemon before
+deciding what to do. If a mutation response is lost or invalid, the change
+may have been applied: inspect the account list or account before trying again.
+Creating again can add another registration. The CLI replaces an incompatible older daemon before
 sending an account request. A vault with audited authority refuses account
 mutations with `audit_mutation_unsupported` (HTTP 409).
 

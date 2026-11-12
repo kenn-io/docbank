@@ -40,14 +40,22 @@ func TestTaxAccountHTTPWorkflow(t *testing.T) {
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
 	var party api.Party
 	require.NoError(t, json.Unmarshal([]byte(body), &party))
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/tax/accounts", nil, map[string]any{"filer_party_id": party.PartyID, "country": "ZZ", "tax_kind": "Example", "cadence": "annual", "currency": "USD", "identifier": "synthetic12345", "effective_start": "2025-01-01"})
+	authorityResp, authorityBody := do(t, ts, http.MethodPost, "/api/v1/parties", nil, map[string]any{"kind": "organization", "display_name": "Example Authority"})
+	require.Equal(t, http.StatusCreated, authorityResp.StatusCode, authorityBody)
+	var authority api.Party
+	require.NoError(t, json.Unmarshal([]byte(authorityBody), &authority))
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/tax/accounts", nil, map[string]any{"filer_party_id": party.PartyID, "authority_party_id": authority.PartyID, "country": "ZZ", "tax_kind": "Example", "cadence": "annual", "currency": "USD", "identifier": "synthetic12345", "effective_start": "2025-01-01"})
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
 	var account api.TaxAccount
 	require.NoError(t, json.Unmarshal([]byte(body), &account))
+	require.NotNil(t, account.AuthorityPartyID)
+	assert.Equal(t, authority.PartyID, *account.AuthorityPartyID)
 	assert.Equal(t, int64(14), account.LeadDays)
 	assert.Equal(t, "****2345", account.Identifier)
 	assert.Equal(t, `"1"`, resp.Header.Get("ETag"))
 	path := "/api/v1/tax/accounts/" + account.AccountID
+	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"1"`}, map[string]any{})
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	resp, body = get(t, ts, path+"?reveal=true", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	require.NoError(t, json.Unmarshal([]byte(body), &account))
@@ -190,6 +198,10 @@ func TestTaxHTTPFiltersAndPaging(t *testing.T) {
 		require.Equal(t, http.StatusOK, resp.StatusCode, body)
 		assert.Contains(t, body, `"items":[]`)
 	}
+	resp, body = get(t, ts, "/api/v1/tax/accounts?filer=private-synthetic-value", nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	assert.Contains(t, body, "filer: invalid value")
+	assert.NotContains(t, body, "private-synthetic-value")
 	for _, query := range []string{"limit=0", "limit=1001", "offset=-1", "country=invalid", "country=%C5%BFZ"} {
 		resp, body = get(t, ts, "/api/v1/tax/accounts?"+query, nil)
 		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)

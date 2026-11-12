@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 
+	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -73,6 +74,14 @@ type PatchTaxAccountRequest struct {
 	ClearEffectiveStart      bool    `json:"-"`
 	ClearEffectiveEnd        bool    `json:"-"`
 	startPresent, endPresent bool
+}
+
+// TransformSchema requires at least one editable account field.
+func (PatchTaxAccountRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	for _, field := range []string{"identifier", "cadence", "period_note", "due_note", "lead_days", "currency", "effective_start", "effective_end", "note"} {
+		schema.AnyOf = append(schema.AnyOf, &huma.Schema{Required: []string{field}})
+	}
+	return schema
 }
 
 func taxAccountMembers(raw []byte, patch bool) (map[string]jsontext.Value, error) {

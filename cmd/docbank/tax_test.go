@@ -39,12 +39,26 @@ func TestTaxCLIAccountWorkflow(t *testing.T) {
 	require.NoError(t, err, out)
 	var party api.Party
 	require.NoError(t, json.Unmarshal([]byte(out), &party))
-	out, err = runCLI(t, "tax", "account", "add", "--filer", party.PartyID, "--country", "ZZ", "--tax-kind", "Example", "--cadence", "annual", "--currency", "USD", "--identifier", "synthetic12345", "--note", "line one\nline two", "--json")
+	out, err = runCLI(t, "party", "create", "Example Authority", "--json")
+	require.NoError(t, err, out)
+	var authority api.Party
+	require.NoError(t, json.Unmarshal([]byte(out), &authority))
+	out, err = runCLI(t, "tax", "account", "add", "--filer", party.PartyID, "--authority", authority.PartyID, "--country", "ZZ", "--tax-kind", "Example", "--cadence", "annual", "--currency", "USD", "--identifier", "synthetic12345", "--effective-start", "2025-01-01", "--note", "line one\nline two", "--json")
 	require.NoError(t, err, out)
 	assert.NotContains(t, out, "synthetic12345")
 	var account api.TaxAccount
 	require.NoError(t, json.Unmarshal([]byte(out), &account))
 	assert.Equal(t, "****2345", account.Identifier)
+	require.NotNil(t, account.AuthorityPartyID)
+	assert.Equal(t, authority.PartyID, *account.AuthorityPartyID)
+	out, err = runCLI(t, "tax", "account", "show", account.AccountID, "--reveal", "--json")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "synthetic12345")
+	out, err = runCLI(t, "tax", "account", "list", "--filer", party.PartyID, "--country", "zz", "--taxkind", "Example", "--limit", "1")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, account.AccountID)
+	assert.Contains(t, out, "--offset 1")
+	assert.NotContains(t, out, "synthetic12345")
 	out, err = runCLI(t, "tax", "account", "show", account.AccountID)
 	require.NoError(t, err, out)
 	assert.Contains(t, out, `note: "line one\nline two"`)
@@ -61,6 +75,13 @@ func TestTaxCLIAccountWorkflow(t *testing.T) {
 	assert.Contains(t, err.Error(), "stale_revision")
 	assert.NotContains(t, out, "private-synthetic-note")
 	assert.NotContains(t, err.Error(), "private-synthetic-note")
+	out, err = runCLI(t, "tax", "account", "edit", account.AccountID, "--clear-effective-start", "--json")
+	require.NoError(t, err, out)
+	require.NoError(t, json.Unmarshal([]byte(out), &account))
+	assert.Nil(t, account.EffectiveStart)
+	out, err = runCLI(t, "tax", "account", "retire", account.AccountID, "--json")
+	require.NoError(t, err, out)
+	assert.NotContains(t, out, "synthetic12345")
 }
 
 func TestTaxCLIFlagErrorsArePrivate(t *testing.T) {
@@ -110,7 +131,7 @@ func TestTaxCLIRevisionInspectAndNoRetry(t *testing.T) {
 			reads++
 			assert.NotEqual(t, "true", r.URL.Query().Get("reveal"))
 			w.Header().Set("ETag", `"1"`)
-			_, _ = w.Write([]byte(`{"account_id":"` + id + `","revision":1}`))
+			_, _ = w.Write([]byte(`{"account_id":"` + id + `","filer_party_id":"22222222-2222-4222-8222-222222222222","country":"ZZ","tax_kind":"Example","cadence":"annual","currency":"USD","created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z","revision":1}`))
 		case http.MethodPatch:
 			writes++
 			assert.Equal(t, `"1"`, r.Header.Get("If-Match"))
