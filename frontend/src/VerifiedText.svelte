@@ -203,9 +203,6 @@
 
 {#snippet pdfNotice()}
   <p class="notice" role="status">
-    {#if resolution?.state === "verified_empty"}
-      {stateMessage("verified_empty")}
-    {/if}
     {missingPages.length === 1 ? "Page" : "Pages"}
     {pageRanges(missingPages)}
     {missingPages.length === 1 ? "has" : "have"} no text layer. If {missingPages.length === 1

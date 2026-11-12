@@ -233,7 +233,7 @@ it("shows PDF page gaps before ready text", async () => {
   ).toBeTruthy();
 });
 
-it("combines a PDF page gap with the verified-empty notice", async () => {
+it("shows only the page gap notice for a verified-empty PDF", async () => {
   renderPDF({
     state: "verified_empty",
     pages_without_text: [1],
@@ -242,7 +242,7 @@ it("combines a PDF page gap with the verified-empty notice", async () => {
     build_id: "e".repeat(64),
   });
   const rendered = await screen.findByText(/Page 1 has no text layer/);
-  expect(rendered.textContent).toContain(
+  expect(rendered.textContent).not.toContain(
     "Processing verified that this document has no readable text.",
   );
   expect(screen.getAllByRole("status")).toHaveLength(1);
