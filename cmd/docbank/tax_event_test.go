@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -124,7 +125,7 @@ func TestTaxCLICashRefundVoidAndPrivacy(t *testing.T) {
 			event = strings.Replace(event, "****1234", secret, 1)
 		}
 		w.Header().Set("ETag", fmt.Sprintf(`"%d"`, revision))
-		_, _ = w.Write([]byte(strings.TrimSuffix(parent, "}") + `,"events":[` + event + `,` + refund + `],"balance":{"outstanding_minor":` + fmt.Sprint(amount) + `,"currency":"USD","other_currency_events":1}}`))
+		_, _ = w.Write([]byte(strings.TrimSuffix(parent, "}") + `,"events":[` + event + `,` + refund + `],"balance":{"outstanding_minor":` + strconv.Itoa(amount) + `,"currency":"USD","other_currency_events":1}}`))
 	})
 	out, err := runCLI(t, "tax", "event", "add", id, "--kind", "payment", "--occurred-on", "2026-01-01", "--amount", "100.00", "--currency", "USD", "--reference", secret, "--revision", "1")
 	require.NoError(t, err)

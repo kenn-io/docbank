@@ -31,12 +31,12 @@ func TestTaxCashEventValidation(t *testing.T) {
 func TestTaxBalanceRules(t *testing.T) {
 	record := RecordValues{Direction: "payable", AmountMinor: new(int64(123400)), Currency: "USD"}
 	events := []EventFact{
-		{EventValues: EventValues{Kind: "payment", Currency: "USD", AmountMinor: new(int64(10000))}},
-		{EventValues: EventValues{Kind: "payment", Currency: "EUR", AmountMinor: new(int64(10))}},
-		{EventValues: EventValues{Kind: "refund", Currency: "EUR", AmountMinor: new(int64(10))}},
-		{EventValues: EventValues{Kind: "refund", Currency: "USD", AmountMinor: new(int64(10))}},
-		{EventValues: EventValues{Kind: "assessed", Currency: "USD", AmountMinor: new(int64(10))}},
-		{EventValues: EventValues{Kind: "payment", Currency: "USD", AmountMinor: new(int64(10))}, Voided: true},
+		{Kind: "payment", Currency: "USD", AmountMinor: new(int64(10000))},
+		{Kind: "payment", Currency: "EUR", AmountMinor: new(int64(10))},
+		{Kind: "refund", Currency: "EUR", AmountMinor: new(int64(10))},
+		{Kind: "refund", Currency: "USD", AmountMinor: new(int64(10))},
+		{Kind: "assessed", Currency: "USD", AmountMinor: new(int64(10))},
+		{Kind: "payment", Currency: "USD", AmountMinor: new(int64(10)), Voided: true},
 	}
 	got, err := CalculateBalance(record, events)
 	if err != nil || got.OutstandingMinor == nil || *got.OutstandingMinor != 113400 || got.OtherCurrencyEvents != 3 {

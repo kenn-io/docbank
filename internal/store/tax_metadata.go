@@ -243,17 +243,17 @@ func validateTaxEventAuthority(ctx context.Context, q metadataQuerier) error {
 	defer func() { _ = rows.Close() }()
 	var previousID string
 	var previousRevision int64
-	var cash []taxrecord.EventFact
+	var balanceFacts []taxrecord.EventFact
 	for rows.Next() {
 		event, err := scanTaxEvent(rows)
 		if err != nil {
 			return err
 		}
 		if previousID != "" && event.RecordID != previousID {
-			if _, err = taxrecord.CalculateBalance(parents[previousID].record, cash); err != nil {
+			if _, err = taxrecord.CalculateBalance(parents[previousID].record, balanceFacts); err != nil {
 				return err
 			}
-			cash = nil
+			balanceFacts = nil
 		}
 		p := parents[event.RecordID]
 		if p == nil || event.RecordRevision > p.revision {
@@ -265,9 +265,7 @@ func validateTaxEventAuthority(ctx context.Context, q metadataQuerier) error {
 		}
 		previousID, previousRevision = event.RecordID, event.RecordRevision
 		fact := taxrecord.EventFact{EventValues: event.EventValues, RecordRevision: event.RecordRevision, Voided: event.VoidedAt != nil}
-		if !fact.Voided && (event.Kind == "payment" || event.Kind == "refund") {
-			cash = append(cash, taxrecord.EventFact{EventValues: taxrecord.EventValues{Kind: event.Kind, Currency: event.Currency, AmountMinor: event.AmountMinor}})
-		}
+		balanceFacts = append(balanceFacts, taxrecord.EventFact{Kind: event.Kind, Currency: event.Currency, AmountMinor: event.AmountMinor, Voided: fact.Voided})
 		if err = p.derived.Apply(fact); err != nil {
 			return err
 		}
@@ -276,7 +274,7 @@ func validateTaxEventAuthority(ctx context.Context, q metadataQuerier) error {
 		return err
 	}
 	if previousID != "" {
-		if _, err = taxrecord.CalculateBalance(parents[previousID].record, cash); err != nil {
+		if _, err = taxrecord.CalculateBalance(parents[previousID].record, balanceFacts); err != nil {
 			return err
 		}
 	}
