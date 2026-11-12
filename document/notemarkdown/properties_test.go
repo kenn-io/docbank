@@ -24,7 +24,7 @@ func TestPropertyLinkOccurrences(t *testing.T) {
 			require.Equal(ht, Span{Start: i * 13, End: i*13 + 12}, linkSpan(l))
 			require.Equal(ht, "note.md", l.Target)
 		}
-	}, hegel.WithTestCases(1000))
+	}, hegel.WithTestCases(1000), hegel.WithDatabase(t.TempDir()))
 }
 
 func TestPropertyContainerMultilineLinks(t *testing.T) {
@@ -37,7 +37,7 @@ func TestPropertyContainerMultilineLinks(t *testing.T) {
 		require.NoError(ht, err)
 		require.Equal(ht, []string{"n&amp;.md"}, linkTargets(n.Links))
 		require.Equal(ht, "["+label+"\n"+continued+"tail](n&amp;amp;.md)", string(src[linkSpan(n.Links[0]).Start:linkSpan(n.Links[0]).End]))
-	}, hegel.WithTestCases(1000))
+	}, hegel.WithTestCases(1000), hegel.WithDatabase(t.TempDir()))
 }
 
 func TestPropertyParseDeterministicImmutableAndBounded(t *testing.T) {
@@ -76,7 +76,7 @@ func TestPropertyParseDeterministicImmutableAndBounded(t *testing.T) {
 		for _, d := range a.Diagnostics {
 			assertOriginalSpan(ht, src, d.Span)
 		}
-	}, hegel.WithTestCases(1000))
+	}, hegel.WithTestCases(1000), hegel.WithDatabase(t.TempDir()))
 }
 
 func TestPropertyOriginalOffsets(t *testing.T) {
@@ -114,7 +114,7 @@ func TestPropertyOriginalOffsets(t *testing.T) {
 			require.Equal(ht, "n#x.md", l.Target)
 			require.Empty(ht, l.Fragment)
 		}
-	}, hegel.WithTestCases(1000))
+	}, hegel.WithTestCases(1000), hegel.WithDatabase(t.TempDir()))
 }
 
 func TestPropertyExcludedRegions(t *testing.T) {
@@ -127,7 +127,7 @@ func TestPropertyExcludedRegions(t *testing.T) {
 			require.NoError(ht, err)
 			require.Empty(ht, n.Links)
 		}
-	}, hegel.WithTestCases(1000))
+	}, hegel.WithTestCases(1000), hegel.WithDatabase(t.TempDir()))
 }
 
 func assertOriginalSpan(tb testing.TB, src []byte, s Span) {

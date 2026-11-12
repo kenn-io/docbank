@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/yuin/goldmark/v2/ast"
+	"github.com/yuin/goldmark/v2/parser"
 )
 
 func TestRawHeadingAndTargetEntityRecovery(t *testing.T) {
@@ -183,10 +185,34 @@ func TestDefinitionDoesNotStartOrderedList(t *testing.T) {
 	require.Equal(t, []string{"target.md"}, linkTargets(n.Links))
 }
 
-func TestReferenceShortcutIncompleteSuffix(t *testing.T) {
-	n, err := Parse(t.Context(), []byte("[foo][\n\n[foo]: note.md\n"), Limits{})
-	require.NoError(t, err)
-	require.Equal(t, []string{"note.md"}, linkTargets(n.Links))
+func TestReferenceTailsMatchGoldmark(t *testing.T) {
+	for _, tc := range []struct{ name, use, raw, target string }{
+		{"incomplete shortcut", "[foo][", "[foo]", "note.md"},
+		{"empty collapsed", "[foo][]", "[foo][]", "note.md"},
+		{"space collapsed", "[foo][ ]", "[foo][ ]", "note.md"},
+		{"tab collapsed", "[foo][\t]", "[foo][\t]", "note.md"},
+		{"CRLF collapsed", "[foo][ \t\r\n ]", "[foo][ \t\r\n ]", "note.md"},
+		{"nonblank full", "[foo][bar]", "[foo][bar]", "other.md"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const prefix = "pré "
+			src := []byte(prefix + tc.use + "\n\n[foo]: note.md\n[bar]: other.md\n")
+			var goldTargets []string
+			// Stock Goldmark owns this oracle, without B's driver or guard.
+			require.NoError(t, ast.Walk(parser.New().Parse(src), func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+				if link, ok := node.(*ast.Link); entering && ok {
+					goldTargets = append(goldTargets, string(link.Destination.Bytes(src)))
+				}
+				return ast.WalkContinue, nil
+			}))
+			require.Equal(t, []string{tc.target}, goldTargets)
+			n, err := Parse(t.Context(), src, Limits{})
+			require.NoError(t, err)
+			require.Equal(t, goldTargets, linkTargets(n.Links))
+			require.Equal(t, []Link{{Form: "reference", Raw: tc.raw, Target: tc.target, Label: "foo", Start: len(prefix), End: len(prefix) + len(tc.raw), Line: 1}}, n.Links)
+			require.Equal(t, tc.raw, string(src[n.Links[0].Start:n.Links[0].End]))
+		})
+	}
 }
 
 func TestUnicodeReferenceLabelLimit(t *testing.T) {
