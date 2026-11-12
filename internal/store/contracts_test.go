@@ -266,7 +266,7 @@ func checkContractRevisionExhaustion(t *testing.T, postgres bool) {
 			if postgres {
 				s, _ = copyRetentionStore(t, s)
 			}
-			before, err := s.GetContract(ctx, contract.ContractID, "")
+			before, err := s.GetContract(ctx, contract.ContractID, "2024-01-01")
 			require.NoError(t, err)
 			require.Equal(t, revision, before.Revision)
 			var snapshot bytes.Buffer
@@ -294,7 +294,7 @@ func checkContractRevisionExhaustion(t *testing.T, postgres bool) {
 			}
 			if action == "boundary" {
 				require.NoError(t, err)
-				got, getErr := s.GetContract(ctx, contract.ContractID, "")
+				got, getErr := s.GetContract(ctx, contract.ContractID, "2024-01-01")
 				require.NoError(t, getErr)
 				assert.Equal(t, int64(math.MaxInt64), got.Revision)
 				assert.Equal(t, "Changed", got.Title)
@@ -305,7 +305,7 @@ func checkContractRevisionExhaustion(t *testing.T, postgres bool) {
 			if action == "update" || action == "attach" || action == "detach" {
 				assert.ErrorIs(t, err, ErrInvalidContract)
 			}
-			got, getErr := s.GetContract(ctx, contract.ContractID, "")
+			got, getErr := s.GetContract(ctx, contract.ContractID, "2024-01-01")
 			if assert.NoError(t, getErr) {
 				assert.Equal(t, before, got)
 			}
