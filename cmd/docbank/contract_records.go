@@ -33,6 +33,16 @@ func printContract(cmd *cobra.Command, c api.Contract, jsonOutput bool) error {
 	}
 	return nil
 }
+
+// confirmedCreateOutputError adds the created contract's ID to an output failure after
+// CreateContract succeeded, so callers do not retry a create that already committed.
+func confirmedCreateOutputError(contractID string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("contract %s created, but writing output failed: %w", contractID, err)
+}
+
 func printContractShow(cmd *cobra.Command, c api.Contract, jsonOutput bool) error {
 	if jsonOutput {
 		return writeCLIJSON(cmd.OutOrStdout(), c)
@@ -240,7 +250,7 @@ func newContractCreateCommand() *cobra.Command {
 		if err != nil {
 			return contractMutationError("create contract", err)
 		}
-		return printContract(cmd, v, jsonOutput)
+		return confirmedCreateOutputError(v.ContractID, printContract(cmd, v, jsonOutput))
 	}}
 	f := cmd.Flags()
 	f.StringVar(&b.ContractType, "type", "", "contract type")

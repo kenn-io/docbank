@@ -892,8 +892,8 @@ valid and records another operation.
 ```text
 docbank contract list [--status <status>] [--type <type>] [--party-id <id>] [--expiring-before <date>] [--q <text>] [--as-of <date>] [--limit <n>] [--offset <n>] [--json]
 docbank contract show <contract-id> [--as-of <date>] [--json]
-docbank contract create <title> [--status <status>] [--type <type>] [--own <party>] [--counterparty <party>] [--json]
-docbank contract edit <contract-id> [field and party flags] [--revision <n>] [--json]
+docbank contract create <title> [--status <status>] [--type <type>] [--starts <date>] [--expires <date>] [--signed <date>] [--summary <text>] [--purpose <text>] [--consideration <text>] [--termination <text>] [--own <party>] [--counterparty <party>] [--json]
+docbank contract edit <contract-id> [--title <title>] [--status <status>] [--type <type>] [--starts <date> | --clear-starts] [--expires <date> | --clear-expires] [--signed <date> | --clear-signed] [--summary <text>] [--purpose <text>] [--consideration <text>] [--termination <text>] [--own <party>] [--counterparty <party>] [--remove-own <party>] [--remove-counterparty <party>] [--revision <n>] [--json]
 docbank contract delete <contract-id> [--revision <n>] [--json]
 docbank contract link <contract-id> <node> --role <role> [--version <version-id>] [--revision <n>] [--json]
 docbank contract unlink <contract-id> <node> --role <role> [--version <version-id>] [--revision <n>] [--json]
