@@ -10,7 +10,7 @@ import type { SnapshotPage } from "../src/snapshots.js";
 const exec = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 // "branch" proves this checkout; "base" captures the same fixtures with the
-// pull request's base binary, which predates role operands and the People facet.
+// historical control binary, which predates role operands and the People facet.
 const proof = process.env.DOCBANK_ROLE_SEARCH_PROOF;
 test.skip(!proof, "DOCBANK_ROLE_SEARCH_PROOF enables this proof");
 

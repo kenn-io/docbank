@@ -16,23 +16,17 @@ const failures = [];
 // so its JSON reporter always writes the result.
 const browserWatchdog = 360_000;
 const browserGlobalTimeout = browserWatchdog - 30_000;
-// Before-and-after screenshot proofs a branch adds to this lane. Each entry is
-// { spec, env }: the branch run sets env=branch, and the base capture runs the
-// same spec, fixtures included, against main's binary with env=base. Each spec
-// holds exactly one test, so the stats check counts specs.
+// Screenshot proofs a branch adds to this lane. Each entry is { spec, env }:
+// the branch run sets env=branch, and the historical control runs the same
+// spec and fixtures with env=base. Each spec holds exactly one test, so the
+// stats check counts specs.
 const proofs = [
   // P07 role search: matched-role chips and the People facet (#1453).
   { spec: "role-search.screenshot.ts", env: "DOCBANK_ROLE_SEARCH_PROOF" },
 ];
-// Where the base capture comes from: a pull request's base branch, or, for a
-// manual workflow_dispatch run (a fork branch before its upstream PR), the
-// current upstream main fetched by explicit URL.
+// This negative control predates role search; it is not a future PR base.
 const upstream = "https://github.com/kenn-io/docbank.git";
-const baseSource = process.env.GITHUB_BASE_REF
-  ? { remote: "origin", ref: process.env.GITHUB_BASE_REF }
-  : process.env.GITHUB_EVENT_NAME === "workflow_dispatch"
-    ? { remote: upstream, ref: "main" }
-    : undefined;
+const historicalControl = "83e7ee31e6c900f21b9dd64ceb8bbe22e598671e";
 const proofEnv = (side) => Object.fromEntries(proofs.map((proof) => [proof.env, side]));
 // Runs the named specs against one binary and requires every case to pass.
 const qualify = async (mode, binary, specs, extraEnv) => {
@@ -119,16 +113,19 @@ try {
       console.error(`${mode}: ${error.message}`);
     }
   }
-  // The base capture runs the branch's proof specs on the same fixtures
-  // against the base's own frontend and binary, so reviewers compare like
-  // with like. It runs only in CI with a known base and at least one proof.
-  if (process.env.CI && baseSource && proofs.length) {
+  // Run the proof specs on the same fixtures against the historical control's
+  // own frontend and binary. Local runs retain branch-only qualification.
+  if (process.env.CI && proofs.length) {
     try {
-      console.log(`Building base ${baseSource.remote} ${baseSource.ref}`);
-      git("fetch", "--depth=1", baseSource.remote, baseSource.ref);
+      console.log(
+        `Building historical control from ${upstream}; expected HEAD: ${historicalControl}`,
+      );
+      git("fetch", "--depth=1", upstream, historicalControl);
       git("worktree", "add", "--detach", base, "FETCH_HEAD");
       baseWorktree = true;
-      console.log(`Base commit: ${git("-C", base, "rev-parse", "HEAD")}`);
+      const actualControl = git("-C", base, "rev-parse", "HEAD");
+      console.log(`Historical control HEAD: expected=${historicalControl} actual=${actualControl}`);
+      assert.equal(actualControl, historicalControl, "historical control HEAD mismatch");
       const binary = path.join(
         scratch,
         `docbank-base${process.platform === "win32" ? ".exe" : ""}`,
