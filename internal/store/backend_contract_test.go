@@ -2273,6 +2273,13 @@ var backendSuites = []backendSuite{
 			checkContractConcurrentRevisionFence(t, newPostgresQueryStore)
 		}},
 		{"ContractDocumentHistory", func(t *testing.T) { t.Helper(); checkContractDocumentHistory(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkContractDocumentHistory(t, newPostgresQueryStore) }},
+		{"ContractDocumentConcurrentFence", func(t *testing.T) {
+			t.Helper()
+			checkContractDocumentConcurrentFence(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkContractDocumentConcurrentFence(t, newPostgresQueryStore)
+		}},
 		{"ContractDocumentLifecycle", func(t *testing.T) { t.Helper(); checkContractDocumentLifecycle(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkContractDocumentLifecycle(t, newPostgresQueryStore) }},
 		{"BatchTagsMixedChangesNoOpsAndCallerOrder", func(t *testing.T) {
 			t.Helper()

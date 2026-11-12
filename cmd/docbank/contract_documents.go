@@ -16,7 +16,7 @@ func newContractDocumentCommand(link bool) *cobra.Command {
 	var role, version string
 	var revision int64
 	var jsonOutput bool
-	cmd := &cobra.Command{Use: name + " <contract-id> <node>", Short: name + " an exact contract document", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: name + " <contract-id> <node>", Short: name + " an exact contract document", Example: "  docbank contract " + name + " <contract-id> id:42 --role signed", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("revision") && revision < 1 {
 			return fmt.Errorf("revision must be positive")
 		}

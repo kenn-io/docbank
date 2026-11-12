@@ -674,6 +674,8 @@ func TestOpenAPIDeclaresMutationPreconditions(t *testing.T) {
 		doc.Paths["/api/v1/contracts/{contract_id}"].Delete,
 		doc.Paths["/api/v1/contracts/{contract_id}/parties/{party_id}"].Put,
 		doc.Paths["/api/v1/contracts/{contract_id}/parties/{party_id}"].Delete,
+		doc.Paths["/api/v1/contracts/{contract_id}/documents/{node_id}"].Put,
+		doc.Paths["/api/v1/contracts/{contract_id}/documents/{node_id}"].Delete,
 	} {
 		require.NotNil(t, operation)
 		required := map[string]bool{}
@@ -908,5 +910,26 @@ func TestPartyRequestSchemas(t *testing.T) {
 			}
 		}
 		assert.True(t, found)
+	}
+}
+
+func TestOpenAPIContractDocumentMutationParameters(t *testing.T) {
+	t.Parallel()
+	doc := api.NewOfflineServer().API().OpenAPI()
+	path := doc.Paths["/api/v1/contracts/{contract_id}/documents/{node_id}"]
+	require.NotNil(t, path)
+	for _, op := range []*huma.Operation{path.Put, path.Delete} {
+		require.NotNil(t, op)
+		params := map[string]*huma.Param{}
+		for _, p := range op.Parameters {
+			params[p.In+":"+p.Name] = p
+		}
+		require.Contains(t, params, "header:If-Match")
+		assert.True(t, params["header:If-Match"].Required)
+		assert.Equal(t, "string", params["header:If-Match"].Schema.Type)
+		require.Contains(t, params, "query:role")
+		assert.True(t, params["query:role"].Required)
+		require.Contains(t, params, "query:content_version_id")
+		assert.False(t, params["query:content_version_id"].Required)
 	}
 }

@@ -2,6 +2,9 @@ package store
 
 import (
 	"bytes"
+	"errors"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -149,4 +152,63 @@ func TestContractDocumentPrune(t *testing.T) {
 	require.Len(t, c.Documents, 1)
 	assert.False(t, c.Documents[0].Available)
 	assert.False(t, c.Documents[0].Current)
+}
+
+// Competing document mutations share the contract revision fence.
+func checkContractDocumentConcurrentFence(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	ctx := t.Context()
+	n, err := s.CreateFile(ctx, s.RootID(), "fence.txt", fakeHash("d1"), 1, "text/plain")
+	require.NoError(t, err)
+	c, err := s.CreateContract(ctx, ContractInput{Title: "Fence"})
+	require.NoError(t, err)
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	var wg sync.WaitGroup
+	for _, role := range []string{"draft", "signed"} {
+		wg.Go(func() {
+			<-start
+			_, err := s.LinkContractDocument(ctx, c.ContractID, c.Revision, n.ID, role, "")
+			results <- err
+		})
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	success, stale := 0, 0
+	for err := range results {
+		if err == nil {
+			success++
+		} else if errors.Is(err, ErrStaleRevision) {
+			stale++
+		} else {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	assert.Equal(t, 1, success)
+	assert.Equal(t, 1, stale)
+}
+
+func TestContractDocumentMetadataRejectsInconsistentCopy(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	n, err := s.CreateFile(ctx, s.RootID(), "metadata.txt", fakeHash("e1"), 2, "text/plain")
+	require.NoError(t, err)
+	c, err := s.CreateContract(ctx, ContractInput{Title: "Metadata"})
+	require.NoError(t, err)
+	_, err = s.LinkContractDocument(ctx, c.ContractID, c.Revision, n.ID, "signed", "")
+	require.NoError(t, err)
+	var buf bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &buf))
+	for _, tc := range []struct{ from, to string }{
+		{`"role":"signed"`, `"role":"invalid"`},
+		{`"size":2,"role":"signed"`, `"size":3,"role":"signed"`},
+	} {
+		mutated := strings.Replace(buf.String(), tc.from, tc.to, 1)
+		require.NotEqual(t, buf.String(), mutated)
+		target := newTestStore(t)
+		require.Error(t, target.ImportMetadata(ctx, strings.NewReader(mutated)))
+	}
 }

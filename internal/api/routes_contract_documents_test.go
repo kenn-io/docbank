@@ -19,6 +19,8 @@ func TestContractDocumentRoutes(t *testing.T) {
 	var c api.Contract
 	require.NoError(t, json.Unmarshal([]byte(body), &c))
 	path := fmt.Sprintf("/api/v1/contracts/%s/documents/%d?role=signed", c.ContractID, n.ID)
+	resp, body = do(t, ts, http.MethodPut, path, nil, nil)
+	require.Equal(t, http.StatusPreconditionRequired, resp.StatusCode, body)
 	resp, body = do(t, ts, http.MethodPut, path, map[string]string{"If-Match": `"1"`}, nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	require.NoError(t, json.Unmarshal([]byte(body), &c))
