@@ -412,6 +412,27 @@ func TestOpenRejectsInvalidTermReportHistoryLayout(t *testing.T) {
 	}
 }
 
+func TestOpenRejectsInvalidTaxEventsLayout(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		for _, change := range []string{"DROP TABLE tax_events", "ALTER TABLE tax_events ADD COLUMN synthetic_unexpected TEXT"} {
+			t.Run(driver.name+"/"+change, func(t *testing.T) {
+				dbPath := filepath.Join(t.TempDir(), "docbank.db")
+				s, err := Open(t.Context(), dbPath, driver.driver)
+				require.NoError(t, err)
+				_, err = s.db.ExecContext(t.Context(), change)
+				require.NoError(t, err)
+				require.NoError(t, s.Close())
+				reopened, err := Open(t.Context(), dbPath, driver.driver)
+				if reopened != nil {
+					require.NoError(t, reopened.Close())
+				}
+				require.ErrorContains(t, err, "unexpected tax_events layout")
+			})
+		}
+	}
+}
+
 func TestOpenRejectsCurrentDatabaseWithoutAttributionTables(t *testing.T) {
 	t.Parallel()
 	tables := []string{
