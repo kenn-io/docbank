@@ -847,12 +847,12 @@ do not change the qualified Store operations.
 
 #### Document export plans and jobs
 
-The native Store supports explicit members, current node IDs and chunked uploads
-as export sources on both backends. It seals exact retained versions, plans
+The native Store supports explicit members, current node IDs, chunked uploads
+and completed mailbox collections as export sources on both backends. It seals exact retained versions, plans
 originals and available retained text, page images, email PDFs and attachment
 outputs, and provides frozen previews and output-problem pages. Explicit photo
 members can capture authored metadata and publish an already-prepared render.
-Query-driven and mailbox source discovery, rendering and filesystem workers,
+Query-driven source discovery, rendering and filesystem workers,
 portable recovery and public PostgreSQL opening remain separate boundaries.
 
 Source admission reserves the owner and operation before invoking a resolver.
@@ -952,6 +952,11 @@ an opaque caller value. These groups describe the boundary:
 schema check and fixture copier. It is test-only. Production uses the existing
 Store, explicit query bindings and metadata codec; it does not inspect a column
 registry or rewrite SQL at runtime.
+
+Optional byte filters use a separate boolean presence parameter. Comparing a
+parameter with `''` can make PostgreSQL infer text before a later byte
+comparison. Bind every cursor component to its column's storage type, including
+values inside tuple comparisons.
 
 Source classification inspects the nine-byte `embedded:` prefix
 case-insensitively. Indexed source lookups and cursors compare raw bytes.

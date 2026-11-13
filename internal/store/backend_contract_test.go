@@ -335,12 +335,13 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkPackageTimelineInputsPreserveRawDateAndDeclaredZone(t, newPostgresQueryStore)
 		}},
+		{"PackageLabelCandidatesPreserveByteKeys", func(t *testing.T) { t.Helper(); checkPackageLabelCandidatesPreserveByteKeys(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPackageLabelCandidatesPreserveByteKeys(t, newPostgresQueryStore) }},
 		{"PackageLabelCandidatesPageAmbiguousSenderLabels", func(t *testing.T) { t.Helper(); checkPackageLabelCandidatesPageAmbiguousSenderLabels(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()
 			checkPackageLabelCandidatesPageAmbiguousSenderLabels(t, newPostgresQueryStore)
 		}},
 	}},
-	{name: "exports", postgres: "native operations", scope: "Explicit/node/chunk sources, pinned output plans, previews, export-job lifecycle and retained-output inspection; excludes query/mailbox source selection, filesystem execution and recovery.", scenarios: []backendScenario{
+	{name: "exports", postgres: "native operations", scope: "Explicit/node/chunk and completed-mailbox sources, pinned output plans, previews, export-job lifecycle and retained-output inspection; excludes query source selection, filesystem execution and recovery.", scenarios: []backendScenario{
 		{"ExportWorkerFailureAndCapacity", func(t *testing.T) { t.Helper(); checkExportWorkerFailureAndCapacity(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkExportWorkerFailureAndCapacity(t, newPostgresQueryStore) }},
 		{"ExportDiscoverySnapshots", nil, checkExportDiscoverySnapshotsPostgres},
 
@@ -376,6 +377,13 @@ var backendSuites = []backendSuite{
 			checkExportPlanPinsRolesAndCannotInventMissingText(t, newPostgresQueryStore)
 		}},
 		{"ExportPreviewUsesFrozenReceiptsAndOwner", func(t *testing.T) { t.Helper(); checkExportPreviewUsesFrozenReceiptsAndOwner(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkExportPreviewUsesFrozenReceiptsAndOwner(t, newPostgresQueryStore) }},
+		{"ExportCompletedMailboxCollectionPinsImportedVersions", func(t *testing.T) {
+			t.Helper()
+			checkExportCompletedMailboxCollectionPinsImportedVersions(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkExportCompletedMailboxCollectionPinsImportedVersions(t, newPostgresQueryStore)
+		}},
 		{"ExportPublicationReleasedOnlyAfterRetentionCleanup", func(t *testing.T) {
 			t.Helper()
 			checkExportPublicationReleasedOnlyAfterRetentionCleanup(t, newTestStore)

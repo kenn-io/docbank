@@ -20,23 +20,21 @@ func (s *Store) ExportMailboxCollectionMembers(ctx context.Context, owner, colle
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	var id string
-	var count int
 	collectionSQL := "json_extract(job_json,'$.collection_id')"
 	if s.postgresSchema != "" {
 		collectionSQL = "(query_json::jsonb ->> 'collection_id')"
 	}
-	err = tx.QueryRowContext(ctx, `SELECT COALESCE(min(id),''),count(*) FROM (SELECT id FROM mailbox_jobs WHERE owner=$1 AND `+collectionSQL+`=$2 ORDER BY id LIMIT 2)`, storedString(s.postgresSchema != "", owner), collection).Scan(&id, &count)
+	ids, err := pageMetadataKeys(ctx, tx, `SELECT id FROM mailbox_jobs WHERE owner=$1 AND `+collectionSQL+`=$2 ORDER BY id LIMIT 2`, storedString(s.postgresSchema != "", owner), collection)
 	if err != nil {
 		return nil, err
 	}
-	if count == 0 {
+	if len(ids) == 0 {
 		return nil, ErrNotFound
 	}
-	if count != 1 {
+	if len(ids) != 1 {
 		return nil, bundle.ErrConflict
 	}
-	j, err := loadMailboxJob(ctx, tx, owner, id, s.postgresSchema != "")
+	j, err := loadMailboxJob(ctx, tx, owner, ids[0], s.postgresSchema != "")
 	if err != nil {
 		return nil, err
 	}

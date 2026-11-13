@@ -23,7 +23,8 @@ Instructions for autonomous coding agents working in this repository.
   `TEXT` cannot hold NUL: use `BYTEA` for unrestricted names and evidence,
   `db:"column,bytes"` in the metadata codec, and explicit native bind conversion.
   Keep SQLite acceptance and canonical metadata bytes unchanged; qualify native
-  reads, comparisons and writes along with restore.
+  reads, comparisons and writes along with restore. Use boolean presence flags
+  for optional byte filters, and bind each byte-valued cursor component explicitly.
 - Keep opaque JSON evidence unchanged. PostgreSQL JSONB operators can reject a
   record because an unrelated string contains NUL. Derive the fields SQL needs
   in Go in the native write transaction, and rebuild them through import and

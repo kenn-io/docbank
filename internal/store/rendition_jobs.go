@@ -244,7 +244,7 @@ func (s *Store) EnqueueRenditionJob(
 			}
 		} else if binding := request.ExecutionIdentity.Upload.InputBinding; binding != "" {
 			visible, err := mediaInputBindingVisibleForSourceTx(
-				ctx, tx, request.Authorization.Principal, binding, sourceSHA256)
+				ctx, tx, request.Authorization.Principal, binding, sourceSHA256, s.postgresSchema != "")
 			if err != nil {
 				return err
 			}
@@ -1553,7 +1553,7 @@ func (s *Store) publishRenditionJob(
 			if err == nil && executionIdentity.Upload.InputBinding != "" && !derived {
 				var visible bool
 				visible, err = mediaInputBindingVisibleForSourceTx(ctx, tx, request.Principal,
-					executionIdentity.Upload.InputBinding, job.SourceSHA256)
+					executionIdentity.Upload.InputBinding, job.SourceSHA256, s.postgresSchema != "")
 				if err == nil && !visible {
 					err = ErrRenditionJobStaleAuthority
 				}
@@ -1740,7 +1740,7 @@ func authorizeStoredEgressTx(
 }
 
 func mediaInputBindingVisibleForSourceTx(
-	ctx context.Context, tx *sql.Tx, principal, inputID, sourceSHA256 string,
+	ctx context.Context, tx *sql.Tx, principal, inputID, sourceSHA256 string, postgres bool,
 ) (bool, error) {
 	var found int
 	err := tx.QueryRowContext(ctx, `SELECT 1 FROM media_input_artifacts i
@@ -1749,7 +1749,7 @@ func mediaInputBindingVisibleForSourceTx(
 		JOIN content_versions c ON c.version_id=v.content_version_id
 		WHERE i.input_id=$1 AND o.caller_principal=$2 AND o.visible=1
 			AND c.blob_hash=$3 AND o.source_version_id=i.source_version_id`,
-		inputID, principal, sourceSHA256).Scan(&found)
+		storedString(postgres, inputID), storedString(postgres, principal), sourceSHA256).Scan(&found)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}

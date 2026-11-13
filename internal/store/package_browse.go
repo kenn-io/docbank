@@ -232,13 +232,13 @@ func (s *Store) PackageLabelCandidates(ctx context.Context, label, packageID, la
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT package_id,provenance,label_set,label,
 		occurrence_id,content_version_id,COALESCE(artifact_id,''),COALESCE(page_number,0),page_state,endpoint
-		FROM package_labels WHERE label=$1 AND ($2='' OR package_id=$3) AND ($4='' OR label_set=$5)
+		FROM package_labels WHERE label=$1 AND ($2='' OR package_id=$3) AND ($4 OR label_set=$5)
 		AND ($6='' OR provenance=$7) AND ($8='' OR (package_id,provenance,label_set,occurrence_id,
 		COALESCE(artifact_id,''),COALESCE(page_number,0),endpoint)>($9,$10,$11,$12,$13,$14,$15))
 		ORDER BY package_id,provenance,label_set,occurrence_id,COALESCE(artifact_id,''),COALESCE(page_number,0),endpoint
-		LIMIT $16`, storedString(s.postgresSchema != "", label), packageID, packageID, labelSet, storedString(s.postgresSchema != "", labelSet), provenance, provenance,
-		after, cursor.PackageID, cursor.Provenance, cursor.LabelSet, cursor.OccurrenceID,
-		cursor.ArtifactID, cursor.PageNumber, cursor.Endpoint, limit+1)
+		LIMIT $16`, storedString(s.postgresSchema != "", label), packageID, packageID, labelSet == "", storedString(s.postgresSchema != "", labelSet), provenance, provenance,
+		after, cursor.PackageID, cursor.Provenance, storedString(s.postgresSchema != "", cursor.LabelSet), storedString(s.postgresSchema != "", cursor.OccurrenceID),
+		storedString(s.postgresSchema != "", cursor.ArtifactID), cursor.PageNumber, cursor.Endpoint, limit+1)
 	if err != nil {
 		return nil, "", err
 	}

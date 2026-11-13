@@ -10,19 +10,22 @@ import (
 	"go.kenn.io/docbank/document/bundle"
 )
 
-func TestExportCompletedMailboxCollectionPinsImportedVersions(t *testing.T) {
+func checkExportCompletedMailboxCollectionPinsImportedVersions(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
+	_, err := s.ExportMailboxCollectionMembers(t.Context(), "one", uuid.NewString())
+	require.ErrorIs(t, err, ErrNotFound)
 	f := newEmailFixture(t, s, "seed.eml")
 	source, err := emailVersion(t.Context(), s.db, f.publication.ContentVersionID)
 	require.NoError(t, err)
-	c := MailboxContainerRequest{ID: "source", Owner: "one", SHA256: source.BlobHash, Size: source.Size, Format: "mbox"}
+	c := MailboxContainerRequest{ID: "source\x00\\id", Owner: "one", SHA256: source.BlobHash, Size: source.Size, Format: "mbox"}
 	_, err = s.BeginMailboxContainer(t.Context(), c)
 	require.NoError(t, err)
 	require.NoError(t, s.PutMailboxChunk(t.Context(), c.Owner, c.ID, MailboxChunk{Index: 0, SHA256: c.SHA256, Size: c.Size}))
 	_, err = s.SealMailboxContainer(t.Context(), c.Owner, c.ID, c.SHA256, c.Size)
 	require.NoError(t, err)
-	_, err = s.BeginMailboxJob(t.Context(), c.Owner, MailboxJobRequest{ID: "job", ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: MailboxSettings{DestinationID: s.RootID()}})
+	_, err = s.BeginMailboxJob(t.Context(), c.Owner, MailboxJobRequest{ID: "job\x00\\id", ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: MailboxSettings{DestinationID: s.RootID()}})
 	require.NoError(t, err)
 	j, err := s.ClaimMailboxJob(t.Context())
 	require.NoError(t, err)
