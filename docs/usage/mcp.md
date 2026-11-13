@@ -1013,8 +1013,9 @@ no processing or provider work.
    for terms, inclusive date cutoffs, timezone, and optional processing profile.
 3. Call `create_report`. Omitted `coverage_mode` means `strict`. Choose
    `available_only` if incomplete evidence is acceptable. A changed selection
-   returns `report_selection_changed`. Refresh and reselect rather than
-   substituting newer versions automatically.
+   returns `report_selection_changed`. Recheck the documents and their current
+   versions with `list_documents` and `list_document_versions`. Review any
+   replacements with the operator before submitting a new selection.
 4. For `needs_review`, page through `get_report_dates`. Keep each member's
    earlier candidates when `candidates_complete` is false. Continue with the
    returned cursor until `next_cursor` is absent. Review the evidence with the

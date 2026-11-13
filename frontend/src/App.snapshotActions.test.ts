@@ -608,12 +608,14 @@ it("preserves the draft after dismissing an uncertain selection tag warning", as
   await screen.findByRole("cell", { name: "/records/report-1.pdf" });
   expect(searches[1]).toEqual(searches[0]);
   const warning = await screen.findByText(
-    "The result is unknown. Check these documents' tags before trying again.",
+    "Docbank couldn't confirm the tag change. Check the documents' tags before trying again.",
   );
   expect(warning.closest('[role="alert"]')).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
   expect(
-    screen.queryByText("The result is unknown. Check these documents' tags before trying again."),
+    screen.queryByText(
+      "Docbank couldn't confirm the tag change. Check the documents' tags before trying again.",
+    ),
   ).toBeNull();
   expect(
     (screen.getByRole("searchbox", { name: "Search documents" }) as HTMLInputElement).value,
@@ -623,4 +625,79 @@ it("preserves the draft after dismissing an uncertain selection tag warning", as
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   expect((screen.getByLabelText("Filters JSON") as HTMLTextAreaElement).value).toBe('{"size_min":');
   expect(screen.getByRole("combobox", { name: "Documents per page: 250" })).toBeTruthy();
+});
+
+it("keeps the snapshot selection when a report adopts a changed version", async () => {
+  history.replaceState(
+    null,
+    "",
+    `/#web_session=fresh-session&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(query))}`,
+  );
+  const [first] = await pages();
+  const root = {
+    id: 1000,
+    name: "",
+    kind: "dir",
+    path: "/",
+    revision: 1,
+    size: 0,
+    created_at: "2026-09-11T00:00:00Z",
+    modified_at: "2026-09-11T00:00:00Z",
+  };
+  const selected = { node_id: 1, version_id: row(1).content_version_id, sha256: row(1).blob_hash };
+  const current = { ...selected, version_id: "00000000-0000-4000-8000-000000000999" };
+  let snapshotRequests = 0;
+  const json = (value: unknown) =>
+    new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/path?path=%2F") return json(root);
+    if (url === "/api/v1/nodes/1000/children?limit=1000&offset=0")
+      return json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
+    if (url === "/api/v1/tags?limit=1000&offset=0")
+      return json({ items: [], total: 0, limit: 1000, offset: 0 });
+    if (url === "/api/v1/queries/parse")
+      return json({ query, query_fingerprint: first.query_fingerprint, dependencies: [] });
+    if (url === "/api/v1/workspace/queries") {
+      snapshotRequests++;
+      return json(first);
+    }
+    if (url.startsWith("/api/v1/search-exports?") || url.startsWith("/api/v1/collections?"))
+      return json({ items: [], total: 0 });
+    if (url === "/api/v1/search-exports/selection")
+      return json([
+        {
+          selected,
+          current,
+          status: "changed",
+          name: "report-1.pdf",
+          path: "/records/report-1.pdf",
+        },
+      ]);
+    if (url === "/api/v1/search-exports" && init?.method === "POST")
+      return new Response(JSON.stringify({ code: "report_selection_changed" }), {
+        status: 409,
+        headers: { "Content-Type": "application/problem+json" },
+      });
+    throw new Error(`unexpected request: ${url}`);
+  });
+  render(App);
+  await screen.findByRole("dialog", { name: "Filters and sort" });
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await screen.findByRole("cell", { name: "/records/report-1.pdf" });
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select /records/report-1.pdf" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Report selected documents" }));
+  const drawer = await screen.findByRole("dialog", { name: "Search term report" });
+  await fireEvent.click(within(drawer).getByRole("button", { name: "Create report" }));
+  await fireEvent.click(await within(drawer).findByRole("button", { name: "Refresh selection" }));
+  await fireEvent.click(
+    await within(drawer).findByRole("checkbox", { name: "Include current version" }),
+  );
+  await fireEvent.click(within(drawer).getByRole("button", { name: "Use this selection" }));
+  await within(drawer).findByText("Selection updated");
+  expect(
+    screen.getByRole<HTMLInputElement>("checkbox", { name: "Select /records/report-1.pdf" })
+      .checked,
+  ).toBe(true);
+  expect(snapshotRequests).toBe(1);
 });

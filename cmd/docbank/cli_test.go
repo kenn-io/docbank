@@ -767,7 +767,7 @@ func TestRefsFindsCurrentHistoricalAndTrashedContent(t *testing.T) {
 
 	out, err = runCLI(t, "refs", strings.Repeat("f", 64))
 	require.NoError(t, err, out)
-	assert.Equal(t, "no authoritative references\n", out)
+	assert.Equal(t, "no document versions found for this content hash on this page\n", out)
 	_, err = runCLI(t, "refs", "ABC")
 	require.ErrorContains(t, err, "canonical lowercase SHA-256")
 	_, err = runCLI(t, "refs", hash, "--limit", "0")

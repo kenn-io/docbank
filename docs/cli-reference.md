@@ -867,7 +867,7 @@ resolvable path.
 The default limit is 100. `--limit` accepts 1–1000 and `--offset` continues a
 bounded result. `--json` emits the page envelope with `items`, `total`, `limit`,
 and `offset`. A cataloged physical blob with no retained content version is not
-a match. The command reports `no authoritative references`.
+a match. The command reports `no document versions found for this content hash on this page`.
 
 ## docbank document revert
 
