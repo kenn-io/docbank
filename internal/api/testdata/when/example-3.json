@@ -1,4 +1,0 @@
-{"state": "floating", "precision": "second",
- "local": "2026-03-10T23:30:00", "zone_state": "omitted",
- "placed_by": {"source": "captured", "rule": "primary-rule/v1", "fallback": false, "event_id": "evt-55"},
- "day": "2026-03-10", "axis_minute": 1410}

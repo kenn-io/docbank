@@ -137,9 +137,16 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 	}
 	var events []document.DocumentEventV1
 	if facts.State != factsStatePending && facts.State != factsStateFailed {
-		_, eventView, err := s.freshEventsInTx(ctx, tx, versionID)
+		eventState, eventView, err := s.freshEventsInTx(ctx, tx, versionID)
 		if err != nil {
 			return DocumentPeopleFacts{}, err
+		}
+		if facts.State == "published" && eventState != "published" {
+			facts.State = eventState
+			if eventState == factsStateNone {
+				facts.State = factsStatePending
+			}
+			facts.Edges = []document.DocumentPersonEdgeV1{}
 		}
 		events = eventView.Events.Events
 		var actorKeys []string

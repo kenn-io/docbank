@@ -123,7 +123,11 @@ func TestVersionFactsPDFMetadata(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.PublishDocumentEvents(t.Context(), targets[0], store.DocumentEventsDeriverFingerprint, evidence.InputsSHA256, eventJSON)
 	require.NoError(t, err)
-	_, err = s.PrepareDocumentPeopleInputs(t.Context(), node.CurrentVersionID)
+	person, err := s.CreatePerson(t.Context(), "Assigned Author", "operator")
+	require.NoError(t, err)
+	_, err = s.AssertDocumentPerson(t.Context(), store.PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	_, err = processing.BackfillDocumentPeopleTargets(t.Context(), s, []store.DocumentPeopleTarget{{ContentVersionID: node.CurrentVersionID}})
 	require.NoError(t, err)
 	res, body := get(t, ts, fmt.Sprintf("/api/v1/versions/%s/dates", node.CurrentVersionID), nil)
 	require.Equal(t, http.StatusOK, res.StatusCode, body)
@@ -144,6 +148,9 @@ func TestVersionFactsPDFMetadata(t *testing.T) {
 	require.Len(t, people.Unresolved, 1)
 	require.Equal(t, "J. PELLHAM", people.Unresolved[0].RawLabel)
 	require.Equal(t, "author", people.Unresolved[0].Role)
+	require.Equal(t, "published", people.State)
+	require.NotEmpty(t, people.Edges)
+	require.Len(t, people.Assertions, 1)
 	_, err = s.StartDocumentEventRebuild(t.Context(), "00000000-0000-4000-8000-000000000001", store.DocumentEventRebuildRequestSHA256)
 	require.NoError(t, err)
 	res, body = get(t, ts, fmt.Sprintf("/api/v1/versions/%s/dates", node.CurrentVersionID), nil)
@@ -153,6 +160,38 @@ func TestVersionFactsPDFMetadata(t *testing.T) {
 	require.Equal(t, "pending", dates.State)
 	require.Empty(t, dates.Claims)
 	require.Nil(t, dates.Primary)
+	checkPeople := func(state string, published bool) {
+		t.Helper()
+		res, body := get(t, ts, fmt.Sprintf("/api/v1/versions/%s/people", node.CurrentVersionID), nil)
+		require.Equal(t, http.StatusOK, res.StatusCode, body)
+		var got api.VersionPeople
+		require.NoError(t, json.Unmarshal([]byte(body), &got))
+		require.Equal(t, state, got.State)
+		require.Len(t, got.Assertions, 1)
+		require.Equal(t, person.PersonID, got.Assertions[0].PersonID)
+		if published {
+			require.NotEmpty(t, got.Edges)
+			require.Len(t, got.Unresolved, 1)
+		} else {
+			require.Empty(t, got.Edges)
+			require.Empty(t, got.Unresolved)
+		}
+	}
+	checkPeople("pending", false)
+	targets, err = s.MissingDocumentEventTargetsAfter(t.Context(), store.DocumentEventsDeriverFingerprint, "", 100)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	evidence, err = s.LoadDocumentEventEvidence(t.Context(), targets[0])
+	require.NoError(t, err)
+	require.NoError(t, s.RecordDocumentEventAttempt(t.Context(), targets[0], evidence.InputsSHA256, "failed", []byte(`[]`)))
+	checkPeople("failed", false)
+	_, err = s.PublishDocumentEvents(t.Context(), targets[0], store.DocumentEventsDeriverFingerprint, evidence.InputsSHA256, eventJSON)
+	require.NoError(t, err)
+	_, err = processing.BackfillDocumentPeopleTargets(t.Context(), s, []store.DocumentPeopleTarget{{ContentVersionID: node.CurrentVersionID}})
+	require.NoError(t, err)
+	checkPeople("published", true)
+	require.NoError(t, s.EnsureDocumentEventRecipe(t.Context(), testHash("new-recipe")))
+	checkPeople("pending", false)
 }
 
 func TestVersionFactsBrowserHiddenAuthorization(t *testing.T) {
