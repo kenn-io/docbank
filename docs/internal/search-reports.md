@@ -42,7 +42,7 @@ evidence. A separate current-version preflight cannot replace that check.
 Missing, trashed, or replaced versions reject the whole run as
 `report_selection_changed`. Availability is checked across the whole set before
 classifying a wrong hash on a matching current version as an invalid request.
-Equal bytes under a new version ID still conflict.
+Equal bytes under a new version ID still conflict. The read-only selection endpoint compares the selected identities in one snapshot for the drawer; report creation repeats admission after the user chooses replacements.
 
 Names, paths, tags, relationships, and processing evidence are observed during
 capture. Metadata-only changes do not replace selected content identity.
