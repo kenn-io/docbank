@@ -472,6 +472,8 @@ type Config struct {
 	ProcessingProfiles map[string]ProcessingProfileConfig `toml:"processing_profiles"`
 	Watches            []WatchConfig                      `toml:"watch"`
 
+	SuppliedMediaEmbeddingProfile string `toml:"supplied_media_embedding_profile"`
+
 	EffectiveProfiles map[string]ResolvedProcessingProfile `toml:"-"`
 }
 

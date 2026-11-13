@@ -328,7 +328,7 @@ Set `DocumentSearchRequest.MediaSources` to search only the transcripts of exact
 recording sources. Reports then set `MediaSourceSelection` and list
 `MediaSelections`, and evidence names its `MediaSources`, following the
 [HTTP media source contract](architecture/http-api.md#coverage-and-source-fenced-search).
-Invalid selectors, or a mode or reranking choice they do not support, match
+Invalid selectors and selected-media requests with an all-live scope or reranking match
 `docbank.ErrMediaSearchInvalid`.
 
 ## Read exact evidence windows

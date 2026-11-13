@@ -369,6 +369,17 @@ func TestSearcherRejectsMissingSourceFenceBeforeEmbedding(t *testing.T) {
 	assert.False(t, backend.releasedAt.IsZero())
 }
 
+func TestSearcherDetectsSelectedEmbeddingsRemovedBeforeEncoding(t *testing.T) {
+	searcher, backend, provider, descriptor := retrievalSearcherFixture(t, true, 1)
+	backend.authority.ANNRows = []vectorindex.RowIdentity{}
+	_, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeSemantic,
+		Scope:         store.SearchOptions{SelectedBuilds: []store.SearchSelectedBuild{{ContentVersionID: "version", BuildID: "build"}}},
+		Authorization: retrievalAuthorization(descriptor)})
+	require.ErrorIs(t, err, ErrSelectedEmbeddingsUnavailable)
+	assert.Zero(t, provider.calls)
+	assert.False(t, backend.releasedAt.IsZero())
+}
+
 func retrievalANNRows(t *testing.T, generation *vectorindex.Generation) []vectorindex.RowIdentity {
 	t.Helper()
 	metadata := generation.Metadata()
@@ -441,18 +452,27 @@ func (backend *retrievalBackendStub) ReleaseVectorIndexGeneration(ctx context.Co
 }
 
 func (backend *retrievalBackendStub) RevalidateSearchCandidates(_ context.Context,
-	requested []store.SearchCandidateIdentity, _ store.SearchOptions, _, _ string,
+	requested []store.SearchCandidateIdentity, scope store.SearchOptions, _, _ string,
 ) (store.SearchCandidateRevalidation, error) {
 	backend.revalidated = requested
 	candidates := make([]store.RevalidatedSearchCandidate, 0, len(backend.semantic))
 	for _, candidate := range backend.lexical {
+		buildID := ""
+		if len(scope.SelectedBuilds) != 0 {
+			buildID = candidate.BuildID
+		}
 		candidates = append(candidates, store.RevalidatedSearchCandidate{
-			NodeID: candidate.Node.ID, ContentVersionID: candidate.Node.CurrentVersionID, Path: candidate.Path,
+			NodeID: candidate.Node.ID, ContentVersionID: candidate.Node.CurrentVersionID, BuildID: buildID, Path: candidate.Path,
 		})
 	}
 	for _, candidate := range backend.semantic {
+		buildID := ""
+		if len(scope.SelectedBuilds) != 0 {
+			buildID = candidate.MediaEvidence.BuildID
+		}
 		candidates = append(candidates, store.RevalidatedSearchCandidate{
-			NodeID: candidate.NodeID, ContentVersionID: candidate.ContentVersionID, Path: candidate.Path,
+			NodeID: candidate.NodeID, ContentVersionID: candidate.ContentVersionID,
+			BuildID: buildID, Path: candidate.Path,
 		})
 	}
 	return store.SearchCandidateRevalidation{Candidates: candidates, Coverage: backend.revalidationCoverage}, nil

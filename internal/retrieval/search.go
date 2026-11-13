@@ -33,6 +33,8 @@ type CandidateRevalidationBackend interface {
 
 var ErrExpandedSearchFailed = errors.New("expanded retrieval stage failed")
 
+var ErrSelectedEmbeddingsUnavailable = errors.New("selected builds have no eligible embedding rows")
+
 type SemanticBackend interface {
 	AcquireSemanticSearchAuthority(ctx context.Context, profile, binding, owner string, at time.Time,
 		duration time.Duration, options store.SearchOptions) (store.SemanticSearchAuthority, error)
@@ -208,6 +210,7 @@ func (searcher *Searcher) revalidateReport(ctx context.Context, query Query, rep
 		return Report{}, err
 	}
 	if revalidation.Coverage != nil {
+		report.Coverage.CompleteContentVersionIDs = revalidation.Coverage.CompleteContentVersionIDs
 		report.Coverage.ScopedDocuments = revalidation.Coverage.ScopedDocuments
 		report.Coverage.CompleteDocuments = revalidation.Coverage.CompleteDocuments
 		report.Coverage.State = CoverageComplete
@@ -216,17 +219,17 @@ func (searcher *Searcher) revalidateReport(ctx context.Context, query Query, rep
 		}
 	}
 	type documentKey struct {
-		nodeID  int64
-		version string
+		nodeID         int64
+		version, build string
 	}
 	set := make(map[documentKey]string, len(revalidation.Candidates))
 	for _, candidate := range revalidation.Candidates {
-		set[documentKey{nodeID: candidate.NodeID, version: candidate.ContentVersionID}] = candidate.Path
+		set[documentKey{nodeID: candidate.NodeID, version: candidate.ContentVersionID, build: candidate.BuildID}] = candidate.Path
 	}
 	results := report.Results[:0]
 	for _, result := range report.Results {
 		if currentPath, ok := set[documentKey{nodeID: result.Document.NodeID,
-			version: result.Document.ContentVersionID}]; ok {
+			version: result.Document.ContentVersionID, build: result.Document.BuildID}]; ok {
 			result.Path = currentPath
 			results = append(results, result)
 		}
@@ -251,7 +254,7 @@ func searchCandidateIdentity(result Result) store.SearchCandidateIdentity {
 			SegmentID: reference.SegmentID, BlobHash: reference.BlobHash,
 			SourceManifestChecksum: reference.SourceManifestChecksum}
 	}
-	return store.SearchCandidateIdentity{NodeID: result.Document.NodeID,
+	return store.SearchCandidateIdentity{NodeID: result.Document.NodeID, BuildID: result.Document.BuildID,
 		ContentVersionID: result.Document.ContentVersionID, Evidence: evidence}
 }
 
@@ -342,7 +345,7 @@ func compareResults(left, right Result) int {
 	return cmp.Or(cmp.Compare(right.Score, left.Score),
 		cmp.Compare(left.Document.VaultID, right.Document.VaultID),
 		cmp.Compare(left.Document.NodeID, right.Document.NodeID),
-		cmp.Compare(left.Document.ContentVersionID, right.Document.ContentVersionID))
+		cmp.Compare(left.Document.ContentVersionID, right.Document.ContentVersionID), cmp.Compare(left.Document.BuildID, right.Document.BuildID))
 }
 
 func conservativeCoverage(reports []Report) Coverage {
@@ -421,6 +424,9 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 	if authority.ANNRows == nil && !authority.WholeSpace {
 		return nil, coverage, false, errors.New("semantic search authority lacks source-fenced ANN rows")
 	}
+	if len(query.Scope.SelectedBuilds) != 0 && !authority.WholeSpace && len(authority.ANNRows) == 0 {
+		return nil, coverage, false, ErrSelectedEmbeddingsUnavailable
+	}
 	provider, err := searcher.encoders.ResolveQueryEncoder(ctx, authority.VectorSpace.Descriptor)
 	if err != nil {
 		return nil, coverage, false, err
@@ -487,6 +493,7 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 			return nil, coverage, false, store.ErrVectorIndexSourceStale
 		}
 		truncated = truncated || resolution.Truncated
+		membershipProgress := false
 		for _, item := range resolution.Candidates {
 			if len(candidates) == query.VectorLimit {
 				truncated = true
@@ -496,6 +503,7 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 				continue
 			}
 			seen[item.NodeID] = struct{}{}
+			membershipProgress = true
 			if item.VectorSpaceID != authority.VectorSpace.ID {
 				return nil, coverage, false, errors.New("semantic result escaped the active vector space")
 			}
@@ -518,16 +526,20 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 				item.Excerpt = input.excerpt
 				reference.TimeSpan = input.span
 			}
-			candidates = append(candidates, Candidate{Document: DocumentIdentity{VaultID: item.VaultID,
-				NodeID: item.NodeID, ContentVersionID: item.ContentVersionID}, Lane: LaneSemantic,
+			identity := DocumentIdentity{VaultID: item.VaultID, NodeID: item.NodeID, ContentVersionID: item.ContentVersionID}
+			if len(query.Scope.SelectedBuilds) != 0 {
+				identity.BuildID = item.MediaEvidence.BuildID
+			}
+			candidates = append(candidates, Candidate{Document: identity, Lane: LaneSemantic,
 				Rank: len(candidates) + 1, Score: item.Score, Path: item.Path, VectorSpaceID: item.VectorSpaceID,
 				Excerpt: item.Excerpt, Evidence: []EvidenceReference{reference}, photoBlobHash: photoFusionBlob(query.Scope, item.BlobHash)})
 		}
 		if len(candidates) == query.VectorLimit || !resolution.Truncated {
 			break
 		}
-		if resolution.NextNeighbor <= 0 || resolution.NextNeighbor >= len(neighbors) {
-			return nil, coverage, false, errors.New("semantic candidate page did not advance through neighbors")
+		if resolution.NextNeighbor < 0 || resolution.NextNeighbor >= len(neighbors) ||
+			(resolution.NextNeighbor == 0 && !membershipProgress) {
+			return nil, coverage, false, errors.New("semantic candidate page did not advance through neighbors or memberships")
 		}
 		neighbors = neighbors[resolution.NextNeighbor:]
 		pageLimit = min(pageLimit*2, document.MaxRetrievalCandidateLimit)
@@ -597,6 +609,18 @@ func (searcher *Searcher) collectLexical(ctx context.Context, query Query) ([]Ca
 	return candidates, truncated, nil
 }
 
+// boundedMediaExcerpt preserves a prefix of the authenticated input.
+func boundedMediaExcerpt(value string) string {
+	count := 0
+	for index := range value {
+		if count == store.SearchExcerptRuneLimit {
+			return value[:index]
+		}
+		count++
+	}
+	return value
+}
+
 func laneReport(requested, actual Mode, coverage Coverage,
 	candidates []Candidate, truncated bool,
 ) Report {
@@ -607,6 +631,9 @@ func laneReport(requested, actual Mode, coverage Coverage,
 			Path: candidate.Path, Evidence: candidate.Evidence, rerankExcerpt: candidate.Excerpt,
 			Explanation: []Contribution{{Lane: candidate.Lane, Rank: candidate.Rank,
 				Contribution: contribution}}}
+		if candidate.Document.BuildID != "" {
+			result.Excerpt = boundedMediaExcerpt(candidate.Excerpt)
+		}
 		if candidate.Lane == LaneLexical {
 			result.Excerpt = candidate.Excerpt
 			result.LexicalRank = candidate.Rank

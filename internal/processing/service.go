@@ -28,6 +28,7 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/embedding"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/pdftext"
 	"go.kenn.io/docbank/document/upload"
@@ -1661,24 +1662,11 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	if request.MediaSources != nil {
 		return service.searchMediaSources(ctx, request, ids, prepared)
 	}
-	if prepared.authorization.ProviderID != "" && (prepared.mode == retrieval.ModeSemantic || prepared.mode == retrieval.ModeHybrid) {
-		binding, err := selectDocumentSearchBinding(profile.portable, prepared.bindingID, prepared.mode)
-		if err != nil {
-			return retrieval.Report{}, err
-		}
-		_, fence, err := service.catalog.BeginProviderEgress(ctx, store.ProviderOperationAuthorizationRequest{
-			Principal: service.principal, Scope: service.scope,
-			ProfileFingerprint: profile.record.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
-			InputClasses: []string{"query_text"}, RetainedArtifactClasses: []string{},
-		})
-		if err != nil {
-			return retrieval.Report{}, err
-		}
-		defer fence.Close()
-		if prepared.rerankingAuthorizer != nil {
-			prepared.rerankingAuthorizer.queryFenceHeld = true
-		}
+	closeEgress, err := service.beginSearchEgress(ctx, profile, prepared)
+	if err != nil {
+		return retrieval.Report{}, err
 	}
+	defer closeEgress()
 	if provider := profile.embedders[prepared.bindingID]; provider != nil {
 		descriptor := provider.Descriptor()
 		searchScope.EmbeddingDescriptor = &descriptor
@@ -1710,6 +1698,29 @@ func (service *Service) ValidateSearch(ctx context.Context, request SearchReques
 	return err
 }
 
+// beginSearchEgress is shared by ordinary and selected-media retrieval. The
+// selected lane calls it only after it has eligible vector candidates.
+func (service *Service) beginSearchEgress(ctx context.Context, profile configuredProfile, prepared preparedSearch) (func(), error) {
+	if prepared.authorization.ProviderID == "" || (prepared.mode != retrieval.ModeSemantic && prepared.mode != retrieval.ModeHybrid) {
+		return func() {}, nil
+	}
+	binding, err := selectDocumentSearchBinding(profile.portable, prepared.bindingID, prepared.mode)
+	if err != nil {
+		return nil, err
+	}
+	_, fence, err := service.catalog.BeginProviderEgress(ctx, store.ProviderOperationAuthorizationRequest{
+		Principal: service.principal, Scope: service.scope, ProfileFingerprint: profile.record.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
+		InputClasses: []string{"query_text"}, RetainedArtifactClasses: []string{},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if prepared.rerankingAuthorizer != nil {
+		prepared.rerankingAuthorizer.queryFenceHeld = true
+	}
+	return fence.Close, nil
+}
+
 type preparedSearch struct {
 	searcher            *retrieval.Searcher
 	mode                retrieval.Mode
@@ -1727,12 +1738,14 @@ func (service *Service) prepareSearch(
 		return preparedSearch{}, store.ErrSearchQueryRequired
 	}
 	mode := retrieval.Mode(request.Mode)
+	if _, err := embedding.NormalizeSearchOptions(embedding.SearchOptions{Mode: embedding.SearchMode(mode)}); err != nil {
+		return preparedSearch{}, err
+	}
 	if mode == "" {
 		mode = retrieval.ModeAuto
 	}
 	requestedMode := mode
-	if request.MediaSources != nil && (request.Rerank ||
-		(mode != retrieval.ModeLexical && mode != retrieval.ModeAuto)) {
+	if request.MediaSources != nil && request.Rerank {
 		return preparedSearch{}, ErrMediaSearchInvalid
 	}
 	limit := request.Limit
@@ -1750,15 +1763,25 @@ func (service *Service) prepareSearch(
 		MediaEvidence: service.mediaEvidence}
 	var authorization document.EmbeddingAuthorization
 	if len(profile.portable.Embeddings) != 0 {
-		binding, bindingErr := selectDocumentSearchBinding(profile.portable, request.BindingID, mode)
-		if errors.Is(bindingErr, store.ErrNotFound) && request.BindingID == "" && mode != retrieval.ModeSemantic {
+		bindingMode := mode
+		selectedSemantic := request.MediaSources != nil && (mode == retrieval.ModeSemantic || mode == retrieval.ModeHybrid)
+		if selectedSemantic {
+			bindingMode = retrieval.ModeSemantic
+		}
+		binding, bindingErr := selectDocumentSearchBinding(profile.portable, request.BindingID, bindingMode)
+		if selectedSemantic && errors.Is(bindingErr, ErrSemanticUnavailable) {
+			mode = retrieval.ModeLexical
+		} else if errors.Is(bindingErr, store.ErrNotFound) && request.BindingID == "" && mode != retrieval.ModeSemantic {
 			mode = retrieval.ModeLexical
 		} else if bindingErr != nil {
 			return preparedSearch{}, bindingErr
 		}
 		if bindingErr == nil {
-			if mode == retrieval.ModeSemantic && !profile.embedders[binding.Name].Descriptor().SupportsTextQuery {
-				return preparedSearch{}, ErrSemanticUnavailable
+			if (mode == retrieval.ModeSemantic || selectedSemantic) && !profile.embedders[binding.Name].Descriptor().SupportsTextQuery {
+				if !selectedSemantic {
+					return preparedSearch{}, ErrSemanticUnavailable
+				}
+				mode = retrieval.ModeLexical
 			}
 			request.BindingID = binding.Name
 			searcherConfig.Encoders = service.embeddings
@@ -1768,7 +1791,13 @@ func (service *Service) prepareSearch(
 				MaxBatchItems:         1, MaxInputBytes: binding.MaxInputBytes, MaxResponseBytes: binding.MaxResponseBytes}
 		}
 	} else if mode == retrieval.ModeSemantic || mode == retrieval.ModeHybrid {
-		return preparedSearch{}, ErrSemanticUnavailable
+		if request.MediaSources == nil {
+			return preparedSearch{}, ErrSemanticUnavailable
+		}
+		if request.BindingID != "" {
+			return preparedSearch{}, fmt.Errorf("embedding binding %q: %w", request.BindingID, store.ErrNotFound)
+		}
+		mode = retrieval.ModeLexical
 	}
 	var rerankingAuth *rerankingAuthorizer
 	if request.Rerank {

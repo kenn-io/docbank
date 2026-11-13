@@ -52,7 +52,7 @@ func (source *similarSourceCapture) load(ctx context.Context, tx metadataQuerier
 	}
 	var rows []vectorindex.RowIdentity
 	err := scanSemanticRows(ctx, tx, profile, binding, kind, space,
-		" AND n.id=? AND cv.version_id=?", []any{source.NodeID, source.ContentVersionID}, nil, false, false,
+		" AND n.id=? AND cv.version_id=?", []any{source.NodeID, source.ContentVersionID}, nil, nil, false, false, false,
 		func(key semanticEligibilityKey, _ int64, _ string) {
 			rows = append(rows, vectorindex.RowIdentity{SetID: key.VectorSetID, InputKey: key.InputID, InputChecksum: key.InputChecksum})
 		})
@@ -150,7 +150,7 @@ func (s *Store) ResolveSimilarCandidates(ctx context.Context, profile, binding s
 			return ErrVectorIndexSourceStale
 		}
 		result.SourceManifestChecksum = manifest
-		result.ScopedDocuments, result.CompleteDocuments, err = semanticSearchCoverageTx(ctx, tx, profile, binding, kind, space, opts)
+		result.ScopedDocuments, result.CompleteDocuments, _, err = semanticSearchCoverageTx(ctx, tx, profile, binding, kind, space, opts)
 		if err != nil {
 			return err
 		}
@@ -232,7 +232,7 @@ func (s *Store) similarCandidatesTx(ctx context.Context, tx metadataQuerier, pro
 		hashes[i] = candidate.BlobHash
 	}
 	copies := make(map[int64]string)
-	err := scanSemanticRows(ctx, tx, profile, binding, kind, space, filter, args, hashes, false, false,
+	err := scanSemanticRows(ctx, tx, profile, binding, kind, space, filter, args, hashes, nil, false, false, false,
 		func(_ semanticEligibilityKey, nodeID int64, hash string) { copies[nodeID] = hash })
 	if err != nil {
 		return err

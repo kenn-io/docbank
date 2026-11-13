@@ -6,12 +6,13 @@ import (
 	"slices"
 	"unicode/utf8"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
 )
 
-var ErrMediaSearchInvalid = errors.New("media search selectors are invalid")
+var ErrMediaSearchInvalid = errors.New("invalid media search request")
 
 // MaxMediaSearchSuppliedInputIDs bounds one selector's supplied input set.
 const MaxMediaSearchSuppliedInputIDs = 64
@@ -38,18 +39,56 @@ func (service *Service) searchMediaSources(
 		return retrieval.Report{}, err
 	}
 	plan := newMediaSearchPlan(request.MediaSources, requests, selected)
-	report := retrieval.Report{RequestedMode: prepared.requestedMode, ActualMode: retrieval.ModeLexical,
-		Results: []retrieval.Result{}}
+	profile := service.profiles[request.Profile]
+	scope := store.SearchOptions{SelectedBuilds: plan.builds}
+	if provider := profile.embedders[prepared.bindingID]; provider != nil {
+		descriptor := provider.Descriptor()
+		scope.EmbeddingDescriptor, scope.VectorSpaceID = &descriptor, profile.vectorSpaces[prepared.bindingID]
+	}
+	nonlexical := prepared.requestedMode == retrieval.ModeSemantic || prepared.requestedMode == retrieval.ModeHybrid
+	binding, _ := selectEmbeddingBinding(profile.portable, prepared.bindingID)
+	bindingRequired := binding.Activation == document.EmbeddingRequired
+	mode := prepared.mode
+	if nonlexical && len(plan.builds) == 0 {
+		mode = retrieval.ModeLexical
+	}
+	if len(plan.builds) != 0 && (mode == retrieval.ModeSemantic || mode == retrieval.ModeHybrid) {
+		available, err := service.catalog.SelectedSemanticRowsAvailable(ctx, profile.record.Fingerprint, prepared.bindingID, scope)
+		if err != nil {
+			return retrieval.Report{}, err
+		}
+		if !available {
+			mode = retrieval.ModeLexical
+		}
+	}
+	actual := mode
+	if actual == retrieval.ModeAuto {
+		actual = retrieval.ModeLexical
+	}
+	report := retrieval.Report{RequestedMode: prepared.requestedMode, ActualMode: actual, Results: []retrieval.Result{}}
 	if len(plan.builds) != 0 {
-		candidateLimit := service.profiles[request.Profile].portable.Retrieval.LexicalLimit
-		report, err = prepared.searcher.Search(ctx, retrieval.Query{Text: request.Query,
-			Mode: prepared.mode, Limit: candidateLimit, LexicalLimit: candidateLimit,
-			Scope: store.SearchOptions{SelectedBuilds: plan.builds}, ContentFirst: true})
+		execution := prepared
+		execution.mode = mode
+		closeEgress, err := service.beginSearchEgress(ctx, profile, execution)
+		if err != nil {
+			return retrieval.Report{}, err
+		}
+		query := retrieval.Query{Text: request.Query, Mode: mode, Limit: max(prepared.limit, profile.portable.Retrieval.LexicalLimit, profile.portable.Retrieval.VectorLimit),
+			LexicalLimit: profile.portable.Retrieval.LexicalLimit, VectorLimit: profile.portable.Retrieval.VectorLimit, Scope: scope, ContentFirst: true,
+			ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: prepared.bindingID, Authorization: prepared.authorization}
+		func() {
+			defer closeEgress()
+			report, err = prepared.searcher.Search(ctx, query)
+		}()
+		if errors.Is(err, retrieval.ErrSelectedEmbeddingsUnavailable) {
+			query.Mode = retrieval.ModeLexical
+			report, err = prepared.searcher.Search(ctx, query)
+		}
 		if err != nil {
 			return retrieval.Report{}, err
 		}
 	}
-	// Re-read authority for every source that could contribute evidence.
+	// Selection is reread even when no vector candidate was eligible.
 	current, err := service.selectMediaTranscripts(ctx, plan.ready)
 	if err != nil {
 		return retrieval.Report{}, err
@@ -61,8 +100,24 @@ func (service *Service) searchMediaSources(
 		report.Truncated = true
 	}
 	report.RequestedMode = prepared.requestedMode
+	if nonlexical && report.ActualMode == retrieval.ModeLexical {
+		report.Degradations = append(report.Degradations, retrieval.DegradationSemanticUnavailable)
+	}
 	report.MediaSelections = plan.mediaSelections(request.MediaSources)
-	report.MediaSourceSelection, report.Coverage = true, plan.coverage()
+	coverage := plan.coverage()
+	if nonlexical {
+		coverage.BindingRequired = bindingRequired
+		coverage.CompleteDocuments = 0
+		for id, complete := range plan.complete {
+			if complete && slices.Contains(report.Coverage.CompleteContentVersionIDs, id) {
+				coverage.CompleteDocuments++
+			}
+		}
+		if report.Coverage.State != retrieval.CoverageComplete || coverage.CompleteDocuments != coverage.ScopedDocuments {
+			coverage.State = retrieval.CoverageIncomplete
+		}
+	}
+	report.MediaSourceSelection, report.Coverage = true, coverage
 	return report, nil
 }
 

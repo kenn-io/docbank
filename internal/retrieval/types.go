@@ -121,18 +121,20 @@ const (
 )
 
 type Coverage struct {
-	BindingRequired   bool
-	ScopedDocuments   int
-	CompleteDocuments int
-	State             CoverageState
+	CompleteContentVersionIDs []string
+	BindingRequired           bool
+	ScopedDocuments           int
+	CompleteDocuments         int
+	State                     CoverageState
 }
 
 type Degradation string
 
 const (
-	DegradationNone              Degradation = ""
-	DegradationExpansionDegraded Degradation = "query_expansion_degraded"
-	DegradationRerankingDegraded Degradation = "reranking_degraded"
+	DegradationNone                Degradation = ""
+	DegradationSemanticUnavailable Degradation = "semantic_unavailable"
+	DegradationExpansionDegraded   Degradation = "query_expansion_degraded"
+	DegradationRerankingDegraded   Degradation = "reranking_degraded"
 )
 
 type TraceCode string

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -33,8 +34,7 @@ func TestMediaProcessingRequiresExplicitSelection(t *testing.T) {
 	require.Error(t, validateMediaProcessing(&MediaProcessingRequest{SuppliedInputID: "input"}))
 }
 
-// TestSuppliedMediaProfileAdmitsWAVAndMP3 catches the daemon advertising a
-// built-in transcript profile without executable codec bindings.
+// TestSuppliedMediaProfileAdmitsWAVAndMP3 checks the built-in codec bindings.
 func TestSuppliedMediaProfileAdmitsWAVAndMP3(t *testing.T) {
 	t.Parallel()
 	fixture := newPublicationFixture(t)
@@ -50,6 +50,32 @@ func TestSuppliedMediaProfileAdmitsWAVAndMP3(t *testing.T) {
 	require.Contains(t, formats, document.RenditionFormatCapability{
 		MediaFamily: "audio", MediaType: "audio/mpeg", InputKind: document.RenditionInputOriginalFile,
 	})
+}
+
+func TestSuppliedMediaEmbeddingComposition(t *testing.T) {
+	t.Parallel()
+	fixture := newPublicationFixture(t)
+	_, profile, err := NewSuppliedMediaProfile(fixture.catalog, fixture.blobs, "daemon:operator")
+	require.NoError(t, err)
+	_, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t))
+	configured := setup.Service.profiles["pdf"]
+	donor := ProfileConfig{Profile: configured.portable, EmbeddingProviders: configured.embedders, Tokenizers: configured.tokenizers}
+	composed, err := WithSuppliedMediaEmbeddings(profile, donor)
+	require.NoError(t, err)
+	require.Equal(t, profile.Profile.Rendition, composed.Profile.Rendition)
+	require.Equal(t, profile.Profile.EvidenceLexical, composed.Profile.EvidenceLexical)
+	require.Equal(t, profile.Profile.RetentionDisclosure, composed.Profile.RetentionDisclosure)
+	require.Equal(t, profile.RenditionProvider.Descriptor(), composed.RenditionProvider.Descriptor())
+	require.NotEmpty(t, composed.Profile.Embeddings)
+	empty := donor
+	empty.Profile.Embeddings = nil
+	_, err = WithSuppliedMediaEmbeddings(profile, empty)
+	require.ErrorContains(t, err, "no bindings")
+	original := donor
+	original.Profile.Embeddings = slices.Clone(donor.Profile.Embeddings)
+	original.Profile.Embeddings[0].InputKind = document.EmbeddingInputOriginalFile
+	_, err = WithSuppliedMediaEmbeddings(profile, original)
+	require.ErrorContains(t, err, "requires rendition_chunk")
 }
 
 // TestMediaEnqueueAuthorizedReturnsBeforeProvider catches request-owned

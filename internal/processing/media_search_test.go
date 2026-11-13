@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
@@ -22,11 +23,13 @@ func TestMediaSearchSelectsCoveringBuildBeforeLimits(t *testing.T) {
 	f := newMediaStateFixture(t)
 	name, supplied, err := NewSuppliedMediaProfile(f.catalog, f.blobs, f.service.principal)
 	require.NoError(t, err)
+	image := newImageEmbeddingService(t, newPhotoDescriptionFixture(t))
 	service, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs,
 		Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Principal: f.service.principal,
 		Profiles: map[string]ProfileConfig{
 			"speech": {Profile: f.service.profiles["speech"].portable, RenditionProvider: f.provider},
 			name:     supplied,
+			"images": {Profile: image.portable, EmbeddingProviders: map[string]document.EmbeddingProvider{image.binding.Name: image.provider}},
 		}})
 	require.NoError(t, err)
 	var ids []string
@@ -150,6 +153,18 @@ func TestMediaSearchSelectsCoveringBuildBeforeLimits(t *testing.T) {
 	require.Equal(t, retrieval.CoverageIncomplete, report.Coverage.State)
 	require.Equal(t, 102, report.Coverage.ScopedDocuments)
 	require.Equal(t, 101, report.Coverage.CompleteDocuments)
+	// Image-only bindings cannot encode transcript chunks, so selected media falls back.
+	for _, mode := range []string{"semantic", "hybrid"} {
+		for _, binding := range []string{"", image.binding.Name} {
+			fallback, err := service.Search(t.Context(), SearchRequest{Query: "longer selected transcript", Mode: mode, Profile: "images",
+				BindingID: binding, Fence: SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{ids[100]}}, MediaSources: []retrieval.MediaSourceSelector{sources[100]}})
+			require.NoError(t, err)
+			require.Equal(t, retrieval.ModeLexical, fallback.ActualMode)
+			require.Contains(t, fallback.Degradations, retrieval.DegradationSemanticUnavailable)
+			require.Len(t, fallback.Results, 1)
+			require.Equal(t, selectedBuild, fallback.Results[0].Evidence[0].BuildID)
+		}
+	}
 	runLoomRenditionJob(t, service, pendingJob.JobID)
 	empty, err := service.Search(t.Context(), SearchRequest{Query: "absentphrase", Mode: "lexical", Profile: name,
 		Fence: SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: ids}, MediaSources: sources})

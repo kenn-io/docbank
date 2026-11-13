@@ -828,13 +828,14 @@ Search requires nonblank `query` text of at most 8,192 characters, `profile`,
 and `mode` (`lexical`, `semantic`, `hybrid`, or `auto`). `limit` defaults to 50
 and accepts 1–100. `binding_id` selects the embedding binding. When the profile has
 embeddings, an unknown binding returns `404 not_found`. Profiles without embeddings
-ignore it for lexical and auto search. Omitting it uses
+ignore it for lexical and auto search; selected semantic and hybrid searches
+reject an unknown binding even when the profile has none. Omitting it uses
 the profile's first binding. Set it explicitly for semantic/hybrid search when
 several are configured. The explicit CLI processing form requires that choice. `auto` uses lexical
 retrieval. See [processing consent](#processing-consent) before choosing a mode
 that embeds query text.
 
-Semantic search requires a binding whose provider supports text queries; otherwise
+Ordinary semantic search requires a binding whose provider supports text queries; otherwise
 it returns `422 semantic_unavailable` after validating the source and binding.
 Hybrid search on a profile without embeddings returns that same error. An index
 without an active generation returns `409 index_unavailable`, so clients can try
@@ -852,8 +853,8 @@ canonical lowercase SHA-256 identities; `null` is rejected. Excluded selections
 make coverage incomplete and consume no ranking budget. Constraints are not
 echoed in evidence source identities. Only selected transcripts contribute
 to results and coverage; fence members without a selector are excluded.
-Source and source-version IDs are nonempty UTF-8 bounded to 256 bytes. Use `lexical` or
-`auto` without reranking. Docbank selects each source's covering transcript
+Source and source-version IDs are nonempty UTF-8 bounded to 256 bytes. Use
+`lexical`, `auto`, `semantic`, or `hybrid` without reranking. Docbank selects each source's covering transcript
 before ranking and limits, including while a retry is pending.
 
 These reports include `media_source_selection: true`, even without matches.
@@ -862,12 +863,28 @@ These reports include `media_source_selection: true`, even without matches.
 query matches. Unready or input-excluded sources are omitted; an empty selection
 summary is `[]`. Ordinary search omits the summary.
 Each selected content/build pair has its own result. Its evidence carries
-`media_sources` and `build_id`, alongside the existing segment, excerpt and timing. Coverage counts
-content versions and is incomplete while any requested selection lacks
-ready evidence. Pending or unavailable transcripts leave ready matches usable.
+`media_sources` and `build_id`. Lexical evidence uses `rendition_segment`;
+semantic evidence uses `embedding` with its exact input, generation, embedding
+set and vector-space identities. Semantic evidence has no `segment_id`.
+Its excerpt and optional timing come from the retained input; displayed
+excerpts use the shared 512-rune limit. Hybrid results can carry both references from the same selected build. When
+lexical evidence contributes the displayed excerpt, use its timing.
+
+Semantic and hybrid modes use only the selected builds' embeddings under the
+requested profile and binding, produced by ordinary processing; search never
+processes media. Coverage counts content versions and is incomplete while any
+requested selection lacks ready evidence or any selected build lacks its
+embeddings. Pending or unavailable transcripts leave ready matches usable.
+When selected sources share a content version but have different builds, that
+version remains incomplete.
 Unknown, hidden, deleted or changed selections contribute incomplete coverage;
 their associations are removed while healthy matches remain usable.
 Consumers require the selection marker to distinguish older producers.
+
+Selected semantic and hybrid requests fall back to word search when no embedding
+binding or eligible embedding rows are available. They return `actual_mode: "lexical"`
+and the `semantic_unavailable` degradation, keep coverage incomplete, and send
+no query text to an encoder.
 
 Set optional `content_first: true` to prefer retained content matches, including
 transcripts, before filename-only matches. Selection applies the source fence

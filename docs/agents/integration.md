@@ -89,7 +89,8 @@ the sibling `/agents/integration.md` URL.
 Use `POST /api/v1/search` with `media_sources` when a transcript match must
 identify a particular recording, such as an audio message. Each selector names
 `source_id`, `source_version_id`, and `content_version_id`; include its content
-version in the request's `fence`. Use `lexical` or `auto` mode without reranking.
+version in the request's `fence`. Use `lexical`, `auto`, `semantic`, or
+`hybrid` mode without reranking.
 The [search API reference](../architecture/http-api.md#coverage-and-source-fenced-search)
 defines the selector limits and optional supplied-input restrictions.
 
@@ -99,6 +100,19 @@ to more than one source. Docbank selects the covering transcripts before
 ranking and limits. Removed or changed recordings leave coverage incomplete
 without crowding out valid matches. Read the exact transcript below to verify
 the evidence's build and supplied-input identity.
+
+For semantic or hybrid retrieval, the requested profile must already have
+embedded the selected transcripts through ordinary processing; search never
+processes media or grants consent. Supplied transcripts have no embeddings
+unless [`supplied_media_embedding_profile`](../configuration.md#embedding-workers-and-credentials)
+names a donor profile. Semantic evidence has `kind: "embedding"` with its input,
+generation, set and vector-space identities, and no `segment_id`. Its excerpt
+and timing come from the embedding input. When a hybrid result also has lexical
+evidence, use the lexical excerpt and timing.
+
+When the selected builds have no embeddings, the search returns word matches
+with `actual_mode: "lexical"` and a `semantic_unavailable` degradation, and
+coverage stays incomplete.
 
 ## Read an exact media transcript
 

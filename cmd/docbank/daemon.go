@@ -383,6 +383,10 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configuring supplied media profile: %w", err)
 	}
+	suppliedProfile, err = processing.ComposeSuppliedMediaEmbeddings(suppliedProfile, processingProfiles, cfg.SuppliedMediaEmbeddingProfile)
+	if err != nil {
+		return fmt.Errorf("configuring supplied media embeddings: %w", err)
+	}
 	if _, exists := processingProfiles[suppliedName]; exists {
 		return fmt.Errorf("configured processing profile %q conflicts with the built-in media profile", suppliedName)
 	}

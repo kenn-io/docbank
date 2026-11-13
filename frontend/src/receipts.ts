@@ -427,7 +427,17 @@ export function validateDocumentSearchReport(
     !["lexical", "semantic", "hybrid"].includes(actualMode) ||
     (requestedMode !== "auto" &&
       requestedMode !== actualMode &&
-      !(requestedMode === "hybrid" && actualMode === "lexical"))
+      !(requestedMode === "hybrid" && actualMode === "lexical") &&
+      !(
+        requestedMode === "semantic" &&
+        actualMode === "lexical" &&
+        Array.isArray(request.media_sources) &&
+        request.media_sources.length > 0 &&
+        report.media_source_selection === true &&
+        request.rerank !== true &&
+        Array.isArray(report.degradations) &&
+        report.degradations.includes("semantic_unavailable")
+      ))
   )
     invalid();
   const limit = request.limit || 20;
