@@ -486,10 +486,14 @@ func TestReviewedBatesExportPublicationConflict(t *testing.T) {
 	}))
 	defer daemon.Close()
 	var logs bytes.Buffer
-	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{AllowPackageWrites: true, Logger: slog.New(slog.NewTextHandler(&logs, nil))}, exportTestLease(t, daemon.URL))
+	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{AllowPackageWrites: true, Logger: slog.New(slog.NewJSONHandler(&logs, nil))}, exportTestLease(t, daemon.URL))
 	output := exportCall(t, server, "export_bates_file", f.arguments)
 	require.Equal(t, "bates_local_io", output["code"])
-	require.Contains(t, logs.String(), destination, "destination I/O keeps its diagnostic")
+	var diagnostic struct {
+		Error string `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(logs.Bytes(), &diagnostic))
+	require.Contains(t, diagnostic.Error, destination, "destination I/O keeps its diagnostic")
 	saved, err := os.ReadFile(destination)
 	require.NoError(t, err)
 	require.Equal(t, "concurrent file", string(saved))
