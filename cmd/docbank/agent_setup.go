@@ -44,12 +44,12 @@ func newAgentSetupCommand() *cobra.Command {
 }
 
 func codexFeatureItem() agentsetup.Item {
-	check := func(ctx context.Context) (agentsetup.Status, error) {
+	probe := func(ctx context.Context) (agentsetup.Status, bool) {
 		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 		output, err := exec.CommandContext(ctx, "codex", "features", "list").Output()
 		if err != nil {
-			return agentsetup.Status{State: agentsetup.StateUnknown, Reason: fmt.Sprintf("checking Codex features: %v", err), NextStep: codexEnable}, nil
+			return agentsetup.Status{State: agentsetup.StateUnknown, Reason: fmt.Sprintf("checking Codex features: %v", err), NextStep: codexEnable}, false
 		}
 		for line := range strings.SplitSeq(string(output), "\n") {
 			fields := strings.Fields(line)
@@ -59,22 +59,26 @@ func codexFeatureItem() agentsetup.Item {
 			if len(fields) >= 2 {
 				switch fields[len(fields)-1] {
 				case "true":
-					return agentsetup.Status{State: agentsetup.StateOK, Reason: "on; Codex shows an under-development feature notice each session"}, nil
+					return agentsetup.Status{State: agentsetup.StateOK, Reason: "on; Codex shows an under-development feature notice each session"}, false
 				case "false":
-					return agentsetup.Status{State: agentsetup.StateFailed, Reason: "Codex's MCP 2026-07-28 support is off", NextStep: codexEnable + " (or docbank agent setup)"}, nil
+					return agentsetup.Status{State: agentsetup.StateFailed, Reason: "Codex's MCP 2026-07-28 support is off", NextStep: codexEnable + " (or docbank agent setup)"}, true
 				}
 			}
-			return agentsetup.Status{State: agentsetup.StateUnknown, Reason: "cannot parse Codex feature state", NextStep: codexEnable}, nil
+			return agentsetup.Status{State: agentsetup.StateUnknown, Reason: "cannot parse Codex feature state", NextStep: codexEnable}, false
 		}
-		return agentsetup.Status{State: agentsetup.StateFailed, Reason: "this Codex has no mcp_2026_07_28 feature", NextStep: "upgrade Codex to 0.164.0 or later"}, nil
+		return agentsetup.Status{State: agentsetup.StateFailed, Reason: "this Codex has no mcp_2026_07_28 feature", NextStep: "upgrade Codex to 0.164.0 or later"}, false
+	}
+	check := func(ctx context.Context) (agentsetup.Status, error) {
+		status, _ := probe(ctx)
+		return status, nil
 	}
 	return agentsetup.Item{
 		Name:  codexFeature + " feature",
 		Check: check,
 		Install: func(ctx context.Context) error {
-			status, err := check(ctx)
-			if err != nil || status.State != agentsetup.StateFailed || !strings.Contains(status.Reason, "support is off") {
-				return err
+			_, off := probe(ctx)
+			if !off {
+				return nil
 			}
 			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
