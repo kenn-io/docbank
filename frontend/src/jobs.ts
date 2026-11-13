@@ -1,6 +1,8 @@
 import type { Job, LaneControl } from "./generated/docbank.js";
 import { timestampComparable } from "./format.js";
 
+const watchEmbeddingPrefix = "embed:watch:";
+
 const activeJob = (job: Job): boolean => job.busy;
 
 export function laneTitle(lane: string): string {
@@ -40,6 +42,7 @@ export function laneTitle(lane: string): string {
     "telemetry:heartbeat": "Usage reporting",
   };
   if (lane.startsWith("import:mailbox:")) return `Importing mailbox ${lane.split(":").at(-1)}`;
+  if (lane.startsWith(watchEmbeddingPrefix)) return "Preparing similarity search";
   if (lane.startsWith("watch:")) return `Watching ${lane.slice(6)}`;
   if (lane.startsWith("process:renditions:"))
     return `Processing documents ${lane.split(":").at(-1)}`;
@@ -79,6 +82,9 @@ export function jobLanes(jobs: Job[], controls: LaneControl[] = []) {
       members,
       lane,
       title: laneTitle(lane),
+      description: lane.startsWith(watchEmbeddingPrefix)
+        ? lane.slice(watchEmbeddingPrefix.length)
+        : undefined,
       control: controls.find((control) => control.lane === lane),
       status: active.some((member) => member.busy) ? ("running" as const) : job?.status,
       completed: progressJobs.reduce((sum, member) => sum + (member.completed_objects ?? 0), 0),

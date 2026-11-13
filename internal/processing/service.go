@@ -101,6 +101,7 @@ type ServiceConfig struct {
 	MediaOrigins      map[string]MediaOriginPolicy
 	MediaOriginProbes map[string]MediaOriginProbe
 	MediaTokenKey     [32]byte
+	WatchProfiles     []string
 }
 
 type configuredProfile struct {
@@ -158,6 +159,8 @@ type Service struct {
 	visionNotReady      sync.Map
 	visionProbeTimeout  time.Duration
 	mediaTokenKey       [32]byte
+
+	watchEmbeddingProfiles map[string]struct{}
 }
 
 type mediaOriginObservation struct {
@@ -252,7 +255,10 @@ type Plan struct {
 	RenditionIneligibleReason string `json:",omitzero"`
 }
 
-type processingRunOptions struct{ retryUnavailable, deferIndex bool }
+type processingRunOptions struct {
+	retryUnavailable, deferIndex bool
+	embeddingInputKind           document.EmbeddingInputKind
+}
 
 type StartRequest struct {
 	runOptions      processingRunOptions
@@ -632,6 +638,13 @@ func NewService(ctx context.Context, config ServiceConfig) (*Service, error) {
 			service.visionLocks[id] = make(chan struct{}, 1)
 		}
 	}
+	service.watchEmbeddingProfiles = make(map[string]struct{}, len(config.WatchProfiles))
+	for _, name := range config.WatchProfiles {
+		profile := service.profiles[name]
+		if slices.ContainsFunc(profile.portable.Embeddings, isChunkEmbedding) {
+			service.watchEmbeddingProfiles[profile.record.Fingerprint] = struct{}{}
+		}
+	}
 	descriptors := make([]document.RenditionDescriptor, 0, len(registeredRenditions))
 	for _, provider := range registeredRenditions {
 		descriptors = append(descriptors, provider.Descriptor())
@@ -790,6 +803,10 @@ func (service *Service) planForSource(ctx context.Context, selector Selector, no
 		plan.Flow = append(plan.Flow, hop)
 		plan.DisclosedClasses = append(plan.DisclosedClasses, string(profileRenditionInput(profile)))
 		plan.Estimate.ProviderCalls++
+	}
+	if _, watched := service.watchEmbeddingProfiles[profile.record.Fingerprint]; watched {
+		const scope = "Granting consent automatically sends text chunks from published renditions of files imported by watches that route to this profile to the configured embedding providers."
+		plan.Estimate.Scope = strings.TrimSpace(plan.Estimate.Scope + " " + scope)
 	}
 	if profile.portable.Rendition != nil {
 		if profile.portable.RetentionDisclosure.RetainSanitizedMarkdown {
@@ -1779,6 +1796,9 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 	vectorSpaces := make([]string, 0, len(profile.portable.Embeddings))
 	var ineligibleErr error
 	for _, binding := range profile.portable.Embeddings {
+		if options.embeddingInputKind != "" && binding.InputKind != options.embeddingInputKind {
+			continue
+		}
 		var generation store.EmbeddingInputGenerationRecord
 		switch binding.InputKind {
 		case document.EmbeddingInputImage:

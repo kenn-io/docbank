@@ -41,16 +41,22 @@ func TestWriteWatchedInboxesDisplaysActivity(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		processing *api.WatchProcessingStatus
+		routes     []api.WatchProcessingStatus
 		want       string
 	}{
-		{"no profile", nil, `-`},
-		{"active", &api.WatchProcessingStatus{Profile: "mistral-ocr", ConsentState: "active"}, `mistral-ocr`},
-		{"waiting", &api.WatchProcessingStatus{Profile: "mistral-ocr", ConsentState: "revoked"}, `mistral-ocr \(waiting on consent: revoked\)`},
+		{name: "no profile", want: `-`},
+		{name: "active", processing: &api.WatchProcessingStatus{Profile: "mistral-ocr", ConsentState: "active"}, want: `mistral-ocr`},
+		{name: "waiting", processing: &api.WatchProcessingStatus{Profile: "mistral-ocr", ConsentState: "revoked"}, want: `mistral-ocr \(waiting on consent: revoked\)`},
+		{name: "routes", routes: []api.WatchProcessingStatus{
+			{MediaFamily: "audio_video", Profile: "asr", ConsentState: "required"},
+			{MediaFamily: "document", Profile: "docling", ConsentState: "active"},
+			{MediaFamily: "image", Profile: "ocr", Error: "Consent status unavailable"},
+		}, want: `audio_video=asr \(waiting on consent: required\), document=docling, image=ocr \(Consent status unavailable\)`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
 			require.NoError(t, writeWatchedInboxes(&out, []api.WatchedInbox{
-				{Name: "waiting", Processing: tc.processing, Job: &api.Job{Status: "running"}},
+				{Name: "waiting", Processing: tc.processing, ProcessingRoutes: tc.routes, Job: &api.Job{Status: "running"}},
 			}))
 			assert.Regexp(t, `waiting\s+idle\s`, out.String())
 			assert.Regexp(t, `EXCLUDES\s+ERROR\s+PROCESSING`, out.String())

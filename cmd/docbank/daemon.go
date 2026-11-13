@@ -9,12 +9,14 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -357,9 +359,9 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	}
 
 	for _, watch := range cfg.Watches {
-		if watch.Profile != "" {
-			if _, ok := processingProfiles[watch.Profile]; !ok {
-				return fmt.Errorf("watch %q profile %q has no executable runtime", watch.Name, watch.Profile)
+		for _, name := range watchProfileNames([]config.WatchConfig{watch}) {
+			if _, ok := processingProfiles[name]; !ok {
+				return fmt.Errorf("watch %q profile %q has no executable runtime", watch.Name, name)
 			}
 		}
 	}
@@ -395,8 +397,10 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configuring media origins: %w", err)
 	}
+	watchProfiles := watchProfileNames(cfg.Watches)
 	processingService, err := processing.NewService(sigCtx, processing.ServiceConfig{
 		Catalog: s, Blobs: blobs, Gate: operationGate, Profiles: processingProfiles,
+		WatchProfiles:     watchProfiles,
 		RenditionRuntimes: runtimeRegistry,
 		Principal:         "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(),
 		Lifecycle:     sigCtx,
@@ -427,6 +431,16 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	if choice.Profile != "" {
 		if err := jobSupervisor.StartWorker("embed:local-text", func(ctx context.Context) error { return localText.Backfill(ctx, logger) }); err != nil {
 			return err
+		}
+	}
+	for _, name := range watchProfiles {
+		if name == choice.Profile {
+			continue
+		}
+		if setup := processingService.WatchEmbeddings(name, cfg.Watches); setup != nil {
+			if err := jobSupervisor.StartWorker("embed:watch:"+name, func(ctx context.Context) error { return setup.Backfill(ctx, logger) }); err != nil {
+				return err
+			}
 		}
 	}
 	pdfText := &processing.PDFTextRunner{Service: processingService}
@@ -640,11 +654,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		if err != nil {
 			return fmt.Errorf("configuring watch %q: %w", watchConfig.Name, err)
 		}
-		if watchConfig.Profile != "" {
-			watcher.AfterImport = func(ctx context.Context, node store.Node) error {
-				return processingService.AdmitImportedRendition(ctx, node, watchConfig.Profile)
-			}
-		}
+		watcher.AfterImport = watchImportAdmission(watchConfig, processingService.AdmitImportedRendition)
 		if err := jobSupervisor.StartWorker("watch:"+watchConfig.Name, watcher.Run); err != nil {
 			return fmt.Errorf("starting watch %q: %w", watchConfig.Name, err)
 		}
@@ -1458,4 +1468,30 @@ func localTextIdle(ctx context.Context, tracker *api.ActivityTracker, timeout ti
 		return false
 	}
 	return tracker.IdleFor() >= timeout
+}
+
+func watchImportAdmission(watch config.WatchConfig, admit func(context.Context, store.Node, string) error) func(context.Context, store.Node) error {
+	return func(ctx context.Context, node store.Node) error {
+		name := watch.ProcessingProfileFor(node.MimeType, node.Name)
+		if name == "" {
+			return nil
+		}
+		return admit(ctx, node, name)
+	}
+}
+
+// watchProfileNames returns the effective routed profiles once, in stable order.
+func watchProfileNames(watches []config.WatchConfig) []string {
+	names := make(map[string]bool)
+	for _, watch := range watches {
+		if watch.Profile != "" {
+			names[watch.Profile] = true
+		}
+		for _, name := range watch.Profiles {
+			if name != "" {
+				names[name] = true
+			}
+		}
+	}
+	return slices.Sorted(maps.Keys(names))
 }

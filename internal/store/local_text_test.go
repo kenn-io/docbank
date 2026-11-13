@@ -82,18 +82,55 @@ func checkLocalTextEmbeddingHeads(t *testing.T, open func(*testing.T) *Store) {
 	retained, err := s.HasEmbeddingHeads(t.Context(), profile.Fingerprint, "chunk")
 	require.NoError(t, err)
 	require.False(t, retained)
+	plain, err := s.CreateFile(t.Context(), s.RootID(), "unrendered.txt", fakeHash("a1"), 12, "text/plain")
+	require.NoError(t, err)
+	publish := func(record EmbeddingSetRecord) {
+		t.Helper()
+		require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
+			FencingToken: 1, Key: EmbeddingHeadKey{ContentVersionID: version, BindingID: record.BindingID, InputKind: record.InputKind},
+			SetID: record.ID, VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+		}))
+	}
+	original := embeddingSetFixture(t.Context(), s, version, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), original))
+	publish(original)
+
 	record := embeddingSetFixture(t.Context(), s, version, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachment)
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 	retained, err = s.HasEmbeddingHeads(t.Context(), profile.Fingerprint, "chunk")
 	require.NoError(t, err)
 	require.False(t, retained, "staging is not published authority")
-	items, err := s.MissingProcessingTargetsAfter(t.Context(), profile.Fingerprint, "", 1, 100)
+	items, err := s.MissingProcessingTargetsAfter(t.Context(), profile.Fingerprint, "", 2, 100)
 	require.NoError(t, err)
 	require.Contains(t, versionIDsForLocalText(items), version)
-	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{FencingToken: 1, Key: EmbeddingHeadKey{ContentVersionID: version, BindingID: record.BindingID, InputKind: record.InputKind}, SetID: record.ID, VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime}))
-	items, err = s.MissingProcessingTargetsAfter(t.Context(), profile.Fingerprint, "", 1, 100)
+	require.Contains(t, versionIDsForLocalText(items), plain.CurrentVersionID)
+	watched := func(watches ...string) []WatchedRenditionTarget {
+		t.Helper()
+		items, err := s.MissingWatchedRenditionTargetsAfter(t.Context(), profile.Fingerprint, "", 1, 100, watches)
+		require.NoError(t, err)
+		return items
+	}
+	require.Empty(t, watched("inbox"), "a version no watch recorded is not a watched target")
+	content, err := s.ContentVersionByID(t.Context(), version)
 	require.NoError(t, err)
-	require.NotContains(t, versionIDsForLocalText(items), version)
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO watch_sources(watch_name,source_ref,node_id,blob_hash,size) VALUES($1,$2,$3,$4,$5)`,
+		"inbox", "nested/report.pdf", content.NodeID, content.BlobHash, content.Size)
+	require.NoError(t, err)
+	require.Empty(t, watched(), "no routed watch selects nothing")
+	require.Empty(t, watched("other"), "another watch's source does not admit the version")
+	node, err := s.NodeByID(t.Context(), content.NodeID)
+	require.NoError(t, err)
+	require.Equal(t, []WatchedRenditionTarget{{
+		NodeID: node.ID, ContentVersionID: version, Name: node.Name,
+		WatchName: "inbox", SourceRef: "nested/report.pdf", MediaType: content.MimeType,
+	}}, watched("other", "inbox"), "a whole-file head does not settle chunk work")
+	_, err = s.db.ExecContext(t.Context(), `UPDATE watch_sources SET size=size+1 WHERE node_id=$1`, content.NodeID)
+	require.NoError(t, err)
+	require.Empty(t, watched("inbox"), "the watch's latest bytes must be the current version")
+	_, err = s.db.ExecContext(t.Context(), `UPDATE watch_sources SET size=$1 WHERE node_id=$2`, content.Size, content.NodeID)
+	require.NoError(t, err)
+	publish(record)
+	require.Empty(t, watched("inbox"))
 	retained, err = s.HasEmbeddingHeads(t.Context(), profile.Fingerprint, "chunk")
 	require.NoError(t, err)
 	require.True(t, retained)
@@ -102,8 +139,6 @@ func checkLocalTextEmbeddingHeads(t *testing.T, open func(*testing.T) *Store) {
 		require.NoError(t, err)
 		require.False(t, retained)
 	}
-	content, err := s.ContentVersionByID(t.Context(), version)
-	require.NoError(t, err)
 	_, _, err = s.Trash(t.Context(), content.NodeID, UnconditionalRev)
 	require.NoError(t, err)
 	retained, err = s.HasEmbeddingHeads(t.Context(), profile.Fingerprint, "chunk")

@@ -468,11 +468,12 @@ pack_max_bytes = 268435456
 ```
 
 To process new imports automatically, add `profile = "mistral-ocr"` to the watch
+or use `profiles = { document = "docling", audio_video = "asr" }` for family routing
 and [grant consent with `docbank processing build --consent`](document-processing.md) for that configured profile. Each added or updated version
 queues its rendition stage. Missing consent leaves the configured rendition
 unprocessed. Baseline plain-text extraction continues, and watch status shows why. Granting consent later doesn't revisit skipped imports.
 See [watch processing configuration](../configuration.md#watched-inboxes) for
-supported profiles and scheduling limits.
+supported profiles, automatic text-chunk embeddings after rendition publication, and scheduling limits.
 
 By default, the daemon observes a file's filesystem identity, size, and
 modification time for a full settle window before reading it. When the

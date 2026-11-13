@@ -453,14 +453,28 @@ change at the watched source appends another version.
 Set `profile = "mistral-ocr"` in a `[[watch]]` entry to queue its configured
 processing profile's OCR or text-extraction stage after each added or updated
 version. The profile must include a rendition that accepts original documents;
-photo vision and embedding-only profiles aren't supported here. Omit `profile`
-to use only baseline plain-text extraction.
+photo vision and embedding-only profiles aren't supported here. Omit both routing
+forms to use only baseline plain-text extraction.
+
+For a mixed folder, use `profiles = { document = "docling", presentation = "docling", spreadsheet = "docling", image = "docling", audio_video = "asr" }`
+instead of `profile`. The forms are mutually exclusive. The `document` family
+covers PDF, word-processing files (DOCX, DOC, ODT, RTF), and EPUB ebooks. Keys use search
+`media_family` values: `email`, `document`, `spreadsheet`, `presentation`, `image`,
+`audio_video`, `text`, `source_code`, `web`, `calendar`, `archive`, `cad`, `unknown`.
+Each value names a profile with an original-file rendition. Only the matching
+family's rendition is queued; unmapped families get baseline extraction only.
+The Docbank Docling document adapter accepts PDF, PPTX, XLSX, plain text,
+Markdown, PNG, and JPEG; other files in those families are ineligible.
+Docbank's Docling ASR adapter accepts only MP3 and WAV; M4A, MP4, and MOV files in `audio_video`
+are skipped as ineligible.
+No current automatic transcription adapter extracts MP4 audio. Photo descriptions
+and image embeddings continue to use vault-wide consent, independently of watches.
 
 The rendition stage needs current consent for that profile configuration.
 Without it, files still import with baseline plain-text extraction, but the
 configured rendition stays unprocessed. [Grant consent with `docbank processing build --consent`](usage/document-processing.md)
 for the configured profile to process subsequent imports. `docbank watch list` and
-the web app's All workers table show the profile and whether consent is required,
+the web app's All workers table show each family's profile and whether consent is required,
 expired, or revoked. Scanner errors remain separate. Unsupported files are skipped.
 An unexpected admission failure is logged once. The document stays imported
 and available for manual processing with `docbank processing build`.
@@ -469,10 +483,34 @@ Consent skips and missing or stale document authority end admission quietly.
 Imports stay accepted. A daemon stop between import and queue admission can leave
 a version unprocessed; use explicit processing for that version.
 
-Scheduling happens only at import. Granting consent later or adding a profile
-doesn't process older imports; use explicit processing for those documents.
-Unchanged rescans add no work. The existing durable workers execute the queued
-rendition; embedding stages require explicit profile execution.
+Watches queue renditions only at import. If you grant consent or add a profile
+later, use explicit processing for earlier imports that lack a rendition.
+Unchanged rescans add no work.
+
+When a routed profile has text-chunk embeddings and current build consent, the
+`embed:watch:<profile>` worker embeds the text of renditions of files imported
+by watches that route to this profile, including ASR transcripts. It runs only
+`rendition_chunk` bindings. A document qualifies when all of these hold:
+
+- A configured watch imported it, and that watch's current route sends the
+  file to the profile. The worker evaluates the route as configured now, not
+  as it was at import. When the media family comes from the file suffix, it
+  uses the source file name the watch recorded, so renaming the document in
+  the vault doesn't change it.
+- The document's current version has the bytes the watch last recorded for
+  its source. After a manual edit, the document waits until it matches again.
+- That version has a published rendition for the profile.
+
+Files that no routing watch imported are never embedded automatically. That
+includes files added to a watch destination by hand, files imported by a
+nested watch that routes elsewhere, and documents outside every watch; use
+explicit processing for them. A qualifying document's published rendition
+counts however it was built, including by explicit processing or for bytes
+written manually that the watch later converged onto, because the profile already
+admitted it. Adding a route later picks up the published renditions of that
+watch's current files. The worker also picks up qualifying renditions with
+missing chunk embeddings when consent is granted. If vault-wide local text
+selects the same profile, its worker handles that profile's backlog.
 
 Watchers run as jobs named `watch:<name>`. `docbank watch list` and
 `GET /api/v1/watches` pair each runner's state with its effective source,

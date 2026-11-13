@@ -45,6 +45,7 @@ func registerWatchRoutes(api huma.API, d Deps) {
 				ExcludePatterns: append([]string{}, watch.EffectiveExcludePatterns()...),
 			}
 			item.Processing = watchProcessingStatus(ctx, d, watch.Profile)
+			item.ProcessingRoutes = watchProcessingRoutes(ctx, d, watch.Profiles)
 			if job, ok := jobsByName["watch:"+watch.Name]; ok {
 				item.Job = &job
 			}
@@ -85,4 +86,15 @@ func watchTagError(ctx context.Context, d Deps, tags []string) string {
 		}
 	}
 	return ""
+}
+
+func watchProcessingRoutes(ctx context.Context, d Deps, profiles map[string]string) []WatchProcessingStatus {
+	var routes []WatchProcessingStatus
+	for family, profile := range profiles {
+		status := watchProcessingStatus(ctx, d, profile)
+		status.MediaFamily = family
+		routes = append(routes, *status)
+	}
+	slices.SortFunc(routes, func(a, b WatchProcessingStatus) int { return cmp.Compare(a.MediaFamily, b.MediaFamily) })
+	return routes
 }

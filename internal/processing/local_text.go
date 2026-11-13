@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"path"
 	"slices"
 	"sync"
 	"time"
@@ -52,6 +53,10 @@ type LocalTextSetup struct {
 	skips      map[localTextSkipKey]*localTextSkip
 	skipWarned bool
 	logger     *slog.Logger
+	rendered   bool
+	lane       string
+	// watches holds, by name, the configured watches that can route to Selected.
+	watches map[string]config.WatchConfig
 }
 
 func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalTextPlan, *Service, error) {
@@ -246,19 +251,25 @@ func (setup *LocalTextSetup) pendingTargets(ctx context.Context, after string, l
 	profile := setup.Service.profiles[setup.Selected]
 	bindings := 0
 	for _, binding := range profile.portable.Embeddings {
-		if binding.InputKind != document.EmbeddingInputImage {
+		if binding.InputKind != document.EmbeddingInputImage && (!setup.rendered || binding.InputKind == document.EmbeddingInputRenditionChunk) {
 			bindings++
 		}
 	}
+	if !setup.rendered && bindings == 0 {
+		return nil, nil
+	}
 	var result []store.DocumentSummary
 	for len(result) < limit {
-		items, err := setup.Service.catalog.MissingProcessingTargetsAfter(ctx, profile.record.Fingerprint, after, bindings, 1000)
+		items, next, done, err := setup.missingPage(ctx, profile.record.Fingerprint, after, bindings)
 		if err != nil {
 			return nil, err
 		}
 		keys := make([]store.EmbeddingHeadKey, 0, len(items)*len(profile.portable.Embeddings))
 		for _, item := range items {
 			for _, binding := range profile.portable.Embeddings {
+				if setup.rendered && binding.InputKind != document.EmbeddingInputRenditionChunk {
+					continue
+				}
 				keys = append(keys, store.EmbeddingHeadKey{ContentVersionID: item.ContentVersionID, BindingID: binding.Name, InputKind: binding.InputKind})
 			}
 		}
@@ -282,7 +293,7 @@ func (setup *LocalTextSetup) pendingTargets(ctx context.Context, after string, l
 				return result, nil
 			}
 		}
-		if len(items) < 1000 {
+		if done {
 			if len(result) == 0 && sweep {
 				for key, skip := range setup.skips {
 					if !skip.seen {
@@ -294,26 +305,64 @@ func (setup *LocalTextSetup) pendingTargets(ctx context.Context, after string, l
 			}
 			return result, nil
 		}
-		after = items[len(items)-1].ContentVersionID
+		after = next
 	}
 	return result, nil
 }
 
+const missingTargetPage = 1000
+
+// missingPage reads one catalog page and returns the cursor after it. The
+// watch lane keeps only versions whose recorded watch source routes to the
+// selected profile, resolved as import admission resolves it.
+func (setup *LocalTextSetup) missingPage(ctx context.Context, fingerprint, after string, bindings int) (items []store.DocumentSummary, next string, done bool, err error) {
+	if !setup.rendered {
+		items, err = setup.Service.catalog.MissingProcessingTargetsAfter(ctx, fingerprint, after, bindings, missingTargetPage)
+		if err != nil || len(items) == 0 {
+			return nil, "", true, err
+		}
+		return items, items[len(items)-1].ContentVersionID, len(items) < missingTargetPage, nil
+	}
+	watched, err := setup.Service.catalog.MissingWatchedRenditionTargetsAfter(ctx, fingerprint, after, bindings, missingTargetPage, slices.Sorted(maps.Keys(setup.watches)))
+	if err != nil || len(watched) == 0 {
+		return nil, "", true, err
+	}
+	for _, item := range watched {
+		// A watch names the file by its source name, which a later vault rename keeps.
+		if setup.watches[item.WatchName].ProcessingProfileFor(item.MediaType, path.Base(item.SourceRef)) == setup.Selected {
+			items = append(items, item.DocumentSummary)
+		}
+	}
+	return items, watched[len(watched)-1].ContentVersionID, len(watched) < missingTargetPage, nil
+}
+
 func (setup *LocalTextSetup) process(ctx context.Context, item store.DocumentSummary) error {
 	selector := Selector{Profile: setup.Selected, NodeID: item.NodeID, ContentVersionID: item.ContentVersionID}
-	profile := setup.Service.profiles[setup.Selected]
-	plan, err := setup.Service.Plan(ctx, selector)
-	if err != nil {
-		return err
-	}
-	if plan.RenditionIneligibleReason != "" {
-		if profileRenditionInput(profile) == document.RenditionInputOriginalFile {
-			setup.skip(item, "")
+	options := processingRunOptions{retryUnavailable: true, deferIndex: true}
+	var jobIDs []string
+	var err error
+	if setup.rendered {
+		jobIDs, err = setup.Service.embedPublishedRendition(ctx, selector, options)
+		if isEmbeddingConsentFailure(err) {
+			return nil
 		}
-		return nil
+	} else {
+		profile := setup.Service.profiles[setup.Selected]
+		plan, planErr := setup.Service.Plan(ctx, selector)
+		if planErr != nil {
+			return planErr
+		}
+		if plan.RenditionIneligibleReason != "" {
+			if profileRenditionInput(profile) == document.RenditionInputOriginalFile {
+				setup.skip(item, "")
+			}
+			return nil
+		}
+		var job Job
+		job, err = setup.Service.Start(ctx, StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint,
+			runOptions: options})
+		jobIDs = job.EmbeddingJobIDs
 	}
-	job, err := setup.Service.Start(ctx, StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint,
-		runOptions: processingRunOptions{retryUnavailable: true, deferIndex: true}})
 	if errors.Is(err, document.ErrTokenizerLimit) {
 		setup.skip(item, "tokenizer_limit")
 		return nil
@@ -329,7 +378,7 @@ func (setup *LocalTextSetup) process(ctx context.Context, item store.DocumentSum
 		return err
 	}
 	skipCode := ""
-	for _, id := range job.EmbeddingJobIDs {
+	for _, id := range jobIDs {
 		status, statusErr := setup.Service.catalog.EmbeddingJobByID(ctx, id)
 		if statusErr != nil {
 			return statusErr
@@ -363,10 +412,10 @@ func (setup *LocalTextSetup) skip(item store.DocumentSummary, code string) {
 	if len(setup.skips) < localTextSkipLimit {
 		setup.skips[key] = &localTextSkip{seen: true}
 		if code != "" {
-			logger.Warn("local text document skipped", "version", item.ContentVersionID, "code", code)
+			logger.Warn(cmp.Or(setup.lane, "local-text")+" document skipped", "version", item.ContentVersionID, "code", code)
 		}
 	} else if !setup.skipWarned {
-		logger.Warn("local text skip limit reached; additional ineligible files will be inspected again", "limit", localTextSkipLimit)
+		logger.Warn(cmp.Or(setup.lane, "local-text")+" skip limit reached; additional ineligible files will be inspected again", "limit", localTextSkipLimit)
 		setup.skipWarned = true
 	}
 }
@@ -393,8 +442,11 @@ func (setup *LocalTextSetup) publicationPending(ctx context.Context) (bool, erro
 	if !ok {
 		return false, nil
 	}
-	for _, space := range profile.vectorSpaces {
-		pending, err := setup.Service.catalog.VectorIndexPublicationPending(ctx, space)
+	for _, binding := range profile.portable.Embeddings {
+		if setup.rendered && !isChunkEmbedding(binding) {
+			continue
+		}
+		pending, err := setup.Service.catalog.VectorIndexPublicationPending(ctx, profile.vectorSpaces[binding.Name])
 		if err != nil || pending {
 			return pending, err
 		}
@@ -415,7 +467,7 @@ func (setup *LocalTextSetup) Backfill(ctx context.Context, logger *slog.Logger) 
 	}
 	defer release()
 	// Publication can finish without a counted write, so poll while holding activity.
-	lane := Backfill[store.DocumentSummary]{Name: "local-text", Page: 50, IdleDelay: time.Second, Logger: logger,
+	lane := Backfill[store.DocumentSummary]{Name: cmp.Or(setup.lane, "local-text"), Page: 50, IdleDelay: time.Second, Logger: logger,
 		WriteRevision: setup.Service.catalog.WriteRevision, Busy: func() bool { return holding },
 		List: func(ctx context.Context, after string, limit int) ([]store.DocumentSummary, error) {
 			items, err := setup.targets(ctx, after, limit)
