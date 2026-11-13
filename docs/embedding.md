@@ -1224,7 +1224,7 @@ Do not point a daemon and an embedded application at the same root. `New` holds
 the same exclusive hierarchy lock as the daemon for the entire vault lifetime
 and fails if the requested root overlaps another active vault or restore target.
 
-`OpenContentReader` also takes this exclusive lock, even though it does not change the vault.
+`OpenContentReader` also holds this exclusive lock until `Close` returns. Close the reader after reading.
 
 The standalone CLI remains daemon-first and never opens storage directly.
 Embedding is a distinct application ownership mode, not a second privileged path
