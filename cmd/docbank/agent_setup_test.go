@@ -259,7 +259,8 @@ elif [ "$1 $2" = "app-server --stdio" ]; then
   read -r line
   case "$line" in *'"method":"initialized"'*) ;; *) exit 1 ;; esac
   read -r line
-  case "$line" in *'"method":"mcpServerStatus/list"'*'"serverName":"docbank"'*) ;; *) exit 1 ;; esac
+  case "$line" in *'"method":"mcpServerStatus/list"'*) ;; *) exit 1 ;; esac
+  case "$line" in *'"serverName":"docbank"'*) ;; *) exit 1 ;; esac
   echo '{"id":2,"result":{"data":[{"name":"docbank","toolsError":"synthetic server failure"}]}}'
 else
   exit 1
@@ -271,6 +272,6 @@ fi
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(manual), 0o600))
 	out, err := runCLI(t, "agent", "setup", "--agent", "codex", "--check")
 	require.ErrorIs(t, err, agentsetup.ErrNotReady)
-	assert.Equal(t, 1, strings.Count(out, "synthetic server failure"))
+	assert.Equal(t, 1, strings.Count(out, "synthetic server failure"), out)
 	assert.NotContains(t, out, "needs the Codex feature step above")
 }
