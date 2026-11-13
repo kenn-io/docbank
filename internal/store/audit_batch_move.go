@@ -70,9 +70,6 @@ func (s *Store) prepareAuditedBatchMove(
 		}
 		snapshot.priorNodes[nodeID] = node
 	}
-	if err := s.addBatchMoveSubtreePaths(ctx, tx, plan); err != nil {
-		return nil, err
-	}
 	snapshot.eventNodeIDs, err = batchMoveChangedPathIDs(*plan, members)
 	if err != nil {
 		return nil, err

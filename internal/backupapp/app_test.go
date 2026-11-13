@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"uuid"
 
 	"github.com/stretchr/testify/assert"
@@ -27,6 +28,7 @@ import (
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/notemarkdown"
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
@@ -499,6 +501,40 @@ func TestJSONLRestoreRebuildsTimelineFromBoundProvenance(t *testing.T) {
 	assert.Equal(t, originalMtime, modified.RawValue)
 	assert.Equal(t, document.EventEvidenceKind("provenance_binding"), modified.EvidenceKind)
 	assert.Equal(t, "original_mtime", modified.EvidenceLocator)
+}
+
+func TestJSONLRestoreRebuildsNotes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx := t.Context()
+		fixture := newArchiveFixture(t)
+		for _, test := range []struct{ name, src string }{{"note.md", "---\ntags: [blue]\n---\n# Restored\n"}, {"bad.md", "\xff"}} {
+			require.NoError(t, fixture.blobs.WithMutation(ctx, func() error {
+				hash, size, err := fixture.blobs.WriteContext(ctx, strings.NewReader(test.src))
+				if err != nil {
+					return err
+				}
+				_, err = fixture.metadata.CreateFile(ctx, fixture.metadata.RootID(), test.name, hash, size, "text/markdown")
+				return err
+			}))
+		}
+		// Backup has no note cache at all. Restore must derive from the restored
+		// original blobs, including a completed classification of bad content.
+		repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+		require.NoError(t, err)
+		_, err = backupapp.Create(ctx, repo, "notes", fixture.metadata, fixture.blobs, backup.CreateOptions{})
+		require.NoError(t, err)
+		target := filepath.Join(t.TempDir(), "restored")
+		_, err = backupapp.Restore(ctx, repo, "notes", backup.RestoreOptions{TargetDir: target})
+		require.NoError(t, err)
+		restored, err := store.Open(ctx, filepath.Join(target, "docbank.db"))
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, restored.Close()) })
+		status, err := restored.NotesStatus(ctx, notemarkdown.Recipe, nil)
+		require.NoError(t, err)
+		require.Equal(t, 1, status[0].Parsed)
+		require.Equal(t, 1, status[0].Failed)
+		require.Zero(t, status[0].Pending)
+	})
 }
 
 func TestJSONLRestorePreservesAuthorityWhenAggregateTimelineOutputExceedsBound(t *testing.T) {

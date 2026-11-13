@@ -69,6 +69,9 @@ func (s *Store) BatchMove(ctx context.Context, requests []BatchMoveRequest) ([]B
 		if err != nil {
 			return err
 		}
+		if err := s.addBatchMoveSubtreePaths(ctx, tx, &plan); err != nil {
+			return err
+		}
 		var audited *auditedBatchMoveSnapshot
 		if active {
 			audited, err = s.prepareAuditedBatchMove(ctx, tx, &plan)
@@ -342,9 +345,9 @@ func (s *Store) addBatchMoveSubtreePaths(ctx context.Context, tx *sql.Tx, plan *
 
 func (s *Store) applyBatchMove(ctx context.Context, tx *sql.Tx, plan batchMovePlan) error {
 	for _, id := range plan.movedIDs {
-		temporaryName := fmt.Sprintf("\x00docbank-batch-%d", id)
+		temporaryName := fmt.Sprintf("/docbank-batch-%d", id)
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE nodes SET name=? WHERE id=?`, temporaryName, id); err != nil {
+			`UPDATE nodes SET name=$1 WHERE id=$2`, temporaryName, id); err != nil {
 			return fmt.Errorf("staging batch move node %d: %w", id, err)
 		}
 	}
@@ -355,7 +358,7 @@ func (s *Store) applyBatchMove(ctx context.Context, tx *sql.Tx, plan batchMovePl
 		}
 		moved[move.nodeID] = true
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE nodes SET parent_id=?,name=?,revision=revision+1,modified_at=? WHERE id=?`,
+			`UPDATE nodes SET parent_id=$1,name=$2,revision=revision+1,modified_at=$3 WHERE id=$4`,
 			move.newParentID, move.newName, plan.recordedAt, move.nodeID); err != nil {
 			return fmt.Errorf("applying batch move node %d: %w", move.nodeID, err)
 		}
@@ -369,6 +372,13 @@ func (s *Store) applyBatchMove(ctx context.Context, tx *sql.Tx, plan batchMovePl
 		}
 		if err := bumpRevisionTx(ctx, tx, id, plan.recordedAt); err != nil {
 			return err
+		}
+	}
+	for id, priorPath := range plan.priorPaths {
+		if priorPath != plan.finalPaths[id] {
+			if err := invalidateMovedNoteLimitTx(ctx, tx, id); err != nil {
+				return err
+			}
 		}
 	}
 	return recordVaultChangesTx(ctx, tx, "moved", sortedBatchMoveIDs(moved)...)

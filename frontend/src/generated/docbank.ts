@@ -4415,6 +4415,66 @@ export interface NodePage {
   total: number;
 }
 
+/**
+ * @nullable
+ */
+export type NoteByPathFrontmatter = {[key: string]: unknown} | null;
+
+/**
+ * Bounded parser diagnostic when frontmatter was discarded; the note body remains readable.
+ */
+export type NoteByPathFrontmatterError = typeof NoteByPathFrontmatterError[keyof typeof NoteByPathFrontmatterError];
+
+
+export const NoteByPathFrontmatterError = {
+  invalid_frontmatter: 'invalid_frontmatter',
+  unclosed_frontmatter: 'unclosed_frontmatter',
+} as const;
+
+export type NoteByPathSourceState = typeof NoteByPathSourceState[keyof typeof NoteByPathSourceState];
+
+
+export const NoteByPathSourceState = {
+  present: 'present',
+  gone: 'gone',
+  not_watched: 'not_watched',
+} as const;
+
+export interface NoteByPath {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  content_version_id: string;
+  /** @nullable */
+  frontmatter: NoteByPathFrontmatter;
+  /** Bounded parser diagnostic when frontmatter was discarded; the note body remains readable. */
+  frontmatter_error?: NoteByPathFrontmatterError;
+  headings: number;
+  modified_at: string;
+  node_id: number;
+  path: string;
+  sha256: string;
+  size: number;
+  source_state: NoteByPathSourceState;
+  tags: string[];
+  title: string;
+}
+
+export interface NoteWatchStatus {
+  destination: string;
+  failed: number;
+  /** Bounded content failure code for the latest failed current note. */
+  last_error?: string;
+  name: string;
+  parsed: number;
+  pending: number;
+}
+
+export interface NotesStatus {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: NoteWatchStatus[];
+}
+
 export interface NumberedFooter {
   font_sha256: string;
   font_size_milli_points: number;
@@ -9915,6 +9975,10 @@ offset?: number;
 
 export type PruneNodeContentVersionsHeaders = {
 'If-Match': string;
+};
+
+export type GetNoteByPathParams = {
+path: string;
 };
 
 export type ListPackagesParams = {
@@ -15567,6 +15631,61 @@ return sessionJSON<VersionPruneReport>(getPruneNodeContentVersionsUrl(id),
     method: 'POST',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(versionPruneRequest)
+  }
+);}
+
+
+
+export const getGetNoteByPathUrl = (params: GetNoteByPathParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/notes/by-path?${stringifiedParams}` : `/api/v1/notes/by-path`
+}
+
+/**
+ * @summary Read a current Markdown note summary and frontmatter
+ */
+export const getNoteByPath = async (params: GetNoteByPathParams, options?: Parameters<typeof sessionJSON>[1]): Promise<NoteByPath> => {
+
+  return sessionJSON<NoteByPath>(getGetNoteByPathUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getGetNotesStatusUrl = () => {
+
+
+
+
+  return `/api/v1/notes/status`
+}
+
+/**
+ * @summary Count parsed, pending and failed current notes per watch collection
+ */
+export const getNotesStatus = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<NotesStatus> => {
+
+  return sessionJSON<NotesStatus>(getGetNotesStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 

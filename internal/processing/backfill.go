@@ -21,6 +21,15 @@ const (
 )
 
 var errBackfillControl = errors.New("reading backfill lane control")
+var errBackfillPage = errors.New("invalid backfill page")
+
+// BackfillPage separates scan progress from actionable targets. A filtered
+// page still advances Next. EOF is a separate empty page with no Next cursor.
+type BackfillPage[T any] struct {
+	Targets []T
+	Next    string
+	EOF     bool
+}
 
 // Backfill walks a catalog listing in key order, processes every target under
 // the daemon's mutation gate, and retries failed targets with a per-target
@@ -42,14 +51,18 @@ type Backfill[T any] struct {
 	// Three consecutive listing failures or three failures of one target return
 	// the last error so synchronous callers do not wait indefinitely.
 	DrainOnce bool
-	// WriteRevision changes after committed catalog writes. When set, an empty
-	// first page settles the scan until the revision changes. DrainOnce ignores it.
+	// WriteRevision changes after committed catalog writes. A complete no-action
+	// pass with an unchanged revision settles until the next write. DrainOnce ignores it.
 	WriteRevision func() uint64
 	// Busy reports work whose completion does not change WriteRevision.
 	// A busy lane keeps listing until that work finishes.
 	Busy func() bool
 	// List returns targets ordered by key after the given cursor.
 	List func(ctx context.Context, after string, limit int) ([]T, error)
+	// ListPage optionally replaces List when filtering can produce empty pages
+	// before EOF. Configure exactly one listing callback. Keys and Next use the
+	// same strictly increasing ordering; targets cannot exceed Next or Page.
+	ListPage func(ctx context.Context, after string, limit int) (BackfillPage[T], error)
 	// Key returns the ordering key of one target, which is also its cursor.
 	Key func(T) string
 	// Process handles one target; its error schedules a retry.
@@ -86,20 +99,28 @@ func (b *Backfill[T]) Run(ctx context.Context) error {
 	passFound := false
 	var settled bool
 	var settledRevision uint64
+	var passRevision uint64
+	var passStarted bool
 	for {
-		var revision uint64
-		if !b.DrainOnce && b.WriteRevision != nil && cursor == "" {
-			revision = b.WriteRevision()
-			if revision != settledRevision {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !passStarted && !b.DrainOnce && b.WriteRevision != nil {
+			passRevision = b.WriteRevision()
+			if passRevision != settledRevision {
 				settled = false
 			}
 		}
-		var targets []T
+		passStarted = true
+		page := BackfillPage[T]{EOF: true}
 		var err error
 		if !settled {
-			targets, err = b.List(ctx, cursor, b.Page)
+			page, err = b.scan(ctx, cursor)
 		}
 		if err != nil {
+			if errors.Is(err, errBackfillPage) {
+				return err
+			}
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -116,24 +137,31 @@ func (b *Backfill[T]) Run(ctx context.Context) error {
 			continue
 		}
 		listFailures = 0
-		if len(targets) == 0 {
-			firstPage := cursor == ""
+		if page.EOF {
 			cursor = ""
+			passStarted = false
 			retries.retainSeen()
 			if b.DrainOnce && len(retries) == 0 {
 				return nil
 			}
-			if !b.DrainOnce && b.WriteRevision != nil && firstPage && len(retries) == 0 && (b.Busy == nil || !b.Busy()) {
-				settled, settledRevision = true, revision
+			changed := !b.DrainOnce && b.WriteRevision != nil && b.WriteRevision() != passRevision
+			if !b.DrainOnce && b.WriteRevision != nil && !passFound && len(retries) == 0 &&
+				(b.Busy == nil || !b.Busy()) && !changed {
+				settled, settledRevision = true, passRevision
 			}
 			// Only a completed scan reports no work to Settle. Targets in retry
 			// backoff become ready only with time.
 			jobs.ReportRetryPending(ctx, len(retries) > 0)
-			if err := jobs.Idle(ctx, retries.waitDelay(b.now(), idleDelay), passFound); err != nil {
+			if err := jobs.Idle(ctx, retries.waitDelay(b.now(), idleDelay), passFound || changed); err != nil {
 				return err
 			}
 			passFound = false
 			idleDelay = min(idleDelay*2, maxIdleDelay)
+			continue
+		}
+		targets := page.Targets
+		if len(targets) == 0 {
+			cursor = page.Next
 			continue
 		}
 		idleDelay = b.IdleDelay
@@ -141,7 +169,7 @@ func (b *Backfill[T]) Run(ctx context.Context) error {
 		passFound = passFound || attempted > 0
 		// A failed control read can stop mid-page; relist it instead of skipping the rest.
 		if !errors.Is(err, errBackfillControl) {
-			cursor = b.Key(targets[len(targets)-1])
+			cursor = page.Next
 		}
 		if err != nil {
 			if ctx.Err() != nil {
@@ -274,13 +302,44 @@ func (b *Backfill[T]) control(ctx context.Context) (store.LaneControl, error) {
 }
 
 func (b *Backfill[T]) validate() error {
-	if b.List == nil || b.Key == nil || b.Process == nil {
-		return errors.New("backfill requires List, Key, and Process")
+	if (b.List == nil) == (b.ListPage == nil) || b.Key == nil || b.Process == nil {
+		return errors.New("backfill requires exactly one of List or ListPage, plus Key and Process")
 	}
 	if b.Page <= 0 || b.IdleDelay <= 0 {
 		return errors.New("backfill requires a positive page size and idle delay")
 	}
 	return nil
+}
+
+// scan adapts legacy listings into the same progress/EOF contract as filtered
+// pages. Invalid provider progress is a contract error, not retryable I/O.
+func (b *Backfill[T]) scan(ctx context.Context, after string) (BackfillPage[T], error) {
+	var page BackfillPage[T]
+	var err error
+	if b.ListPage != nil {
+		page, err = b.ListPage(ctx, after, b.Page)
+	} else {
+		page.Targets, err = b.List(ctx, after, b.Page)
+		page.EOF = len(page.Targets) == 0
+		if !page.EOF {
+			page.Next = b.Key(page.Targets[len(page.Targets)-1])
+		}
+	}
+	if err != nil {
+		return page, err
+	}
+	if len(page.Targets) > b.Page || (page.EOF && (len(page.Targets) != 0 || page.Next != "")) || (!page.EOF && page.Next <= after) {
+		return page, errBackfillPage
+	}
+	previous := after
+	for _, target := range page.Targets {
+		key := b.Key(target)
+		if key <= previous || key > page.Next {
+			return page, errBackfillPage
+		}
+		previous = key
+	}
+	return page, nil
 }
 
 func (b *Backfill[T]) mutate(ctx context.Context, fn func() error) error {

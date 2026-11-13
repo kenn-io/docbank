@@ -1068,6 +1068,7 @@ func (s *Store) importMetadata(ctx context.Context, r io.Reader) error {
 // the side tables custom inserts write, and the media tables until #733. A
 // record's own table comes from its registration instead.
 var metadataPristineStateTables = []string{
+	"note_parses", "note_fields", "note_headings", "note_links", "note_aliases",
 	"export_jobs", "document_event_state", "document_event_generations", "document_event_heads",
 	"document_events", "document_event_actors", "document_event_primaries", "document_event_builds",
 	"document_event_dirty", "document_event_attempts", "text_extraction_queue", "text_searchable_versions",

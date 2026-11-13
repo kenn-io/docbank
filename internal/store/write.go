@@ -740,6 +740,15 @@ func (s *Store) moveAtTx(
 			return Node{}, err
 		}
 	}
+	subtree, err := liveSubtreeIDsTx(ctx, tx, id)
+	if err != nil {
+		return Node{}, err
+	}
+	for _, nodeID := range subtree {
+		if err := invalidateMovedNoteLimitTx(ctx, tx, nodeID); err != nil {
+			return Node{}, err
+		}
+	}
 	updated, err := nodeByIDTx(ctx, tx, id)
 	if err != nil {
 		return Node{}, err

@@ -134,6 +134,17 @@ var releasedStorageSchemas = []releasedStorageSchema{
 		restoreSourceState:         restoreV41SourceState,
 		keepsProcessingIncarnation: true,
 	},
+	{
+		version: 48, release: "v0.17.0", backupSuffix: ".schema-v48.bak",
+		validate: func(ctx context.Context, db *sql.DB, _, _ []string) error {
+			return validateReleasedLayout(ctx, db, "v0.17.0", schemaV48Layout)
+		},
+		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
+			return exportReleasedMetadataSnapshot(ctx, source, dst, 48)
+		},
+		restoreSourceState:         restoreV48SourceState,
+		keepsProcessingIncarnation: true,
+	},
 }
 
 var (
@@ -144,6 +155,7 @@ var (
 // currentSchemaTables selects a subset of schema tables for column validation.
 var currentSchemaTables = [...]string{
 	"blobs", "blob_packs", "vault_metadata",
+	"note_parses", "note_fields", "note_headings", "note_links", "note_aliases",
 	"mailbox_containers", "mailbox_chunks",
 	"mailbox_archives", "mailbox_transfer_receipts",
 	"mailbox_jobs", "mailbox_occurrences",
@@ -914,6 +926,11 @@ func copyReleasedTable(ctx context.Context, source metadataQuerier, tx *sql.Tx, 
 // copyReleasedRows copies the source rows of table that match filter, a SQL
 // WHERE clause or "" for every row, after checking that the columns match.
 func copyReleasedRows(ctx context.Context, source metadataQuerier, tx *sql.Tx, table, filter string) error {
+	return copyReleasedRowsOrdered(ctx, source, tx, table, filter, "rowid")
+}
+
+// orderBy is fixed source SQL, including primary keys for WITHOUT ROWID tables.
+func copyReleasedRowsOrdered(ctx context.Context, source metadataQuerier, tx *sql.Tx, table, filter, orderBy string) error {
 	sourceColumns, err := queryTableColumns(ctx, source, table)
 	if err != nil {
 		return err
@@ -931,7 +948,7 @@ func copyReleasedRows(ctx context.Context, source metadataQuerier, tx *sql.Tx, t
 	if filter != "" {
 		query += ` WHERE ` + filter
 	}
-	rows, err := source.QueryContext(ctx, query+` ORDER BY rowid`)
+	rows, err := source.QueryContext(ctx, query+` ORDER BY `+orderBy)
 	if err != nil {
 		return fmt.Errorf("reading released %s: %w", table, err)
 	}

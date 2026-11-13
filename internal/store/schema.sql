@@ -1169,6 +1169,67 @@ CREATE TABLE IF NOT EXISTS watch_sources (
     PRIMARY KEY (watch_name, source_ref)
 ) WITHOUT ROWID;
 
+-- Rebuildable structure over original Markdown bytes. No source bytes or
+-- publication authority live here; metadata JSONL deliberately omits these.
+CREATE TABLE IF NOT EXISTS note_parses (
+    version_id TEXT PRIMARY KEY REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    recipe TEXT NOT NULL,
+    parsed_at TEXT NOT NULL,
+    state TEXT NOT NULL,
+    title TEXT NOT NULL,
+    title_source TEXT NOT NULL,
+    frontmatter_json TEXT,
+    frontmatter_error TEXT,
+    body_start INTEGER NOT NULL,
+    lines INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS note_fields (
+    version_id TEXT NOT NULL REFERENCES note_parses(version_id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,
+    value TEXT NOT NULL,
+    PRIMARY KEY (version_id, key, ordinal)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS note_fields_value ON note_fields(key, value, version_id);
+CREATE TABLE IF NOT EXISTS note_headings (
+    version_id TEXT NOT NULL REFERENCES note_parses(version_id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    level INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    path TEXT NOT NULL,
+    start INTEGER NOT NULL,
+    line_end INTEGER NOT NULL,
+    section_end INTEGER NOT NULL,
+    line INTEGER NOT NULL,
+    section_end_line INTEGER NOT NULL,
+    PRIMARY KEY (version_id, ordinal)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS note_links (
+    version_id TEXT NOT NULL REFERENCES note_parses(version_id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    form TEXT NOT NULL,
+    raw TEXT NOT NULL,
+    target TEXT NOT NULL,
+    target_path TEXT,
+    target_key TEXT,
+    fragment TEXT NOT NULL,
+    label TEXT NOT NULL,
+    start INTEGER NOT NULL,
+    "end" INTEGER NOT NULL,
+    line INTEGER NOT NULL,
+    PRIMARY KEY (version_id, ordinal)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS note_links_path ON note_links(target_path);
+CREATE INDEX IF NOT EXISTS note_links_key ON note_links(target_key);
+CREATE TABLE IF NOT EXISTS note_aliases (
+    version_id TEXT NOT NULL REFERENCES note_parses(version_id) ON DELETE CASCADE,
+    alias_key TEXT NOT NULL,
+    alias TEXT NOT NULL,
+    PRIMARY KEY (version_id, alias_key)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS note_aliases_key ON note_aliases(alias_key);
+
 -- Operational presence observations are intentionally absent from metadata-v1.
 CREATE TABLE IF NOT EXISTS watch_source_absences (
     watch_name   TEXT NOT NULL,

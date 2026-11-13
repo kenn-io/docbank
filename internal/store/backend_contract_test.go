@@ -22,6 +22,14 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
+	{name: "notes", postgres: "native operations", scope: "Current-version note publication, recipe invalidation, path freshness, source presence, bounded cleanup and read summaries; original-byte worker and released upgrades are SQLite vault lifecycle checks.", scenarios: []backendScenario{
+		{"NoteLifecycle", func(t *testing.T) { t.Helper(); checkNoteLifecycle(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkNoteLifecycle(t, newPostgresQueryStore) }},
+		{"NoteMoveAndPresence", func(t *testing.T) { t.Helper(); checkNoteMoveAndPresence(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkNoteMoveAndPresence(t, newPostgresQueryStore) }},
+		{"NoteFailureAndValidation", func(t *testing.T) { t.Helper(); checkNoteFailureAndValidation(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkNoteFailureAndValidation(t, newPostgresQueryStore) }},
+		{"NoteAuthoredValuesAndCollections", func(t *testing.T) { t.Helper(); checkNoteAuthoredValuesAndCollections(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkNoteAuthoredValuesAndCollections(t, newPostgresQueryStore) }},
+		{"NoteBoundedPagesAndPrune", func(t *testing.T) { t.Helper(); checkNoteBoundedPagesAndPrune(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkNoteBoundedPagesAndPrune(t, newPostgresQueryStore) }},
+		{"NoteFiveThousand", nil, func(t *testing.T) { t.Helper(); checkNoteFiveThousand(t, newPostgresQueryStore) }},
+	}},
 	{name: "multi-store", postgres: "native operations", scope: "Secondary registry, inventory, placement, evacuation, storage jobs, cleanup and native repair/salvage; excludes deployment adapters, filesystem workers and metadata recovery.", scenarios: []backendScenario{
 		{"StorageRepairRollback", nil, checkStorageRepairRollbackPostgres},
 		{"MultiStorePhysicalRoundTrip", nil, checkMultiStorePhysicalRoundTripPostgres},

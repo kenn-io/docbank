@@ -529,6 +529,9 @@ GRANT INSERT, UPDATE, DELETE ON documents.collection_labels TO docbank_runtime;
 GRANT INSERT, UPDATE ON documents.watch_sources, documents.push_sources
     TO docbank_runtime;
 GRANT INSERT, DELETE ON documents.watch_source_absences TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.note_parses, documents.note_fields,
+    documents.note_headings, documents.note_links, documents.note_aliases
+    TO docbank_runtime;
 GRANT DELETE ON documents.document_event_heads, documents.document_event_generations,
     documents.document_people_heads, documents.document_people TO docbank_runtime;
 GRANT INSERT, UPDATE(revision, reason) ON documents.document_event_dirty

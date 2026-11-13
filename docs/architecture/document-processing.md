@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-13
+last_edited: 2026-11-12
 title: Document processing
 description: How Docbank derives readable text and search data while keeping original versions and requiring consent for processing.
 ---
@@ -91,6 +91,62 @@ original bytes instead of a rendition.
 Local [source metadata](source-metadata.md) and
 [visual previews](visual-previews.md) have their own processors and version
 identities. They do not require a hosted rendition provider.
+
+## Authored Markdown notes
+
+The daemon derives note structure from verified original bytes in the
+`derive:notes` background job. A live file qualifies when its MIME type is
+`text/markdown` or its name ends in `.md` or `.markdown`, ignoring suffix case.
+Readable notes contain at most 4 MiB. MIME-only notes qualify for reads.
+
+The pure `document/notemarkdown` parser supplies frontmatter, headings and
+links with offsets into the original bytes. Its recipe identifies the parse
+contract. Five derived catalogs retain the current version's parse, fields,
+headings, links and aliases. They contain no original bytes and are omitted
+from metadata JSONL. Storage schema 49 upgrades the released v0.17.0 schema 48
+through the existing fresh-database cutover and preserves the logical format.
+The cutover also preserves watch source absence observations, which are local
+operational state omitted from metadata JSONL.
+The v0.17.0 upgrade retains completed face scans and admitted photo work with its processing authority.
+Backup restore still requires fresh consent for outbound requests.
+PostgreSQL mirrors these catalogs using its canonical schema fingerprint.
+
+The bounded worker starts with the daemon and uses the shared `WriteRevision`
+signal after catalog writes. An unrelated global revision can still require
+O(N) candidate revalidation; incremental discovery is not delivered here.
+It replaces obsolete recipes, removes projections without a current live note,
+and refreshes relative link paths after a node or ancestor moves. The scan
+selects a bounded page of current-note and cached version identities before
+checking ancestry and cached links. Unchanged and trashed rows advance the
+scan cursor; only EOF completes a pass. Cleanup rechecks live ownership in its
+write transaction. An unchanged no-work pass settles until a catalog write.
+Filtered pages continue without a timer. Publication checks the observed
+version, revision and canonical path in one transaction.
+Filename title fallback is computed from the live name. UTF-8 or NUL failures,
+oversize inputs and parser limits record `not_utf8`, `too_large` or `limit`
+without blocking other notes. Malformed or unclosed YAML leaves readable body
+structure and retains its bounded parser diagnostic alongside null frontmatter.
+Operational blob or database errors remain retryable.
+
+Frontmatter JSON has an independent 24 MiB encoded limit. Mapping keys,
+escaping, separators and container bytes count toward the limit, with no
+trailing newline. Overflow publishes a fenced terminal `limit` with no partial
+frontmatter, fields, headings, links or aliases.
+Cancellation and other encoding failures keep their original error behavior.
+
+Indexed text has a separate shared SQLite/PostgreSQL admission boundary:
+each index tuple contains at most 2,048 UTF-8 text bytes, with 128 bytes reserved
+for headers, alignment, length words and fixed-width ordinals. Fields count
+key, value and actual version ID together; aliases count normalized alias key
+and version ID. Link path and key indexes each count their canonical text
+individually. Admission happens before the publication transaction. Overflow
+completes as the same zero-structure `limit`; many individually admissible rows
+remain valid regardless of their combined size.
+
+Restore rebuilds note structure from restored original blobs before publishing
+the target vault. A bad note's terminal classification does not fail restore.
+Historical versions do not acquire note cache rows. The current read routes
+are described in the [HTTP note contract](http-api.md#authored-markdown-notes).
 
 ## Keep policy and result identities separate
 
