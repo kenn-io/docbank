@@ -135,7 +135,7 @@ it("refreshes observations and locks an unknown selection result", async () => {
   await chooseReview();
   await fireEvent.click(await screen.findByRole("button", { name: "Apply" }));
   await screen.findByText(
-    "The result is unknown. Check these documents' tags before trying again.",
+    "Docbank couldn't confirm the tag change. Check the documents' tags before trying again.",
   );
   expect((screen.getByRole("combobox", { name: "Tag" }) as HTMLInputElement).disabled).toBe(true);
   expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();

@@ -10,7 +10,10 @@
     TextInput,
   } from "@kenn-io/kit-ui";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
+  import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
   import IconAction from "./IconAction.svelte";
+  import RecipientPackageAction from "./RecipientPackageAction.svelte";
+  import type { RecipientPackageController } from "./recipientPackageController.svelte.js";
   import { APIError } from "./api-transport.js";
   import { listBatesNamespaces, createBatesNamespace, downloadBatesExport } from "./bates.js";
   import {
@@ -31,6 +34,7 @@
     onpublished,
     onproductions,
     onnotice = () => {},
+    packageController,
   }: {
     session: string;
     inputs: NumberingInputs;
@@ -40,6 +44,7 @@
     onpublished: () => void;
     onproductions?: () => void;
     onnotice?: (message: string) => void;
+    packageController?: RecipientPackageController;
   } = $props();
   let opened = $state(false),
     namespaces = $state<BatesNamespace[]>([]),
@@ -63,6 +68,7 @@
     lookup = new AbortController(),
     disposed = false;
   let listing = $state(false);
+  let deliveryNotice = $state("");
   let nextSequence = $state<number>();
   const namespace = $derived(namespaces.find((n) => n.namespace_id === selected));
   const labels = $derived(
@@ -204,9 +210,15 @@
   async function download() {
     if (!artifact) return;
     error = "";
+    deliveryNotice = "";
     try {
       await downloadBatesExport(session, artifact, controller.signal);
-      if (!disposed) onnotice("Download started. Keep this tab open until the download finishes.");
+      if (disposed) return;
+      // With a shared controller, its single status line is the only place a
+      // download reports. A busy package keeps its line; the browser shows the PDF.
+      const message = "Download started. Keep this review open until it finishes.";
+      if (packageController) packageController.note(artifact.allocation_id, message);
+      else deliveryNotice = message;
     } catch (cause) {
       if (!controller.signal.aborted) fail(cause);
     }
@@ -239,15 +251,32 @@
 <section class="numbering" aria-label="Numbered PDF">
   {#if !opened}<Button onclick={() => void open()}>Number and keep PDF</Button>
   {:else}
-    <h3>Keep a numbered PDF</h3>
     {#if artifact}
-      <p><strong>{artifact.pages[0]?.label}–{artifact.pages.at(-1)?.label}</strong></p>
-      <p>Kept in Productions.</p>
-      <Button tone="info" surface="solid" onclick={() => void download()}
-        >Download numbered PDF</Button
-      >
-      {#if onproductions}<Button onclick={onproductions}>Open Productions</Button>{/if}
+      <div class="delivery-heading">
+        <h3>{artifact.pages[0]?.label}–{artifact.pages.at(-1)?.label}</h3>
+        {#if onproductions}<IconAction
+            size="sm"
+            ariaLabel="Open Productions"
+            onclick={onproductions}><ExternalLinkIcon size={16} aria-hidden="true" /></IconAction
+          >{/if}
+      </div>
+      <p class="muted">Kept in Productions</p>
+      <div class="delivery-actions">
+        <span class="muted">Download</span>
+        <Button size="sm" ariaLabel="Download numbered PDF" onclick={() => void download()}
+          >PDF</Button
+        >
+        {#if packageController && frozen}<RecipientPackageAction
+            controller={packageController}
+            inputs={frozen}
+            {artifact}
+          />{/if}
+        {#if deliveryNotice}<p class="delivery-status muted" role="status">
+            {deliveryNotice}
+          </p>{/if}
+      </div>
     {:else if frozen}
+      <h3>Keep a numbered PDF</h3>
       <p>
         <strong
           >{numberedLabels(
@@ -272,6 +301,7 @@
         >{/if}
       {#if reservation}<p class="muted">Allocation: {reservation.allocation_id}</p>{/if}
     {:else}
+      <h3>Keep a numbered PDF</h3>
       {#if loading}<p role="status"><Spinner size={16} />Loading namespace…</p>{/if}
       {#if namespaces.length}
         <SelectDropdown
@@ -400,6 +430,28 @@
   }
   .error {
     color: var(--status-error-text);
+  }
+  .delivery-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+  .delivery-heading h3 {
+    overflow-wrap: anywhere;
+  }
+  .delivery-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .delivery-actions > span {
+    font-size: var(--font-size-sm);
+  }
+  .delivery-actions :global(p) {
+    flex-basis: 100%;
   }
   .namespace-fields {
     display: grid;

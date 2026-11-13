@@ -297,3 +297,91 @@ describe("version history drawer", () => {
     expect(screen.getByText(createdVersionID)).toBeTruthy();
   });
 });
+
+it.each(["Network error", ""])(
+  "retries version history after a network failure (%s)",
+  async (message) => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValueOnce(new TypeError(message))
+      .mockRejectedValueOnce(new TypeError(message))
+      .mockResolvedValueOnce(Response.json({ items: [], total: 0, limit: 1000, offset: 0 }));
+    render(VersionHistoryDrawer, {
+      session: "session",
+      node,
+      path: "/report.txt",
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+    await fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("No versions")).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  },
+);
+
+it("retries interrupted version bodies and recovers on a manual attempt", async () => {
+  const interrupted = () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.error(new TypeError("Connection lost"));
+        },
+      }),
+    );
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(interrupted())
+    .mockResolvedValueOnce(interrupted())
+    .mockResolvedValueOnce(
+      Response.json({
+        items: [version(createdVersionID, 1, "content_create", "a")],
+        total: 1,
+        limit: 1000,
+        offset: 0,
+      }),
+    );
+  render(VersionHistoryDrawer, {
+    session: "session",
+    node,
+    path: "/report.txt",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  const retry = await screen.findByRole("button", { name: "Try again" });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  await fireEvent.click(retry);
+  expect(await screen.findByText("1 version")).toBeTruthy();
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+});
+
+it("does not retry malformed version history JSON", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{"));
+  render(VersionHistoryDrawer, {
+    session: "session",
+    node,
+    path: "/report.txt",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await screen.findByRole("alert");
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+it("hides the previous total when refreshing history fails without a message", async () => {
+  vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json({ items: [], total: 2, limit: 1000, offset: 0 }))
+    .mockRejectedValue(new TypeError(""));
+  const drawer = render(VersionHistoryDrawer, {
+    session: "session",
+    node,
+    path: "/report.txt",
+    onselect: vi.fn(),
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await screen.findByText("2 versions");
+  await drawer.rerender({ node: { ...node, current_version_id: createdVersionID } });
+  await screen.findByRole("button", { name: "Try again" });
+  expect(screen.queryByText("2 versions")).toBeNull();
+});

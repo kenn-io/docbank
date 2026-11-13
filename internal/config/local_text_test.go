@@ -47,3 +47,25 @@ func TestLocalTextPreservesFormattedInputCapacity(t *testing.T) {
 	_, err = LocalTextEmbedding(profile, "local")
 	require.ErrorContains(t, err, "model or input contract differs from local Nomic")
 }
+
+func TestLocalTextTransportDefaults(t *testing.T) {
+	cfg, err := Default().WithLocalText()
+	require.NoError(t, err)
+	local := cfg.EmbeddingProfiles[LocalTextProfile]
+	require.Equal(t, 8, local.MaxBatchItems)
+	require.Equal(t, 5*time.Minute, local.Runtime.RequestTimeout.Std())
+
+	local.MaxBatchItems = 23
+	local.Runtime.RequestTimeout = Duration(42 * time.Second)
+	local.Runtime.Endpoint = "http://127.0.0.1:12345"
+	local.Runtime.Managed = false
+	cfg.EmbeddingProfiles["remote"] = local
+	remote, err := cfg.EmbeddingProfile("remote")
+	require.NoError(t, err)
+	require.Equal(t, 23, remote.MaxBatchItems)
+	require.Equal(t, 42*time.Second, remote.Runtime.RequestTimeout.Std())
+	moved, err := LocalTextEmbedding(remote, "local")
+	require.NoError(t, err)
+	require.Equal(t, 23, moved.MaxBatchItems)
+	require.Equal(t, 42*time.Second, moved.Runtime.RequestTimeout.Std())
+}

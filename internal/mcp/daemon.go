@@ -44,6 +44,9 @@ type daemonLease struct {
 	close      func(*daemonconn.Connection) error
 	newContext func() (context.Context, context.CancelFunc)
 	keyPolicy  daemonconn.APIKeyExclusionPolicy
+
+	// suppliedConnection belongs to the caller, never to an individual relay.
+	suppliedConnection *daemonconn.Connection
 }
 
 type leasedDaemonClient struct {

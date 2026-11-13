@@ -644,9 +644,12 @@ func parseByteRange(value string, size int64) (int64, int64, error) {
 }
 
 func fromProcessingCoverage(report processing.Coverage) CoverageReport {
-	result := CoverageReport{VaultUID: report.VaultUID, ProfileFingerprint: report.ProfileFingerprint,
+	result := CoverageReport{VaultUID: report.VaultUID, ProfileFingerprint: report.ProfileFingerprint, PageCoverage: report.PageCoverage, PageCoverageUnavailable: report.PageCoverageUnavailable,
 		State: report.State, Renditions: fromProcessingCoverageClass(report.Renditions),
 		Embeddings: make([]CoverageClass, len(report.Embeddings))}
+	for _, gap := range report.PagesWithoutText {
+		result.PagesWithoutText = append(result.PagesWithoutText, PageTextGap{ContentVersionID: gap.ContentVersionID, Pages: gap.Pages})
+	}
 	for index, item := range report.Embeddings {
 		result.Embeddings[index] = fromProcessingCoverageClass(item)
 	}

@@ -64,6 +64,7 @@ func NewServerWithConnection(connection *daemonconn.Connection, options ServerOp
 	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		return connection, nil
 	}, func(c *daemonconn.Connection) error { return c.Close() })
+	lease.suppliedConnection = connection
 	return newServerWithOptionsAndDaemon(defaultImplementation(), options, lease)
 }
 
@@ -73,6 +74,10 @@ func defaultImplementation() *sdkmcp.Implementation {
 		Title:       "Docbank",
 		Description: "Self-sovereign document system",
 		Version:     version.Version,
+		WebsiteURL:  "https://docbank.ai",
+		Icons: []sdkmcp.Icon{{
+			Source: serverIconSource, MIMEType: "image/png", Sizes: []string{"256x256"},
+		}},
 	}
 }
 
@@ -112,6 +117,11 @@ func newServerWithOptionsAndDaemon(
 }
 
 func enforcePrivateResultCap(implementation *sdkmcp.Implementation, logger *slog.Logger) sdkmcp.Middleware {
+	// Discovery carries the full branding. Repeated private-result identity
+	// keeps its original size so adding an icon does not consume tool budgets.
+	identity := *implementation
+	identity.Icons = nil
+	identity.WebsiteURL = ""
 	return func(next sdkmcp.MethodHandler) sdkmcp.MethodHandler {
 		return func(ctx context.Context, method string, request sdkmcp.Request) (sdkmcp.Result, error) {
 			result, err := next(ctx, method, request)
@@ -121,7 +131,7 @@ func enforcePrivateResultCap(implementation *sdkmcp.Implementation, logger *slog
 			metadata := make(map[string]any, len(result.GetMeta())+1)
 			maps.Copy(metadata, result.GetMeta())
 			if _, exists := metadata[sdkmcp.MetaKeyServerInfo]; !exists {
-				metadata[sdkmcp.MetaKeyServerInfo] = implementation
+				metadata[sdkmcp.MetaKeyServerInfo] = &identity
 			}
 			result.SetMeta(metadata)
 			encoded, marshalErr := json.Marshal(result)

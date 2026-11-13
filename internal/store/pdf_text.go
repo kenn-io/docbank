@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 )
 
@@ -34,6 +35,38 @@ func (s *Store) PDFTextTargetsAfter(ctx context.Context, profile, after string, 
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+func pdfOmissionCandidateSQL(d metadataJSONDialect, alias string) string {
+	return alias + ".unit_count < " + d.number(alias+".provider_receipt_json", "usage.units")
+}
+
+// PDFTextCandidates returns active builds whose metadata records omitted pages.
+func (s *Store) PDFTextCandidates(ctx context.Context, versions []string, profile string) (map[string]string, error) {
+	d := metadataJSONDialect{s.postgresSchema != ""}
+	encoded, err := json.Marshal(versions)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT h.content_version_id, b.build_id FROM rendition_heads h
+		JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
+		 AND a.content_version_id=h.content_version_id AND a.profile_fingerprint=h.profile_fingerprint
+		JOIN rendition_builds b ON b.build_id=a.build_id
+		WHERE h.content_version_id IN (SELECT value FROM `+d.arrayValues("$1")+`) AND h.profile_fingerprint=$2
+		 AND `+pdfOmissionCandidateSQL(d, "b"), string(encoded), profile)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	builds := make(map[string]string)
+	for rows.Next() {
+		var version, build string
+		if err := rows.Scan(&version, &build); err != nil {
+			return nil, err
+		}
+		builds[version] = build
+	}
+	return builds, rows.Err()
 }
 
 func pdfWaitingSQL(version, profile string) string {
