@@ -61,6 +61,7 @@ func ReadInputs(ctx context.Context, preparationPath, masksPath string) (process
 	}
 	var transport struct {
 		processing.RedactionPreparation
+
 		Schema string `json:"$schema,omitzero"`
 	}
 	if err := json.Unmarshal(data, &transport, json.RejectUnknownMembers(true)); err != nil {
@@ -87,6 +88,7 @@ func ReadInputs(ctx context.Context, preparationPath, masksPath string) (process
 func ReadReview(ctx context.Context, path string, request processing.RedactionResolveRequest) (processing.RedactionReview, error) {
 	var transport struct {
 		processing.RedactionReview
+
 		Schema string `json:"$schema,omitzero"`
 	}
 	data, err := ReadFile(ctx, path, 16<<20)
