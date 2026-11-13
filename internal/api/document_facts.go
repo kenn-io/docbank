@@ -54,15 +54,7 @@ func whenFromClaim(event document.DocumentEventV1) WhenV1 {
 		w.At = at.UTC().Format(time.RFC3339Nano)
 		w.SourceZone = event.ZoneText
 		w.SourceOffsetSeconds = event.OffsetSeconds
-		if event.TimezoneKind == "offset" && w.SourceZone == "" {
-			w.ZoneState = "unknown"
-			w.Local = ""
-			w.SourceOffsetSeconds = nil
-		}
 		if event.TimezoneKind == "utc" {
-			if w.SourceZone == "" {
-				w.SourceZone = "UTC"
-			}
 			w.SourceOffsetSeconds = new(0)
 		}
 	} else {

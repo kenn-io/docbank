@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -20,6 +21,81 @@ func TestDocumentFactsToolsRejectAmbiguousSelection(t *testing.T) {
 			require.EqualValues(t, jsonrpc.CodeInvalidParams, wireErr.Code)
 			require.Equal(t, "invalid tool arguments", wireErr.Message)
 		}
+	}
+}
+
+func TestDocumentFactsPagesRejectChangedFacts(t *testing.T) {
+	f := newNativeExportFixture(t)
+	file := f.addFile(t, "pages.txt", "synthetic")
+	var first, second store.Person
+	for i := range 101 {
+		person, err := f.catalog.CreatePerson(t.Context(), fmt.Sprintf("Person %03d", i), "operator")
+		require.NoError(t, err)
+		_, err = f.catalog.AssertDocumentPerson(t.Context(), store.PersonDocumentAssertion{ContentVersionID: file.VersionID, PersonID: person.PersonID, Role: "custodian", Action: "assert", Revision: 1})
+		require.NoError(t, err)
+		if i == 0 {
+			first = person
+		} else if i == 1 {
+			second = person
+		}
+	}
+	server := newSearchProcessingServer(t, f, nil)
+	page := func() map[string]any {
+		return exportCall(t, server, "get_document_people", map[string]any{"node_id": file.NodeID})
+	}
+	continuePage := func(p map[string]any) map[string]any {
+		return exportCall(t, server, "get_document_people", map[string]any{"node_id": file.NodeID, "offset": p["next_offset"], "snapshot": p["snapshot"]})
+	}
+	p := page()
+	require.NotNil(t, p["next_offset"])
+	require.NotEmpty(t, continuePage(p)["assertions"])
+	require.Equal(t, "stale_facts", exportCall(t, server, "get_document_people", map[string]any{"node_id": file.NodeID, "offset": p["next_offset"]})["code"])
+	person, err := f.catalog.CreatePerson(t.Context(), "Earlier Author", "operator")
+	require.NoError(t, err)
+	_, err = f.catalog.AssertDocumentPerson(t.Context(), store.PersonDocumentAssertion{ContentVersionID: file.VersionID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	require.Equal(t, "stale_facts", continuePage(p)["code"])
+	p = page()
+	_, err = f.catalog.MergePersons(t.Context(), first.PersonID, second.PersonID, "00000000-0000-4000-8000-000000000002", first.Revision, second.Revision)
+	require.NoError(t, err)
+	assertions, err := f.catalog.DocumentPersonAssertions(t.Context(), file.VersionID)
+	require.NoError(t, err)
+	require.Len(t, assertions, 101)
+	require.Equal(t, "stale_facts", continuePage(p)["code"])
+	require.NoError(t, processing.RebuildDocumentEvents(t.Context(), f.catalog))
+	p = page()
+	_, err = f.catalog.StartDocumentEventRebuild(t.Context(), "00000000-0000-4000-8000-000000000001", store.DocumentEventRebuildRequestSHA256)
+	require.NoError(t, err)
+	require.Equal(t, "stale_facts", continuePage(p)["code"])
+	p = page()
+	hash, size, err := f.blobs.WriteContext(t.Context(), strings.NewReader("replacement"))
+	require.NoError(t, err)
+	node, err := f.catalog.NodeByID(t.Context(), file.NodeID)
+	require.NoError(t, err)
+	_, _, err = f.catalog.ReplaceContent(t.Context(), node.ID, node.Revision, hash, size, "text/plain")
+	require.NoError(t, err)
+	require.Equal(t, "stale_facts", continuePage(p)["code"])
+}
+
+func TestDocumentFactsToolsHiddenPhoto(t *testing.T) {
+	f := newNativeExportFixture(t)
+	hash, size, err := f.blobs.WriteContext(t.Context(), strings.NewReader("synthetic photo"))
+	require.NoError(t, err)
+	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "hidden.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := f.catalog.PhotoAssetForNode(t.Context(), node.ID)
+	require.NoError(t, err)
+	require.NoError(t, f.catalog.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
+	_, err = f.catalog.SetPhotoAssetHidden(t.Context(), asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	person, err := f.catalog.CreatePerson(t.Context(), "Hidden Person", "operator")
+	require.NoError(t, err)
+	_, err = f.catalog.AssertDocumentPerson(t.Context(), store.PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	server := newSearchProcessingServer(t, f, nil)
+	for _, name := range []string{"get_document_dates", "get_document_people"} {
+		out := exportCall(t, server, name, map[string]any{"content_version_id": node.CurrentVersionID})
+		require.Equal(t, "not_found", out["code"])
 	}
 }
 

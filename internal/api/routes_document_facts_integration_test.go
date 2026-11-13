@@ -80,6 +80,8 @@ func TestVersionFactsBrowserFullForbidden(t *testing.T) {
 		res, body = get(t, ts, path+"?disclosure=full", headers)
 		require.Equal(t, http.StatusForbidden, res.StatusCode, body)
 		require.Equal(t, "disclosure_forbidden", decodeProblem(t, body).Code)
+		res, body = get(t, ts, path+"?timezone=UTC", headers)
+		require.Equal(t, http.StatusBadRequest, res.StatusCode, body)
 	}
 	person, err := s.CreatePerson(t.Context(), "Blind Recipient", "operator")
 	require.NoError(t, err)
@@ -215,11 +217,20 @@ func TestVersionFactsBrowserHiddenAuthorization(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &session))
 	_, cookie, err := daemonconn.New(ts.URL, testAPIKey).PhotoHidden(ctx, "unlock", "synthetic-passcode", "")
 	require.NoError(t, err)
+	person, err := s.CreatePerson(ctx, "Hidden Person", "operator")
+	require.NoError(t, err)
+	_, err = s.AssertDocumentPerson(ctx, store.PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1})
+	require.NoError(t, err)
 	for _, kind := range []string{"dates", "people"} {
 		path := fmt.Sprintf("/api/v1/versions/%s/%s", node.CurrentVersionID, kind)
+		res, body = get(t, ts, path, nil)
+		require.Equal(t, http.StatusNotFound, res.StatusCode, body)
 		headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: session.Token, "Cookie": cookie}
 		res, body = get(t, ts, path, headers)
 		require.Equal(t, http.StatusOK, res.StatusCode, body)
+		if kind == "people" {
+			require.Contains(t, body, person.PersonID)
+		}
 	}
 	require.NoError(t, s.LockPhotoHidden(ctx))
 	for _, kind := range []string{"dates", "people"} {

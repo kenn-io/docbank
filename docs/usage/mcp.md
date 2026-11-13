@@ -298,8 +298,8 @@ metadata, and cache fields; a larger catalog requires a reviewed budget edit.
 | `list_package_preflight_diagnostics` | Pages through bounded diagnostics for a retained preflight. |
 | `list_package_custodians` | Pages through active custodian claims for an exact package scope. |
 | `find_people` | Finds bounded active canonical people by word-start folded display-name search, with global display-only identity labels that may contain email addresses, phone numbers, or scoped handles, and folded-name page continuation. |
-| `get_document_dates` | Reads safe date claims and the selected primary for a content version or current document node. Pass `next_offset` as `offset` to continue through claims and diagnostics. If an individual item exceeds the response limit, use the HTTP dates route. |
-| `get_document_people` | Reads safe people, assertions, and unresolved names for a content version or current document node. Pass `next_offset` as `offset` with the same selector to continue through edges, assertions, and unresolved names. Each page repeats version metadata; results can change between requests. If an individual item exceeds the response limit, use the HTTP people route. |
+| `get_document_dates` | Reads safe date claims and the selected primary for a content version or current document node. Pass `next_offset` as `offset` and `snapshot` unchanged to continue through claims and diagnostics. Restart at offset zero if facts change. If an individual item exceeds the response limit, use the HTTP dates route. |
+| `get_document_people` | Reads safe people, assertions, and unresolved names for a content version or current document node. Pass `next_offset` as `offset` and `snapshot` unchanged with the same selector to continue through edges, assertions, and unresolved names. Restart at offset zero if facts change. If an individual item exceeds the response limit, use the HTTP people route. |
 | `get_person` | Reads one person, its identities, and its external UIDs. |
 | `list_packages` | Pages through received and produced load-file packages. |
 | `get_package` | Reads one package and its retained source authority. |

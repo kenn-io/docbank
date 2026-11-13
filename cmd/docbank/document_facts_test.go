@@ -57,7 +57,6 @@ func TestDocumentFactsTableEscapesAndTimezones(t *testing.T) {
 		name, zone, state, zoneState, want string
 	}{
 		{"email unknown offset", "-0000", "floating", "omitted", `"-0000" (state=floating, zone="omitted")`},
-		{"exact missing source zone", "", "exact", "unknown", `"" (state=exact, zone="unknown")`},
 		{"zone controls", "zone\n\x1b[31m", "floating", "named", `"zone\n\x1b[31m" (state=floating, zone="named")`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

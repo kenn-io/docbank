@@ -19,7 +19,6 @@ func TestWhenFieldTable(t *testing.T) {
 		{"offset", document.DocumentEventV1{DateKind: "sent", Precision: "minute", DateValue: "2026-03-10T09:12", TimezoneKind: "offset", ZoneText: "-04:00", UTCKey: "2026-03-10T13:12:00.000000000Z", OffsetSeconds: new(-14400)}, `{"state":"exact","precision":"minute","at":"2026-03-10T13:12:00Z","local":"2026-03-10T09:12:00","zone_state":"offset","source_zone":"-04:00","source_offset_seconds":-14400}`},
 		{"producer UTC", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T23:50:00", TimezoneKind: "utc", ZoneText: "Z", UTCKey: "2026-03-10T23:50:00.000000000Z"}, `{"state":"exact","precision":"second","at":"2026-03-10T23:50:00Z","local":"2026-03-10T23:50:00","zone_state":"utc","source_zone":"Z","source_offset_seconds":0}`},
 		{"omitted", document.DocumentEventV1{Precision: "minute", DateValue: "2026-03-10T09:12", TimezoneKind: "omitted", ZoneText: "-0000"}, `{"state":"floating","precision":"minute","local":"2026-03-10T09:12:00","zone_state":"omitted"}`},
-		{"missing offset zone", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T09:12:00", TimezoneKind: "offset", OffsetSeconds: new(3600), UTCKey: "2026-03-10T08:12:00.000000000Z"}, `{"state":"exact","precision":"second","at":"2026-03-10T08:12:00Z","zone_state":"unknown"}`},
 		{"missing named zone", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T09:12:00", TimezoneKind: "named"}, `{"state":"floating","precision":"second","local":"2026-03-10T09:12:00","zone_state":"omitted"}`},
 		{"date", document.DocumentEventV1{Precision: "date", DateValue: "2026-03-10"}, `{"state":"date","precision":"date","date":"2026-03-10"}`},
 		{"month", document.DocumentEventV1{Precision: "month", DateValue: "2026-03"}, `{"state":"coarse","precision":"month","period":"2026-03"}`},
@@ -115,6 +114,9 @@ func TestWhenFieldTableAllProducerCombinations(t *testing.T) {
 	for _, precision := range document.AllEventPrecisions() {
 		for _, zone := range document.AllEventTimezoneKinds() {
 			for _, zoneText := range []string{"", "source zone"} {
+				if zoneText == "" && (zone == "offset" || zone == "utc") {
+					continue
+				}
 				claim := document.DocumentEventV1{Precision: precision, DateValue: values[precision], TimezoneKind: zone, ZoneText: zoneText}
 				if zone == "offset" {
 					claim.OffsetSeconds = new(3600)
@@ -143,9 +145,7 @@ func TestWhenFieldTableAllProducerCombinations(t *testing.T) {
 					want["zone_state"] = true
 					if key != "" {
 						want["at"] = true
-						if zone != "offset" || zoneText != "" {
-							want["local"], want["source_zone"], want["source_offset_seconds"] = true, true, true
-						}
+						want["local"], want["source_zone"], want["source_offset_seconds"] = true, true, true
 					} else {
 						want["local"] = true
 						if zone != "omitted" && zoneText != "" {
