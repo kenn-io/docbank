@@ -212,7 +212,7 @@ modification timestamps, such as nodes restored together.
 `GET /api/v1/search/text-coverage` takes the ordinary search filters and counts
 current files after an empty text search. `no_text` counts files a processing
 profile could make searchable, by `families` (`pdf`, `office`, `other`), and
-`pending` counts native-text files still queued for extraction.
+`pending` counts native-text files still queued for extraction. PDF page coverage reads at most 16 distinct evidence builds; `pdf_page_coverage_partial` marks incomplete coverage, and the PDF and page counts are lower bounds when it is true.
 
 Set `fuzzy=true` on ordinary `GET /search` to append bounded ASCII filename
 and path discovery after existing hits. Blank text returns `422 validation`;
@@ -783,6 +783,8 @@ The rendition and embedding counts come from one catalog snapshot, including
 current source visibility and serving evidence. Missing required coverage keeps
 the aggregate state `partial` even if another class is rebuilding. This read
 does not grant consent or start provider work.
+
+For `docbank-pdf-text`, `pages_without_text` lists source version IDs and one-based PDF page numbers without a text layer. Each response inspects at most 16 candidate builds and contains at most 8,192 page numbers. When `page_coverage` is `partial`, narrow the source fence to inspect more pages. `page_coverage_unavailable` reports evidence that could not be read. Text rendition receipts also expose `pages_without_text` for the source PDF independently of the selected profile, or `page_coverage: "unavailable"` when its evidence could not be read.
 
 `POST /search` uses JSON, separately from ordinary lexical `GET /search`:
 

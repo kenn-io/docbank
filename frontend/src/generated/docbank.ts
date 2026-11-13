@@ -1752,10 +1752,25 @@ export interface CoverageClass {
   unavailable: number;
 }
 
+export type CoverageReportPageCoverage = typeof CoverageReportPageCoverage[keyof typeof CoverageReportPageCoverage];
+
+
+export const CoverageReportPageCoverage = {
+  partial: 'partial',
+} as const;
+
+export interface PageTextGap {
+  content_version_id: string;
+  pages: number[];
+}
+
 export interface CoverageReport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   embeddings: CoverageClass[];
+  page_coverage?: CoverageReportPageCoverage;
+  page_coverage_unavailable?: boolean;
+  pages_without_text?: PageTextGap[];
   /** @pattern ^[0-9a-f]{64}$ */
   profile_fingerprint: string;
   renditions: CoverageClass;
@@ -7918,6 +7933,13 @@ export interface RenditionTextProfile {
   name: string;
 }
 
+export type RenditionTextReceiptPageCoverage = typeof RenditionTextReceiptPageCoverage[keyof typeof RenditionTextReceiptPageCoverage];
+
+
+export const RenditionTextReceiptPageCoverage = {
+  unavailable: 'unavailable',
+} as const;
+
 export type RenditionTextReceiptState = typeof RenditionTextReceiptState[keyof typeof RenditionTextReceiptState];
 
 
@@ -7947,6 +7969,8 @@ export interface RenditionTextReceipt {
   attachment_id: string;
   build_id: string;
   generation_id: string;
+  page_coverage?: RenditionTextReceiptPageCoverage;
+  pages_without_text?: number[];
   profile: RenditionTextProfile;
   source: RenditionTextSource;
   state: RenditionTextReceiptState;
@@ -8428,6 +8452,13 @@ export interface SearchTextCoverage {
   families: SearchTextCoverageFamiliesItem[];
   /** @minimum 0 */
   no_text: number;
+  /** @minimum 0 */
+  pages_without_text: number;
+  pdf_page_coverage_partial: boolean;
+  /** @minimum 0 */
+  pdf_page_coverage_unavailable: number;
+  /** @minimum 0 */
+  pdfs_without_text: number;
   /** @minimum 0 */
   pending: number;
 }

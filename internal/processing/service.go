@@ -370,10 +370,18 @@ type CoverageClass struct {
 	Total                                   int
 }
 
+type PageTextGap struct {
+	ContentVersionID string
+	Pages            []int
+}
+
 type Coverage struct {
 	VaultUID, ProfileFingerprint, State string
 	Renditions                          CoverageClass
 	Embeddings                          []CoverageClass
+	PagesWithoutText                    []PageTextGap
+	PageCoverage                        string
+	PageCoverageUnavailable             bool
 }
 
 type SearchRequest struct {
@@ -1536,6 +1544,14 @@ func (service *Service) Coverage(ctx context.Context, profileName string, fence 
 	}
 	report := Coverage{VaultUID: service.catalog.VaultID(), ProfileFingerprint: profile.record.Fingerprint,
 		State: "complete", Renditions: CoverageClass{Name: "rendition", State: "not_required", Total: len(ids)}}
+	if profileName == PDFTextProfileName {
+		pages, state, unavailable, err := service.PDFPageGaps(ctx, fence)
+		if err != nil {
+			return Coverage{}, err
+		}
+		report.PagesWithoutText, report.PageCoverage, report.PageCoverageUnavailable = pages, state, unavailable
+	}
+
 	// A description profile attaches no rendition, so there is none to cover.
 	if profile.portable.Rendition != nil && profileRenditionInput(profile) == document.RenditionInputOriginalFile {
 		report.Renditions = toClass(snapshot.Renditions)

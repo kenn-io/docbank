@@ -2,6 +2,8 @@ package processing
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"strconv"
 	"testing"
 	"time"
@@ -19,9 +21,11 @@ func TestPDFTextBackfillRetainsPages(t *testing.T) {
 		name  string
 		pages []string
 		text  bool
+		gaps  []int
 	}{
-		{"born", []string{"first page", "distinctivequartz second page"}, true},
-		{"image-only", []string{"", ""}, false},
+		{"born", []string{"first page", "distinctivequartz second page"}, true, nil},
+		{"image-only", []string{"", ""}, false, []int{1, 2}},
+		{"mixed", []string{"distinctivequartz", ""}, true, []int{2}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newPublicationFixture(t)
@@ -54,14 +58,76 @@ func TestPDFTextBackfillRetainsPages(t *testing.T) {
 			pending, err = restarted.Pending(t.Context())
 			require.NoError(t, err)
 			require.False(t, pending)
-			if !test.text {
-				coverage, err := fixture.catalog.SearchTextCoverage(t.Context(), store.SearchOptions{}, active.record.Fingerprint, service.PDFHasNoTextLayer)
+			report, err := service.Coverage(t.Context(), name, SourceFence{VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}})
+			require.NoError(t, err)
+			if len(test.gaps) > 0 {
+				require.Equal(t, []PageTextGap{{ContentVersionID: node.CurrentVersionID, Pages: test.gaps}}, report.PagesWithoutText)
+				for _, artifact := range view.Rendition.Build.Artifacts {
+					if artifact.Role == "normalized_evidence" {
+						require.NoError(t, fixture.blobs.Remove(artifact.BlobHash))
+					}
+				}
+				corruptReport, err := service.Coverage(t.Context(), name, SourceFence{VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}})
 				require.NoError(t, err)
-				require.Zero(t, coverage.Pending)
-				require.Equal(t, 1, coverage.NoText)
+				require.Equal(t, report.Renditions, corruptReport.Renditions)
+				require.Empty(t, corruptReport.PagesWithoutText)
+				require.True(t, corruptReport.PageCoverageUnavailable)
+			} else {
+				require.Empty(t, report.PagesWithoutText)
 			}
 		})
 	}
+}
+
+func TestCoveragePageBounds(t *testing.T) {
+	t.Parallel()
+	ids := make([]string, 17)
+	builds := make(map[string]string)
+	for i := range ids {
+		ids[i] = strconv.Itoa(i)
+		builds[ids[i]] = ids[i]
+	}
+	calls := 0
+	gaps, state, unavailable, err := readPDFCoveragePage(t.Context(), ids, builds, func(_ context.Context, build string) ([]int, error) {
+		calls++
+		if build == "0" {
+			return nil, errors.New("missing evidence")
+		}
+		return []int{2, 4}, nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, 16, calls)
+	require.Len(t, gaps, 15)
+	require.Equal(t, "partial", state)
+	require.True(t, unavailable)
+	for _, id := range ids {
+		builds[id] = "shared"
+	}
+	calls = 0
+	gaps, state, _, err = readPDFCoveragePage(t.Context(), ids, builds, func(context.Context, string) ([]int, error) { calls++; return []int{2, 4}, nil })
+	require.NoError(t, err)
+	require.Equal(t, 1, calls)
+	require.Len(t, gaps, 17)
+	require.Empty(t, state)
+	pages := make([]int, 5000)
+	for i := range pages {
+		pages[i] = i + 1
+	}
+	gaps, state, _, err = readPDFCoveragePage(t.Context(), ids, builds, func(context.Context, string) ([]int, error) { return pages, nil })
+	require.NoError(t, err)
+	require.Len(t, gaps, 2)
+	require.Len(t, gaps[1].Pages, 3192)
+	require.Equal(t, "partial", state)
+	_, state, unavailable, err = readPDFCoveragePage(t.Context(), ids[:1], builds, func(context.Context, string) ([]int, error) { return nil, errors.New("missing") })
+	require.NoError(t, err)
+	require.Empty(t, state)
+	require.True(t, unavailable)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, state, unavailable, err = readPDFCoveragePage(ctx, ids, builds, func(context.Context, string) ([]int, error) { return nil, nil })
+	require.ErrorIs(t, err, context.Canceled)
+	require.Empty(t, state)
+	require.False(t, unavailable)
 }
 
 func newPDFTextService(t *testing.T, fixture publicationFixture, profile ProfileConfig) *Service {
@@ -142,7 +208,11 @@ func TestPDFTextRunnerSkipPolicy(t *testing.T) {
 				require.NoError(t, err)
 				second, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "second.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
 				require.NoError(t, err)
+				unqueued, err := runner.UnqueuedPending(t.Context())
+				require.NoError(t, err)
+				require.True(t, unqueued(node.CurrentVersionID, node.Size))
 				require.NoError(t, runner.process(t.Context(), item))
+				require.False(t, unqueued(node.CurrentVersionID, node.Size))
 				items, err := runner.targets(t.Context(), "", 1)
 				require.NoError(t, err)
 				require.Len(t, items, 1)
@@ -170,4 +240,17 @@ func TestPDFTextRunnerSkipPolicy(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPDFTextRunnerUnqueuedOversized(t *testing.T) {
+	t.Parallel()
+	fixture := newPublicationFixture(t)
+	_, profile, err := NewPDFTextProfile()
+	require.NoError(t, err)
+	service := newPDFTextService(t, fixture, profile)
+	runner := &PDFTextRunner{Service: service}
+	require.NoError(t, runner.Initialize(t.Context()))
+	unqueued, err := runner.UnqueuedPending(t.Context())
+	require.NoError(t, err)
+	require.False(t, unqueued("oversized", PDFTextMaxDocumentBytes+1))
 }

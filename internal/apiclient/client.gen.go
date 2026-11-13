@@ -27133,6 +27133,12 @@ const (
 	RenditionTextProfileConfigurationUnconfigured    RenditionTextProfileConfiguration = "unconfigured"
 )
 
+type RenditionTextReceiptPageCoverage string
+
+const (
+	RenditionTextReceiptPageCoverageUnavailable RenditionTextReceiptPageCoverage = "unavailable"
+)
+
 type RenditionTextReceiptState string
 
 const (
@@ -31467,6 +31473,8 @@ type PageSelectionRequest = api.PageSelectionRequest
 
 type PageSource = document.PageSource
 
+type PageTextGap = api.PageTextGap
+
 type Pending = kataevidence.Pending
 
 type PendingFormatV1 = document.PendingFormatV1
@@ -31960,14 +31968,16 @@ type RenditionTextProfile struct {
 
 type RenditionTextReceipt struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema       *string                   `json:"$schema,omitempty"`
-	Artifact     *RenditionTextArtifact    `json:"artifact,omitempty"`
-	AttachmentID string                    `json:"attachment_id"`
-	BuildID      string                    `json:"build_id"`
-	GenerationID string                    `json:"generation_id"`
-	Profile      RenditionTextProfile      `json:"profile"`
-	Source       RenditionTextSource       `json:"source"`
-	State        RenditionTextReceiptState `json:"state"`
+	Schema           *string                           `json:"$schema,omitempty"`
+	Artifact         *RenditionTextArtifact            `json:"artifact,omitempty"`
+	AttachmentID     string                            `json:"attachment_id"`
+	BuildID          string                            `json:"build_id"`
+	GenerationID     string                            `json:"generation_id"`
+	PageCoverage     *RenditionTextReceiptPageCoverage `json:"page_coverage,omitempty"`
+	PagesWithoutText []int64                           `json:"pages_without_text,omitempty"`
+	Profile          RenditionTextProfile              `json:"profile"`
+	Source           RenditionTextSource               `json:"source"`
+	State            RenditionTextReceiptState         `json:"state"`
 }
 
 type RenditionTextRequest struct {
