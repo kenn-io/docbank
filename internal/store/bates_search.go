@@ -290,7 +290,7 @@ func (s *Store) batesCustodianScopeSQL() string {
 	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
 	sources := "json_each(sm.canonical_json,'$.source_collection_ids') AS items"
 	if d.postgres {
-		sources = d.arrayValues(d.text("convert_from(sm.canonical_json,'UTF8')", "source_collection_ids"))
+		sources = d.arrayValues("sm.source_collection_ids_json")
 	}
 	return `(ca.scope_kind='document' AND ca.node_id=sm.node_id AND ca.content_version_id=sm.content_version_id) OR
 		(ca.scope_kind='package' AND ca.package_id=p.package_id AND

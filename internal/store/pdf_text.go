@@ -14,7 +14,12 @@ func (s *Store) PDFTextTargetsAfter(ctx context.Context, profile, after string, 
 	}
 	mimeType := "lower(trim(CASE WHEN instr(v.mime_type,';')=0 THEN v.mime_type ELSE substr(v.mime_type,1,instr(v.mime_type,';')-1) END))"
 	if s.postgresSchema != "" {
-		mimeType = "lower(trim(split_part(v.mime_type,';',1)))"
+		mimeType = `lower(trim(CASE
+ WHEN position(';'::bytea in v.mime_type)>0
+  AND position('\x00'::bytea in v.mime_type)>0
+  AND position('\x00'::bytea in v.mime_type)<position(';'::bytea in v.mime_type)
+ THEN encode(substring(v.mime_type from 1 for position('\x00'::bytea in v.mime_type)-1),'escape')
+ ELSE split_part(encode(v.mime_type,'escape'),';',1) END))`
 	}
 	waiting := ""
 	if !includeWaiting {

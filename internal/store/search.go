@@ -1294,7 +1294,7 @@ func (s *Store) StageLexicalGenerationWithRoot(
 		if err != nil {
 			return err
 		}
-		return putCurrentRenditionRootTx(ctx, tx, root)
+		return putCurrentRenditionRootTx(ctx, tx, root, s.postgresSchema != "")
 	})
 	if err != nil {
 		return LexicalGeneration{}, err
@@ -1601,7 +1601,7 @@ func indexLexicalSegmentsTx(
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO rendition_lexical_index(row_id,build_id,segment_id,text)
 			SELECT COALESCE(MAX(row_id),0)+1,$1,$2,$3 FROM rendition_lexical_index`,
-			segment.buildID, segment.segmentID, storedString(postgres, segment.text),
+			segment.buildID, storedString(postgres, segment.segmentID), storedString(postgres, segment.text),
 		); err != nil {
 			return fmt.Errorf("indexing lexical segment %s of build %s: %w",
 				segment.segmentID, segment.buildID, err)
@@ -2135,7 +2135,7 @@ func (s *Store) publishRenditionAttachmentsAndLexicalHeadsTx(
 			pair.head.AttachmentID != normalized.ID {
 			return errors.New("rendition head does not resolve through its exact attachment")
 		}
-		if err := ensureProcessingProfileTx(ctx, tx, normalized.Profile); err != nil {
+		if err := ensureProcessingProfileTx(ctx, tx, normalized.Profile, s.postgresSchema != ""); err != nil {
 			return err
 		}
 		build, err := validateRenditionPublicationTx(ctx, tx, normalized, generationID, authorization)
@@ -2152,7 +2152,7 @@ func (s *Store) publishRenditionAttachmentsAndLexicalHeadsTx(
 				return err
 			}
 		}
-		if err := insertRenditionAttachmentAndHeadTx(ctx, tx, normalized, pair.head); err != nil {
+		if err := insertRenditionAttachmentAndHeadTx(ctx, tx, normalized, pair.head, s.postgresSchema != ""); err != nil {
 			return err
 		}
 	}
@@ -2280,7 +2280,7 @@ func (s *Store) authorizeRenditionPublicationTx(
 // insertRenditionAttachmentAndHeadTx records the immutable attachment, or
 // proves an existing one names the same metadata, then moves the head.
 func insertRenditionAttachmentAndHeadTx(
-	ctx context.Context, tx *sql.Tx, normalized RenditionAttachmentRecord, head RenditionHeadRecord,
+	ctx context.Context, tx *sql.Tx, normalized RenditionAttachmentRecord, head RenditionHeadRecord, postgres bool,
 ) error {
 	result, err := tx.ExecContext(ctx, `
 			INSERT INTO rendition_attachments(
@@ -2291,7 +2291,7 @@ func insertRenditionAttachmentAndHeadTx(
 		normalized.ID, normalized.VaultID, normalized.ContentVersionID, normalized.BuildID,
 		normalized.Profile.Fingerprint, normalized.Profile.RetentionDisclosureFingerprint,
 		normalized.Profile.AttachmentPolicyFingerprint, normalized.Profile.ConsentFingerprint,
-		normalized.Profile.RenditionDisclosureFingerprint, normalized.Profile.TrustBoundary,
+		normalized.Profile.RenditionDisclosureFingerprint, storedString(postgres, normalized.Profile.TrustBoundary),
 		normalized.AttachedAt)
 	if err != nil {
 		return fmt.Errorf("inserting rendition attachment %s: %w", normalized.ID, err)

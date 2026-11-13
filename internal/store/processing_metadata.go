@@ -49,7 +49,7 @@ type metadataProcessingProfile struct {
 	AttachmentPolicyFingerprint    string         `json:"attachment_policy_fingerprint" db:"attachment_policy_fingerprint"`
 	ConsentFingerprint             string         `json:"consent_fingerprint" db:"consent_fingerprint"`
 	RenditionDisclosureFingerprint string         `json:"rendition_disclosure_fingerprint" db:"rendition_disclosure_fingerprint"`
-	TrustBoundary                  string         `json:"trust_boundary" db:"trust_boundary"`
+	TrustBoundary                  string         `json:"trust_boundary" db:"trust_boundary,bytes"`
 }
 
 type metadataRenditionBuild struct {
@@ -62,7 +62,7 @@ type metadataRenditionBuild struct {
 	CapturedArtifactPolicyFingerprint string                        `json:"captured_artifact_policy_fingerprint" db:"captured_artifact_policy_fingerprint"`
 	CapturedArtifactPolicy            jsontext.Value                `json:"captured_artifact_policy" db:"captured_artifact_policy_json,json"`
 	AuthorizationChecksum             string                        `json:"authorization_checksum" db:"authorization_checksum"`
-	ProviderOperationID               string                        `json:"provider_operation_id" db:"provider_operation_id"`
+	ProviderOperationID               string                        `json:"provider_operation_id" db:"provider_operation_id,bytes"`
 	ProviderReceipt                   jsontext.Value                `json:"provider_receipt" db:"provider_receipt_json,json"`
 	EvidenceChecksum                  string                        `json:"evidence_checksum" db:"evidence_checksum"`
 	RenditionChecksum                 string                        `json:"rendition_checksum" db:"rendition_checksum"`
@@ -80,7 +80,7 @@ type metadataRenditionBuild struct {
 type metadataRenditionArtifact struct {
 	Type       string                 `json:"type"`
 	BuildID    string                 `json:"build_id" db:"build_id"`
-	ArtifactID string                 `json:"artifact_id" db:"artifact_id"`
+	ArtifactID string                 `json:"artifact_id" db:"artifact_id,bytes"`
 	Role       string                 `json:"role" db:"role"`
 	BlobHash   string                 `json:"blob_hash" db:"blob_hash"`
 	Size       int64                  `json:"size" db:"size"`
@@ -91,8 +91,8 @@ type metadataRenditionArtifact struct {
 type metadataRenditionUnit struct {
 	Type           string                     `json:"type"`
 	BuildID        string                     `json:"build_id" db:"build_id"`
-	UnitID         string                     `json:"unit_id" db:"unit_id"`
-	EvidenceUnitID string                     `json:"evidence_unit_id" db:"evidence_unit_id"`
+	UnitID         string                     `json:"unit_id" db:"unit_id,bytes"`
+	EvidenceUnitID string                     `json:"evidence_unit_id" db:"evidence_unit_id,bytes"`
 	Order          int                        `json:"order" db:"unit_order"`
 	Checksum       string                     `json:"checksum" db:"checksum"`
 	HeadingPath    []string                   `json:"heading_path" db:"heading_path_json,json"`
@@ -102,8 +102,8 @@ type metadataRenditionUnit struct {
 type metadataRenditionSegment struct {
 	Type      string `json:"type"`
 	BuildID   string `json:"build_id" db:"build_id"`
-	SegmentID string `json:"segment_id" db:"segment_id"`
-	UnitID    string `json:"unit_id" db:"unit_id"`
+	SegmentID string `json:"segment_id" db:"segment_id,bytes"`
+	UnitID    string `json:"unit_id" db:"unit_id,bytes"`
 	Order     int    `json:"order" db:"segment_order"`
 	CharStart int    `json:"char_start" db:"char_start"`
 	CharEnd   int    `json:"char_end" db:"char_end"`
@@ -122,7 +122,7 @@ type metadataRenditionAttachment struct {
 	AttachmentPolicyFingerprint    string `json:"attachment_policy_fingerprint" db:"attachment_policy_fingerprint"`
 	ConsentFingerprint             string `json:"consent_fingerprint" db:"consent_fingerprint"`
 	RenditionDisclosureFingerprint string `json:"rendition_disclosure_fingerprint" db:"rendition_disclosure_fingerprint"`
-	TrustBoundary                  string `json:"trust_boundary" db:"trust_boundary"`
+	TrustBoundary                  string `json:"trust_boundary" db:"trust_boundary,bytes"`
 	AttachedAt                     string `json:"attached_at" db:"attached_at"`
 }
 
@@ -147,7 +147,7 @@ type metadataLexicalGeneration struct {
 
 type metadataCurrentRenditionRoot struct {
 	Type         string                     `json:"type"`
-	ID           string                     `json:"root_id" db:"root_id"`
+	ID           string                     `json:"root_id" db:"root_id,bytes"`
 	Kind         CurrentRenditionRootKind   `json:"root_kind" db:"root_kind"`
 	TargetKind   CurrentRenditionTargetKind `json:"target_kind" db:"target_kind"`
 	TargetID     string                     `json:"target_id" db:"target_id"`
@@ -180,8 +180,8 @@ type metadataProcessingConsentGrant struct {
 	ConsentSetID            string   `json:"consent_set_id" db:"consent_set_id"`
 	VaultID                 string   `json:"vault_id" db:"vault_uid"`
 	ProcessingIncarnationID string   `json:"incarnation_id" db:"incarnation_id"`
-	Principal               string   `json:"principal" db:"principal"`
-	Scope                   string   `json:"scope" db:"scope"`
+	Principal               string   `json:"principal" db:"principal,bytes"`
+	Scope                   string   `json:"scope" db:"scope,bytes"`
 	ProfileFingerprint      string   `json:"profile_fingerprint" db:"profile_fingerprint"`
 	DisclosureFingerprint   string   `json:"disclosure_fingerprint" db:"disclosure_fingerprint"`
 	InputClasses            []string `json:"input_classes" db:"input_classes_json,json"`
@@ -196,8 +196,8 @@ type metadataProcessingConsentRevocation struct {
 	ID                      string `json:"revocation_id" db:"revocation_id"`
 	VaultID                 string `json:"vault_id" db:"vault_uid"`
 	ProcessingIncarnationID string `json:"incarnation_id" db:"incarnation_id"`
-	Principal               string `json:"principal" db:"principal"`
-	Scope                   string `json:"scope" db:"scope"`
+	Principal               string `json:"principal" db:"principal,bytes"`
+	Scope                   string `json:"scope" db:"scope,bytes"`
 	Fence                   int64  `json:"fence" db:"fence"`
 	RevokedAt               string `json:"revoked_at" db:"revoked_at"`
 }
@@ -239,8 +239,8 @@ type metadataRenditionJobWaiter struct {
 	JobID                        string                `json:"job_id" db:"job_id"`
 	ContentVersionID             string                `json:"content_version_id" db:"content_version_id"`
 	ProfileFingerprint           string                `json:"profile_fingerprint" db:"profile_fingerprint"`
-	Principal                    string                `json:"principal" db:"principal"`
-	Scope                        string                `json:"scope" db:"scope"`
+	Principal                    string                `json:"principal" db:"principal,bytes"`
+	Scope                        string                `json:"scope" db:"scope,bytes"`
 	DisclosureFingerprint        string                `json:"disclosure_fingerprint" db:"disclosure_fingerprint"`
 	InputClasses                 []string              `json:"input_classes" db:"input_classes_json,json"`
 	RetainedClasses              []string              `json:"retained_classes" db:"retained_classes_json,json"`
@@ -508,7 +508,7 @@ func importMetadataProcessingConsentGrant(ctx context.Context, tx *sql.Tx, value
 		disclosure_fingerprint,input_classes_json,retained_classes_json,
 		revocation_fence,issued_at,expires_at
 	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, value.ID, value.ConsentSetID, value.VaultID,
-		value.ProcessingIncarnationID, authority.principal, authority.scope,
+		value.ProcessingIncarnationID, storedString(postgres, authority.principal), storedString(postgres, authority.scope),
 		authority.profile, authority.disclosure, authority.inputsJSON,
 		authority.retainedJSON, value.RevocationFence, value.IssuedAt, expires)
 	return err
@@ -528,16 +528,23 @@ func importMetadataProcessingProfile(ctx context.Context, tx *sql.Tx, value meta
 	if err != nil {
 		return err
 	}
+	extraColumns, extraValues := "", ""
+	args := []any{record.Fingerprint, string(record.CanonicalProfile), record.RenditionRequestFingerprint, record.EvidenceLexicalFingerprint, record.RetentionDisclosureFingerprint, record.AttachmentPolicyFingerprint, record.ConsentFingerprint, record.RenditionDisclosureFingerprint, storedString(postgres, record.TrustBoundary)}
+	if postgres {
+		bindings, err := processingProfileBindingsJSON(record.CanonicalProfile)
+		if err != nil {
+			return err
+		}
+		extraColumns, extraValues = ",embedding_bindings_json", ",$10"
+		args = append(args, bindings)
+	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO processing_profiles(
 			profile_fingerprint,canonical_profile,rendition_request_fingerprint,
 			evidence_lexical_fingerprint,retention_disclosure_fingerprint,
 			attachment_policy_fingerprint,consent_fingerprint,
-			rendition_disclosure_fingerprint,trust_boundary
-		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, record.Fingerprint, string(record.CanonicalProfile),
-		record.RenditionRequestFingerprint, record.EvidenceLexicalFingerprint,
-		record.RetentionDisclosureFingerprint, record.AttachmentPolicyFingerprint,
-		record.ConsentFingerprint, record.RenditionDisclosureFingerprint, record.TrustBoundary)
+			rendition_disclosure_fingerprint,trust_boundary`+extraColumns+`
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9`+extraValues+`)`, args...)
 	return err
 }
 
@@ -614,7 +621,7 @@ func importMetadataRenditionJob(ctx context.Context, tx *sql.Tx, value metadataR
 		value.ID, value.VaultID, value.SourceSHA256, value.RenditionRequestFingerprint,
 		value.EvidenceLexicalFingerprint, value.CapturedArtifactPolicyFingerprint,
 		string(value.CapturedArtifactPolicy), value.ExecutionIdentityFingerprint,
-		string(identityJSON), snapshotJSON, value.State, value.Phase, value.ClaimOwner,
+		string(identityJSON), snapshotJSON, value.State, value.Phase, storedOptionalString(postgres, value.ClaimOwner),
 		value.ClaimEpoch, value.LeaseExpiresAt, value.AvailableAt, boolInt(value.ProviderStarted),
 		value.ProviderAttempts,
 		value.ProviderResumeHandle, selectedWaiterID, authorizationGrantID,
@@ -648,7 +655,7 @@ func importMetadataRenditionJobWaiter(ctx context.Context, tx *sql.Tx, value met
 		state,failure_code,
 		attachment_id,created_at,updated_at
 	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`, value.ID, value.JobID, value.ContentVersionID,
-		value.ProfileFingerprint, authority.principal, authority.scope,
+		value.ProfileFingerprint, storedString(postgres, authority.principal), storedString(postgres, authority.scope),
 		authority.disclosure, authority.inputsJSON, authority.retainedJSON,
 		value.AuthorizationGrantID, value.AuthorizationIncarnationID,
 		value.AuthorizationRevocationFence, value.State,

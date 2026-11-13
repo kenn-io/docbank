@@ -74,11 +74,11 @@ func (e watchPresenceEvidence) state(ref string) (present, gone bool) {
 }
 
 // watchPresenceChanges returns marks the scan clears and records.
-func watchPresenceChanges(ctx context.Context, q rowsQuerier, watchName string, scan WatchPresenceScan) (cleared, recorded []string, err error) {
+func watchPresenceChanges(ctx context.Context, q rowsQuerier, watchName string, scan WatchPresenceScan, postgres bool) (cleared, recorded []string, err error) {
 	rows, err := q.QueryContext(ctx, `SELECT ws.source_ref, a.source_ref IS NOT NULL
  FROM watch_sources ws LEFT JOIN watch_source_absences a
  ON a.watch_name=ws.watch_name AND a.source_ref=ws.source_ref
- WHERE ws.watch_name=$1`, watchName)
+ WHERE ws.watch_name=$1`, storedString(postgres, watchName))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -103,7 +103,7 @@ func watchPresenceChanges(ctx context.Context, q rowsQuerier, watchName string, 
 // WatchSourcePresenceChanged reports, without writing, whether
 // ReconcileWatchSourcePresence would change any mark for this scan.
 func (s *Store) WatchSourcePresenceChanged(ctx context.Context, watchName string, scan WatchPresenceScan) (bool, error) {
-	cleared, recorded, err := watchPresenceChanges(ctx, s.db, watchName, scan)
+	cleared, recorded, err := watchPresenceChanges(ctx, s.db, watchName, scan, s.postgresSchema != "")
 	return len(cleared)+len(recorded) != 0, err
 }
 
@@ -111,17 +111,17 @@ func (s *Store) WatchSourcePresenceChanged(ctx context.Context, watchName string
 // archived documents or metadata. Callers must supply a complete inventory.
 func (s *Store) ReconcileWatchSourcePresence(ctx context.Context, watchName string, scan WatchPresenceScan, now time.Time) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		cleared, recorded, err := watchPresenceChanges(ctx, tx, watchName, scan)
+		cleared, recorded, err := watchPresenceChanges(ctx, tx, watchName, scan, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
 		for _, ref := range cleared {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM watch_source_absences WHERE watch_name=$1 AND source_ref=$2`, watchName, ref); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM watch_source_absences WHERE watch_name=$1 AND source_ref=$2`, storedString(s.postgresSchema != "", watchName), storedString(s.postgresSchema != "", ref)); err != nil {
 				return err
 			}
 		}
 		for _, ref := range recorded {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO watch_source_absences(watch_name,source_ref,absent_since) VALUES($1,$2,$3)`, watchName, ref, now.UTC().Format(time.RFC3339)); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO watch_source_absences(watch_name,source_ref,absent_since) VALUES($1,$2,$3)`, storedString(s.postgresSchema != "", watchName), storedString(s.postgresSchema != "", ref), now.UTC().Format(time.RFC3339)); err != nil {
 				return err
 			}
 		}
@@ -156,7 +156,7 @@ func (s *Store) DeleteWatchSourceAbsencesExcept(ctx context.Context, configured 
 		}
 		for _, name := range names {
 			if !slices.Contains(configured, name) {
-				if _, err := tx.ExecContext(ctx, `DELETE FROM watch_source_absences WHERE watch_name=$1`, name); err != nil {
+				if _, err := tx.ExecContext(ctx, `DELETE FROM watch_source_absences WHERE watch_name=$1`, storedString(s.postgresSchema != "", name)); err != nil {
 					return err
 				}
 			}

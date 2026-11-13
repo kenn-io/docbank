@@ -29,3 +29,20 @@ func storedOptionalString(postgres bool, value *string) any {
 	}
 	return storedString(postgres, *value)
 }
+
+// Nullable evidence stays absent, while present strings retain every byte.
+func storedNullableString(postgres bool, value string) any {
+	if value == "" {
+		return nil
+	}
+	return storedString(postgres, value)
+}
+
+// storedStringSQL joins a format-constrained text key to an opaque byte key.
+// Expressions are fixed SQL; caller values use storedString instead.
+func storedStringSQL(postgres bool, expression string) string {
+	if postgres {
+		return "convert_to(" + expression + ",'UTF8')"
+	}
+	return expression
+}

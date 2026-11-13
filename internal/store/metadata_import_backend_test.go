@@ -26,6 +26,46 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
 	seeds := retainedMetadataCatalogSeeds()
+	seeds["NUL watch"] = func(t *testing.T) *Store {
+		t.Helper()
+		return seedNULWatch(t, newTestStore(t))
+	}
+	seeds["NUL package header"] = func(t *testing.T) *Store {
+		t.Helper()
+		return seedNULPackageHeader(t, newTestStore(t))
+	}
+	seeds["NUL preview"] = func(t *testing.T) *Store {
+		t.Helper()
+		return seedNULPreview(t, newTestStore(t))
+	}
+	seeds["NUL MIME"] = func(t *testing.T) *Store {
+		t.Helper()
+		return seedNULMIME(t, newTestStore(t))
+	}
+	seeds["NUL saved query"] = func(t *testing.T) *Store {
+		t.Helper()
+		return seedNULSavedQuery(t, newTestStore(t))
+	}
+	seeds["NUL snapshot"] = func(t *testing.T) *Store {
+		t.Helper()
+		return seedNULSnapshot(t, newTestStore(t))
+	}
+	seeds["NUL processing"] = func(t *testing.T) *Store {
+		t.Helper()
+		return seedNULProcessing(t, newTestStore(t))
+	}
+	seeds["NUL package labels"] = func(t *testing.T) *Store {
+		t.Helper()
+		return seedNULPackageLabels(t, newTestStore(t))
+	}
+	seeds["NUL mailbox state"] = func(t *testing.T) *Store {
+		t.Helper()
+		return seedNULMailbox(t, newTestStore(t))
+	}
+	seeds["NUL XMP receipt"] = func(t *testing.T) *Store {
+		t.Helper()
+		return seedNULXMP(t, newTestStore(t))
+	}
 	seeds["NUL media identities and inputs"] = func(t *testing.T) *Store {
 		t.Helper()
 		s := newTestStore(t)
@@ -50,7 +90,7 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 		require.NoError(t, err)
 		settings, err := (MailboxSettings{DestinationID: s.RootID()}).Canonical()
 		require.NoError(t, err)
-		_, err = s.PublishMailboxTransfer(t.Context(), MailboxTransferPublication{Owner: "owner\x00id", Run: run, Request: MailboxTransferRequest{ArchiveID: "archive\x00id", Reference: "reference", SHA256: source.BlobHash, Size: source.Size, Settings: settings, DestinationID: s.RootID(), Name: "message.eml"}, Email: email.publication})
+		_, err = s.PublishMailboxTransfer(t.Context(), MailboxTransferPublication{Owner: "owner\x00id", Run: run, Request: MailboxTransferRequest{ArchiveID: "archive\x00id", Reference: "reference\x00original", SHA256: source.BlobHash, Size: source.Size, Settings: settings, DestinationID: s.RootID(), Name: "message.eml"}, Email: email.publication})
 		require.NoError(t, err)
 
 		return s
@@ -360,6 +400,16 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 	// Verify these native fixtures actually produce the custom records whose
 	// insertion behavior the round trip must exercise.
 	requiredKinds := map[string][]string{
+		"NUL watch":                       {"watch_source"},
+		"NUL package header":              {"package", "package_volume"},
+		"NUL preview":                     {"visual_preview_generation"},
+		"NUL MIME":                        {"content_version"},
+		"NUL saved query":                 {"saved_query"},
+		"NUL snapshot":                    {"collection_snapshot", "collection_snapshot_member", "collection_snapshot_representation"},
+		"NUL processing":                  {"processing_profile", "rendition_build", "rendition_unit", "processing_consent_grant", "rendition_job"},
+		"NUL package labels":              {"package_label", "package_record", "package_import_receipt"},
+		"NUL mailbox state":               {"mailbox_container", "mailbox_job", "mailbox_occurrence"},
+		"NUL XMP receipt":                 {"photo_change_receipt"},
 		"NUL media identities and inputs": {"media_source", "media_source_version", "media_occurrence", "media_input_artifact", "media_operation"},
 		"NUL archive identities":          {"mailbox_archive", "mailbox_transfer_receipt"},
 
@@ -453,9 +503,68 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, before, after)
 
+			if name == "NUL watch" {
+				for _, store := range []*Store{runtime, recovered} {
+					checkNULWatch(t, store)
+				}
+			}
+			if name == "NUL package header" {
+				for _, store := range []*Store{runtime, recovered} {
+					checkNULPackageHeader(t, store)
+				}
+			}
+			if name == "NUL preview" {
+				for _, store := range []*Store{runtime, recovered} {
+					checkNULPreview(t, store)
+				}
+			}
+			if name == "NUL MIME" {
+				pdfs, err := source.PDFTextTargetsAfter(ctx, fakeHash("e3"), "", 100, 100, true)
+				require.NoError(t, err)
+				require.Len(t, pdfs, 2)
+				emails, err := source.MissingEmailTargetsAfter(ctx, fakeHash("e4"), fakeHash("e5"), "", 100)
+				require.NoError(t, err)
+				require.Len(t, emails, 1)
+				for _, store := range []*Store{runtime, recovered} {
+					got, err := store.PDFTextTargetsAfter(ctx, fakeHash("e3"), "", 100, 100, true)
+					require.NoError(t, err)
+					require.Equal(t, pdfs, got)
+					gotEmails, err := store.MissingEmailTargetsAfter(ctx, fakeHash("e4"), fakeHash("e5"), "", 100)
+					require.NoError(t, err)
+					require.Equal(t, emails, gotEmails)
+				}
+				for _, store := range []*Store{runtime, recovered} {
+					checkNULMIME(t, store)
+				}
+			}
+			if name == "NUL saved query" {
+				for _, store := range []*Store{runtime, recovered} {
+					checkNULSavedQuery(t, store)
+				}
+			}
+			if name == "NUL snapshot" {
+				for _, store := range []*Store{runtime, recovered} {
+					checkNULSnapshot(t, store)
+				}
+			}
+			if name == "NUL package labels" {
+				for _, store := range []*Store{runtime, recovered} {
+					checkNULPackageLabels(t, store)
+				}
+			}
+			if name == "NUL mailbox state" {
+				for _, store := range []*Store{runtime, recovered} {
+					checkNULMailbox(t, store)
+				}
+			}
+			if name == "NUL XMP receipt" {
+				for _, store := range []*Store{runtime, recovered} {
+					checkNULXMP(t, store)
+				}
+			}
 			if name == "NUL archive identities" {
 				for _, store := range []*Store{runtime, recovered} {
-					receipt, err := store.MailboxTransfer(ctx, "owner\x00id", "archive\x00id", "reference")
+					receipt, err := store.MailboxTransfer(ctx, "owner\x00id", "archive\x00id", "reference\x00original")
 					require.NoError(t, err)
 					require.Equal(t, "archive\x00id", receipt.Request.ArchiveID)
 					require.NoError(t, store.RegisterMailboxArchive(ctx, MailboxArchive{ID: "archive\x00id", Owner: "owner\x00id", Description: "description"}))

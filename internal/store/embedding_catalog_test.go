@@ -1530,12 +1530,12 @@ func TestEmbeddingValidationPreservesReadErrors(t *testing.T) {
 	err = s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		readErr := requireEmbeddingWorkerLeaseTx(ctx, tx, claim.AttemptID, claim.Epoch, work.InputGeneration.ID, at)
+		readErr := requireEmbeddingWorkerLeaseTx(ctx, tx, claim.AttemptID, claim.Epoch, work.InputGeneration.ID, at, s.postgresSchema != "")
 		require.ErrorIs(t, readErr, context.Canceled)
-		classified := validateEmbeddingWorkTx(ctx, tx, s.vaultID, claim, work, at)
+		classified := validateEmbeddingWorkTx(ctx, tx, s.vaultID, claim, work, at, s.postgresSchema != "")
 		require.NotErrorIs(t, classified, ErrEmbeddingJobFenced)
 		require.ErrorIs(t, classified, context.Canceled)
-		require.NoError(t, validateEmbeddingWorkTx(t.Context(), tx, s.vaultID, claim, work, at))
+		require.NoError(t, validateEmbeddingWorkTx(t.Context(), tx, s.vaultID, claim, work, at, s.postgresSchema != ""))
 		return nil
 	})
 	require.NoError(t, err)
@@ -2229,7 +2229,7 @@ func checkEmbeddingReconciliationRestoresPendingImageGenerationInMixedProfile(t 
 	t.Parallel()
 	f := seedImageEmbeddingCatalog(t, open(t))
 	require.NoError(t, f.s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return ensureProcessingProfileTx(t.Context(), tx, f.request.Profile)
+		return ensureProcessingProfileTx(t.Context(), tx, f.request.Profile, f.s.postgresSchema != "")
 	}))
 	var secondVersion string
 	require.NoError(t, f.s.db.QueryRowContext(t.Context(), `SELECT version_id FROM content_versions WHERE blob_hash=$1 ORDER BY version_id LIMIT 1`, catalogSourceHash).Scan(&secondVersion))

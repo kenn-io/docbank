@@ -24,6 +24,10 @@ Instructions for autonomous coding agents working in this repository.
   `db:"column,bytes"` in the metadata codec, and explicit native bind conversion.
   Keep SQLite acceptance and canonical metadata bytes unchanged; qualify native
   reads, comparisons and writes along with restore.
+- Keep opaque JSON evidence unchanged. PostgreSQL JSONB operators can reject a
+  record because an unrelated string contains NUL. Derive the fields SQL needs
+  in Go in the native write transaction, and rebuild them through import and
+  fixture copying. Keep their indexes and query predicates aligned.
 - Metadata-transfer tests populate every custom import hook with native records.
   Assert expected derived rows exist before comparing backend projections;
   equality between empty lists does not qualify their recovery.

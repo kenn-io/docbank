@@ -45,8 +45,20 @@ func checkBackendSchemaPostgres(t *testing.T) {
 	assert.Equal(t, backendColumn{Kind: "text", Required: true}, right["vault_metadata"].Columns["schema_fingerprint"])
 	delete(left["vault_metadata"].Columns, "schema_version")
 	delete(right["vault_metadata"].Columns, "schema_fingerprint")
+	assert.Equal(t, backendColumn{Kind: "text", Required: true}, right["collection_snapshot_members"].Columns["source_collection_ids_json"])
+	delete(right["collection_snapshot_members"].Columns, "source_collection_ids_json")
 	assert.Equal(t, backendColumn{Kind: "text"}, right["photo_change_receipts"].Columns["face_version_id"])
 	delete(right["photo_change_receipts"].Columns, "face_version_id")
+	assert.Equal(t, backendColumn{Kind: "text", Required: true}, right["photo_change_receipts"].Columns["query_json"])
+	delete(right["photo_change_receipts"].Columns, "query_json")
+	assert.Equal(t, backendColumn{Kind: "text", Required: true}, right["mailbox_jobs"].Columns["query_json"])
+	delete(right["mailbox_jobs"].Columns, "query_json")
+	assert.Equal(t, backendColumn{Kind: "text", Required: true}, right["processing_profiles"].Columns["embedding_bindings_json"])
+	delete(right["processing_profiles"].Columns, "embedding_bindings_json")
+	assert.Equal(t, backendColumn{Kind: "integer", Required: true}, right["saved_queries"].Columns["photo_scope"])
+	delete(right["saved_queries"].Columns, "photo_scope")
+	assert.Equal(t, backendColumn{Kind: "text", Required: true}, right["package_import_receipts"].Columns["query_json"])
+	delete(right["package_import_receipts"].Columns, "query_json")
 	assert.Equal(t, backendIndex{Columns: []string{"<expression>", "receipt_id"}, Partial: true}, left["photo_change_receipts"].Indexes["photo_change_receipts_face_version"])
 	assert.Equal(t, backendIndex{Columns: []string{"face_version_id", "receipt_id"}, Partial: true}, right["photo_change_receipts"].Indexes["photo_change_receipts_face_version"])
 	delete(left["photo_change_receipts"].Indexes, "photo_change_receipts_face_version")
@@ -359,7 +371,11 @@ func describePostgresIndexes(t *testing.T, s *Store, table string) map[string]ba
 // Accepted UTF-8 evidence and names need byte storage on PostgreSQL. This list
 // makes those intentional schema differences visible to the drift check.
 var backendByteStringColumns = map[string][]string{
-	"mailbox_transfer_receipts":  {"archive_id"},
+	"mailbox_containers":         {"id", "owner"},
+	"mailbox_chunks":             {"container_id"},
+	"mailbox_jobs":               {"id", "owner", "container_id"},
+	"mailbox_occurrences":        {"job_id"},
+	"mailbox_transfer_receipts":  {"archive_id", "source_ref"},
 	"media_input_artifacts":      {"source_id", "source_version_id", "occurrence_id", "input_id", "origin", "provider", "language"},
 	"media_source_versions":      {"source_id", "source_version_id"},
 	"person_document_assertions": {"note"},
@@ -375,9 +391,42 @@ var backendByteStringColumns = map[string][]string{
 	"person_external_identities": {"display_name_snapshot"},
 	"person_match_candidates":    {"display_name"},
 	"custodian_assignments":      {"raw_label", "raw_label_folded", "source_ref"},
-	"rendition_lexical_segments": {"text"},
-	"rendition_lexical_index":    {"text"},
-	"extracted_text":             {"extractor", "error", "text"},
-	"media_occurrences":          {"caller_principal", "caller_occurrence_ref", "caller_revision", "caller_filename", "caller_person_ref", "speaker_label", "source_id", "source_version_id", "occurrence_id"},
-	"media_operations":           {"principal", "source_id"},
+
+	"extracted_text":                      {"extractor", "error", "text"},
+	"media_occurrences":                   {"caller_principal", "caller_occurrence_ref", "caller_revision", "caller_filename", "caller_person_ref", "speaker_label", "source_id", "source_version_id", "occurrence_id"},
+	"media_operations":                    {"principal", "source_id"},
+	"processing_consent_grants":           {"principal", "scope"},
+	"processing_consent_revocations":      {"principal", "scope"},
+	"rendition_job_waiters":               {"principal", "scope"},
+	"rendition_jobs":                      {"claim_owner"},
+	"embedding_jobs":                      {"principal", "scope", "claim_owner"},
+	"collection_snapshot_members":         {"occurrence_id", "family_id", "parent_occurrence_id", "display_name", "document_kind"},
+	"collection_snapshot_representations": {"occurrence_id", "role", "media_type"},
+	"packages":                            {"party_label", "relation", "produced_on"},
+	"package_volumes":                     {"volume_name", "declared_root", "mapped_root"},
+	"package_records":                     {"load_file", "occurrence_id"},
+	"package_labels":                      {"label_set", "label", "occurrence_id", "artifact_id"},
+	"package_preflights":                  {"owner", "source_ref", "source_locator"},
+	"package_import_jobs":                 {"owner", "claim_owner"},
+	"processing_profiles":                 {"trust_boundary"},
+	"rendition_attachments":               {"trust_boundary"},
+	"rendition_builds":                    {"provider_operation_id"},
+	"rendition_artifacts":                 {"artifact_id"},
+	"rendition_units":                     {"unit_id", "evidence_unit_id"},
+	"rendition_lexical_segments":          {"text", "segment_id", "unit_id"},
+	"rendition_lexical_index":             {"text", "segment_id"},
+	"embedding_vector_spaces":             {"provider_descriptor", "provider_revision", "compatibility_id", "document_formatter", "query_formatter"},
+	"embedding_generation_inputs":         {"input_id"},
+	"embedding_vector_rows":               {"row_id", "input_id"},
+	"visual_preview_generations":          {"failure_detail"},
+	"bates_page_labels":                   {"occurrence_id"},
+	"bates_artifact_pages":                {"occurrence_id"},
+	"package_import_receipts":             {"occurrence_id"},
+	"watch_sources":                       {"watch_name", "source_ref"},
+	"watch_source_absences":               {"watch_name", "source_ref"},
+	"current_rendition_roots":             {"root_id"},
+	"document_events":                     {"source_key", "source_kind_raw", "raw_value", "zone_text", "evidence_id"},
+	"document_event_actors":               {"display_name", "address", "evidence_id"},
+	"document_event_primaries":            {"reason"},
+	"content_versions":                    {"mime_type"},
 }

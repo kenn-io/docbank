@@ -97,7 +97,7 @@ func (s *Store) sealCollectionSnapshotStreamTx(ctx context.Context, tx *sql.Tx, 
 		if err := validateSnapshotMembersTx(ctx, tx, SnapshotSealRequest{Members: batch}, s.postgresSchema != ""); err != nil {
 			return err
 		}
-		if err := insertCollectionSnapshotMembersTx(ctx, tx, header.SnapshotID, batch); err != nil {
+		if err := insertCollectionSnapshotMembersTx(ctx, tx, header.SnapshotID, batch, s.postgresSchema != ""); err != nil {
 			return err
 		}
 		batch = batch[:0]

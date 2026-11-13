@@ -24,6 +24,7 @@ type backendSuite struct {
 var backendSuites = []backendSuite{
 	{name: "metadata-import", postgres: "native operations", scope: "Owner-only logical import into fresh PostgreSQL, SQLite round trips and derived-state recovery; excludes blob-byte verification, physical pack recovery and public opening.", scenarios: []backendScenario{
 		{"MetadataImportCatalogs", nil, checkMetadataImportCatalogsPostgres},
+		{"RetainedStringNativeWrites", nil, checkRetainedStringNativeWritesPostgres},
 		{"MetadataImportRollback", nil, checkMetadataImportRollbackPostgres},
 		{"MetadataImportAdmission", nil, checkMetadataImportAdmissionPostgres},
 		{"MetadataImportKeepsFreshConsent", nil, checkMetadataImportKeepsFreshConsentPostgres},

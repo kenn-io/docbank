@@ -137,7 +137,7 @@ func mailboxTransferHead(ctx context.Context, q metadataQuerier, owner, archive,
 		JOIN mailbox_archives a ON a.id=r.archive_id
 		JOIN content_versions v ON v.version_id=r.target_version_id
 		WHERE r.archive_id=$1 AND r.source_ref=$2 AND a.owner=$3
-		ORDER BY v.node_revision DESC LIMIT 1`, storedString(postgres, archive), reference, storedString(postgres, owner)).Scan(&id)
+		ORDER BY v.node_revision DESC LIMIT 1`, storedString(postgres, archive), storedString(postgres, reference), storedString(postgres, owner)).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MailboxTransferReceipt{}, ErrNotFound
 	}
@@ -282,6 +282,6 @@ func insertMailboxTransferReceipt(ctx context.Context, tx *sql.Tx, r MailboxTran
 	if len(b) > 1<<20 {
 		return ErrMailboxLimit
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_transfer_receipts(id,archive_id,source_ref,target_version_id,document_publication_id,receipt_json) VALUES($1,$2,$3,$4,$5,$6)`, r.ID, storedString(postgres, r.Request.ArchiveID), r.Request.Reference, r.Target.VersionID, r.DocumentPublicationID, b)
+	_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_transfer_receipts(id,archive_id,source_ref,target_version_id,document_publication_id,receipt_json) VALUES($1,$2,$3,$4,$5,$6)`, r.ID, storedString(postgres, r.Request.ArchiveID), storedString(postgres, r.Request.Reference), r.Target.VersionID, r.DocumentPublicationID, b)
 	return err
 }

@@ -58,7 +58,7 @@ func (s *Store) PackageMembers(ctx context.Context, packageID string, afterOrdin
 	if !snapshotID.Valid || snapshotID.String == "" {
 		return nil, nil
 	}
-	members, err := loadSnapshotMembersTx(ctx, tx, snapshotID.String, afterOrdinal, limit)
+	members, err := loadSnapshotMembersTx(ctx, tx, snapshotID.String, afterOrdinal, limit, s.postgresSchema != "")
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +107,7 @@ func (s *Store) PackageRecordByOccurrence(ctx context.Context, packageID, occurr
 	}
 	var rowID string
 	err := s.db.QueryRowContext(ctx, `SELECT row_id FROM package_records WHERE package_id=$1 AND occurrence_id=$2`,
-		packageID, occurrenceID).Scan(&rowID)
+		packageID, storedString(s.postgresSchema != "", occurrenceID)).Scan(&rowID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PackageRecordRow{}, ErrNotFound
 	}
@@ -126,7 +126,7 @@ func (s *Store) PackageLabels(ctx context.Context, packageID, occurrenceID strin
 		occurrence_id,content_version_id,COALESCE(artifact_id,''),COALESCE(page_number,0),page_state,endpoint
 		FROM package_labels WHERE package_id=$1 AND occurrence_id=$2
 		ORDER BY package_id,provenance,label_set,occurrence_id,COALESCE(artifact_id,''),COALESCE(page_number,0),endpoint`,
-		packageID, occurrenceID)
+		packageID, storedString(s.postgresSchema != "", occurrenceID))
 	if err != nil {
 		return nil, err
 	}
@@ -236,7 +236,7 @@ func (s *Store) PackageLabelCandidates(ctx context.Context, label, packageID, la
 		AND ($6='' OR provenance=$7) AND ($8='' OR (package_id,provenance,label_set,occurrence_id,
 		COALESCE(artifact_id,''),COALESCE(page_number,0),endpoint)>($9,$10,$11,$12,$13,$14,$15))
 		ORDER BY package_id,provenance,label_set,occurrence_id,COALESCE(artifact_id,''),COALESCE(page_number,0),endpoint
-		LIMIT $16`, label, packageID, packageID, labelSet, labelSet, provenance, provenance,
+		LIMIT $16`, storedString(s.postgresSchema != "", label), packageID, packageID, labelSet, storedString(s.postgresSchema != "", labelSet), provenance, provenance,
 		after, cursor.PackageID, cursor.Provenance, cursor.LabelSet, cursor.OccurrenceID,
 		cursor.ArtifactID, cursor.PageNumber, cursor.Endpoint, limit+1)
 	if err != nil {

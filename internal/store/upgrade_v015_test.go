@@ -573,7 +573,7 @@ func TestUpgradeReleasedV0150KeepsFailedEmbeddingJobs(t *testing.T) {
 			versions := seedRenditionCatalogVersions(t, legacy)
 			profile := embeddingCatalogProfile(t)
 			require.NoError(t, legacy.withStorageTx(ctx, func(tx *sql.Tx) error {
-				return ensureProcessingProfileTx(ctx, tx, profile)
+				return ensureProcessingProfileTx(ctx, tx, profile, legacy.postgresSchema != "")
 			}))
 			request := embeddingJobTestRequest(t, legacy, versions[0], profile, "upgrade-failed")
 			_, err := legacy.EnqueueEmbeddingJob(ctx, request)

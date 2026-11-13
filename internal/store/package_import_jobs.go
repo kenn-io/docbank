@@ -91,9 +91,9 @@ func loadPackageImportJobTx(ctx context.Context, q metadataQuerier, id string) (
 	return job, err
 }
 
-func packageImportJobByOperationTx(ctx context.Context, q metadataQuerier, owner, operationID string) (PackageImportJob, error) {
+func packageImportJobByOperationTx(ctx context.Context, q metadataQuerier, owner, operationID string, postgres bool) (PackageImportJob, error) {
 	var id string
-	err := q.QueryRowContext(ctx, `SELECT id FROM package_import_jobs WHERE owner=$1 AND operation_id=$2`, owner, operationID).Scan(&id)
+	err := q.QueryRowContext(ctx, `SELECT id FROM package_import_jobs WHERE owner=$1 AND operation_id=$2`, storedString(postgres, owner), operationID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PackageImportJob{}, ErrNotFound
 	}
@@ -122,7 +122,7 @@ func (s *Store) AdmitPackageImport(ctx context.Context, run IngestRun, pkg Packa
 	}
 	var result PackageImportJob
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		stored, err := packageImportJobByOperationTx(ctx, tx, request.Owner, request.OperationID)
+		stored, err := packageImportJobByOperationTx(ctx, tx, request.Owner, request.OperationID, s.postgresSchema != "")
 		// A racing retry arrives with a freshly allocated package ID, so the
 		// package identity is deliberately not part of the replay comparison.
 		replayed, found, err := replayReceipt(stored, err, stored.PreflightID == request.PreflightID &&
@@ -137,7 +137,7 @@ func (s *Store) AdmitPackageImport(ctx context.Context, run IngestRun, pkg Packa
 			mapping_sha256,mapping_json,manifest_sha256,
 			manifest_blob_sha256,blocking FROM package_preflights
 			WHERE preflight_id=$1 AND owner=$2 AND expires_at>$3`,
-			request.PreflightID, request.Owner, nowRFC3339()).Scan(&sourceKind, &sourceLocator,
+			request.PreflightID, storedString(s.postgresSchema != "", request.Owner), nowRFC3339()).Scan(&sourceKind, &sourceLocator,
 			&profile, &profileJSON, &mapping, &mappingJSON, &manifest, &manifestBlob, &blocking)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrPackageConflict
@@ -180,18 +180,18 @@ func (s *Store) AdmitPackageImport(ctx context.Context, run IngestRun, pkg Packa
 			mapping_sha256,mapping_json,manifest_sha256,manifest_blob_sha256,
 			predecessor_package_id,relation,ingest_id,export_plan_id,state,produced_on,created_at
 		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`, pkg.PackageID, nil, pkg.Direction,
-			pkg.PackageName, pkg.PartyLabel, pkg.ProfileSHA256, pkg.ProfileJSON,
+			pkg.PackageName, storedString(s.postgresSchema != "", pkg.PartyLabel), pkg.ProfileSHA256, pkg.ProfileJSON,
 			pkg.MappingSHA256, pkg.MappingJSON, pkg.ManifestSHA256, pkg.ManifestBlobSHA256,
-			nullableString(pkg.PredecessorPackageID), pkg.Relation, pkg.IngestID, nil,
-			pkg.State, nullableString(pkg.ProducedOn), now)
+			nullableString(pkg.PredecessorPackageID), storedString(s.postgresSchema != "", pkg.Relation), pkg.IngestID, nil,
+			pkg.State, storedNullableString(s.postgresSchema != "", pkg.ProducedOn), now)
 		if err != nil {
 			return err
 		}
 		for _, volume := range pkg.Volumes {
 			_, err = tx.ExecContext(ctx, `INSERT INTO package_volumes(
 				package_id,ordinal,volume_name,declared_root,mapped_root,resolved_root_sha256
-			) VALUES($1,$2,$3,$4,$5,$6)`, pkg.PackageID, volume.Ordinal, volume.VolumeName,
-				volume.DeclaredRoot, volume.MappedRoot, volume.ResolvedRootSHA256)
+			) VALUES($1,$2,$3,$4,$5,$6)`, pkg.PackageID, volume.Ordinal, storedString(s.postgresSchema != "", volume.VolumeName),
+				storedString(s.postgresSchema != "", volume.DeclaredRoot), storedString(s.postgresSchema != "", volume.MappedRoot), volume.ResolvedRootSHA256)
 			if err != nil {
 				return err
 			}
@@ -199,7 +199,7 @@ func (s *Store) AdmitPackageImport(ctx context.Context, run IngestRun, pkg Packa
 		_, err = tx.ExecContext(ctx, `INSERT INTO package_import_jobs(
 			id,owner,operation_id,request_sha256,preflight_id,package_id,
 			state,epoch,token,job_json,created_at,updated_at
-		) VALUES($1,$2,$3,$4,$5,$6,'queued',0,'',$7,$8,$9)`, request.ID, request.Owner, request.OperationID,
+		) VALUES($1,$2,$3,$4,$5,$6,'queued',0,'',$7,$8,$9)`, request.ID, storedString(s.postgresSchema != "", request.Owner), request.OperationID,
 			request.RequestSHA256, request.PreflightID, pkg.PackageID, request.JobJSON, now, now)
 		if err != nil {
 			return err
@@ -214,7 +214,7 @@ func (s *Store) PackageImportJob(ctx context.Context, owner, operationID string)
 	if owner == "" || validateUUIDv4(operationID) != nil {
 		return PackageImportJob{}, ErrPackageConflict
 	}
-	return packageImportJobByOperationTx(ctx, s.db, owner, operationID)
+	return packageImportJobByOperationTx(ctx, s.db, owner, operationID, s.postgresSchema != "")
 }
 
 // PackageImportProgress reports import receipts without exposing private source
@@ -239,11 +239,14 @@ func (s *Store) PackageImportProgress(ctx context.Context, packageID string) (Pa
 	hasGaps := `instr(CAST(r.receipt_json AS TEXT),'"gaps":[')>0 AND instr(CAST(r.receipt_json AS TEXT),'"gaps":[]')=0`
 	gapCount := `json_array_length(CAST(r.receipt_json AS TEXT),'$.gaps')`
 	gapRows := `json_each(CAST(r.receipt_json AS TEXT),'$.gaps') j`
+	gapValue, recordGap := "CAST(j.value AS TEXT)", "r.record_key"
 	if s.postgresSchema != "" {
-		hasGaps = `strpos(convert_from(r.receipt_json,'UTF8'),'"gaps":[')>0 AND strpos(convert_from(r.receipt_json,'UTF8'),'"gaps":[]')=0`
-		gapArray := `convert_from(r.receipt_json,'UTF8')::jsonb -> 'gaps'`
-		gapCount = `jsonb_array_length(` + gapArray + `)`
-		gapRows = `jsonb_array_elements_text(CASE WHEN ` + hasGaps + ` THEN ` + gapArray + ` ELSE '[]'::jsonb END) WITH ORDINALITY AS j(value,key)`
+		hasGaps = "(r.query_json::jsonb ->> 'has_gaps')::boolean"
+		gapArray := `r.query_json::jsonb -> 'gaps'`
+		gapCount = "jsonb_array_length(" + gapArray + ")"
+		gapRows = "jsonb_array_elements_text(" + gapArray + ") WITH ORDINALITY AS j(value,key)"
+		gapValue = "decode(j.value,'base64')"
+		recordGap = "convert_to(r.record_key,'UTF8')"
 	}
 	progress := PackageImportProgress{Gaps: []string{}}
 	err = tx.QueryRowContext(ctx, `SELECT
@@ -255,11 +258,11 @@ func (s *Store) PackageImportProgress(ctx context.Context, packageID string) (Pa
 		return PackageImportProgress{}, fmt.Errorf("reading package import progress: %w", err)
 	}
 	rows, err := tx.QueryContext(ctx, `WITH package_gaps(record_key,gap_ordinal,gap) AS (
-		SELECT r.record_key,CAST(j.key AS INTEGER),CAST(j.value AS TEXT)
+		SELECT r.record_key,CAST(j.key AS INTEGER),`+gapValue+`
 		FROM package_import_receipts r JOIN `+gapRows+` ON TRUE
 		WHERE r.package_id=$1 AND `+hasGaps+`
 		UNION ALL
-		SELECT r.record_key,0,r.record_key FROM package_import_receipts r
+		SELECT r.record_key,0,`+recordGap+` FROM package_import_receipts r
 		WHERE r.package_id=$1 AND r.state IN ('rejected','skipped') AND NOT (`+hasGaps+`)
 	)
 	SELECT gap FROM package_gaps ORDER BY record_key,gap_ordinal LIMIT 100`, packageID)
@@ -309,7 +312,7 @@ func (s *Store) ClaimPackageImportJob(ctx context.Context, worker string, lease 
 		until := time.Now().UTC().Add(lease).Format(timestampLayout)
 		update, err := tx.ExecContext(ctx, `UPDATE package_import_jobs SET state='running',
 			claim_owner=$1,lease_expires_at=$2,epoch=epoch+1,token=$3,updated_at=$4
-			WHERE id=$5 AND state=$6 AND epoch=$7`, worker, until, token, now, id, previous.State, previous.Epoch)
+			WHERE id=$5 AND state=$6 AND epoch=$7`, storedString(s.postgresSchema != "", worker), until, token, now, id, previous.State, previous.Epoch)
 		if err != nil {
 			return err
 		}
@@ -463,7 +466,7 @@ func (s *Store) CancelPackageImportJob(ctx context.Context, owner, operationID s
 	var result PackageImportJob
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		result, err = packageImportJobByOperationTx(ctx, tx, owner, operationID)
+		result, err = packageImportJobByOperationTx(ctx, tx, owner, operationID, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
@@ -503,7 +506,7 @@ func (s *Store) CancelPackageImportJob(ctx context.Context, owner, operationID s
 // one owner. A revoked browser session must not keep importing its files.
 func (s *Store) RevokePackageImportOwner(ctx context.Context, owner string) error {
 	rows, err := s.db.QueryContext(ctx, `SELECT operation_id FROM package_import_jobs
-		WHERE owner=$1 AND state IN ('queued','running')`, owner)
+		WHERE owner=$1 AND state IN ('queued','running')`, storedString(s.postgresSchema != "", owner))
 	if err != nil {
 		return err
 	}

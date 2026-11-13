@@ -553,7 +553,7 @@ GRANT INSERT, DELETE, UPDATE(root_kind, target_kind, target_id, fencing_token,
 GRANT INSERT, DELETE, UPDATE(name, revision, assignment_count) ON documents.tags TO docbank_runtime;
 GRANT INSERT, DELETE ON documents.node_tags TO docbank_runtime;
 GRANT INSERT ON documents.batch_tag_receipts TO docbank_runtime;
-GRANT INSERT, DELETE, UPDATE(name, description, payload, fingerprint, revision, updated_at)
+GRANT INSERT, DELETE, UPDATE(name, description, payload, fingerprint, revision, updated_at, photo_scope)
     ON documents.saved_queries TO docbank_runtime;
 GRANT UPDATE(binding_epoch) ON documents.document_people_state TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(display_name, display_name_folded, state, revision,
@@ -923,67 +923,84 @@ cannot authorize a provider call until the operator grants consent again.
 `VerifyAudit` independently replays the restored history and can compare
 previously recorded evidence on either backend.
 
-Provenance strings, person names and assertion notes, archive descriptions,
-remote source provider/scope values, extracted text, technical photo labels and
-caller-supplied occurrence attributes retain U+0000 across logical transfer and
-native operations.
-PostgreSQL stores unrestricted provenance strings, person names and retained
-name snapshots, extracted text/error strings and retained rendition text, and
-caller-supplied media occurrence attributes as `BYTEA`. The metadata codec marks these fields with
-`db:"column,bytes"`; its existing import plan binds raw bytes on PostgreSQL.
-Native writes use explicit bindings. Shared readers scan the columns back into
-strings, and SQLite retains its released `TEXT` columns. Wire strings,
-provenance identities, metadata exports and audit records keep their original
-bytes. JSON documents remain JSON text with escaped control characters.
+#### String storage across backends
 
-Source classification inspects only the nine-byte `embedded:` prefix,
-case-insensitively, without decoding the full kind into PostgreSQL text. Exact
-source-path lookups bind bytes directly against the existing index. JSON receipt
-paths use separate text parameters from binary path lookups.
+Accepted strings keep every UTF-8 byte, including U+0000. PostgreSQL `TEXT`
+cannot hold U+0000. Store unrestricted strings and their references as `BYTEA`
+there, and keep SQLite's released `TEXT` columns. The metadata codec marks
+these fields with `db:"column,bytes"`. Native statements bind bytes explicitly;
+shared readers scan them back into Go strings. Wire values, provenance
+identities, metadata exports, canonical receipts and audit bytes stay unchanged.
 
-Person-name ordering and cursors compare the original folded-name bytes.
-NUL-free names retain the PostgreSQL Unicode word-prefix regexp. For a name or
-prefix containing NUL, the query finds exact byte occurrences and checks the
-preceding Unicode rune; it never decodes a NUL-bearing value as PostgreSQL text
-or filters a bounded page after reading it. Recent-name exclusions use a native
-`bytea[]` parameter. These differences add no database round trip or storage
-escaping layer.
+Choose storage from the owning validator, not a column's name. An `id` may be
+an opaque caller value. These groups describe the boundary:
 
-PostgreSQL also stores published custodian labels and technical photo string
-projections as bytes. Rebuilding those projections preserves the original source
-metadata. Authored photo fields keep their existing validation.
+| Values | Storage rule and owner |
+| --- | --- |
+| UUIDs, digests, timestamps, closed vocabulary | Keep text when the owning format or vocabulary check excludes NUL. Empty optional values keep their existing nullability. |
+| Node names, tags, saved-query names/descriptions, push references, authored photo text, photo suggestions | Keep text. Their name, control-character, path or XML validators already exclude NUL. |
+| Provenance, media and mailbox identities, owners and source references | Use bytes. Bounded UTF-8 validation does not forbid NUL. Matching references and cursor parameters use the same bytes. |
+| Person names, retained labels, notes, extracted text and technical photo strings | Use bytes, including derived name folds and copied labels. Rebuilding a projection keeps the original evidence. |
+| Snapshot occurrence/family keys, display names, representation roles and media types; package labels, volume names and declared roots | Use bytes. Snapshot and package validators enforce relationships and bounds without restricting these strings to ASCII. |
+| Processing subjects/scopes, worker owners, trust boundaries, provider operation IDs, rendition artifact/unit/segment keys and retention-root names | Use bytes. Format-constrained build IDs and resume handles remain text. |
+| Embedding descriptor labels and retained vector/input keys | Use bytes. Vector-space fingerprints and fixed metric/encoding names remain text. |
+| Content MIME strings and preview failure details | Use bytes. MIME strings returned to callers and compared for exact identity retain their full value. SQL worker predicates keep SQLite's ASCII MIME matching, including its substring behavior around NUL. |
+| Document-event source keys, raw date/zone text, evidence references, actor names/addresses and primary reasons | Use bytes for native event publication. Logical transfer omits these rebuildable event projections. |
+| Local physical placement and transient execution state | Follow their owning storage or worker contract. Logical transfer does not copy physical placements or revive process authority. |
 
-Archive registration needs only `SELECT` and `INSERT` on `mailbox_archives`:
+`backendByteStringColumns` records intentional type differences for the installed
+schema check and fixture copier. It is test-only. Production uses the existing
+Store, explicit query bindings and metadata codec; it does not inspect a column
+registry or rewrite SQL at runtime.
+
+Source classification inspects the nine-byte `embedded:` prefix
+case-insensitively. Indexed source lookups and cursors compare raw bytes.
+Person-name ordering compares folded-name bytes. NUL-free names use the
+PostgreSQL Unicode word-prefix regexp. NUL-bearing names or prefixes use exact
+byte occurrences and the preceding Unicode rune, without filtering a bounded
+page after reading it. Recent-name exclusions use a native `bytea[]` parameter.
+
+#### Querying opaque JSON
+
+A valid JSON receipt can contain an escaped NUL in a field unrelated to a
+lookup. PostgreSQL's JSONB operators decode strings throughout that receipt and
+reject it. Keep the complete JSON evidence unchanged and derive only the fields
+SQL needs in Go, within the same native write transaction. Import and fixture
+copying rebuild those fields from the evidence:
+
+| Evidence | PostgreSQL query fields |
+| --- | --- |
+| Photo receipts | `face_version_id` and `query_json` hold structural file/version/node references, representative ranks and XMP token/outside-source lookup data. The existing partial indexes use those fields. Readers decode the complete receipt in Go. |
+| Mailbox jobs | `query_json` holds the start time, collection ID and referenced tag IDs used for paging, collection export and tag retention. |
+| Processing profiles | `embedding_bindings_json` holds only binding names, input kinds and descriptor fingerprints used by embedding admission and processing target discovery. |
+| Saved queries | `photo_scope` records whether the validated query explicitly selects only photos/videos. Listing reads it without parsing the full search text in SQL. |
+| Snapshot members | `source_collection_ids_json` holds source-collection UUIDs for the Bates custodian lookup, independent of frozen names and fields. |
+| Received-package receipts | `query_json` holds gap and retained-representation references used by progress and cleanup. Unrelated envelope fields do not affect those references. |
+| Media operations and inputs | Existing receipt source-version/state columns and the quoted input identity support replay, reads and revocation. |
+
+Unrestricted values inside a query projection use JSON's standard byte-slice
+encoding; SQL decodes them to bytes for comparison or return. These projections
+are excluded from logical exports and have no authority independent of the
+original receipt. Native writes populate them in the existing insert/update;
+they add no database round trip. SQLite keeps its receipt expressions and
+indexes. Batched media-version requests hex-encode opaque keys only in the
+PostgreSQL query parameter, and SQL compares decoded bytes against indexed
+columns. No stored or exported identity acquires an escaping format.
+
+Mailbox native operations use these runtime grants in addition to the shared
+read grants:
 
 ```sql
-GRANT SELECT, INSERT ON documents.mailbox_archives TO docbank_runtime;
+GRANT INSERT ON documents.mailbox_archives, documents.mailbox_chunks,
+    documents.mailbox_transfer_receipts TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(state, manifest_sha256)
+    ON documents.mailbox_containers TO docbank_runtime;
+GRANT INSERT, UPDATE(state, claim, job_json, query_json)
+    ON documents.mailbox_jobs TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(receipt_id, occurrence_json)
+    ON documents.mailbox_occurrences TO docbank_runtime;
 ```
 
-Face-decision receipts can contain NUL-bearing candidate names. PostgreSQL's
-JSON operators decode strings throughout a record and cannot inspect those
-receipts. Native writes and import therefore populate an indexed
-`photo_change_receipts.face_version_id` lookup in Go. Receipt readers use that
-lookup and the shared Go decoder. The lookup is derived, stays outside logical
-exports, and does not change receipt bytes. Face-protection reads keep one
-query, including candidate and receipt references.
-
-Media source, source-version, occurrence and input identifiers retain their raw
-UTF-8 bytes in PostgreSQL, including NUL. Input origin, provider and language,
-plus archive identifiers, owners and archive references in transfer receipts use the same byte
-bindings. Scans and logical exports retain their existing string format.
-
-Media receipts keep their original JSON bytes. PostgreSQL stores their selected
-source version and operation state separately, populated by the shared write and
-import helper and updated with the processing receipt. Input artifacts also keep
-the JSON-quoted input identity needed to revoke dependent renditions without
-converting a NUL-bearing value to PostgreSQL text. These derived lookup columns
-are excluded from logical exports and rebuilt during import.
-
-Batched media-version reads hex-encode identifiers only in the PostgreSQL query
-parameter. SQL decodes those parameters before comparing the indexed byte
-columns. SQLite keeps its existing query parameters and lookup expressions;
-no stored or exported identifier uses an escaping format. These paths add no
-database round trip.
 
 PostgreSQL foreign keys that normally check immediately allow explicit deferral.
 Logical import and collection snapshot sealing, including received packages,

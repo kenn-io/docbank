@@ -37,14 +37,14 @@ func exportMailboxMetadata(ctx context.Context, q metadataQuerier, write metadat
 	after := ""
 	for {
 		var id, owner string
-		err := q.QueryRowContext(ctx, `SELECT id,owner FROM mailbox_containers WHERE id>$1 ORDER BY id LIMIT 1`, after).Scan(&id, &owner)
+		err := q.QueryRowContext(ctx, `SELECT id,owner FROM mailbox_containers WHERE id>$1 ORDER BY id LIMIT 1`, storedString(postgres, after)).Scan(&id, &owner)
 		if errors.Is(err, sql.ErrNoRows) {
 			return exportMailboxTransfers(ctx, q, write, postgres)
 		}
 		if err != nil {
 			return err
 		}
-		c, err := loadMailboxContainer(ctx, q, owner, id)
+		c, err := loadMailboxContainer(ctx, q, owner, id, postgres)
 		if err != nil {
 			return err
 		}
@@ -66,12 +66,12 @@ func exportMailboxMetadata(ctx context.Context, q metadataQuerier, write metadat
 var mailboxMetadataTables = []metadataRecordCodec{
 	newMetadataTable(metadataTable[metadataMailboxJob]{record: metadataMailboxJob{Type: "mailbox_job"}, table: "mailbox_jobs",
 		insert: func(ctx context.Context, tx *sql.Tx, r metadataMailboxJob, postgres bool) error {
-			return saveMailboxJob(ctx, tx, r.Job, true)
+			return saveMailboxJob(ctx, tx, r.Job, true, postgres)
 		}}),
 	newMetadataTable(metadataTable[metadataMailboxOccurrence]{
 		record: metadataMailboxOccurrence{Type: "mailbox_occurrence"}, table: "mailbox_occurrences",
 		insert: func(ctx context.Context, tx *sql.Tx, r metadataMailboxOccurrence, postgres bool) error {
-			return insertMailboxOccurrence(ctx, tx, r.Occurrence)
+			return insertMailboxOccurrence(ctx, tx, r.Occurrence, postgres)
 		}}),
 	newMetadataTable(metadataTable[metadataMailboxArchive]{record: metadataMailboxArchive{Type: "mailbox_archive"},
 		table: "mailbox_archives", insert: importMailboxArchive}),
@@ -98,11 +98,11 @@ func importMailboxContainer(ctx context.Context, tx *sql.Tx, r metadataMailboxCo
 	if err := validateRetainedMailboxContainer(ctx, tx, c); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO mailbox_containers(id,owner,sha256,size,format,state,created_at,manifest_sha256) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, c.ID, c.Owner, c.SHA256, c.Size, c.Format, c.State, c.CreatedAt, c.ManifestSHA256); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO mailbox_containers(id,owner,sha256,size,format,state,created_at,manifest_sha256) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, storedString(postgres, c.ID), storedString(postgres, c.Owner), c.SHA256, c.Size, c.Format, c.State, c.CreatedAt, c.ManifestSHA256); err != nil {
 		return err
 	}
 	for _, ch := range c.Chunks {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO mailbox_chunks(container_id,chunk_index,blob_hash,size) VALUES($1,$2,$3,$4)`, c.ID, ch.Index, ch.SHA256, ch.Size); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO mailbox_chunks(container_id,chunk_index,blob_hash,size) VALUES($1,$2,$3,$4)`, storedString(postgres, c.ID), ch.Index, ch.SHA256, ch.Size); err != nil {
 			return err
 		}
 	}
@@ -142,7 +142,7 @@ func exportMailboxTransfers(ctx context.Context, q metadataQuerier, write metada
 		var id string
 		err := q.QueryRowContext(ctx, `SELECT id FROM mailbox_transfer_receipts WHERE id>$1 ORDER BY id LIMIT 1`, after).Scan(&id)
 		if errors.Is(err, sql.ErrNoRows) {
-			return exportMailboxJobs(ctx, q, write)
+			return exportMailboxJobs(ctx, q, write, postgres)
 		}
 		if err != nil {
 			return err

@@ -199,7 +199,7 @@ type metadataContentVersion struct {
 	NodeID                int64   `json:"node_id" db:"node_id"`
 	BlobHash              string  `json:"blob_hash" db:"blob_hash"`
 	Size                  int64   `json:"size" db:"size"`
-	MIMEType              *string `json:"mime_type" db:"mime_type"`
+	MIMEType              *string `json:"mime_type" db:"mime_type,bytes"`
 	RecordedAt            string  `json:"recorded_at" db:"recorded_at"`
 	NodeRevision          int64   `json:"node_revision" db:"node_revision"`
 	IntroducedOperationID string  `json:"introduced_operation_id" db:"introduced_operation_id"`
@@ -227,8 +227,8 @@ type metadataProvenance struct {
 
 type metadataWatchSource struct {
 	Type      string `json:"type"`
-	WatchName string `json:"watch_name" db:"watch_name"`
-	SourceRef string `json:"source_ref" db:"source_ref"`
+	WatchName string `json:"watch_name" db:"watch_name,bytes"`
+	SourceRef string `json:"source_ref" db:"source_ref,bytes"`
 	NodeID    int64  `json:"node_id" db:"node_id"`
 	BlobHash  string `json:"blob_hash" db:"blob_hash"`
 	Size      int64  `json:"size" db:"size"`
@@ -389,7 +389,7 @@ func importVisualPreviewGeneration(ctx context.Context, tx *sql.Tx, v metadataVi
 		v.ContentVersionID, v.SourceSHA256, v.ContractVersion, v.RecipeFingerprint,
 		v.CanonicalResult, v.Checksum, preview.State, previewOutputHash(preview),
 		previewOutputSize(preview), previewOutputMediaType(preview), previewOutputWidth(preview),
-		previewOutputHeight(preview), previewFailureCode(preview), previewFailureDetail(preview),
+		previewOutputHeight(preview), previewFailureCode(preview), previewFailureDetail(preview, postgres),
 		v.CreatedAt)
 	return err
 }
@@ -581,7 +581,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 		}
 	}
 	if layout.schemaVersion >= 22 {
-		if err := exportPackageMetadata(ctx, tx, write); err != nil {
+		if err := exportPackageMetadata(ctx, tx, write, layout.postgres); err != nil {
 			return err
 		}
 		if err := exportPackageImportMetadata(ctx, tx, write); err != nil {

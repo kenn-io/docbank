@@ -28,16 +28,16 @@ type metadataEmbeddingVectorSpace struct {
 	ID                    string `json:"vector_space_id" db:"vector_space_id"`
 	ContractVersion       string `json:"contract_version" db:"contract_version"`
 	DescriptorJSON        []byte `json:"descriptor_json" db:"descriptor_json"`
-	ProviderDescriptor    string `json:"provider_descriptor" db:"provider_descriptor"`
-	ProviderRevision      string `json:"provider_revision" db:"provider_revision"`
+	ProviderDescriptor    string `json:"provider_descriptor" db:"provider_descriptor,bytes"`
+	ProviderRevision      string `json:"provider_revision" db:"provider_revision,bytes"`
 	DescriptorFingerprint string `json:"descriptor_fingerprint" db:"descriptor_fingerprint"`
-	CompatibilityID       string `json:"compatibility_id" db:"compatibility_id"`
+	CompatibilityID       string `json:"compatibility_id" db:"compatibility_id,bytes"`
 	Dimensions            int    `json:"dimensions" db:"dimensions"`
 	Metric                string `json:"metric" db:"metric"`
 	Normalization         string `json:"normalization" db:"normalization"`
 	ScalarEncoding        string `json:"scalar_encoding" db:"scalar_encoding"`
-	DocumentFormatter     string `json:"document_formatter" db:"document_formatter"`
-	QueryFormatter        string `json:"query_formatter" db:"query_formatter"`
+	DocumentFormatter     string `json:"document_formatter" db:"document_formatter,bytes"`
+	QueryFormatter        string `json:"query_formatter" db:"query_formatter,bytes"`
 	ModelInputFingerprint string `json:"model_input_fingerprint" db:"model_input_fingerprint"`
 }
 
@@ -62,7 +62,7 @@ type metadataEmbeddingGeneration struct {
 type metadataEmbeddingInput struct {
 	Type             string `json:"type"`
 	GenerationID     string `json:"generation_id" db:"generation_id"`
-	InputID          string `json:"input_id" db:"input_id"`
+	InputID          string `json:"input_id" db:"input_id,bytes"`
 	Order            int    `json:"order" db:"input_order"`
 	RenderedChecksum string `json:"rendered_checksum" db:"rendered_checksum"`
 }
@@ -83,9 +83,9 @@ type metadataEmbeddingVectorSet struct {
 type metadataEmbeddingVectorRow struct {
 	Type        string `json:"type"`
 	VectorSetID string `json:"vector_set_id" db:"vector_set_id"`
-	RowID       string `json:"row_id" db:"row_id"`
+	RowID       string `json:"row_id" db:"row_id,bytes"`
 	Order       int    `json:"order" db:"row_order"`
-	InputID     string `json:"input_id" db:"input_id"`
+	InputID     string `json:"input_id" db:"input_id,bytes"`
 	Dimensions  int    `json:"dimensions" db:"dimensions"`
 	Checksum    string `json:"checksum" db:"checksum"`
 }

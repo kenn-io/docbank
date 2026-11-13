@@ -135,7 +135,7 @@ func (s *Store) RetainRemoteRecordingMedia(
 				FROM media_source_versions v JOIN content_versions c
 				ON c.version_id=v.content_version_id
 				WHERE v.source_id=$1 AND c.blob_hash=$2 AND c.size=$3 AND COALESCE(c.mime_type,'')=$4
-				ORDER BY v.revision DESC LIMIT 1`, storedString(s.postgresSchema != "", sourceID), request.InputSHA, request.ByteLength, request.MediaType).Scan(&sourceVersionID, &contentVersionID)
+				ORDER BY v.revision DESC LIMIT 1`, storedString(s.postgresSchema != "", sourceID), request.InputSHA, request.ByteLength, storedString(s.postgresSchema != "", request.MediaType)).Scan(&sourceVersionID, &contentVersionID)
 			if errors.Is(err, sql.ErrNoRows) {
 				content, sealErr := s.sealMediaContentTx(ctx, tx, request.VirtualPath, ContentVersion{
 					BlobHash: request.InputSHA, Size: request.ByteLength, MimeType: request.MediaType}, request.Physical)
@@ -216,7 +216,7 @@ func (s *Store) retainMediaInputArtifactTx(
 		AND c.blob_hash=$9 AND c.size=$10 AND COALESCE(c.mime_type,'')=$11
 		FROM media_input_artifacts i JOIN content_versions c ON c.version_id=i.content_version_id
 		WHERE i.input_id=$12`, storedString(s.postgresSchema != "", request.OccurrenceID), storedString(s.postgresSchema != "", request.Operation.SourceID), storedString(s.postgresSchema != "", request.SourceVersionID), request.Kind, storedString(s.postgresSchema != "", request.Origin), storedString(s.postgresSchema != "", request.Provider), storedString(s.postgresSchema != "", request.Language), request.InputSHA, request.InputSHA,
-		request.ByteLength, request.MediaType, storedString(s.postgresSchema != "", request.InputID)).Scan(&versionID, &matches)
+		request.ByteLength, storedString(s.postgresSchema != "", request.MediaType), storedString(s.postgresSchema != "", request.InputID)).Scan(&versionID, &matches)
 	if err == nil {
 		if !matches || (contentVersionID != "" && contentVersionID != versionID) {
 			return "", ErrMediaOperationConflict

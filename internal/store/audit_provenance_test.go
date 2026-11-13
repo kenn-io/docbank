@@ -310,7 +310,7 @@ func TestAuditedProvenanceImportRequiresCallerSuppliedIngest(t *testing.T) {
 					return err
 				}
 				if test.kind == "watch" {
-					if err := insertWatchSourceTx(t.Context(), tx, "source", fact.OriginalPath, node.ID, node.BlobHash, node.Size); err != nil {
+					if err := insertWatchSourceTx(t.Context(), tx, "source", fact.OriginalPath, node.ID, node.BlobHash, node.Size, false); err != nil {
 						return err
 					}
 				}

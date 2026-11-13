@@ -169,7 +169,7 @@ func (s *Store) migrateLegacyPlainTextTx(
 	report.EligibleRows = len(eligible)
 
 	if len(eligible) != 0 {
-		if err := ensureProcessingProfileTx(ctx, tx, profile); err != nil {
+		if err := ensureProcessingProfileTx(ctx, tx, profile, s.postgresSchema != ""); err != nil {
 			return LegacyMigrationReport{}, fmt.Errorf("recording legacy plain-text profile: %w", err)
 		}
 	}
@@ -215,7 +215,7 @@ func (s *Store) migrateLegacyPlainTextTx(
 			ID: attachmentID, VaultID: s.vaultID, ContentVersionID: version.versionID,
 			BuildID: buildID, Profile: profile, AttachedAt: row.extractedAt,
 		}
-		if err := insertLegacyRenditionAttachmentTx(ctx, tx, attachment); err != nil {
+		if err := insertLegacyRenditionAttachmentTx(ctx, tx, attachment, s.postgresSchema != ""); err != nil {
 			return LegacyMigrationReport{}, err
 		}
 		if err := publishRenditionHeadTx(ctx, tx, RenditionHeadRecord{ContentVersionID: version.versionID, ProcessingProfileFingerprint: profile.Fingerprint, AttachmentID: attachmentID, PublishedAt: row.extractedAt}); err != nil {
@@ -439,7 +439,7 @@ func (s *Store) legacyPlainTextWorkPendingTx(
 		  AND NOT EXISTS (SELECT 1 FROM rendition_heads h
 		                  WHERE h.content_version_id=v.version_id AND h.profile_fingerprint=$5)
 		ORDER BY version_id,blob_hash`,
-		legacyPlainTextExtractor, legacyPlainTextExtractorVersion, ExtractionOK, legacyPlainTextProvider, profileFingerprint)
+		legacyPlainTextExtractor, legacyPlainTextExtractorVersion, ExtractionOK, storedString(s.postgresSchema != "", legacyPlainTextProvider), profileFingerprint)
 	if err != nil {
 		return false, fmt.Errorf("checking unpublished legacy plain-text versions: %w", err)
 	}
@@ -720,7 +720,7 @@ func insertLegacyRenditionBuildTx(
 		record.ID, record.VaultID, record.SourceSHA256,
 		record.RenditionRequestFingerprint, record.EvidenceLexicalFingerprint,
 		record.CapturedArtifactPolicyFingerprint, string(record.CapturedArtifactPolicy),
-		record.AuthorizationChecksum, record.ProviderOperationID, string(record.ProviderReceipt),
+		record.AuthorizationChecksum, storedString(postgres, record.ProviderOperationID), string(record.ProviderReceipt),
 		record.EvidenceChecksum, record.RenditionChecksum, record.MarkdownChecksum,
 		record.Completeness, boolInt(record.PartialSuccess), boolInt(record.Truncated),
 		mustCatalogJSON(record.Warnings), record.CompletedAt, record.DeclaredArtifactCount,
@@ -770,7 +770,7 @@ func legacyPlainTextBuildEqual(left, right RenditionBuildRecord) bool {
 }
 
 func insertLegacyRenditionAttachmentTx(
-	ctx context.Context, tx *sql.Tx, record RenditionAttachmentRecord,
+	ctx context.Context, tx *sql.Tx, record RenditionAttachmentRecord, postgres bool,
 ) error {
 	normalized, err := normalizeRenditionAttachmentRecord(record)
 	if err != nil {
@@ -785,7 +785,7 @@ func insertLegacyRenditionAttachmentTx(
 		normalized.ID, normalized.VaultID, normalized.ContentVersionID, normalized.BuildID,
 		normalized.Profile.Fingerprint, normalized.Profile.RetentionDisclosureFingerprint,
 		normalized.Profile.AttachmentPolicyFingerprint, normalized.Profile.ConsentFingerprint,
-		normalized.Profile.RenditionDisclosureFingerprint, normalized.Profile.TrustBoundary,
+		normalized.Profile.RenditionDisclosureFingerprint, storedString(postgres, normalized.Profile.TrustBoundary),
 		normalized.AttachedAt,
 	)
 	if err != nil {

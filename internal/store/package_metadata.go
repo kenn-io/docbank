@@ -68,7 +68,7 @@ type metadataPackageVolumePayload struct {
 	PackageID string `json:"package_id"`
 }
 
-func exportPackageMetadata(ctx context.Context, q metadataQuerier, write metadataWrite) error {
+func exportPackageMetadata(ctx context.Context, q metadataQuerier, write metadataWrite, postgres bool) error {
 	snapshotIDs, err := pageMetadataKeys(ctx, q, `SELECT snapshot_id FROM collection_snapshots ORDER BY snapshot_id`)
 	if err != nil {
 		return err
@@ -112,7 +112,7 @@ func exportPackageMetadata(ctx context.Context, q metadataQuerier, write metadat
 				}); err != nil {
 					return err
 				}
-				representations, err := loadSnapshotRepresentationRows(ctx, q, id, member.OccurrenceID)
+				representations, err := loadSnapshotRepresentationRows(ctx, q, id, member.OccurrenceID, postgres)
 				if err != nil {
 					return err
 				}
@@ -223,16 +223,30 @@ func importCollectionSnapshotMemberMetadata(ctx context.Context, tx *sql.Tx, rec
 			return err
 		}
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO collection_snapshot_members(
+	return insertSnapshotMemberTx(ctx, tx, record.SnapshotID, member, selected, record.CanonicalJSON, record.Checksum, postgres)
+}
+
+func insertSnapshotMemberTx(ctx context.Context, tx *sql.Tx, snapshotID string, member CollectionSnapshotMember, selected any, encoded []byte, checksum string, postgres bool) error {
+	extraColumns, extraValues := "", ""
+	args := []any{snapshotID, member.Ordinal,
+		storedString(postgres, member.OccurrenceID), member.NodeID, member.ContentVersionID, member.BlobSHA256,
+		member.Size, storedString(postgres, member.FamilyID), storedString(postgres, member.ParentOccurrenceID), member.FamilyOrder,
+		storedString(postgres, member.DisplayName), member.FrozenFieldsJSON, storedString(postgres, member.DocumentKind), selected,
+		member.SelectedPDFSHA256, member.SourcePageCount, encoded, checksum}
+	if postgres {
+		sources, err := canonical.Marshal(member.SourceCollectionIDs)
+		if err != nil {
+			return err
+		}
+		extraColumns, extraValues = ",source_collection_ids_json", ",$19"
+		args = append(args, string(sources))
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO collection_snapshot_members(
 		snapshot_id,ordinal,occurrence_id,node_id,content_version_id,blob_sha256,size,
 		family_id,parent_occurrence_id,family_order,display_name,frozen_fields_json,
 		document_kind,selected_source_pages_json,selected_pdf_sha256,source_page_count,
-		canonical_json,checksum
-	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`, record.SnapshotID, member.Ordinal,
-		member.OccurrenceID, member.NodeID, member.ContentVersionID, member.BlobSHA256,
-		member.Size, member.FamilyID, member.ParentOccurrenceID, member.FamilyOrder,
-		member.DisplayName, member.FrozenFieldsJSON, member.DocumentKind, selected,
-		member.SelectedPDFSHA256, member.SourcePageCount, []byte(record.CanonicalJSON), record.Checksum)
+		canonical_json,checksum`+extraColumns+`
+	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18`+extraValues+`)`, args...)
 	return err
 }
 
@@ -248,9 +262,9 @@ func importCollectionSnapshotRepresentationMetadata(ctx context.Context, tx *sql
 		snapshot_id,occurrence_id,role,ordinal,status,text_authority,content_version_id,
 		blob_sha256,size,media_type,page_number,verified_page_count,rendition_build_id,
 		lexical_generation_id,recipe_sha256,canonical_json,checksum
-	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`, record.SnapshotID, rep.OccurrenceID,
-		rep.Role, rep.Ordinal, rep.Status, rep.TextAuthority, nullableString(rep.ContentVersionID),
-		nullableString(rep.BlobSHA256), rep.Size, rep.MediaType, rep.PageNumber, rep.VerifiedPageCount,
+	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`, record.SnapshotID, storedString(postgres, rep.OccurrenceID),
+		storedString(postgres, rep.Role), rep.Ordinal, rep.Status, rep.TextAuthority, nullableString(rep.ContentVersionID),
+		nullableString(rep.BlobSHA256), rep.Size, storedString(postgres, rep.MediaType), rep.PageNumber, rep.VerifiedPageCount,
 		nullableString(rep.RenditionBuildID), nullableString(rep.LexicalGenerationID),
 		nullableString(rep.RecipeSHA256), []byte(record.CanonicalJSON), record.Checksum)
 	return err
@@ -269,10 +283,10 @@ func importPackageRecordMetadata(ctx context.Context, tx *sql.Tx, record metadat
 		mapping_sha256,mapping_json,manifest_sha256,manifest_blob_sha256,
 		predecessor_package_id,relation,ingest_id,export_plan_id,state,produced_on,created_at,completed_at
 	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`, pkg.PackageID, nullableString(pkg.SnapshotID),
-		pkg.Direction, pkg.PackageName, pkg.PartyLabel, pkg.ProfileSHA256, pkg.ProfileJSON,
+		pkg.Direction, pkg.PackageName, storedString(postgres, pkg.PartyLabel), pkg.ProfileSHA256, pkg.ProfileJSON,
 		pkg.MappingSHA256, pkg.MappingJSON, pkg.ManifestSHA256, pkg.ManifestBlobSHA256,
-		nullableString(pkg.PredecessorPackageID), pkg.Relation, nullableString(pkg.IngestID),
-		nullableString(pkg.ExportPlanID), pkg.State, nullableString(pkg.ProducedOn),
+		nullableString(pkg.PredecessorPackageID), storedString(postgres, pkg.Relation), nullableString(pkg.IngestID),
+		nullableString(pkg.ExportPlanID), pkg.State, storedNullableString(postgres, pkg.ProducedOn),
 		pkg.CreatedAt, nullableString(pkg.CompletedAt))
 	return err
 }
@@ -287,13 +301,13 @@ func importPackageVolumeMetadata(ctx context.Context, tx *sql.Tx, record metadat
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO package_volumes(
 		package_id,ordinal,volume_name,declared_root,mapped_root,resolved_root_sha256
-	) VALUES($1,$2,$3,$4,$5,$6)`, record.PackageID, volume.Ordinal, volume.VolumeName,
-		volume.DeclaredRoot, volume.MappedRoot, volume.ResolvedRootSHA256)
+	) VALUES($1,$2,$3,$4,$5,$6)`, record.PackageID, volume.Ordinal, storedString(postgres, volume.VolumeName),
+		storedString(postgres, volume.DeclaredRoot), storedString(postgres, volume.MappedRoot), volume.ResolvedRootSHA256)
 	return err
 }
 
 func validatePackageMetadataState(ctx context.Context, q metadataQuerier, vaultID string, postgres bool) error {
-	if err := exportPackageMetadata(ctx, q, func(any) error { return nil }); err != nil {
+	if err := exportPackageMetadata(ctx, q, func(any) error { return nil }, postgres); err != nil {
 		return fmt.Errorf("validating package metadata: %w", err)
 	}
 	var foreignVault bool
@@ -381,7 +395,7 @@ func validateSnapshotMetadataRows(ctx context.Context, q metadataQuerier, snapsh
 		}
 		for i := range batch {
 			member := &batch[i]
-			member.Representations, err = loadSnapshotRepresentationRows(ctx, q, snapshot.SnapshotID, member.OccurrenceID)
+			member.Representations, err = loadSnapshotRepresentationRows(ctx, q, snapshot.SnapshotID, member.OccurrenceID, postgres)
 			if err != nil {
 				return err
 			}

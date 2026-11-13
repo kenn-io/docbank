@@ -18,7 +18,7 @@ type metadataMailboxOccurrence struct {
 	Occurrence MailboxOccurrence `json:"occurrence"`
 }
 
-func insertMailboxOccurrence(ctx context.Context, tx *sql.Tx, o MailboxOccurrence) error {
+func insertMailboxOccurrence(ctx context.Context, tx *sql.Tx, o MailboxOccurrence, postgres bool) error {
 	b, err := json.Marshal(o)
 	if err != nil {
 		return err
@@ -30,25 +30,25 @@ func insertMailboxOccurrence(ctx context.Context, tx *sql.Tx, o MailboxOccurrenc
 	if o.ReceiptID != "" {
 		receipt = o.ReceiptID
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_occurrences(job_id,ordinal,receipt_id,occurrence_json) VALUES($1,$2,$3,$4)`, o.JobID, o.Ordinal, receipt, b)
+	_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_occurrences(job_id,ordinal,receipt_id,occurrence_json) VALUES($1,$2,$3,$4)`, storedString(postgres, o.JobID), o.Ordinal, receipt, b)
 	return err
 }
-func exportMailboxJobs(ctx context.Context, q metadataQuerier, write metadataWrite) error {
+func exportMailboxJobs(ctx context.Context, q metadataQuerier, write metadataWrite, postgres bool) error {
 	after := ""
 	for {
 		var owner, id string
-		err := q.QueryRowContext(ctx, `SELECT owner,id FROM mailbox_jobs WHERE id>$1 ORDER BY id LIMIT 1`, after).Scan(&owner, &id)
+		err := q.QueryRowContext(ctx, `SELECT owner,id FROM mailbox_jobs WHERE id>$1 ORDER BY id LIMIT 1`, storedString(postgres, after)).Scan(&owner, &id)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		j, err := loadMailboxJob(ctx, q, owner, id)
+		j, err := loadMailboxJob(ctx, q, owner, id, postgres)
 		if err != nil {
 			return err
 		}
-		c, err := loadMailboxContainer(ctx, q, owner, j.ContainerID)
+		c, err := loadMailboxContainer(ctx, q, owner, j.ContainerID, postgres)
 		if err != nil {
 			return err
 		}
@@ -60,7 +60,7 @@ func exportMailboxJobs(ctx context.Context, q metadataQuerier, write metadataWri
 		}
 		var ordinal, imported, rejected, pending, canceled int64
 		for {
-			page, err := mailboxOccurrences(ctx, q, id, ordinal, 100)
+			page, err := mailboxOccurrences(ctx, q, id, ordinal, 100, postgres)
 			if err != nil {
 				return err
 			}

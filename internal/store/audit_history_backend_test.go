@@ -226,9 +226,29 @@ func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables 
 		if table == "extracted_text" || table == "photo_hidden_failures" {
 			override = " OVERRIDING SYSTEM VALUE"
 		}
+		snapshotMember := table == "collection_snapshot_members"
+		if snapshotMember {
+			columns = append(columns, "source_collection_ids_json")
+		}
 		faceReceipt := table == "photo_change_receipts"
 		if faceReceipt {
-			columns = append(columns, "face_version_id")
+			columns = append(columns, "face_version_id", "query_json")
+		}
+		packageReceipt := table == "package_import_receipts"
+		if packageReceipt {
+			columns = append(columns, "query_json")
+		}
+		savedQuery := table == "saved_queries"
+		if savedQuery {
+			columns = append(columns, "photo_scope")
+		}
+		processingProfile := table == "processing_profiles"
+		if processingProfile {
+			columns = append(columns, "embedding_bindings_json")
+		}
+		mailboxJob := table == "mailbox_jobs"
+		if mailboxJob {
+			columns = append(columns, "query_json")
 		}
 		mediaInput := table == "media_input_artifacts"
 		if mediaInput {
@@ -252,6 +272,47 @@ func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables 
 			}
 
 			args := values
+			if snapshotMember {
+				raw, ok := values[slices.Index(columns, "canonical_json")].([]byte)
+				require.True(t, ok)
+				var member CollectionSnapshotMember
+				require.NoError(t, json.Unmarshal(raw, &member))
+				encoded, err := json.Marshal(member.SourceCollectionIDs)
+				require.NoError(t, err)
+				args = append(slices.Clone(values), string(encoded))
+			}
+			if packageReceipt {
+				raw, ok := values[slices.Index(columns, "receipt_json")].([]byte)
+				require.True(t, ok)
+				lookup, err := packageImportQueryJSON(raw)
+				require.NoError(t, err)
+				args = append(slices.Clone(values), lookup)
+			}
+			if savedQuery {
+				kind, ok := values[slices.Index(columns, "kind")].(string)
+				require.True(t, ok)
+				payload, ok := values[slices.Index(columns, "payload")].([]byte)
+				require.True(t, ok)
+				scope, err := savedQueryPhotoScope(kind, payload)
+				require.NoError(t, err)
+				args = append(slices.Clone(values), scope)
+			}
+			if processingProfile {
+				raw, ok := values[slices.Index(columns, "canonical_profile")].(string)
+				require.True(t, ok)
+				bindings, err := processingProfileBindingsJSON([]byte(raw))
+				require.NoError(t, err)
+				args = append(slices.Clone(values), bindings)
+			}
+			if mailboxJob {
+				raw, ok := values[slices.Index(columns, "job_json")].([]byte)
+				require.True(t, ok)
+				var job MailboxJob
+				require.NoError(t, json.Unmarshal(raw, &job))
+				query, err := mailboxJobQueryJSON(job)
+				require.NoError(t, err)
+				args = append(slices.Clone(values), query)
+			}
 			if faceReceipt {
 				operation, ok := values[slices.Index(columns, "operation")].(string)
 				require.True(t, ok)
@@ -259,7 +320,11 @@ func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables 
 				require.True(t, ok)
 				version, err := photoReceiptFaceVersion(operation, before)
 				require.NoError(t, err)
-				args = append(slices.Clone(values), nullableString(version))
+				after, ok := values[slices.Index(columns, "after_json")].(string)
+				require.True(t, ok)
+				query, err := photoReceiptQueryJSON(operation, after)
+				require.NoError(t, err)
+				args = append(slices.Clone(values), nullableString(version), query)
 			}
 			if mediaReceipt {
 				raw, ok := values[slices.Index(columns, "receipt_json")].(string)

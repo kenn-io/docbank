@@ -304,10 +304,10 @@ func checkCleanupEmbeddingAuthorityPostgres(t *testing.T) {
 		var jobs, roots, sets, attachments, generations int
 		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT
    (SELECT count(*) FROM embedding_jobs WHERE job_id=$1),
-   (SELECT count(*) FROM current_rendition_roots WHERE root_id=$1),
-   (SELECT count(*) FROM embedding_sets WHERE content_version_id=$2),
-   (SELECT count(*) FROM rendition_attachments WHERE content_version_id=$2),
-   (SELECT count(*) FROM embedding_input_generations WHERE generation_id=$3)`, job.ID, version, request.InputGeneration.ID).Scan(&jobs, &roots, &sets, &attachments, &generations))
+   (SELECT count(*) FROM current_rendition_roots WHERE root_id=$2),
+   (SELECT count(*) FROM embedding_sets WHERE content_version_id=$3),
+   (SELECT count(*) FROM rendition_attachments WHERE content_version_id=$3),
+   (SELECT count(*) FROM embedding_input_generations WHERE generation_id=$4)`, job.ID, storedString(s.postgresSchema != "", job.ID), version, request.InputGeneration.ID).Scan(&jobs, &roots, &sets, &attachments, &generations))
 		require.Zero(t, jobs)
 		require.Zero(t, roots)
 		require.Zero(t, sets)

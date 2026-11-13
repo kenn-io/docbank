@@ -254,7 +254,7 @@ func (s *Store) writeFaceDecisionReceiptTx(ctx context.Context, tx *sql.Tx, befo
 		return result, err
 	}
 	if s.postgresSchema == "" {
-		err = writePhotoReceiptTx(ctx, tx, photoReceipt{ReceiptID: id, Operation: "face_decision", AssetID: assetID, Before: before, After: afterState, BeforeRevision: 0, AfterRevision: 1})
+		err = s.writePhotoReceiptTx(ctx, tx, photoReceipt{ReceiptID: id, Operation: "face_decision", AssetID: assetID, Before: before, After: afterState, BeforeRevision: 0, AfterRevision: 1})
 	} else {
 		beforeJSON, e := json.Marshal(before, json.Deterministic(true))
 		if e != nil {

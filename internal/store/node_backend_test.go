@@ -54,7 +54,10 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT SELECT ON ALL TABLES IN SCHEMA "+schema+" TO "+quotedRole+
 		"; GRANT SELECT,INSERT,UPDATE,DELETE ON "+schema+".nodes,"+schema+".blobs,"+schema+".content_versions TO "+quotedRole+
 		"; GRANT SELECT,INSERT ON "+schema+".blob_checksums TO "+quotedRole+
-		"; GRANT INSERT ON "+schema+".mailbox_archives TO "+quotedRole+
+		"; GRANT INSERT ON "+schema+".mailbox_archives,"+schema+".mailbox_chunks,"+schema+".mailbox_transfer_receipts TO "+quotedRole+
+		"; GRANT INSERT,DELETE,UPDATE(state,manifest_sha256) ON "+schema+".mailbox_containers TO "+quotedRole+
+		"; GRANT INSERT,UPDATE(state,claim,job_json,query_json) ON "+schema+".mailbox_jobs TO "+quotedRole+
+		"; GRANT INSERT,DELETE,UPDATE(receipt_id,occurrence_json) ON "+schema+".mailbox_occurrences TO "+quotedRole+
 		"; GRANT SELECT ON "+schema+".audit_records,"+schema+".audit_authority,"+schema+".audit_scopes,"+schema+".audit_baselines,"+schema+".audit_memberships TO "+quotedRole+
 		"; GRANT INSERT ON "+schema+".audit_records TO "+quotedRole+
 		"; GRANT UPDATE(operation_sequence_high_water,allocation_entry_count,allocation_head) ON "+schema+".audit_authority TO "+quotedRole+
@@ -149,7 +152,7 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 	require.NoError(t, err)
 	_, err = setup.ExecContext(ctx, "GRANT INSERT,DELETE ON "+schema+".node_tags TO "+quotedRole+
 		"; GRANT INSERT ON "+schema+".batch_tag_receipts TO "+quotedRole+
-		"; GRANT INSERT,DELETE,UPDATE(name,description,payload,fingerprint,revision,updated_at) ON "+schema+".saved_queries TO "+quotedRole)
+		"; GRANT INSERT,DELETE,UPDATE(name,description,payload,fingerprint,revision,updated_at,photo_scope) ON "+schema+".saved_queries TO "+quotedRole)
 	require.NoError(t, err)
 	_, err = setup.ExecContext(ctx, "GRANT INSERT ON "+schema+".source_metadata_generations,"+schema+".document_event_generations,"+schema+".document_events,"+schema+".document_event_actors,"+schema+".document_event_primaries TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(generation_id,published_at) ON "+schema+".source_metadata_heads TO "+quotedRole+

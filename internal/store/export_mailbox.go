@@ -22,7 +22,11 @@ func (s *Store) ExportMailboxCollectionMembers(ctx context.Context, owner, colle
 	defer func() { _ = tx.Rollback() }()
 	var id string
 	var count int
-	err = tx.QueryRowContext(ctx, `SELECT COALESCE(min(id),''),count(*) FROM (SELECT id FROM mailbox_jobs WHERE owner=? AND json_extract(job_json,'$.collection_id')=? ORDER BY id LIMIT 2)`, owner, collection).Scan(&id, &count)
+	collectionSQL := "json_extract(job_json,'$.collection_id')"
+	if s.postgresSchema != "" {
+		collectionSQL = "(query_json::jsonb ->> 'collection_id')"
+	}
+	err = tx.QueryRowContext(ctx, `SELECT COALESCE(min(id),''),count(*) FROM (SELECT id FROM mailbox_jobs WHERE owner=$1 AND `+collectionSQL+`=$2 ORDER BY id LIMIT 2)`, storedString(s.postgresSchema != "", owner), collection).Scan(&id, &count)
 	if err != nil {
 		return nil, err
 	}
@@ -32,7 +36,7 @@ func (s *Store) ExportMailboxCollectionMembers(ctx context.Context, owner, colle
 	if count != 1 {
 		return nil, bundle.ErrConflict
 	}
-	j, err := loadMailboxJob(ctx, tx, owner, id)
+	j, err := loadMailboxJob(ctx, tx, owner, id, s.postgresSchema != "")
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +53,7 @@ func (s *Store) ExportMailboxCollectionMembers(ctx context.Context, owner, colle
 	var members []bundle.Member
 	var after int64
 	for {
-		rows, err := mailboxOccurrences(ctx, tx, j.ID, after, 100)
+		rows, err := mailboxOccurrences(ctx, tx, j.ID, after, 100, s.postgresSchema != "")
 		if err != nil {
 			return nil, err
 		}

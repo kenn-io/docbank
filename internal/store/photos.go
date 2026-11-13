@@ -277,7 +277,7 @@ type photoReceipt struct {
 	After          any
 }
 
-func writePhotoReceiptTx(ctx context.Context, tx *sql.Tx, receipt photoReceipt) error {
+func (s *Store) writePhotoReceiptTx(ctx context.Context, tx *sql.Tx, receipt photoReceipt) error {
 	marshal := marshalPhotoState
 	if receipt.Operation == "xmp_sync" || receipt.Operation == "face_decision" || receipt.Operation == "authored" || receipt.Operation == "authored_undo" || receipt.Operation == "authored_sidecar" {
 		marshal = func(v any) (string, error) {
@@ -310,6 +310,14 @@ func writePhotoReceiptTx(ctx context.Context, tx *sql.Tx, receipt photoReceipt) 
 		if err != nil {
 			return fmt.Errorf("allocating photo receipt: %w", err)
 		}
+	}
+	if s.postgresSchema != "" {
+		query, err := photoReceiptQueryJSON(receipt.Operation, afterJSON)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO photo_change_receipts(receipt_id,operation,asset_id,settings_key,set_id,before_revision,after_revision,before_json,after_json,created_at,query_json) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, receiptID, receipt.Operation, nullablePhotoText(receipt.AssetID), nullablePhotoText(receipt.SettingsKey), nullablePhotoText(receipt.SetID), receipt.BeforeRevision, receipt.AfterRevision, beforeJSON, afterJSON, nowRFC3339(), query)
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO photo_change_receipts(
@@ -580,7 +588,7 @@ func (s *Store) createPhotoAssetWithReceiptTx(ctx context.Context, tx *sql.Tx, n
 		return PhotoAsset{}, err
 	}
 	changes := photoAssetMemberChanges(PhotoAsset{}, result)
-	if err := writePhotoReceiptTx(ctx, tx, photoReceipt{
+	if err := s.writePhotoReceiptTx(ctx, tx, photoReceipt{
 		Operation: operation, AssetID: result.ID, AfterRevision: result.Revision,
 		Before: photoAssetState(PhotoAsset{}, changes), After: photoAssetState(result, changes),
 	}); err != nil {
@@ -609,7 +617,7 @@ func (s *Store) mutatePhotoAssetTx(ctx context.Context, tx *sql.Tx, assetID stri
 	if !changed {
 		return asset, nil
 	}
-	result, err := commitPhotoAssetTx(ctx, tx, before, asset, operation)
+	result, err := s.commitPhotoAssetTx(ctx, tx, before, asset, operation)
 	if err != nil {
 		return PhotoAsset{}, err
 	}
@@ -645,7 +653,7 @@ func (s *Store) mutatePhotoAsset(ctx context.Context, assetID string, revision i
 // commitPhotoAssetTx persists an edited asset: it reloads members, drops an
 // override that no longer names a member, recomputes the display choice,
 // advances the revision once, and records the before and after states.
-func commitPhotoAssetTx(ctx context.Context, tx *sql.Tx, before, asset PhotoAsset, operation string) (PhotoAsset, error) {
+func (s *Store) commitPhotoAssetTx(ctx context.Context, tx *sql.Tx, before, asset PhotoAsset, operation string) (PhotoAsset, error) {
 	files, err := loadPhotoFiles(ctx, tx, asset.ID)
 	if err != nil {
 		return PhotoAsset{}, err
@@ -676,7 +684,7 @@ func commitPhotoAssetTx(ctx context.Context, tx *sql.Tx, before, asset PhotoAsse
 		return PhotoAsset{}, err
 	}
 	changes := photoAssetMemberChanges(before, result)
-	if err := writePhotoReceiptTx(ctx, tx, photoReceipt{
+	if err := s.writePhotoReceiptTx(ctx, tx, photoReceipt{
 		Operation: operation, AssetID: asset.ID, BeforeRevision: before.Revision,
 		AfterRevision: result.Revision, Before: photoAssetState(before, changes),
 		After: photoAssetState(result, changes),
@@ -979,7 +987,7 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update Pho
 		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,preference,revision,updated_at,burst_gap_seconds,backup_interval_seconds,backup_keep_last,hidden_unlock_lifetime_seconds) VALUES(1,$1,$2,$3,$4,$5,$6,$7) ON CONFLICT(singleton) DO UPDATE SET preference=excluded.preference,revision=excluded.revision,updated_at=excluded.updated_at,burst_gap_seconds=excluded.burst_gap_seconds,backup_interval_seconds=excluded.backup_interval_seconds,backup_keep_last=excluded.backup_keep_last,hidden_unlock_lifetime_seconds=excluded.hidden_unlock_lifetime_seconds`, nullablePhotoString(next.Preference), next.Revision, next.UpdatedAt, next.BurstGapSeconds, next.BackupIntervalSeconds, next.BackupKeepLast, next.HiddenUnlockLifetimeSeconds); err != nil {
 			return err
 		}
-		if err := writePhotoReceiptTx(ctx, tx, photoReceipt{
+		if err := s.writePhotoReceiptTx(ctx, tx, photoReceipt{
 			Operation: "settings", SettingsKey: "library", BeforeRevision: current.Revision,
 			AfterRevision: next.Revision, Before: photoSettingsState(current),
 			After: photoSettingsState(next),
@@ -998,7 +1006,7 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update Pho
 			if equalPhotoOptional(asset.DisplayFileID, choice.FileID) {
 				continue
 			}
-			if _, err := commitPhotoAssetTx(ctx, tx, asset, asset, "settings_recompute"); err != nil {
+			if _, err := s.commitPhotoAssetTx(ctx, tx, asset, asset, "settings_recompute"); err != nil {
 				return err
 			}
 			if err := s.refreshPhotoAssetWorkTx(ctx, tx, asset.ID); err != nil {

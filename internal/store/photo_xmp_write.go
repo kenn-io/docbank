@@ -331,7 +331,7 @@ func (s *Store) writePhotoXMPSidecarTx(ctx context.Context, tx *sql.Tx, run Inge
 	if err := s.insertPhotoFileTx(ctx, tx, PhotoFile{AssetID: w.Original.AssetID, NodeID: written.Node.ID, Role: PhotoRoleSidecar, SidecarOfID: &w.Original.ID, CreatedAt: nowRFC3339()}); err != nil {
 		return PhotoSidecarProvenance{}, err
 	}
-	if _, err := commitPhotoAssetTx(ctx, tx, before, before, "attach"); err != nil {
+	if _, err := s.commitPhotoAssetTx(ctx, tx, before, before, "attach"); err != nil {
 		return PhotoSidecarProvenance{}, err
 	}
 	var fileID string

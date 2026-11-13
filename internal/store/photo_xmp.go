@@ -479,7 +479,7 @@ func (s *Store) loadPhotoXMPWorkTx(ctx context.Context, tx metadataQuerier, id s
 	w.settled = !pending
 	sc := new(PhotoXMPSidecar)
 	sc.Node, err = scanNode(tx.QueryRowContext(ctx, `SELECT `+nodeCols+`,sf.file_id,EXISTS(SELECT 1 FROM audit_memberships WHERE node_id=n.id), (SELECT count(*) FROM photo_files cf JOIN nodes cn ON cn.id=cf.node_id WHERE cf.sidecar_of_file_id=sf.sidecar_of_file_id AND cf.asset_id=sf.asset_id AND cn.trashed_at IS NULL) FROM `+nodeFrom+` JOIN photo_files sf ON sf.node_id=n.id WHERE sf.sidecar_of_file_id=$1 AND sf.asset_id=$2
- ORDER BY n.trashed_at IS NOT NULL,sf.file_id=COALESCE((SELECT `+d.text("after_json", "sync.sidecar.file_id")+` FROM `+receiptTable+` WHERE operation='xmp_sync' AND `+receiptFile+`=$3), '') DESC,n.id LIMIT 1`, f.ID, f.AssetID, f.ID), &sc.FileID, &sc.audited, &w.sidecars)
+ ORDER BY n.trashed_at IS NOT NULL,sf.file_id=COALESCE((SELECT `+d.text(d.receiptColumn(""), "sync.sidecar.file_id")+` FROM `+receiptTable+` WHERE operation='xmp_sync' AND `+receiptFile+`=$3), '') DESC,n.id LIMIT 1`, f.ID, f.AssetID, f.ID), &sc.FileID, &sc.audited, &w.sidecars)
 	if err == nil {
 		if sc.Node.TrashedAt == nil {
 			w.Sidecar = sc
@@ -664,7 +664,7 @@ func (s *Store) resumeDetachedPhotoXMPTx(ctx context.Context, tx *sql.Tx, id str
 	if err := s.insertPhotoFileTx(ctx, tx, PhotoFile{AssetID: before.ID, NodeID: sidecar.NodeID, Role: PhotoRoleSidecar, SidecarOfID: &w.Original.ID}); err != nil {
 		return w, err
 	}
-	if _, err := commitPhotoAssetTx(ctx, tx, before, before, "attach"); err != nil {
+	if _, err := s.commitPhotoAssetTx(ctx, tx, before, before, "attach"); err != nil {
 		return w, err
 	}
 	if err := validatePhotoAssetGraph(ctx, tx, before.ID); err != nil {
@@ -703,7 +703,7 @@ func (s *Store) settlePhotoXMPTx(ctx context.Context, tx *sql.Tx, w PhotoXMPWork
 	if err := s.deletePhotoXMPReceiptTx(ctx, tx, w.Original.ID); err != nil {
 		return err
 	}
-	if err := writePhotoReceiptTx(ctx, tx, photoReceipt{AssetID: w.Original.AssetID, Operation: "xmp_sync", AfterRevision: 1, After: outcome}); err != nil {
+	if err := s.writePhotoReceiptTx(ctx, tx, photoReceipt{AssetID: w.Original.AssetID, Operation: "xmp_sync", AfterRevision: 1, After: outcome}); err != nil {
 		return err
 	}
 	return s.refreshPhotoAssetWorkTx(ctx, tx, w.Original.AssetID)
@@ -824,10 +824,10 @@ func PhotoXMPConflictRows(catalog PhotoAuthored, keywords []string, sidecar Phot
 }
 
 // photoXMPReceiptLookupSQL preserves SQLite's required partial-index hint and
-// uses PostgreSQL's existing expression index for the same file lookup.
+// uses PostgreSQL's projected expression index for the same file lookup.
 func (s *Store) photoXMPReceiptLookupSQL() (table, file string) {
 	if s.postgresSchema != "" {
-		return "photo_change_receipts", "(after_json::jsonb ->> 'file_id')"
+		return "photo_change_receipts", "(query_json::jsonb ->> 'file_id')"
 	}
 	return "photo_change_receipts INDEXED BY photo_change_receipts_xmp_file", "CAST(json_extract(after_json,'$.file_id') AS TEXT)"
 }

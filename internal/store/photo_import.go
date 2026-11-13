@@ -172,12 +172,12 @@ func photoImportRoleFilter(role string) (string, []any) {
 // in first-use order so both drivers bind the same values.
 // Restored receipts may encode the optional outside list as JSON null.
 const photoImportAcceptedPostgres = `CASE WHEN EXISTS(SELECT 1 FROM photo_change_receipts xr
- WHERE (xr.after_json::jsonb ->> 'file_id')=pf.sidecar_of_file_id AND xr.operation='xmp_sync'
- AND (xr.after_json::jsonb #>> '{sync,sidecar,node_id}')::bigint=n.id
- AND xr.after_json::jsonb #>> '{sync,sidecar,file_id}'=pf.file_id
- AND xr.after_json::jsonb #>> '{sync,written_version}'=n.current_version_id
- AND EXISTS(SELECT 1 FROM jsonb_array_elements(NULLIF(xr.after_json::jsonb #> '{sync,outside}','null'::jsonb)) o WHERE o.value->>'digest'=$1
- AND (o.value->>'path'=$2 OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements(NULLIF(xr.after_json::jsonb #> '{sync,outside}','null'::jsonb)) own WHERE own.value->>'path'=$2)))
+ WHERE (xr.query_json::jsonb ->> 'file_id')=pf.sidecar_of_file_id AND xr.operation='xmp_sync'
+ AND (xr.query_json::jsonb #>> '{sync,sidecar,node_id}')::bigint=n.id
+ AND xr.query_json::jsonb #>> '{sync,sidecar,file_id}'=pf.file_id
+ AND xr.query_json::jsonb #>> '{sync,written_version}'=n.current_version_id
+ AND EXISTS(SELECT 1 FROM jsonb_array_elements(NULLIF(xr.query_json::jsonb #> '{sync,outside}','null'::jsonb)) o WHERE o.value->>'digest'=$1
+ AND (decode(o.value->>'path','base64')=$2 OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements(NULLIF(xr.query_json::jsonb #> '{sync,outside}','null'::jsonb)) own WHERE decode(own.value->>'path','base64')=$2)))
 ) THEN $1 ELSE '' END`
 
 const photoImportAcceptedSQLite = `CASE WHEN EXISTS(SELECT 1 FROM photo_change_receipts xr INDEXED BY photo_change_receipts_xmp_file
@@ -336,7 +336,7 @@ func (s *Store) photoImportCurrentDuplicateTx(
 		WHERE n.trashed_at IS NULL AND `+photoFilter+` AND cv.blob_hash=$`+strconv.Itoa(len(roleArgs)+1)+`
 		ORDER BY n.id, p.identity`, slices.Concat(roleArgs, []any{member.BlobHash})
 	if role == PhotoRoleSidecar {
-		query, args = s.photoImportSidecarCandidatesSQL(), []any{member.BlobHash, normalizePhotoSourcePath(member.OriginalPath), storedString(s.postgresSchema != "", member.OriginalPath)}
+		query, args = s.photoImportSidecarCandidatesSQL(), []any{member.BlobHash, storedString(s.postgresSchema != "", normalizePhotoSourcePath(member.OriginalPath)), storedString(s.postgresSchema != "", member.OriginalPath)}
 	}
 	if role == PhotoRoleSidecar && fallback && target != "" {
 		original, bound, err := s.photoSidecarSourceTx(ctx, tx, target, member.OriginalPath, "", false)
@@ -783,7 +783,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 			}
 		}
 		if attached {
-			updated, err := commitPhotoAssetTx(ctx, tx, target, target, "import")
+			updated, err := s.commitPhotoAssetTx(ctx, tx, target, target, "import")
 			if err != nil {
 				return err
 			}
