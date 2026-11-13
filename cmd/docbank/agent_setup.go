@@ -32,8 +32,6 @@ func newAgentSetupCommand() *cobra.Command {
 			return []agentsetup.Item{codexFeatureItem(), item}, nil
 		},
 	})
-	cmd.Short = "Connect Claude Code and Codex to Docbank"
-	cmd.Long = "Register the read-only Docbank MCP server with installed agents."
 	cmd.Flags().Lookup("json").Usage = "print JSON to stdout"
 	clisearch.SetKeywords(cmd, "connect Claude Code and Codex to docbank")
 	cmd.Example = "  docbank agent setup\n  docbank agent setup --agent codex --check"
@@ -53,13 +51,11 @@ func codexFeatureItem() agentsetup.Item {
 			if len(fields) == 0 || fields[0] != codexFeature {
 				continue
 			}
-			if len(fields) >= 2 {
-				switch fields[len(fields)-1] {
-				case "true":
-					return agentsetup.Status{State: agentsetup.StateOK, Reason: "on; Codex shows an under-development feature notice each session"}, false
-				case "false":
-					return agentsetup.Status{State: agentsetup.StateFailed, Reason: "Codex's MCP 2026-07-28 support is off", NextStep: codexEnable + " (or docbank agent setup)"}, true
-				}
+			switch fields[len(fields)-1] {
+			case "true":
+				return agentsetup.Status{State: agentsetup.StateOK, Reason: "on; Codex shows an under-development feature notice each session"}, false
+			case "false":
+				return agentsetup.Status{State: agentsetup.StateFailed, Reason: "Codex's MCP 2026-07-28 support is off", NextStep: codexEnable + " (or docbank agent setup)"}, true
 			}
 			return agentsetup.Status{State: agentsetup.StateUnknown, Reason: "cannot parse Codex feature state", NextStep: codexEnable}, false
 		}
