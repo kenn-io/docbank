@@ -316,6 +316,7 @@ func TestContentReaderRejectsRegistryInsideVault(t *testing.T) {
 }
 
 func TestContentReaderStorageUnchanged(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"loose", "packed", "compressed", "tampered"} {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
