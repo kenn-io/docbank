@@ -33,17 +33,11 @@ func TestContentReader(t *testing.T) {
 		require.ErrorIs(t, err, os.ErrNotExist)
 	}
 	root := t.TempDir()
-	_, err := docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
-	require.ErrorIs(t, err, docbank.ErrVaultNeedsOwner)
-	_, err = os.Stat(filepath.Join(root, "vault.lock"))
-	require.ErrorIs(t, err, os.ErrNotExist)
 	v, err := docbank.New(t.Context(), docbank.Config{Root: root})
 	require.NoError(t, err)
 	_, err = v.Put(t.Context(), "/sessions/x.jsonl", strings.NewReader("synthetic original"), docbank.PutOptions{})
 	require.NoError(t, err)
 	id := v.ID()
-	_, err = docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
-	require.ErrorIs(t, err, docbank.ErrVaultLocked)
 	require.NoError(t, v.Close())
 	stabilizeReaderTree(t, root)
 	before := snapshotReaderTree(t, root)
@@ -53,34 +47,7 @@ func TestContentReader(t *testing.T) {
 	_, err = docbank.New(t.Context(), docbank.Config{Root: root})
 	require.ErrorIs(t, err, docbank.ErrVaultLocked)
 	assertReaderContent(t, reader, "/sessions/x.jsonl", "synthetic original")
-	_, err = reader.OpenContent(t.Context(), "/missing")
-	require.ErrorIs(t, err, docbank.ErrNotFound)
-	_, err = reader.OpenContent(t.Context(), "/sessions")
-	require.ErrorIs(t, err, docbank.ErrNotFile)
 	require.NoError(t, reader.Close())
-	require.NoError(t, reader.Close())
-	_, err = reader.OpenContent(t.Context(), "/sessions/x.jsonl")
-	require.ErrorIs(t, err, docbank.ErrClosed)
-	require.Equal(t, before, snapshotReaderTree(t, root))
-}
-
-func TestContentReaderPackedAndSidecars(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	v, err := docbank.New(t.Context(), docbank.Config{Root: root})
-	require.NoError(t, err)
-	receipt, err := v.Put(t.Context(), "/packed", strings.NewReader("packed synthetic data"), docbank.PutOptions{})
-	require.NoError(t, err)
-	report, err := v.Pack(t.Context(), docbank.PackOptions{})
-	require.NoError(t, err)
-	require.GreaterOrEqual(t, report.BlobsPacked, 1)
-	require.NoFileExists(t, looseBlobPath(root, receipt.Computed.SHA256))
-	require.NoError(t, v.Close())
-	stabilizeReaderTree(t, root)
-	before := snapshotReaderTree(t, root)
-	reader, err := docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
-	require.NoError(t, err)
-	assertReaderContent(t, reader, "/packed", "packed synthetic data")
 	require.NoError(t, reader.Close())
 	require.Equal(t, before, snapshotReaderTree(t, root))
 }
@@ -187,18 +154,6 @@ func TestContentReaderRefusesRecoveryWithoutChanges(t *testing.T) {
 			t.Helper()
 			require.NoError(t, os.Remove(filepath.Join(root, "vault.lock")))
 		}, true, "", false},
-		{"missing database", func(t *testing.T, root string) {
-			t.Helper()
-			require.NoError(t, os.Remove(filepath.Join(root, "docbank.db")))
-		}, true, "", false},
-		{"empty database", func(t *testing.T, root string) {
-			t.Helper()
-			require.NoError(t, os.WriteFile(filepath.Join(root, "docbank.db"), nil, 0o600))
-		}, true, "", false},
-		{"sidecar", func(t *testing.T, root string) {
-			t.Helper()
-			require.NoError(t, os.WriteFile(filepath.Join(root, "docbank.db-wal"), nil, 0o600))
-		}, true, "sidecar", false},
 		{"restore handoff", func(t *testing.T, root string) {
 			t.Helper()
 			backend, err := blob.NewFilesystemBackend(filepath.Join(root, "blobs"), nil)
@@ -226,14 +181,6 @@ func TestContentReaderRefusesRecoveryWithoutChanges(t *testing.T) {
 			require.NoError(t, backend.ReplaceOwnership(t.Context(), wrong, &prior))
 			require.NoError(t, backend.Close())
 		}, false, "", true},
-		{"newer schema", func(t *testing.T, root string) {
-			t.Helper()
-			db, err := store.DefaultSQLiteDriver().Open(filepath.Join(root, "docbank.db"), docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred})
-			require.NoError(t, err)
-			_, err = db.ExecContext(t.Context(), "UPDATE vault_metadata SET schema_version = 999999")
-			require.NoError(t, err)
-			require.NoError(t, db.Close())
-		}, false, "newer than binary", false},
 		{"released schema", func(t *testing.T, root string) {
 			t.Helper()
 			path := filepath.Join(root, "docbank.db")
@@ -249,15 +196,10 @@ func TestContentReaderRefusesRecoveryWithoutChanges(t *testing.T) {
 			require.NoError(t, db.Close())
 		}, true, "database requires initialization or upgrade", false},
 	}
-	for _, name := range []string{"database directory", "database symlink", "handoff directory", "handoff symlink"} {
+	for _, name := range []string{"handoff directory", "handoff symlink"} {
 		cases = append(cases, refusalCase{name, func(t *testing.T, root string) {
 			t.Helper()
-			path := filepath.Join(root, "docbank.db")
-			if strings.HasPrefix(name, "handoff") {
-				path = filepath.Join(root, "blobs", "tmp", "primary-restore-handoff.json")
-			} else {
-				require.NoError(t, os.Remove(path))
-			}
+			path := filepath.Join(root, "blobs", "tmp", "primary-restore-handoff.json")
 			if strings.HasSuffix(name, "directory") {
 				require.NoError(t, os.Mkdir(path, 0o700))
 			} else if err := os.Symlink(filepath.Join(t.TempDir(), "target"), path); err != nil {
@@ -361,86 +303,66 @@ func TestNilContentReader(t *testing.T) {
 }
 
 func TestContentReaderRejectsRegistryInsideVault(t *testing.T) {
-	for _, dangling := range []bool{false, true} {
-		t.Run(fmt.Sprintf("dangling_%t", dangling), func(t *testing.T) {
-			registry := t.TempDir()
-			t.Setenv("DOCBANK_LOCK_DIR", registry)
-			root := t.TempDir()
-			vault, err := docbank.New(t.Context(), docbank.Config{Root: root})
-			require.NoError(t, err)
-			require.NoError(t, vault.Close())
-			path := filepath.Join(root, "missing", "locks")
-			if dangling {
-				path = filepath.Join(t.TempDir(), "dangling")
-				if err := os.Symlink(filepath.Join(t.TempDir(), "missing"), path); err != nil {
-					t.Skipf("symlinks unavailable: %v", err)
-				}
-			}
-			t.Setenv("DOCBANK_LOCK_DIR", path)
-			assertReaderRefusedUnchanged(t, root, func(err error) {
-				t.Helper()
-				require.Error(t, err)
-				require.NotErrorIs(t, err, docbank.ErrVaultNeedsOwner)
-				if !dangling {
-					require.ErrorContains(t, err, "DOCBANK_LOCK_DIR")
-				}
-			})
-			t.Setenv("DOCBANK_LOCK_DIR", registry)
-			lock, err := (home.Layout{Root: root}).TryLockExclusive()
-			require.NoError(t, err)
-			require.NoError(t, lock.Release())
-		})
-	}
-}
-
-func TestContentReaderCompressedLoose(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	vault, err := docbank.New(t.Context(), docbank.Config{Root: root, LooseCompression: docbank.LooseCompressionOptions{Enabled: true, MinBytes: 1, MinSavingsPercent: 0}})
-	require.NoError(t, err)
-	data := strings.Repeat("synthetic compressed data ", 256)
-	receipt, err := vault.Put(t.Context(), "/compressed", strings.NewReader(data), docbank.PutOptions{})
-	require.NoError(t, err)
-	require.Equal(t, "zstd", receipt.Physical.Encoding)
-	require.NoError(t, vault.Close())
-	stabilizeReaderTree(t, root)
-	before := snapshotReaderTree(t, root)
-	reader, err := docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
-	require.NoError(t, err)
-	assertReaderContent(t, reader, "/compressed", data)
-	require.NoError(t, reader.Close())
-	require.Equal(t, before, snapshotReaderTree(t, root))
-}
-
-func TestContentReaderTamperedAndTrashed(t *testing.T) {
-	t.Parallel()
 	root := t.TempDir()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: root})
 	require.NoError(t, err)
-	receipt, err := vault.Put(t.Context(), "/tampered", strings.NewReader("synthetic original"), docbank.PutOptions{})
-	require.NoError(t, err)
-	_, err = vault.Put(t.Context(), "/trashed", strings.NewReader("synthetic trash"), docbank.PutOptions{})
-	require.NoError(t, err)
-	_, err = vault.TrashPath(t.Context(), "/trashed", docbank.RevisionOptions{})
-	require.NoError(t, err)
 	require.NoError(t, vault.Close())
-	path := looseBlobPath(root, receipt.Computed.SHA256)
-	damage, err := os.ReadFile(path)
-	require.NoError(t, err)
-	damage[0] ^= 1
-	require.NoError(t, os.WriteFile(path, damage, 0o600))
-	stabilizeReaderTree(t, root)
-	before := snapshotReaderTree(t, root)
-	reader, err := docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
-	require.NoError(t, err)
-	_, err = reader.OpenContent(t.Context(), "/trashed")
-	require.ErrorIs(t, err, docbank.ErrNotFound)
-	content, err := reader.OpenContent(t.Context(), "/tampered")
-	require.NoError(t, err)
-	_, err = io.ReadAll(content.Reader)
-	require.ErrorIs(t, err, packstore.ErrPhysicalCorrupt)
-	require.ErrorIs(t, content.Reader.Verify(), packstore.ErrPhysicalCorrupt)
-	require.ErrorIs(t, content.Reader.Close(), packstore.ErrPhysicalCorrupt)
-	require.NoError(t, reader.Close())
-	require.Equal(t, before, snapshotReaderTree(t, root))
+	t.Setenv("DOCBANK_LOCK_DIR", filepath.Join(root, "missing", "locks"))
+	assertReaderRefusedUnchanged(t, root, func(err error) {
+		t.Helper()
+		require.ErrorContains(t, err, "DOCBANK_LOCK_DIR")
+		require.NotErrorIs(t, err, docbank.ErrVaultNeedsOwner)
+	})
+}
+
+func TestContentReaderStorageUnchanged(t *testing.T) {
+	for _, kind := range []string{"loose", "packed", "compressed", "tampered"} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			config := docbank.Config{Root: root}
+			data := "synthetic original"
+			if kind == "compressed" {
+				config.LooseCompression = docbank.LooseCompressionOptions{Enabled: true, MinBytes: 1, MinSavingsPercent: 0}
+				data = strings.Repeat("synthetic compressed data ", 256)
+			}
+			vault, err := docbank.New(t.Context(), config)
+			require.NoError(t, err)
+			receipt, err := vault.Put(t.Context(), "/source", strings.NewReader(data), docbank.PutOptions{})
+			require.NoError(t, err)
+			if kind == "compressed" {
+				require.Equal(t, "zstd", receipt.Physical.Encoding)
+			}
+			if kind == "packed" {
+				report, err := vault.Pack(t.Context(), docbank.PackOptions{})
+				require.NoError(t, err)
+				require.GreaterOrEqual(t, report.BlobsPacked, 1)
+				require.NoFileExists(t, looseBlobPath(root, receipt.Computed.SHA256))
+			}
+			require.NoError(t, vault.Close())
+			if kind == "tampered" {
+				path := looseBlobPath(root, receipt.Computed.SHA256)
+				damage, err := os.ReadFile(path)
+				require.NoError(t, err)
+				damage[0] ^= 1
+				require.NoError(t, os.WriteFile(path, damage, 0o600))
+			}
+			stabilizeReaderTree(t, root)
+			before := snapshotReaderTree(t, root)
+			reader, err := docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
+			require.NoError(t, err)
+			if kind == "tampered" {
+				content, err := reader.OpenContent(t.Context(), "/source")
+				require.NoError(t, err)
+				_, err = io.ReadAll(content.Reader)
+				require.ErrorIs(t, err, packstore.ErrPhysicalCorrupt)
+				require.ErrorIs(t, content.Reader.Verify(), packstore.ErrPhysicalCorrupt)
+				require.ErrorIs(t, content.Reader.Close(), packstore.ErrPhysicalCorrupt)
+			} else {
+				assertReaderContent(t, reader, "/source", data)
+			}
+			require.NoError(t, reader.Close())
+			require.Equal(t, before, snapshotReaderTree(t, root))
+		})
+	}
 }

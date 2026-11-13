@@ -760,7 +760,8 @@ Newer, unsupported, or unreadable schemas, invalid identity, wrong ownership mar
 and non-regular database or handoff files retain their own errors. The existing
 `vault.lock` must be writable. The lock registry (`DOCBANK_LOCK_DIR` when set)
 must be writable and outside the vault; a registry inside it is a configuration
-error. When checking a current-schema database, Docbank creates a temporary
+error. Docbank creates the registry directory and its lock files as needed. When
+checking a current-schema database, Docbank creates a temporary
 `docbank-current-schema-*.db` file in the registry. The default registry is
 `.local/state/docbank/target-locks` in the account home. Docbank deletes the file
 before `OpenContentReader` returns, but a crash during the check can leave it

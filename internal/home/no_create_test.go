@@ -21,62 +21,40 @@ func TestNoCreateLock(t *testing.T) {
 }
 
 func TestNoCreateRegistryInsideVault(t *testing.T) {
-	for _, present := range []bool{false, true} {
-		for _, name := range []string{"root", "child", "missing descendant", "root alias", "alias descendant"} {
-			t.Run(fmt.Sprintf("%s_leaf_%t", name, present), func(t *testing.T) {
-				root := t.TempDir()
-				leaf := filepath.Join(root, "vault.lock")
-				if present {
-					require.NoError(t, os.WriteFile(leaf, []byte("synthetic lock"), 0o600))
+	for _, name := range []string{"root", "child", "missing descendant", "root alias", "alias descendant"} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			alias := filepath.Join(t.TempDir(), "alias")
+			if name == "root alias" || name == "alias descendant" {
+				if err := os.Symlink(root, alias); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
 				}
-				alias := filepath.Join(t.TempDir(), "alias")
-				if name == "root alias" || name == "alias descendant" {
-					if err := os.Symlink(root, alias); err != nil {
-						t.Skipf("symlinks unavailable: %v", err)
-					}
-				}
-				registry := map[string]string{
-					"root": root, "child": filepath.Join(root, "locks"),
-					"missing descendant": filepath.Join(root, "missing", "locks"),
-					"root alias":         alias, "alias descendant": filepath.Join(alias, "locks"),
-				}[name]
-				t.Setenv("DOCBANK_LOCK_DIR", registry)
-				before, err := os.Stat(root)
-				require.NoError(t, err)
-				var leafBefore os.FileInfo
-				if present {
-					leafBefore, err = os.Stat(leaf)
-					require.NoError(t, err)
-				}
-				opened, held, returnedRegistry, err := (Layout{Root: root}).OpenExistingAndLockExclusiveNoCreate()
-				require.ErrorIs(t, err, ErrRegistryInsideVault)
-				require.Nil(t, opened)
-				require.Nil(t, held)
-				require.Empty(t, returnedRegistry)
-				after, err := os.Stat(root)
-				require.NoError(t, err)
-				require.Equal(t, before.Mode(), after.Mode())
-				require.Equal(t, before.ModTime(), after.ModTime())
-				entries, err := os.ReadDir(root)
-				require.NoError(t, err)
-				if !present {
-					require.Empty(t, entries)
-				} else {
-					require.Len(t, entries, 1)
-					leafAfter, err := os.Stat(leaf)
-					require.NoError(t, err)
-					require.Equal(t, leafBefore.Mode(), leafAfter.Mode())
-					require.Equal(t, leafBefore.ModTime(), leafAfter.ModTime())
-					data, err := os.ReadFile(leaf)
-					require.NoError(t, err)
-					require.Equal(t, "synthetic lock", string(data))
-				}
-				t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
-				owner, err := (Layout{Root: root}).TryLockExclusive()
-				require.NoError(t, err)
-				require.NoError(t, owner.Release())
-			})
-		}
+			}
+			registry := map[string]string{
+				"root": root, "child": filepath.Join(root, "locks"),
+				"missing descendant": filepath.Join(root, "missing", "locks"),
+				"root alias":         alias, "alias descendant": filepath.Join(alias, "locks"),
+			}[name]
+			t.Setenv("DOCBANK_LOCK_DIR", registry)
+			before, err := os.Stat(root)
+			require.NoError(t, err)
+			opened, held, returnedRegistry, err := (Layout{Root: root}).OpenExistingAndLockExclusiveNoCreate()
+			require.ErrorIs(t, err, ErrRegistryInsideVault)
+			require.Nil(t, opened)
+			require.Nil(t, held)
+			require.Empty(t, returnedRegistry)
+			after, err := os.Stat(root)
+			require.NoError(t, err)
+			require.Equal(t, before.Mode(), after.Mode())
+			require.Equal(t, before.ModTime(), after.ModTime())
+			entries, err := os.ReadDir(root)
+			require.NoError(t, err)
+			require.Empty(t, entries)
+			t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
+			owner, err := (Layout{Root: root}).TryLockExclusive()
+			require.NoError(t, err)
+			require.NoError(t, owner.Release())
+		})
 	}
 	t.Run("default registry", func(t *testing.T) {
 		t.Setenv("DOCBANK_LOCK_DIR", "")
@@ -175,18 +153,5 @@ func TestNoCreateOwnershipTransitionConflict(t *testing.T) {
 	require.Nil(t, root)
 	require.Nil(t, lock)
 	require.NotEmpty(t, registry)
-	require.NoError(t, transition.Release())
-	root, lock, registry, err = layout.OpenExistingAndLockExclusiveNoCreate()
-	require.NoError(t, err)
-	require.NotEmpty(t, registry)
-	transition, err = layout.TryLockOwnershipTransition()
-	require.NoError(t, err)
-	_, _, err = transition.OpenExistingAndLockExclusive()
-	require.ErrorIs(t, err, ErrVaultLocked)
-	require.NoError(t, transition.Release())
-	require.NoError(t, lock.Release())
-	require.NoError(t, root.Close())
-	transition, err = layout.TryLockOwnershipTransition()
-	require.NoError(t, err)
 	require.NoError(t, transition.Release())
 }

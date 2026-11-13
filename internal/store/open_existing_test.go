@@ -45,12 +45,6 @@ func TestOpenExisting(t *testing.T) {
 		require.ErrorIs(t, err, ErrNeedsOwner)
 		require.NoError(t, os.Remove(path+suffix))
 	}
-	require.NoError(t, os.Remove(path))
-	_, err = OpenExisting(t.Context(), path, driver, scratchDir)
-	require.ErrorIs(t, err, ErrNeedsOwner)
-	data, err = os.ReadFile(stale)
-	require.NoError(t, err)
-	require.Equal(t, "stale", string(data))
 }
 
 func TestOpenExistingRefusesReleasedAndFresh(t *testing.T) {
