@@ -52,7 +52,7 @@ func newAgentSetupCommand() *cobra.Command {
 
 // codexCommand runs from the home directory so Codex reads user settings, not a trusted project's.
 func codexCommand(ctx context.Context, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "codex", args...)
+	cmd := exec.CommandContext(ctx, "codex", args...) //nolint:gosec // Callers supply fixed Codex feature commands.
 	cmd.Dir, _ = os.UserHomeDir()
 	return cmd
 }
