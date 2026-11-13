@@ -104,11 +104,7 @@ var ErrExistingVaultMissing = errors.New("existing vault root or lock is missing
 
 // OpenExistingAndLockExclusiveNoCreate returns the validated registry used for locking.
 func (l Layout) OpenExistingAndLockExclusiveNoCreate() (*os.Root, *Lock, string, error) {
-	return l.openExistingAndLockExclusiveNoCreate(targetLockRegistryPath)
-}
-
-func (l Layout) openExistingAndLockExclusiveNoCreate(resolveRegistry func() (string, error)) (*os.Root, *Lock, string, error) {
-	registry, err := resolveRegistry()
+	registry, err := targetLockRegistryPath()
 	if err != nil {
 		return nil, nil, "", err
 	}

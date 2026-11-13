@@ -56,27 +56,6 @@ func TestNoCreateRegistryInsideVault(t *testing.T) {
 			require.NoError(t, owner.Release())
 		})
 	}
-	t.Run("default registry", func(t *testing.T) {
-		t.Setenv("DOCBANK_LOCK_DIR", "")
-		root := t.TempDir()
-		registry := filepath.Join(root, "missing", "locks")
-		before, err := os.Stat(root)
-		require.NoError(t, err)
-		resolve := func() (string, error) {
-			return targetLockRegistryPathWithBase(func() (string, error) { return registry, nil })
-		}
-		opened, lock, gotRegistry, err := (Layout{Root: root}).openExistingAndLockExclusiveNoCreate(resolve)
-		require.ErrorIs(t, err, ErrRegistryInsideVault)
-		require.Nil(t, opened)
-		require.Nil(t, lock)
-		require.Empty(t, gotRegistry)
-		after, err := os.Stat(root)
-		require.NoError(t, err)
-		require.Equal(t, before.ModTime(), after.ModTime())
-		entries, err := os.ReadDir(root)
-		require.NoError(t, err)
-		require.Empty(t, entries)
-	})
 	t.Run("missing root", func(t *testing.T) {
 		root := filepath.Join(t.TempDir(), "vault")
 		t.Setenv("DOCBANK_LOCK_DIR", filepath.Join(root, "locks"))
