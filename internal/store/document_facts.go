@@ -147,6 +147,8 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 				facts.State = factsStatePending
 			}
 			facts.Edges = []document.DocumentPersonEdgeV1{}
+		} else if facts.State == factsStateNone && (eventState == factsStatePending || eventState == factsStateFailed) {
+			facts.State = eventState
 		}
 		events = eventView.Events.Events
 		var actorKeys []string
