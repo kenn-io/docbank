@@ -162,11 +162,11 @@ func newBatesExportDownloadCommand() *cobra.Command {
 				if prepPath == "" || masksPath == "" || reviewPath == "" {
 					return usageError(errors.New("provide --preparation, --masks and --review together"))
 				}
-				inputs, err := readRedactionInputs(prepPath, masksPath)
+				inputs, err := readRedactionInputs(cmd.Context(), prepPath, masksPath)
 				if err != nil {
 					return err
 				}
-				checked, err := readRedactionReview(reviewPath, inputs)
+				checked, err := readRedactionReview(cmd.Context(), reviewPath, inputs)
 				if err != nil {
 					return err
 				}
