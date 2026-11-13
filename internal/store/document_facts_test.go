@@ -32,6 +32,26 @@ func TestDocumentPeopleFactsMissingHead(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "none", facts.State)
 	require.Empty(t, facts.Edges)
+	person, err := s.CreatePerson(t.Context(), "Assigned Author", "operator")
+	require.NoError(t, err)
+	_, err = s.AssertDocumentPerson(t.Context(), PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	_, err = s.StartDocumentEventRebuild(t.Context(), "00000000-0000-4000-8000-000000000001", DocumentEventRebuildRequestSHA256)
+	require.NoError(t, err)
+	// A failed attempt from the previous epoch makes the new event work pending.
+	target := requireDocumentEventTarget(t, s, version.ID)
+	require.NoError(t, s.RecordDocumentEventAttempt(t.Context(), target, requireDocumentEventInputsSHA256(t, s, target), "failed", []byte(`[]`)))
+	facts, err = s.DocumentPeopleFacts(t.Context(), version.ID, true)
+	require.NoError(t, err)
+	require.Equal(t, "failed", facts.State)
+	require.Len(t, facts.Assertions, 1)
+	_, err = s.StartDocumentEventRebuild(t.Context(), "00000000-0000-4000-8000-000000000002", DocumentEventRebuildRequestSHA256)
+	require.NoError(t, err)
+	facts, err = s.DocumentPeopleFacts(t.Context(), version.ID, true)
+	require.NoError(t, err)
+	require.Equal(t, "pending", facts.State)
+	require.Len(t, facts.Assertions, 1)
+	require.Equal(t, person.PersonID, facts.Assertions[0].PersonID)
 }
 
 func checkDocumentPeopleFactsFiltersBlindCopyAssertion(t *testing.T, newStore func(*testing.T) *Store) {
