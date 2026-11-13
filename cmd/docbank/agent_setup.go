@@ -19,18 +19,26 @@ const codexEnable = "codex features enable " + codexFeature
 
 func newAgentSetupCommand() *cobra.Command {
 	cmd := agentsetup.NewCommand(agentsetup.Options{
-		SetupCommand:  "docbank agent setup",
-		RepairCommand: "docbank agent setup",
+		SetupCommand: "docbank agent setup",
 		Items: func(agent string) ([]agentsetup.Item, error) {
 			server, err := mcpConfigServer(agentmcp.Agent(agent), "stdio", "", nil)
 			if err != nil {
 				return nil, err
 			}
-			items := []agentsetup.Item{agentsetup.MCP(agent, "docbank", server)}
-			if agent == "codex" {
-				items = append([]agentsetup.Item{codexFeatureItem()}, items...)
+			item := agentsetup.MCP(agent, "docbank", server)
+			if agent != "codex" {
+				return []agentsetup.Item{item}, nil
 			}
-			return items, nil
+			feature := codexFeatureItem()
+			check := item.Check
+			item.Check = func(ctx context.Context) (agentsetup.Status, error) {
+				status, err := feature.Check(ctx)
+				if err == nil && status.State == agentsetup.StateFailed {
+					return agentsetup.Status{State: agentsetup.StateFailed, Reason: "needs the Codex feature step above"}, nil
+				}
+				return check(ctx)
+			}
+			return []agentsetup.Item{feature, item}, nil
 		},
 	})
 	cmd.Short = "Connect Claude Code and Codex to Docbank"
