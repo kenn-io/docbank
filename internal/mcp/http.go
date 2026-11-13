@@ -94,7 +94,18 @@ func (server *Server) HTTPTransportHandler(options HTTPOptions) (http.Handler, e
 	// The outer guard owns explicit Host validation, including Docker service
 	// names on loopback connections. Keep the public protocol handler protected.
 	inner := server.httpHandler(true)
-	return wrapHTTPTransport(inner, options, http.HandlerFunc(server.relayOriginalDownload))
+	protected, err := wrapHTTPTransport(inner, options, http.HandlerFunc(server.relayOriginalDownload))
+	if err != nil {
+		return nil, err
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/icon.png", "/favicon.ico":
+			serveIcon(w, r)
+		default:
+			protected.ServeHTTP(w, r)
+		}
+	}), nil
 }
 
 // prepareHTTP binds one opaque credential-exclusion policy to the daemon lease
