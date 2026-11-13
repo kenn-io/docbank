@@ -70,7 +70,7 @@ func (s *Store) freshEventsInTx(ctx context.Context, tx *sql.Tx, versionID strin
 	if failed {
 		return factsStateFailed, DocumentEventView{}, nil
 	}
-	if !attempt && !head {
+	if !attempt && !head && state.InputEpoch <= 1 {
 		return factsStateNone, DocumentEventView{}, nil
 	}
 	return factsStatePending, DocumentEventView{}, nil
@@ -164,6 +164,26 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 	}
 	// Candidates omit sensitivity. Match each occurrence to the current event
 	// generation and fail closed when its authoritative evidence is absent.
+	type actorOccurrence struct {
+		actorKey   string
+		occurrence PersonCandidateOccurrence
+	}
+	type occurrenceEvidence struct {
+		label     string
+		sensitive bool
+	}
+	evidence := make(map[actorOccurrence]occurrenceEvidence)
+	for _, event := range events {
+		for _, actor := range event.Actors {
+			kind, id := actor.EvidenceKind, actor.EvidenceID
+			if kind == "" {
+				kind, id = event.EvidenceKind, event.EvidenceID
+			}
+			key := actorOccurrence{actor.ActorKey, PersonCandidateOccurrence{ContentVersionID: versionID, Role: string(actor.Role), EvidenceKind: string(kind), EvidenceID: id}}
+			prior := evidence[key]
+			evidence[key] = occurrenceEvidence{label: (DocumentPeopleActor{DisplayName: actor.DisplayName, Address: actor.Address, ActorKey: actor.ActorKey}).DisplayLabel(), sensitive: prior.sensitive || event.Sensitive || actor.Sensitive}
+		}
+	}
 	for i := range facts.Candidates {
 		c := &facts.Candidates[i]
 		c.OccurrenceLabels = make(map[PersonCandidateOccurrence]string)
@@ -171,23 +191,12 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 			if safe && o.Role == "blind_copy" {
 				return true
 			}
-			found := false
-			for _, event := range events {
-				for _, actor := range event.Actors {
-					kind, id := actor.EvidenceKind, actor.EvidenceID
-					if kind == "" {
-						kind, id = event.EvidenceKind, event.EvidenceID
-					}
-					if actor.ActorKey == c.ActorKey && string(actor.Role) == o.Role && string(kind) == o.EvidenceKind && id == o.EvidenceID {
-						if safe && (event.Sensitive || actor.Sensitive) {
-							return true
-						}
-						found = true
-						c.OccurrenceLabels[o] = (DocumentPeopleActor{DisplayName: actor.DisplayName, Address: actor.Address, ActorKey: actor.ActorKey}).DisplayLabel()
-					}
-				}
+			match, found := evidence[actorOccurrence{c.ActorKey, o}]
+			if !found || safe && match.sensitive {
+				return true
 			}
-			return !found
+			c.OccurrenceLabels[o] = match.label
+			return false
 		})
 	}
 	ids := map[string]bool{}
@@ -232,15 +241,11 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 	return facts, nil
 }
 
-// factsVersionTx reads the version and applies the caller's Hidden scope once.
+// factsVersionTx reads the version and applies the caller's Hidden session once.
 func (s *Store) factsVersionTx(ctx context.Context, tx *sql.Tx, versionID string) (ContentVersion, bool, error) {
 	version, err := scanContentVersion(tx.QueryRowContext(ctx, `SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=$1`, versionID))
 	if err != nil {
 		return ContentVersion{}, false, err
-	}
-	visible, _ := ctx.Value(visiblePersonContextKey{}).(bool)
-	if !visible {
-		return version, false, nil
 	}
 	_, err = s.hiddenSession(ctx, tx)
 	if err == nil {

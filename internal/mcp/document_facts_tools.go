@@ -2,6 +2,9 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"uuid"
@@ -15,6 +18,7 @@ type documentFactsInput struct {
 	NodeID           int64  `json:"node_id"`
 	ContentVersionID string `json:"content_version_id"`
 	Offset           int    `json:"offset"`
+	Snapshot         string `json:"snapshot"`
 }
 
 func documentFactsSelection(raw []byte) (documentFactsInput, error) {
@@ -29,15 +33,17 @@ type documentDatesOutput struct {
 	privateCache
 	api.VersionDates
 
-	Offset     int  `json:"offset"`
-	NextOffset *int `json:"next_offset,omitzero"`
+	Offset     int    `json:"offset"`
+	NextOffset *int   `json:"next_offset,omitzero"`
+	Snapshot   string `json:"snapshot"`
 }
 type documentPeopleOutput struct {
 	privateCache
 	api.VersionPeople
 
-	Offset     int  `json:"offset"`
-	NextOffset *int `json:"next_offset,omitzero"`
+	Offset     int    `json:"offset"`
+	NextOffset *int   `json:"next_offset,omitzero"`
+	Snapshot   string `json:"snapshot"`
 }
 
 func getDocumentFacts(ctx context.Context, lease *daemonLease, raw []byte, kind string) (any, error) {
@@ -76,18 +82,57 @@ func getDocumentFacts(ctx context.Context, lease *daemonLease, raw []byte, kind 
 		return factsResponse{people: result}, err
 	})
 	if err != nil {
+		if facts, ok := toolProblemFacts(err); ok && facts.Code == "version_not_found" {
+			return nil, &searchProfileError{code: "not_found", message: domainErrorMessage("not_found")}
+		}
 		return nil, err
 	}
 	if response.dates != nil {
+		if err := validateFactsSnapshot(in, *response.dates); err != nil {
+			return nil, err
+		}
 		return documentDatesPage(*response.dates, in.Offset)
 	}
 	if response.people != nil {
+		if err := validateFactsSnapshot(in, *response.people); err != nil {
+			return nil, err
+		}
 		return documentPeoplePage(*response.people, in.Offset)
 	}
 	if response.noVersion {
+		if in.Offset > 0 {
+			return nil, staleFactsPage()
+		}
 		return nil, &searchProfileError{code: "no_content_version", message: "Document has no current content version."}
 	}
 	return nil, errors.New("document facts response is empty")
+}
+
+func validateFactsSnapshot(in documentFactsInput, value any) error {
+	if in.Offset == 0 {
+		return nil
+	}
+	snapshot, err := factsSnapshot(value)
+	if err != nil {
+		return err
+	}
+	if in.Snapshot != snapshot {
+		return staleFactsPage()
+	}
+	return nil
+}
+
+func staleFactsPage() error {
+	return &searchProfileError{code: "stale_facts", message: "Document facts changed. Restart at offset zero."}
+}
+
+func factsSnapshot(value any) (string, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(raw)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 // documentDatesPage pages claims followed by diagnostics, retaining the primary
@@ -96,9 +141,14 @@ func documentDatesPage(dates api.VersionDates, offset int) (documentDatesOutput,
 	total := len(dates.Claims) + len(dates.Diagnostics)
 	start := min(offset, total)
 	output := documentDatesOutput{privateCache: newPrivateCache(), VersionDates: dates, Offset: start}
+	snapshot, err := factsSnapshot(dates)
+	if err != nil {
+		return output, err
+	}
+	output.Snapshot = snapshot
 	output.Claims = []api.VersionDateClaim{}
 	output.Diagnostics = []api.FactDiagnostic{}
-	err := pageFacts(start, total, &output.NextOffset, func(i int, add bool) {
+	err = pageFacts(start, total, &output.NextOffset, func(i int, add bool) {
 		if i < len(dates.Claims) {
 			if add {
 				output.Claims = append(output.Claims, dates.Claims[i])
@@ -122,10 +172,15 @@ func documentPeoplePage(people api.VersionPeople, offset int) (documentPeopleOut
 	total := edges + assertions + len(people.Unresolved)
 	start := min(offset, total)
 	output := documentPeopleOutput{privateCache: newPrivateCache(), VersionPeople: people, Offset: start}
+	snapshot, err := factsSnapshot(people)
+	if err != nil {
+		return output, err
+	}
+	output.Snapshot = snapshot
 	output.Edges = []api.VersionPersonEdge{}
 	output.Assertions = []api.VersionPersonAssertion{}
 	output.Unresolved = []api.VersionUnresolvedName{}
-	err := pageFacts(start, total, &output.NextOffset, func(i int, add bool) {
+	err = pageFacts(start, total, &output.NextOffset, func(i int, add bool) {
 		switch {
 		case i < edges:
 			if add {
