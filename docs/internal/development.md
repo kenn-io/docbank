@@ -387,9 +387,18 @@ sessions and photo settings have native Store contracts as well.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Photo-derived processing, email PDF rendering,
-other media workers, search and physical backup recovery remain unqualified.
+other media workers, search and PostgreSQL-target backup recovery remain unqualified.
 Native multi-store catalog operations are qualified below; deployment adapters
 and filesystem workers remain separate from public PostgreSQL vault opening.
+
+The internal `store.OpenPostgres(ctx, connection, cfg)` opens an installed schema
+with runtime credentials. It copies the pgx connection configuration, pins the
+explicit schema in every connection's startup parameters, checks the effective
+schema, and runs `pgschema.Validate` before loading vault roots. It creates no
+schema and performs no repair. The returned Store owns its pool; `Close` releases
+it. Setup and logical restore keep their separate owner credentials. The Store
+contract suite and native backup tests use this opener through the same
+`pgstoretest.RuntimeConfig` grant fixture. Public Vault opening stays separate.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
 and uses the explicit `Schema` setting. The database must use `UTF8` encoding;
@@ -923,6 +932,29 @@ cannot authorize a provider call until the operator grants consent again.
 `VerifyAudit` independently replays the restored history and can compare
 previously recorded evidence on either backend.
 
+#### Backup capture and SQLite recovery
+
+The internal backup pipeline captures PostgreSQL metadata and managed blob
+bytes into the existing backup repository. It retains the existing repository ownership and caller-owned
+mutation freeze and maintenance fence, with the same streaming content and
+placement artifact as SQLite capture. The metadata snapshot stays on one repeatable-read transaction
+while content capture reads loose or packed bytes through catalog authority.
+Catalog-presence checks use PostgreSQL's catalog lookup; SQLite retains its
+historical optional-table handling.
+
+The existing restore pipeline recovers these snapshots into SQLite. It verifies
+content before publishing the destination and reconstructs fresh primary pack
+ownership. Vault, node, version and audit identities survive recovery; source
+installation authority does not. Source PostgreSQL metadata and blob files are
+not needed once capture finishes. Missing source content fails capture without
+publishing a snapshot. PostgreSQL-target physical restore remains unqualified.
+
+`make test-pg` runs the backup application scenarios after the Store lane on both
+PostgreSQL versions. The shared scenarios verify loose and packed byte readback,
+photo state after source loss, and complete audited incremental history. The
+PostgreSQL source-loss scenario removes both the schema and source files before
+restoring. The ordinary SQLite suite runs the same recovery scenarios.
+
 #### String storage across backends
 
 Accepted strings keep every UTF-8 byte, including U+0000. PostgreSQL `TEXT`
@@ -1133,10 +1165,6 @@ readback. Native document writes also record physical receipts as described
 below. Checksum backfill remains unqualified.
 
 !!! info "Planned"
-
-    Runtime opening must reject a connection whose `current_schema()` differs
-    from the configured vault schema. Each pool must pin that same search path,
-    so writers to one schema use the same advisory lock key.
 
     Photos checkout writes currently rely on SQLite's single-connection writer
     pool. Their PostgreSQL implementation must use `withStorageTx` for every
@@ -2202,7 +2230,7 @@ schema can enroll its root without a copied fixture.
 Copying supporting catalogs qualifies their validation, not their producers.
 The [operation inventory](#backend-support-and-drift-checks) identifies native
 writes and their catalog-maintenance coverage. Public PostgreSQL opening,
-physical backup/restore and search remain unqualified. Logical metadata transfer
+PostgreSQL-target physical restore and search remain unqualified. Logical metadata transfer
 uses the internal import/export entry points described above.
 
 For PostgreSQL tests, start a disposable server, never an operator database:

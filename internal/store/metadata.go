@@ -44,6 +44,9 @@ type MetadataSnapshot struct {
 	layout metadataSourceLayout
 }
 
+// IsPostgres identifies the catalog dialect of this pinned snapshot.
+func (s *MetadataSnapshot) IsPostgres() bool { return s.layout.postgres }
+
 func (s *MetadataSnapshot) QueryContext(
 	ctx context.Context, query string, args ...any,
 ) (*sql.Rows, error) {
