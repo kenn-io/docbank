@@ -41,7 +41,7 @@ require (
 	github.com/xdg-go/stringprep v1.0.4
 	github.com/yuin/goldmark/v2 v2.1.13
 	go.kenn.io/kata v0.23.0
-	go.kenn.io/kit v0.53.0
+	go.kenn.io/kit v0.53.1-0.20261113224723-273044a99c7d
 	golang.org/x/crypto v0.59.0
 	golang.org/x/image v0.47.0
 	golang.org/x/mod v0.42.0
