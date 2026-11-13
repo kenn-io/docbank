@@ -144,6 +144,51 @@ fi
 	require.ErrorContains(t, err, "enable refused")
 }
 
+func TestAgentSetupFeatureUsesUserScope(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell stub")
+	}
+	for _, tc := range []struct {
+		name, user, project string
+	}{
+		{"project enabled", "false", "true"},
+		{"project disabled", "true", "false"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			project := filepath.Join(dir, "project")
+			require.NoError(t, os.Mkdir(project, 0o700))
+			t.Chdir(project)
+			t.Setenv("HOME", dir)
+			t.Setenv("CODEX_HOME", dir)
+			t.Setenv("PATH", dir)
+			t.Setenv("TEST_PROJECT", project)
+			t.Setenv("TEST_USER_FEATURE", filepath.Join(dir, "user-feature"))
+			t.Setenv("TEST_PROJECT_FEATURE", tc.project)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "user-feature"), []byte(tc.user+"\n"), 0o600))
+			stub := `#!/bin/sh
+if [ "$1 $2" = "features list" ]; then
+  if [ "$PWD" = "$TEST_PROJECT" ]; then value="$TEST_PROJECT_FEATURE"; else read -r value < "$TEST_USER_FEATURE"; fi
+  echo "mcp_2026_07_28 under development $value"
+elif [ "$1 $2 $3" = "features enable mcp_2026_07_28" ]; then
+  echo true > "$TEST_USER_FEATURE"
+else
+  exit 1
+fi
+`
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "codex"), []byte(stub), 0o700))
+			item := codexFeatureItem()
+			require.NoError(t, item.Install(t.Context()))
+			user, err := os.ReadFile(filepath.Join(dir, "user-feature"))
+			require.NoError(t, err)
+			assert.Equal(t, "true\n", string(user))
+			status, err := item.Check(t.Context())
+			require.NoError(t, err)
+			assert.Equal(t, agentsetup.StateOK, status.State)
+		})
+	}
+}
+
 func TestAgentSetupResetsManualWriteArgs(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell stub")

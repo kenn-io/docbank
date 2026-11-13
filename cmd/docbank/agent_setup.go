@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -49,11 +50,18 @@ func newAgentSetupCommand() *cobra.Command {
 	return cmd
 }
 
+// codexCommand runs from the home directory so Codex reads user settings, not a trusted project's.
+func codexCommand(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "codex", args...)
+	cmd.Dir, _ = os.UserHomeDir()
+	return cmd
+}
+
 func codexFeatureItem() agentsetup.Item {
 	probe := func(ctx context.Context) (agentsetup.Status, bool) {
 		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		output, err := exec.CommandContext(ctx, "codex", "features", "list").Output()
+		output, err := codexCommand(ctx, "features", "list").Output()
 		if err != nil {
 			return agentsetup.Status{State: agentsetup.StateUnknown, Reason: fmt.Sprintf("checking Codex features: %v", err), NextStep: codexEnable}, false
 		}
@@ -86,7 +94,7 @@ func codexFeatureItem() agentsetup.Item {
 			}
 			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
-			output, err := exec.CommandContext(ctx, "codex", "features", "enable", codexFeature).CombinedOutput()
+			output, err := codexCommand(ctx, "features", "enable", codexFeature).CombinedOutput()
 			if err != nil {
 				return fmt.Errorf("enabling Codex feature: %w: %s", err, strings.TrimSpace(string(output)))
 			}
