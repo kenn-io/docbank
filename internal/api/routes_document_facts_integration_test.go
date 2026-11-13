@@ -80,8 +80,11 @@ func TestVersionFactsBrowserFullForbidden(t *testing.T) {
 		res, body = get(t, ts, path+"?disclosure=full", headers)
 		require.Equal(t, http.StatusForbidden, res.StatusCode, body)
 		require.Equal(t, "disclosure_forbidden", decodeProblem(t, body).Code)
-		res, body = get(t, ts, path+"?timezone=UTC", headers)
-		require.Equal(t, http.StatusBadRequest, res.StatusCode, body)
+		for _, query := range []string{"?timezone=UTC", "?disclosure=bad", "?disclosure=full&disclosure=safe"} {
+			res, body = get(t, ts, path+query, headers)
+			require.Equal(t, http.StatusForbidden, res.StatusCode, body)
+			require.Equal(t, "web_session_read_only", decodeProblem(t, body).Code)
+		}
 	}
 	person, err := s.CreatePerson(t.Context(), "Blind Recipient", "operator")
 	require.NoError(t, err)
