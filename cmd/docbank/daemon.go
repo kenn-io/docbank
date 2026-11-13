@@ -763,7 +763,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		BackupScheduleWake: backupScheduleWake,
 		Jobs:               jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
 		WebLoginEnabled: webLoginEnabled, APIAddress: addr,
-		Processing: processingService, LocalText: localText, Faces: faces,
+		Processing: processingService, LocalText: localText, PDFText: pdfText, Faces: faces,
 		LocalTextStatus: func(ctx context.Context) (api.LocalTextStatus, error) {
 			return localTextStatus(ctx, processingProfiles, processingService, restartPending.Load())
 		}, EnsureEmail: processing.EnsureEmailTarget,
@@ -854,11 +854,12 @@ func drainHTTPServer(server *http.Server) func(context.Context) error {
 	}
 }
 
-// withMCPRoute serves hosted MCP at /mcp ahead of the API middleware. The MCP
-// transport applies its own bearer, Host, and Origin checks.
+// withMCPRoute serves hosted MCP and its public icon aliases ahead of the API
+// middleware. The MCP transport applies its own bearer, Host, and Origin checks.
 func withMCPRoute(api, mcp http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == mcpHTTPPath || r.URL.Path == docmcp.OriginalDownloadPath {
+		switch r.URL.Path {
+		case mcpHTTPPath, docmcp.OriginalDownloadPath, "/icon.png", "/favicon.ico":
 			mcp.ServeHTTP(w, r)
 			return
 		}

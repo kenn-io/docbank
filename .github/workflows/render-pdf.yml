@@ -34,7 +34,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.52.0
       - name: Prepare pinned renderer without changing host policy
         shell: bash
         run: |
@@ -47,8 +47,9 @@ jobs:
           chmod +x chrome-linux64/chrome chrome-linux64/chrome_crashpad_handler
           cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf fonts/
           if ! command -v bwrap >/dev/null; then
-            kit-retry 3 5 apt-get download bubblewrap
-            dpkg-deb -x bubblewrap_*.deb bubblewrap
+            kit-download https://archive.ubuntu.com/ubuntu/pool/main/b/bubblewrap/bubblewrap_0.6.1-1ubuntu0.3_amd64.deb bubblewrap.deb
+            echo '706763714e5d19fc7ab2572a6418506e3a4a5d5960e99309707b58117e6b40cb  bubblewrap.deb' | sha256sum -c -
+            dpkg-deb -x bubblewrap.deb bubblewrap
             cp bubblewrap/usr/bin/bwrap bin/
           fi
           echo "$RUNNER_TEMP/email-proof/bin" >> "$GITHUB_PATH"
@@ -105,7 +106,7 @@ jobs:
           node-version: 26.13.0
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.52.0
 
       - name: Install Poppler and Chromium
         run: |
@@ -146,7 +147,7 @@ jobs:
           node-version: 26.13.0
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.52.0
 
       - name: Install Poppler and Chromium
         run: |

@@ -15,6 +15,59 @@ import (
 const PDFTextProfileName = "docbank-pdf-text"
 const PDFTextMaxDocumentBytes = 500 << 20
 
+// readPDFCoveragePage bounds both evidence reads and returned page numbers.
+func readPDFCoveragePage(ctx context.Context, ids []string, builds map[string]string, read func(context.Context, string) ([]int, error)) ([]PageTextGap, string, bool, error) {
+	type result struct {
+		pages []int
+		err   error
+	}
+	cache := make(map[string]result)
+	var gaps []PageTextGap
+	remaining := 8192
+	unavailable := false
+	for i, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return nil, "", false, err
+		}
+		build := builds[id]
+		if build == "" {
+			continue
+		}
+		r, ok := cache[build]
+		if !ok {
+			if len(cache) == 16 {
+				return gaps, statusPartial, unavailable, nil
+			}
+			r.pages, r.err = read(ctx, build)
+			cache[build] = r
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, "", false, err
+		}
+		if r.err != nil {
+			unavailable = true
+			continue
+		}
+		end := min(len(r.pages), remaining)
+		if end > 0 {
+			gaps = append(gaps, PageTextGap{ContentVersionID: id, Pages: r.pages[:end]})
+			remaining -= end
+		}
+		if remaining == 0 {
+			if end < len(r.pages) {
+				return gaps, statusPartial, unavailable, nil
+			}
+			for _, later := range ids[i+1:] {
+				if builds[later] != "" {
+					return gaps, statusPartial, unavailable, nil
+				}
+			}
+			return gaps, "", unavailable, nil
+		}
+	}
+	return gaps, "", unavailable, nil
+}
+
 // NewPDFTextProfile constructs the daemon's local PDF text profile.
 func NewPDFTextProfile() (string, ProfileConfig, error) {
 	provider, err := pdftext.New(pdftext.Profile{MaxDocumentBytes: PDFTextMaxDocumentBytes, MaxPages: 5_000})
@@ -58,25 +111,52 @@ func NewPDFTextProfile() (string, ProfileConfig, error) {
 	return PDFTextProfileName, ProfileConfig{Profile: profile, RenditionProvider: provider}, nil
 }
 
-// PDFHasNoTextLayer reads a retained build through the canonical evidence reader.
-func (service *Service) PDFHasNoTextLayer(ctx context.Context, buildID string) (bool, error) {
+// PDFPagesWithoutText reads omissions from one retained build.
+func (service *Service) PDFPagesWithoutText(ctx context.Context, buildID string) ([]int, error) {
 	build, err := service.catalog.RenditionBuild(ctx, buildID)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	evidence, _, err := service.renditionEvidence(ctx, build)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	if evidence.Family != "pdf" || len(evidence.Units) != 0 || len(evidence.Omissions) == 0 {
-		return false, nil
-	}
-	for _, omission := range evidence.Omissions {
-		if omission.Reason != "no_text_layer" {
-			return false, nil
+	var pages []int
+	if evidence.Family == "pdf" {
+		for _, omission := range evidence.Omissions {
+			if omission.Reason == "no_text_layer" && omission.Locator != nil {
+				pages = append(pages, int(omission.Locator.Start))
+			}
 		}
 	}
-	return true, nil
+	return pages, nil
+}
+
+// PDFSourcePagesWithoutText reads gaps from the built-in profile for a source version.
+func (service *Service) PDFSourcePagesWithoutText(ctx context.Context, versionID string) ([]int, error) {
+	profile, ok := service.profiles[PDFTextProfileName]
+	if !ok {
+		return nil, nil
+	}
+	builds, err := service.catalog.PDFTextCandidates(ctx, []string{versionID}, profile.record.Fingerprint)
+	buildID := builds[versionID]
+	if err != nil || buildID == "" {
+		return nil, err
+	}
+	return service.PDFPagesWithoutText(ctx, buildID)
+}
+
+// PDFPageGaps reads bounded page omissions for the exact source fence.
+func (service *Service) PDFPageGaps(ctx context.Context, fence SourceFence) ([]PageTextGap, string, bool, error) {
+	profile, ids, err := service.profileFence(PDFTextProfileName, fence)
+	if err != nil {
+		return nil, "", false, err
+	}
+	builds, err := service.catalog.PDFTextCandidates(ctx, ids, profile.record.Fingerprint)
+	if err != nil {
+		return nil, "", false, err
+	}
+	return readPDFCoveragePage(ctx, ids, builds, service.PDFPagesWithoutText)
 }
 
 // PDFTextRunner admits automatic PDFs through the shared rendition lifecycle.
@@ -185,6 +265,20 @@ func (r *PDFTextRunner) process(ctx context.Context, item store.DocumentSummary)
 		return nil
 	}
 	return err
+}
+
+// UnqueuedPending reports which eligible sources the runner has yet to queue.
+func (r *PDFTextRunner) UnqueuedPending(ctx context.Context) (func(string, int64) bool, error) {
+	active, err := r.Service.ProfileConsentActive(ctx, PDFTextProfileName)
+	if err != nil || !active {
+		return nil, err
+	}
+	maxBytes := r.Service.profiles[PDFTextProfileName].portable.Rendition.MaxDocumentBytes
+	return func(version string, size int64) bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return size > 0 && size <= maxBytes && !r.skips[version]
+	}, nil
 }
 
 // Pending includes current sources and jobs that have not published yet.

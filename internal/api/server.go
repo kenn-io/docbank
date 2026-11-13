@@ -81,6 +81,7 @@ type Deps struct {
 	WebURL                string           // fresh per-daemon loopback origin; empty disables browser sessions
 	BlobRegistry          *blob.Registry   // nil keeps storage-registry routes read-only to the primary
 	Processing            *processing.Service
+	PDFText               *processing.PDFTextRunner
 	RequestEmailPDF       func(context.Context, document.EmailPDFRequest) (document.EmailPDFJob, error)
 	PublishEmailDocuments PublishEmailDocumentsFunc
 
@@ -192,6 +193,7 @@ func NewServer(d Deps) *Server {
 		}
 		s.webDownloads.revokeOwner(owner)
 		d.Processing.RevokeRedactionPreviews(owner)
+		d.Processing.RevokeRecipientPackages(owner)
 		if d.Store != nil {
 			// Hidden unlocks are vault-wide, so ending any browser session locks Hidden.
 			if err := d.Store.LockPhotoHidden(context.Background()); err != nil {
@@ -233,6 +235,7 @@ func NewServer(d Deps) *Server {
 	registerContentWriteRoute(mux, humaAPI, d, g)
 	registerRedactionRoutes(mux, humaAPI, d)
 	s.registerRedactionPreviews(mux)
+	s.registerRecipientPackages(mux)
 	registerContentRevertRoute(humaAPI, d, g)
 	registerContentPruneRoute(humaAPI, d, g)
 	registerProvenanceRoutes(humaAPI, d, g)

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-31
+last_edited: 2026-11-10
 title: Model Context Protocol
 description: Connect a local MCP client to Docbank's read-mostly document tools through the daemon.
 ---
@@ -15,6 +15,19 @@ Standalone MCP is a client of the selected vault's daemon. It discovers or
 starts that daemon the same way the CLI does and never opens `docbank.db`, a
 blob, pack, or rendition directly. There is no MCP-only embedded-vault path and
 no remote-daemon option.
+
+## Server identity
+
+Stdio and HTTP clients receive Docbank's website and icon in `server/discover`
+metadata. The MCP icon depicts a document with a vault dial and is separate
+from the website favicon. It is an embedded 256×256 PNG data URI, so clients
+can load it without an external request. Whether it appears depends on the client.
+`tools/call` and `resources/read` results repeat a compact server identity
+without embedding the image again.
+
+Standalone and daemon-hosted MCP HTTP listeners also serve that PNG at
+`/icon.png` and `/favicon.ico`. These public image routes accept GET and HEAD
+without a bearer token. `/mcp` keeps its required bearer authentication.
 
 ## Start the server
 
@@ -459,6 +472,8 @@ lined up. These statuses cover only the retrieved, eligible sentences. Check
 winner.
 
 ### Answer questions
+
+`answer_question` reports bounded `pages_without_text` as inclusive ranges for PDFs in the resolved scope, including documents absent from search results. Gaps, partial page coverage, and unreadable evidence (`page_coverage_unavailable`) make coverage incomplete; the answer can still contain passages. Narrow the scope or call `get_processing_coverage` with specific content version IDs to inspect more pages. See [OCR](document-processing.md#ocr) for options.
 
 `answer_question` returns evidence without writing an answer. Content passages require every prepared word and exact quoted phrase in one segment. Common words may be dropped and regular word forms match. Use key terms. `ANSWERED` means
 that a content excerpt matched; it does not verify that the excerpt answers the

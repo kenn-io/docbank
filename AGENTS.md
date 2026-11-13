@@ -217,13 +217,21 @@ Instructions for autonomous coding agents working in this repository.
   anything without a caller.
 - When review findings keep landing in the same code, rethink the design there
   instead of patching each one.
-- Build a stack one PR at a time, and start the next only after the one below
-  has been reviewed. Review usually reshapes a PR, and everything built on it
-  then has to be rebuilt.
-- Keep only a few PRs open at once. Each one waits for a maintainer, and the
-  ones nobody gets to go stale.
 - Before each push, check that your schema, API, and protocol version numbers
   are still the next ones free on `main`.
+
+## Pull requests from a fork
+
+This section applies only to PRs opened from a fork. PRs from branches in this
+repository are not limited by it.
+
+- Keep one unreviewed PR per stack. Open the next only after a maintainer has
+  reviewed the one below, even if you were asked to open the whole plan.
+  Review usually reshapes a PR, and everything built on it then has to be
+  rebuilt.
+- Keep at most 10 PRs open. Each one waits for a maintainer, and the ones
+  nobody gets to go stale. At 10, hold the next PR and tell the user. Leave
+  open PRs as they are.
 
 ## Commit Messages
 
@@ -363,7 +371,9 @@ release, from a breaking change to `feat` to `fix`.
   released-schema fixture and direct oldest-supported-to-current coverage in
   both SQLite modes. Register each release's schema version and fixture as
   described in the development guide's "Change schema" section; CI fails
-  otherwise. Every post-v0.9 layout records an explicit monotonically
+  otherwise.
+  Keep released schema-contract records; released fixtures check compatibility.
+  Every post-v0.9 layout records an explicit monotonically
   increasing storage schema version; v0.9 is the only layout recognized by an
   inferred structural fingerprint. Keep source-version readers available for
   every supported release, and keep metadata JSONL at format v1 until a

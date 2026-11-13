@@ -8,6 +8,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -249,6 +250,61 @@ func TestRenditionTextHTTPExactRendition(t *testing.T) {
 	require.Equal(t, fixture.attachment, window.AttachmentID)
 }
 
+//nolint:paralleltest // PDFium uses process-wide resources.
+func TestRenditionTextHTTPReportsMissingPDFPages(t *testing.T) {
+	var runner *processing.PDFTextRunner
+	ts, s := newTestServer(t, func(d *api.Deps) {
+		renditionTextConfig(d)
+		runner = configureAutomaticPDFText(t, d)
+	})
+	pdf, err := os.ReadFile("../../document/testdata/scanassessment/mixed-below-ratio.pdf")
+	require.NoError(t, err)
+	hash, size, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader(pdf))
+	require.NoError(t, err)
+	node, err := s.CreateFile(t.Context(), s.RootID(), "mixed.pdf", hash, size, "application/pdf")
+	require.NoError(t, err)
+	selector := processing.Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: processing.PDFTextProfileName}
+	plan, err := runner.Service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	_, err = runner.Service.Start(t.Context(), processing.StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+	require.NoError(t, err)
+	resp, body := get(t, ts, "/api/v1/search/text-coverage", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.Contains(t, body, `"pages_without_text":1`)
+	request := map[string]any{"node_id": node.ID, "revision": node.Revision, "version_id": node.CurrentVersionID, "blob_hash": node.BlobHash, "size": node.Size, "profile": processing.PDFTextProfileName}
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, request)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var receipt struct {
+		Pages   []int  `json:"pages_without_text"`
+		BuildID string `json:"build_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+	require.Equal(t, []int{2}, receipt.Pages)
+	buildID := receipt.BuildID
+	request["profile"] = "archive"
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, request)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var archiveReceipt struct {
+		Pages []int `json:"pages_without_text"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &archiveReceipt))
+	require.Contains(t, body, `"state":"unprocessed"`)
+	require.Equal(t, []int{2}, archiveReceipt.Pages)
+	build, err := s.RenditionBuild(t.Context(), buildID)
+	require.NoError(t, err)
+	for _, artifact := range build.Artifacts {
+		if artifact.Role == "normalized_evidence" {
+			require.NoError(t, s.Blobs.Remove(artifact.BlobHash))
+		}
+	}
+	request["profile"] = processing.PDFTextProfileName
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, request)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.Contains(t, body, `"state":"ready"`)
+	require.NotContains(t, body, `"pages_without_text"`)
+	require.Contains(t, body, `"page_coverage":"unavailable"`)
+}
+
 func TestRenditionTextHTTPKeepsUnavailableStatesDistinct(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
@@ -452,6 +508,7 @@ func configureAutomaticPDFText(t *testing.T, d *api.Deps) *processing.PDFTextRun
 	t.Cleanup(service.Stop)
 	runner := &processing.PDFTextRunner{Service: service}
 	d.Processing = service
+	d.PDFText = runner
 	require.NoError(t, runner.Initialize(t.Context()))
 	return runner
 }

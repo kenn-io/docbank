@@ -593,6 +593,8 @@ Saving search choices in QueryV1 does not execute either workflow.
 
 ## Why did a text search find nothing?
 
+A search with no matches reports `needs_ocr` when PDFs in scope have pages without a text layer. See [OCR](document-processing.md#ocr) for options.
+
 An empty CLI text search keeps its usual output and prints hints on stderr:
 how many files in the search scope need a processing profile, how many text
 files are still being indexed, and, when a lexical search has more than one

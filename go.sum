@@ -309,6 +309,8 @@ github.com/spf13/pathologize v1.1.0/go.mod h1:CwE+2y5kdp5EBv1kxhXujQo2SrY0s+rYAM
 github.com/spf13/pflag v1.0.9/go.mod h1:McXfInJRrz4CZXVZOBLb0bTZqETkiAhM9Iw0y3An2Bg=
 github.com/spf13/pflag v1.0.10 h1:4EBh2KAYBwaONj6b2Ye1GiHfwjqyROoF4RwYO+vPwFk=
 github.com/spf13/pflag v1.0.10/go.mod h1:McXfInJRrz4CZXVZOBLb0bTZqETkiAhM9Iw0y3An2Bg=
+github.com/sqlc-dev/meyer v0.1.2 h1:40Ng9Glnx7CTf3yOYV7jfvDIN7voIFjrStkIULS+uws=
+github.com/sqlc-dev/meyer v0.1.2/go.mod h1:pS4USCRf/SLjWtaMcnTo4YrEEFKBj8CyyqlxcVUJQH8=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UVUgZn+9EI=
 github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
@@ -356,8 +358,12 @@ github.com/yusufpapurcu/wmi v1.2.4 h1:zFUKzehAFReQwLys1b/iSMl+JQGSCSjtVqQn9bBrPo
 github.com/yusufpapurcu/wmi v1.2.4/go.mod h1:SBZ9tNy3G9/m5Oi98Zks0QjeHVDvuK0qfxQmPyzfmi0=
 go.kenn.io/kata v0.22.0 h1:u+PZquTVfswx0SWPQCC8ilpcg33PIWSyh56IhMNvR6E=
 go.kenn.io/kata v0.22.0/go.mod h1:OnxbDnAz4/O7ZkUW9n59xdpDSPvQPqlFoHUTg3HV/y4=
+go.kenn.io/kata v0.23.0 h1:gIxDLGJOJUy01QvSuDpMGQFXOo0YIRxQf72TErY6dY4=
+go.kenn.io/kata v0.23.0/go.mod h1:DaPzNVWqCn8Y//W5yhZQwAxuD0Zs5Dn7wH280anDlfg=
 go.kenn.io/kit v0.51.0 h1:LtZGNYOmkkMg8JcBclxTJP83MIQ4uwgzcVVsRGzBTww=
 go.kenn.io/kit v0.51.0/go.mod h1:ps/bK19BCQUZGo1aRuK2XdFoCf7gPO5jmWFqPn8Ngns=
+go.kenn.io/kit v0.52.0 h1:r6E9C49sNhxbbG20mlP3biCB1CURV2hbpI9io/UkOL4=
+go.kenn.io/kit v0.52.0/go.mod h1:ps/bK19BCQUZGo1aRuK2XdFoCf7gPO5jmWFqPn8Ngns=
 go.mongodb.org/mongo-driver/v2 v2.9.2 h1:OCAdjI37pC/SVxucz/9CM8zD4jCdegtsY5QcKzYFCgE=
 go.mongodb.org/mongo-driver/v2 v2.9.2/go.mod h1:SHKN0IWkKmEVGHLjXnni6s4wPKX4v86FTgOeJJFuXcA=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=

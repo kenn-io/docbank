@@ -51,27 +51,28 @@ type webDownloadRegistry struct {
 }
 
 type webDownloadTicket struct {
-	original        *originalDownloadSelection
-	previewID       string
-	previewReview   string
-	reportID        string
-	reportFormat    string
-	path            string
-	name            string
-	mediaType       string
-	versionID       string
-	blobHash        string
-	size            int64
-	owner           string
-	expiresAt       time.Time
-	timer           *time.Timer
-	archiveFile     *os.File
-	releaseArchive  func()
-	planFingerprint string
+	original           *originalDownloadSelection
+	recipientPackageID string
+	previewID          string
+	previewReview      string
+	reportID           string
+	reportFormat       string
+	path               string
+	name               string
+	mediaType          string
+	versionID          string
+	blobHash           string
+	size               int64
+	owner              string
+	expiresAt          time.Time
+	timer              *time.Timer
+	archiveFile        *os.File
+	releaseArchive     func()
+	planFingerprint    string
 }
 
 func (t webDownloadTicket) release() {
-	if t.reportID != "" || t.previewID != "" {
+	if t.reportID != "" || t.previewID != "" || t.recipientPackageID != "" {
 		return
 	}
 	if t.releaseArchive != nil {
@@ -430,6 +431,10 @@ func registerWebDownload(
 		defer ticket.release()
 		if ticket.original != nil {
 			deliverOriginalDownload(w, r, d, ticket)
+			return
+		}
+		if ticket.recipientPackageID != "" {
+			deliverRecipientPackage(w, r, d.Processing, ticket)
 			return
 		}
 		if ticket.previewID != "" {

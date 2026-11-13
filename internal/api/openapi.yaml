@@ -3387,6 +3387,16 @@ components:
           items:
             $ref: "#/components/schemas/CoverageClass"
           type: array
+        page_coverage:
+          enum:
+            - partial
+          type: string
+        page_coverage_unavailable:
+          type: boolean
+        pages_without_text:
+          items:
+            $ref: "#/components/schemas/PageTextGap"
+          type: array
         profile_fingerprint:
           pattern: ^[0-9a-f]{64}$
           type: string
@@ -12605,6 +12615,25 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    PageTextGap:
+      additionalProperties: false
+      properties:
+        content_version_id:
+          format: uuid
+          type: string
+        pages:
+          items:
+            format: int64
+            type: integer
+          type: array
+      required:
+        - content_version_id
+        - pages
+      type: object
+      x-go-type: api.PageTextGap
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     Pending:
       additionalProperties: false
       properties:
@@ -17199,6 +17228,47 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    Profile:
+      additionalProperties: false
+      properties:
+        columns:
+          items:
+            type: string
+          type: array
+        date_format:
+          type: string
+        declared_timezone:
+          type: string
+        encoding:
+          type: string
+        field:
+          format: int32
+          type: integer
+        header_row:
+          type: boolean
+        id:
+          type: string
+        newline_in_field:
+          format: int32
+          type: integer
+        qualifier:
+          format: int32
+          type: integer
+      required:
+        - id
+        - field
+        - qualifier
+        - newline_in_field
+        - header_row
+        - columns
+        - encoding
+        - date_format
+        - declared_timezone
+      type: object
+      x-go-type: loadfile.Profile
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/loadfile
+        name: loadfile
     PromotePhotoNodeRequest:
       additionalProperties: false
       properties:
@@ -17777,6 +17847,156 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/pdfstamp
         name: pdfstamp
+    RecipientPackageDocument:
+      additionalProperties: false
+      properties:
+        allocation_id:
+          type: string
+        artifact_manifest_sha256:
+          type: string
+        document_id:
+          type: string
+        labels:
+          items:
+            type: string
+          type: array
+        namespace_id:
+          type: string
+        ordinal:
+          format: int64
+          type: integer
+        page_count:
+          format: int64
+          type: integer
+        pdf:
+          $ref: "#/components/schemas/RecipientPackageFile"
+        recipe_sha256:
+          type: string
+        review_sha256:
+          type: string
+        text:
+          $ref: "#/components/schemas/RecipientPackageFile"
+      required:
+        - ordinal
+        - document_id
+        - allocation_id
+        - namespace_id
+        - artifact_manifest_sha256
+        - recipe_sha256
+        - review_sha256
+        - page_count
+        - labels
+        - pdf
+        - text
+      type: object
+      x-go-type: processing.RecipientPackageDocument
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    RecipientPackageDownload:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RecipientPackageDownload.json
+          format: uri
+          readOnly: true
+          type: string
+        allocation_id:
+          format: uuid
+          type: string
+        contract:
+          type: string
+        expires_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+        receipt:
+          $ref: "#/components/schemas/RecipientPackageReceipt"
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+        url:
+          type: string
+        verification:
+          type: string
+      required:
+        - contract
+        - url
+        - name
+        - verification
+        - id
+        - allocation_id
+        - receipt
+        - size
+        - sha256
+        - expires_at
+      type: object
+    RecipientPackageFile:
+      additionalProperties: false
+      properties:
+        path:
+          type: string
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+      required:
+        - path
+        - size
+        - sha256
+      type: object
+      x-go-type: processing.RecipientPackageFile
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    RecipientPackageReceipt:
+      additionalProperties: false
+      properties:
+        contract:
+          type: string
+        dat_profile:
+          $ref: "#/components/schemas/Profile"
+        document_count:
+          format: int64
+          type: integer
+        documents:
+          items:
+            $ref: "#/components/schemas/RecipientPackageDocument"
+          type: array
+        load_file:
+          $ref: "#/components/schemas/RecipientPackageFile"
+        mapping:
+          $ref: "#/components/schemas/RecipientPackageFile"
+        opt_profile:
+          $ref: "#/components/schemas/Profile"
+        page_count:
+          format: int64
+          type: integer
+        page_map:
+          $ref: "#/components/schemas/RecipientPackageFile"
+      required:
+        - contract
+        - document_count
+        - page_count
+        - dat_profile
+        - opt_profile
+        - load_file
+        - page_map
+        - mapping
+        - documents
+      type: object
+      x-go-type: processing.RecipientPackageReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
     RedactionArchive:
       additionalProperties: false
       properties:
@@ -18524,6 +18744,15 @@ components:
           type: string
         generation_id:
           type: string
+        page_coverage:
+          enum:
+            - unavailable
+          type: string
+        pages_without_text:
+          items:
+            format: int64
+            type: integer
+          type: array
         profile:
           $ref: "#/components/schemas/RenditionTextProfile"
         source:
@@ -19810,6 +20039,20 @@ components:
           format: int64
           minimum: 0
           type: integer
+        pages_without_text:
+          format: int64
+          minimum: 0
+          type: integer
+        pdf_page_coverage_partial:
+          type: boolean
+        pdf_page_coverage_unavailable:
+          format: int64
+          minimum: 0
+          type: integer
+        pdfs_without_text:
+          format: int64
+          minimum: 0
+          type: integer
         pending:
           format: int64
           minimum: 0
@@ -19818,6 +20061,10 @@ components:
         - no_text
         - families
         - pending
+        - pdfs_without_text
+        - pages_without_text
+        - pdf_page_coverage_unavailable
+        - pdf_page_coverage_partial
       type: object
       x-go-type: api.SearchTextCoverage
       x-go-type-import:
@@ -31409,6 +31656,41 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Gateway Timeout
       summary: Publish one reviewed numbered PDF into retained storage
+  /api/v1/redaction/recipient-packages:
+    delete:
+      operationId: discardRecipientPackages
+      responses:
+        "204":
+          description: Package retired
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Package cleanup failed
+      summary: Cancel this owner's recipient package and transfer
+    post:
+      operationId: buildRecipientPackage
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RedactionRenderRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecipientPackageDownload"
+          description: Verified recipient ZIP and one-use download ticket
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Package preparation failed
+      summary: Prepare a recipient ZIP from one completed numbered review
   /api/v1/redaction/render:
     post:
       operationId: renderNativePDF
