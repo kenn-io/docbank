@@ -855,18 +855,25 @@ it("keeps suggestion cards unique when a reopened group shifts the next offset p
     ...isAda,
     candidate_id: `later-${index}`,
   }));
+  const reopened = { ...isAda, candidate_id: "reopened" };
+  const refreshed = [reopened, ...first, ...following];
   const list = vi
     .spyOn(api, "listFaceCandidates")
     .mockResolvedValueOnce({ items: first, total: 34 })
     .mockResolvedValueOnce({ items: [first.at(-1)!, ...following.slice(0, 5)], total: 34 })
-    .mockResolvedValueOnce({ items: following.slice(5), total: 34 });
+    .mockResolvedValueOnce({ items: following.slice(5), total: 34 })
+    .mockResolvedValueOnce({ items: refreshed.slice(0, 24), total: 34 })
+    .mockResolvedValueOnce({ items: refreshed.slice(24), total: 34 });
   const people = new People("session", vi.fn());
   try {
     await people.suggestions.load();
     await people.suggestions.load(true);
     expect(people.suggestions.items).toHaveLength(33);
     expect(new Set(people.suggestions.items.map((item) => item.candidate_id)).size).toBe(33);
+    expect(people.suggestions.offset).toBe(people.suggestions.total);
     expect(list.mock.calls.map(([params]) => params!.offset)).toEqual([0, 24, 30]);
+    await people.suggestions.load();
+    expect(people.suggestions.items).toEqual(refreshed);
   } finally {
     people.dispose();
   }

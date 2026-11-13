@@ -461,6 +461,7 @@ export const reviewFaces = ({ candidate, removed }: SuggestionReview) =>
 export class Suggestions {
   items = $state.raw<FaceCandidate[]>([]);
   total = $state(0);
+  offset = $state(0);
   loading = $state(false);
   error = $state("");
   busy = $state(false);
@@ -483,6 +484,7 @@ export class Suggestions {
     this.started = false;
     this.items = [];
     this.total = 0;
+    this.offset = 0;
     this.loading = false;
     this.error = "";
     this.review = undefined;
@@ -516,12 +518,12 @@ export class Suggestions {
     const request = (this.controller = new AbortController());
     const epoch = this.epoch;
     const wanted = more
-      ? this.items.length + peoplePageSize
+      ? this.offset + peoplePageSize
       : Math.max(this.items.length, peoplePageSize);
     this.loading = true;
     this.error = "";
     let rows: FaceCandidate[] = more ? [...this.items] : [];
-    let offset = rows.length;
+    let offset = more ? this.offset : 0;
     try {
       let total = 0;
       do {
@@ -532,10 +534,14 @@ export class Suggestions {
           ...new Map([...rows, ...page.items].map((item) => [item.candidate_id, item])).values(),
         ];
         total = page.total;
-        if (!page.items.length) break;
+        if (!page.items.length) {
+          offset = total;
+          break;
+        }
       } while (offset < Math.min(wanted, total));
       this.items = rows;
       this.total = total;
+      this.offset = offset;
     } catch (cause) {
       if (this.current(request, epoch)) {
         this.error = this.people.failure(cause);

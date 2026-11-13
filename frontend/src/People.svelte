@@ -323,7 +323,7 @@
               </button>
             </li>
           {/each}
-          {#if suggestions.items.length < suggestions.total}<li class="suggestion-more">
+          {#if suggestions.offset < suggestions.total}<li class="suggestion-more">
               <Button disabled={suggestions.loading} onclick={() => void suggestions.load(true)}
                 >{suggestions.loading ? "Loading…" : "Show more"}</Button
               >
