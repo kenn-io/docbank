@@ -93,7 +93,7 @@ func writeVersionPeopleTable(out io.Writer, result *apiclient.VersionPeople) err
 	}
 	w := tabwriter.NewWriter(out, 2, 4, 2, ' ', 0)
 	for _, edge := range result.Edges {
-		_, _ = fmt.Fprintf(w, "%s\t%q\t%s\n", edge.Role, edge.DisplayName, documentFactLabel(edge.Basis))
+		_, _ = fmt.Fprintf(w, "%s\t%q\t%s\n", documentFactLabel(edge.Role), edge.DisplayName, documentFactLabel(edge.Basis))
 	}
 	for _, assertion := range result.Assertions {
 		represented := false
@@ -106,11 +106,11 @@ func writeVersionPeopleTable(out io.Writer, result *apiclient.VersionPeople) err
 			}
 		}
 		if !represented {
-			_, _ = fmt.Fprintf(w, "%s\t%q\t%s\n", assertion.Role, assertion.DisplayName, assertion.Action)
+			_, _ = fmt.Fprintf(w, "%s\t%q\t%s\n", documentFactLabel(assertion.Role), assertion.DisplayName, assertion.Action)
 		}
 	}
 	for _, unresolved := range result.Unresolved {
-		_, _ = fmt.Fprintf(w, "%s\t%q\tunresolved\n", unresolved.Role, unresolved.RawLabel)
+		_, _ = fmt.Fprintf(w, "%s\t%q\tunresolved\n", documentFactLabel(unresolved.Role), unresolved.RawLabel)
 	}
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("writing people table: %w", err)
@@ -124,6 +124,12 @@ func documentFactLabel(value string) string {
 		return "From document"
 	case "docbank_observed":
 		return "Recorded by Docbank"
+	case "package_column":
+		return "From package"
+	case "transfer_record":
+		return "From transfer"
+	case "blind_copy":
+		return "Bcc"
 	case "identifier_match":
 		return "Matched by identity"
 	case "external_uid":

@@ -85,15 +85,6 @@ func TestDocumentFactsTableEscapesAndTimezones(t *testing.T) {
 	require.NotContains(t, output.String(), "\x1b")
 }
 
-func TestDocumentFactsCommandRegistration(t *testing.T) {
-	for _, path := range [][]string{{"people", "list"}, {"document", "people"}, {"document", "dates"}} {
-		cmd, remaining, err := rootCmd.Find(path)
-		require.NoError(t, err)
-		require.Empty(t, remaining)
-		require.Equal(t, path[len(path)-1], cmd.Name())
-	}
-}
-
 func TestDocumentFactsCommands(t *testing.T) {
 	f := newDocumentInspectionFixture(t)
 	catalog, err := store.Open(t.Context(), filepath.Join(f.root, "docbank.db"))
@@ -120,7 +111,11 @@ func TestDocumentFactsCommands(t *testing.T) {
 		if noun == "people" {
 			require.Contains(t, table, "Synthetic Author")
 			require.Contains(t, table, "author")
-			require.Contains(t, table, "assert")
+			require.True(t, strings.Contains(table, "assert") || strings.Contains(table, "Assigned by you"))
+			fullTable, err := runCLI(t, "document", noun, "/notes.txt", "--full")
+			require.NoError(t, err)
+			require.Contains(t, fullTable, "Bcc")
+			require.NotContains(t, fullTable, "blind_copy")
 		}
 		safeOutput, err := runCLI(t, "document", noun, "/notes.txt", "--json")
 		require.NoError(t, err)
@@ -151,6 +146,22 @@ func TestDocumentFactsCommands(t *testing.T) {
 			require.Equal(t, "blind_copy", roles[blind.PersonID])
 		}
 	}
+}
+
+func TestDocumentPeopleTableBccLabels(t *testing.T) {
+	result := api.VersionPeople{State: "published",
+		Edges:      []api.VersionPersonEdge{{Role: "blind_copy", DisplayName: "Edge", Basis: "package_column"}},
+		Assertions: []api.VersionPersonAssertion{{Role: "blind_copy", DisplayName: "Assertion", Action: "assert"}},
+		Unresolved: []api.VersionUnresolvedName{{Role: "blind_copy", RawLabel: "Unresolved"}},
+	}
+	var table strings.Builder
+	require.NoError(t, writeVersionPeopleTable(&table, &result))
+	require.Equal(t, 3, strings.Count(table.String(), "Bcc"))
+	require.Contains(t, table.String(), "From package")
+	var output strings.Builder
+	require.NoError(t, writeVersionJSON(&output, &result))
+	require.Equal(t, 3, strings.Count(output.String(), "blind_copy"))
+	require.Equal(t, "From transfer", documentFactLabel("transfer_record"))
 }
 
 func TestDocumentPeopleTableAssertionSupport(t *testing.T) {

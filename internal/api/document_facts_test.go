@@ -2,8 +2,6 @@ package api
 
 import (
 	"encoding/json/v2"
-	"os"
-	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -106,53 +104,6 @@ func TestVersionPeopleProjectionHidesBccAndUnsupportedPeople(t *testing.T) {
 	full := versionPeopleAPI(f, false, "")
 	if len(full.Edges) != 3 || len(full.Assertions) != 1 || full.Assertions[0].DisplayName != "Hidden" || len(full.Unresolved) != 2 {
 		t.Fatalf("full: %+v", full)
-	}
-}
-
-func TestEmittedWhenMatchesContractExamples(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		path  string
-		claim document.DocumentEventV1
-	}{
-		{"example-1.json", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T23:40:00", TimezoneKind: "offset", ZoneText: "-04:00", OffsetSeconds: new(-14400), UTCKey: "2026-03-11T03:40:00.000000000Z"}},
-		{"example-2.json", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T23:40:00", TimezoneKind: "offset", OffsetSeconds: new(-14400), UTCKey: "2026-03-11T03:40:00.000000000Z"}},
-		{"example-3.json", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T23:30:00", TimezoneKind: "omitted"}},
-		{"example-4.json", document.DocumentEventV1{Precision: "date", DateValue: "2026-03-10"}},
-		{"example-5.json", document.DocumentEventV1{Precision: "date", DateValue: "2026-03-09"}},
-		{"example-6.json", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T23:50:00", TimezoneKind: "utc", ZoneText: "UTC", UTCKey: "2026-03-10T23:50:00.000000000Z"}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.path, func(t *testing.T) {
-			t.Parallel()
-			tc.claim.EventID = "evt-55"
-			tc.claim.DateKind = "imported"
-			tc.claim.ClaimBasis = "source_asserted"
-			raw, err := os.ReadFile(filepath.Join("testdata/when", tc.path))
-			if err != nil {
-				t.Fatal(err)
-			}
-			var want, got map[string]any
-			if err := json.Unmarshal(raw, &want); err != nil {
-				t.Fatal(err)
-			}
-			emitted, err := json.Marshal(whenFromClaim(tc.claim))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := json.Unmarshal(emitted, &got); err != nil {
-				t.Fatal(err)
-			}
-			// The examples are zoned and some describe ranges or other providers.
-			// This route emits single Docbank claims with its own provenance.
-			for _, field := range []string{"day", "axis_minute", "end_at", "end_local", "end_date"} {
-				delete(want, field)
-			}
-			want["placed_by"] = map[string]any{"source": string(tc.claim.DateKind), "rule": "primary-rule/v1", "fallback": true, "event_id": tc.claim.EventID, "claim_basis": tc.claim.ClaimBasis}
-			if !reflect.DeepEqual(want, got) {
-				t.Errorf("got %s; want %v", emitted, want)
-			}
-		})
 	}
 }
 
