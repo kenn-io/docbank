@@ -1107,6 +1107,11 @@
   let bulkSelection = $state<SelectionState>(clearSelection());
   let searchQuery = $state("");
   let activeQuery = $state("");
+  let pdfCoverage = $state<generated.SearchTextCoverage | null>(null);
+  const pdfCoverageIncomplete = $derived(
+    !!pdfCoverage &&
+      (pdfCoverage.pdf_page_coverage_partial || pdfCoverage.pdf_page_coverage_unavailable > 0),
+  );
   let submittedSearchQuery = $state("");
   let tagFilterID = $state("");
   let activeTagID = $state("");
@@ -1238,6 +1243,13 @@
 
   const selected = $derived(rows.find((row) => row.node.id === selectedID));
   const snapshotActive = $derived(snapshot.state.status !== "idle");
+  const pdfCoverageDescription = $derived(
+    pdfCoverage?.pdfs_without_text
+      ? `Some PDFs ${activeTagID ? "with this tag" : "in this vault"} have pages without a text layer.`
+      : pdfCoverageIncomplete
+        ? "PDF text coverage is incomplete; some pages may not be searchable."
+        : undefined,
+  );
   const tagBrowse = $derived(activeTagID !== "" && activeQuery === "");
   const panelScreen = $derived(activePanel ? panelScreens[activePanel.kind] : null);
   const visibleScreen = $derived<generated.TelemetryEventPropertiesScreen>(
@@ -2150,6 +2162,29 @@
       if (request === generation) loading = false;
     }
   }
+
+  $effect(() => {
+    const query = activeQuery;
+    const tag = activeTagID;
+    const session = webSession;
+    const eligible = !snapshotActive && !!query && !loading && !searchPending && rows.length === 0;
+    pdfCoverage = null;
+    if (!eligible) return;
+    const controller = new AbortController();
+    void generated
+      .searchTextCoverage(tag ? { tag_id: tag } : {}, {
+        session,
+        signal: controller.signal,
+      })
+      .then((coverage) => {
+        if (!controller.signal.aborted) pdfCoverage = coverage;
+      })
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted) return;
+        if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
+      });
+    return () => controller.abort();
+  });
 
   async function runSearch(
     preferredSelectedID = selectedID,
@@ -4853,11 +4888,13 @@
                       : emptyRoot
                         ? "No documents yet"
                         : "Empty folder"}
-                  description={tagBrowse && taggedTrashed > 0
-                    ? `${taggedTrashed} trashed assignment${taggedTrashed === 1 ? " is" : "s are"} omitted.`
-                    : emptyRoot
-                      ? "Add files or a folder to start your vault."
-                      : undefined}
+                  description={activeQuery && pdfCoverageDescription
+                    ? pdfCoverageDescription
+                    : tagBrowse && taggedTrashed > 0
+                      ? `${taggedTrashed} trashed assignment${taggedTrashed === 1 ? " is" : "s are"} omitted.`
+                      : emptyRoot
+                        ? "Add files or a folder to start your vault."
+                        : undefined}
                   children={emptyRoot ? emptyAddMenu : undefined}
                 >
                   {#snippet icon()}

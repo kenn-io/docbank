@@ -108,6 +108,23 @@ func TestWebSessionAllowsPhotoAlbumAuthoredAndEventRoutes(t *testing.T) {
 	require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/photos/assets", nil)))
 }
 
+func TestWebSessionTextCoverageRoute(t *testing.T) {
+	t.Parallel()
+	const path = "/api/v1/search/text-coverage"
+	const tag = "11111111-1111-4111-8111-111111111111"
+	for _, tc := range []struct {
+		method, path string
+		allowed      bool
+	}{
+		{http.MethodGet, path, true},
+		{http.MethodGet, path + "?tag_id=" + tag, true},
+		{http.MethodGet, path + "?tag_id=" + tag + "&mime_type=application%2Fpdf", false},
+		{http.MethodGet, path + "?tag_id=" + tag + "&tag_id=" + tag, false},
+	} {
+		require.Equal(t, tc.allowed, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil)), tc.path)
+	}
+}
+
 func TestWebSessionPhotoGroupingAndCheckpointMethods(t *testing.T) {
 	t.Parallel()
 	for _, route := range []struct {

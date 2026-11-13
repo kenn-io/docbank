@@ -119,6 +119,16 @@ function jobRequests(fetchMock: ReturnType<typeof setup>["fetchMock"]): { consen
 }
 
 describe("processing dialog", () => {
+  it("offers the built-in PDF profile for extraction", async () => {
+    const view = setup({ pdf: plan("pdf", { consent_required: false, consent_state: "active" }) });
+    await view.rerender({
+      node: { ...view.props.node, name: "report.pdf", mime_type: "application/pdf" },
+      path: "/Reports/report.pdf",
+    });
+    expect(await enabledRun()).toBeTruthy();
+    expect(screen.queryByText(/No processing profile handles this file type/)).toBeNull();
+  });
+
   it("offers transcription when the audio plan retains only text", async () => {
     const { rerender, props } = setup({
       audio: plan("audio", { consent_required: false, consent_state: "active" }),

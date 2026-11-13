@@ -167,6 +167,18 @@
     };
   });
 
+  const missingPages = $derived(resolution?.pagesWithoutText ?? []);
+
+  function pageRanges(pages: number[]): string {
+    const ranges: string[] = [];
+    for (let i = 0; i < pages.length; i++) {
+      const start = pages[i];
+      while (i + 1 < pages.length && pages[i + 1] === pages[i] + 1) i++;
+      ranges.push(start === pages[i] ? String(start) : `${start}–${pages[i]}`);
+    }
+    return ranges.join(", ");
+  }
+
   function moveMatch(delta: number): void {
     if (findMatches.length === 0) return;
     activeMatch = (activeMatch + delta + findMatches.length) % findMatches.length;
@@ -180,7 +192,7 @@
   function stateMessage(state: Exclude<RenditionTextResolution["state"], "ready">): string {
     if (state === "verified_empty")
       return "Processing verified that this document has no readable text.";
-    if (state === "failed") return "Text processing failed for this selected version.";
+    if (state === "failed") return "Text processing failed for the selected profile.";
     if (state === "unprocessed" || state === "unconfigured") return "";
     if (state === "profile_required")
       return "Choose a processing profile before reading rendition text.";
@@ -238,6 +250,23 @@
   {#if queryHighlightError}<p class="notice" role="status">
       Query highlights unavailable: {queryHighlightError}
     </p>{/if}
+  {#if !loading && missingPages.length}
+    <p class="notice" role="status">
+      {missingPages.length === 1 ? "Page" : "Pages"}
+      {pageRanges(missingPages)}
+      {missingPages.length === 1 ? "has" : "have"} no text layer. If {missingPages.length === 1
+        ? "it is a scan"
+        : "they are scans"},
+      <a
+        href="https://docbank.ai/docs/usage/document-processing/#ocr"
+        target="_blank"
+        rel="noreferrer">OCR can read {missingPages.length === 1 ? "it" : "them"}</a
+      >.
+    </p>
+  {/if}
+  {#if !loading && resolution?.pageCoverage === "unavailable"}
+    <p class="notice" role="status">PDF page text coverage is unavailable.</p>
+  {/if}
   {#if loading}
     <div class="loading" role="status"><Spinner size={14} /> Loading text…</div>
   {:else if error}
@@ -259,18 +288,18 @@
     {#if marked.truncated}<p class="notice" role="status">
         Showing the first 5,000 non-overlapping matches.
       </p>{/if}
-  {:else if resolution?.state === "unconfigured"}
+  {:else if resolution?.state === "unconfigured" && source.mimeType !== "application/pdf"}
     <p class="setup">
       <span>Text extraction isn't set up.</span>
       <a href="https://docbank.ai/docs/usage/document-processing/" target="_blank" rel="noreferrer"
         >Set up</a
       >
     </p>
-  {:else if resolution?.state === "unprocessed" || resolution?.state === "profile_required"}
+  {:else if resolution?.state === "unprocessed" || resolution?.state === "profile_required" || resolution?.state === "unconfigured"}
     {#if onprocess}<div>
         <Button size="sm" surface="soft" onclick={onprocess}>Process…</Button>
       </div>{:else}<p class="setup">This version hasn't been processed.</p>{/if}
-  {:else if resolution && resolution.state !== "ready"}
+  {:else if resolution && resolution.state !== "ready" && !(resolution.state === "verified_empty" && missingPages.length)}
     <p class="notice" role="status">{stateMessage(resolution.state)}</p>
   {/if}
 </div>
@@ -337,5 +366,9 @@
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     background: var(--bg-inset);
+  }
+  .notice a {
+    color: var(--accent-blue);
+    white-space: nowrap;
   }
 </style>

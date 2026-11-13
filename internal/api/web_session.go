@@ -505,6 +505,18 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	if method != http.MethodGet {
 		return false
 	}
+	if path == "/api/v1/search/text-coverage" {
+		values, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil {
+			return false
+		}
+		for key, entries := range values {
+			if key != "tag_id" || len(entries) != 1 {
+				return false
+			}
+		}
+		return true
+	}
 	if after, ok := strings.CutPrefix(path, webMapTilePath+"/"); ok {
 		return r.URL.RawQuery == "" && len(strings.Split(after, "/")) == 3
 	}

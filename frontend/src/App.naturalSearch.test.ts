@@ -6,7 +6,7 @@ import App from "./App.svelte";
 import { snapshotEnvelope } from "./snapshot-test-fixtures.js";
 import { parseQuery } from "./query.js";
 import type { SnapshotRow } from "./snapshots.js";
-import type { Node } from "./generated/docbank.js";
+import type { Node, SearchTextCoverage } from "./generated/docbank.js";
 
 const vaultID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const baseVersion = "11111111-1111-4111-8111-111111111111";
@@ -34,6 +34,19 @@ function json(value: unknown): Response {
     status: 200,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function textCoverage(overrides: Partial<SearchTextCoverage> = {}): SearchTextCoverage {
+  return {
+    no_text: 0,
+    families: [],
+    pending: 0,
+    pdfs_without_text: 0,
+    pages_without_text: 0,
+    pdf_page_coverage_partial: false,
+    pdf_page_coverage_unavailable: 0,
+    ...overrides,
+  };
 }
 
 function node(id: number, name: string, version: string) {
@@ -91,6 +104,7 @@ function report(
 }
 
 interface HarnessOptions {
+  coverage?: () => Promise<Response>;
   profiles: unknown[];
   profilesStatus?: number;
   profilesPending?: boolean;
@@ -265,6 +279,8 @@ function installHarness(options: HarnessOptions) {
       if (options.basePending && baseCalls === 1) return basePending;
       return json(options.baseReport);
     }
+    if (url.startsWith("/api/v1/search/text-coverage"))
+      return options.coverage?.() ?? json(textCoverage());
     if (url.startsWith("/api/v1/search?") && method === "GET") {
       legacyCalls += 1;
       if (options.legacyFailureAfter !== undefined && legacyCalls > options.legacyFailureAfter) {
@@ -2086,3 +2102,66 @@ it.each(["names", "meaning", "frozen"])(
     }
   },
 );
+
+function renderEmptySearch(coverage: () => Promise<Response>) {
+  const files = [node(2, "report.txt", baseVersion)];
+  const baseReport = report("lexical", []);
+  const harness = installHarness({ profiles: [], files, baseReport, coverage });
+  render(App);
+  return harness;
+}
+
+it("scopes empty search coverage to the selected tag", async () => {
+  const { fetchMock } = renderEmptySearch(async () =>
+    json(textCoverage({ pdfs_without_text: 2, pages_without_text: 3 })),
+  );
+  await screen.findAllByText("report.txt");
+  await fireEvent.click(
+    screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+  );
+  await fireEvent.click(await screen.findByRole("option", { name: "reviewed (1)" }));
+  await submitSearch("missing");
+  await screen.findByText("Some PDFs with this tag have pages without a text layer.");
+  const liveRequest = fetchMock.mock.calls
+    .map(([url]) => String(url))
+    .find((url) => url.startsWith("/api/v1/search/text-coverage"));
+  expect(new URL(liveRequest!, "https://example.com").searchParams.get("tag_id")).toBe(tagID);
+});
+
+it.each([
+  [
+    "known gaps",
+    "Some PDFs in this vault have pages without a text layer.",
+    textCoverage({ pdfs_without_text: 1, pages_without_text: 1 }),
+  ],
+  [
+    "unavailable",
+    "PDF text coverage is incomplete; some pages may not be searchable.",
+    textCoverage({ pdf_page_coverage_unavailable: 1 }),
+  ],
+  [
+    "incomplete",
+    "PDF text coverage is incomplete; some pages may not be searchable.",
+    textCoverage({ pdf_page_coverage_partial: true }),
+  ],
+] as const)("shows %s PDF coverage", async (_kind, message, coverage) => {
+  renderEmptySearch(async () => json(coverage));
+  await submitSearch("missing");
+  expect(await screen.findByText(message)).toBeTruthy();
+});
+
+it("aborts coverage from an older search", async () => {
+  const old = new Promise<Response>(() => {});
+  const coverage = vi.fn().mockReturnValueOnce(old).mockResolvedValue(json(textCoverage()));
+  const { fetchMock } = renderEmptySearch(coverage);
+  await submitSearch("first");
+  await waitFor(() => expect(coverage).toHaveBeenCalledTimes(1));
+  const request = fetchMock.mock.calls.find(([url]) =>
+    String(url).startsWith("/api/v1/search/text-coverage"),
+  );
+  const signal = request?.[1]?.signal;
+  expect(signal?.aborted).toBe(false);
+  await submitSearch("second");
+  await waitFor(() => expect(coverage).toHaveBeenCalledTimes(2));
+  expect(signal?.aborted).toBe(true);
+});
