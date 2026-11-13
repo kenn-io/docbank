@@ -160,8 +160,13 @@ var publishBatesExportToolDefinition = toolDefinition{
 
 var exportBatesFileToolDefinition = toolDefinition{
 	name: "export_bates_file", title: "Export Bates file",
-	description: "Write a retained Bates PDF to a local path. The verification field reports stamped_labels for ordinary exports with a matching engine or recorded_bytes_and_numbers for numbered redactions and different recorded engine versions. Recorded-byte recovery does not recheck masks, approved text or rendered numbers.",
-	schemas:     exportBatesFileSchemas, write: true, destructive: true,
+	description: "Write a retained Bates PDF to a local path. " +
+		"Supply preparation_path, masks_path and review_path together as absolute MCP-host paths " +
+		"for full checking of a numbered redaction, reported as masks_text_and_numbers. " +
+		"Full checking never falls back to recovery. Without these paths, verification is " +
+		"stamped_labels for matching ordinary exports or recorded_bytes_and_numbers for numbered " +
+		"redactions and different recorded engines; recovery does not recheck masks, approved text or rendered numbers.",
+	schemas: exportBatesFileSchemas, write: true, destructive: true,
 }
 
 var exportLoadFilePackageToolDefinition = toolDefinition{
@@ -454,6 +459,9 @@ func stableDomainError(err error) (string, int) {
 	if err == nil {
 		return "", 0
 	}
+	if full, ok := errors.AsType[*reviewedBatesError](err); ok {
+		return full.code, 0
+	}
 	var scope *daemonconn.SourceFenceScopeTooLargeError
 	switch {
 	case errors.As(err, &scope):
@@ -579,6 +587,24 @@ func domainErrorMessage(code string) string {
 		return message
 	}
 	switch code {
+	case "redaction_busy":
+		return "Another full PDF check is running in this MCP process; retry when it finishes."
+	case "redaction_review_changed":
+		return "The review does not match these inputs or this numbered delivery; select the matching files."
+	case "redaction_verifier_version":
+		return "The preparation, review or recorded delivery requires a different verifier version."
+	case "redaction_integrity":
+		return "The retained PDF failed its recorded identity or reviewed masks, text and numbers check."
+	case "redaction_memory":
+		return "The MCP process exceeds the PDF verifier memory ceiling; retry when other work has finished."
+	case "redaction_canceled":
+		return "The full PDF check was canceled."
+	case "redaction_timeout":
+		return "The full PDF check exceeded the request deadline."
+	case "redaction_worker_timeout":
+		return "The PDF verifier exceeded its per-page deadline."
+	case "bates_local_io":
+		return "The local PDF could not be staged or saved; check the destination and available disk space."
 	case "download_selection_stale":
 		return "Refresh the live document and list_document_versions, then select its vault, node, version, hash and size again."
 	case "kata_token_invalid":
@@ -763,7 +789,7 @@ func sanitizedRPCError(_ error) *jsonrpc.Error {
 
 func logOperationError(logger *slog.Logger, operation string, err error) {
 	code, _ := stableDomainError(err)
-	if errors.Is(err, errExportLocalIO) || errors.Is(err, errReportLocalIO) {
+	if errors.Is(err, errExportLocalIO) || errors.Is(err, errReportLocalIO) || code == "bates_local_io" {
 		logger.Error("MCP operation failed", "operation", operation,
 			"error_code", code, "error", err)
 		return

@@ -24,11 +24,11 @@ func newRedactionRenderCommand() *cobra.Command {
 			if allocation != "" && !daemonconn.IsCanonicalUUIDv4(allocation) {
 				return usageError(errors.New("--allocation must be a canonical lowercase UUIDv4"))
 			}
-			inputs, err := readRedactionInputs(args[0], args[1])
+			inputs, err := readRedactionInputs(cmd.Context(), args[0], args[1])
 			if err != nil {
 				return err
 			}
-			review, err := readRedactionReview(args[2], inputs)
+			review, err := readRedactionReview(cmd.Context(), args[2], inputs)
 			if err != nil {
 				return err
 			}
