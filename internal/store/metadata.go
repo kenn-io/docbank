@@ -659,7 +659,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 		}
 	}
 	if layout.schemaVersion >= 19 {
-		if err := exportMailboxMetadata(ctx, tx, write); err != nil {
+		if err := exportMailboxMetadata(ctx, tx, write, layout.postgres); err != nil {
 			return err
 		}
 	}
@@ -1704,7 +1704,7 @@ func validateMetadataStateWithVaultIdentity(
 			}
 		}
 		if layout.schemaVersion >= 19 {
-			if err := exportMailboxMetadata(ctx, tx, func(any) error { return nil }); err != nil {
+			if err := exportMailboxMetadata(ctx, tx, func(any) error { return nil }, layout.postgres); err != nil {
 				return err
 			}
 		}

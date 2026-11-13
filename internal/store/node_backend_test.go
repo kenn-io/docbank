@@ -185,7 +185,7 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 
 	_, err = setup.ExecContext(ctx, "GRANT INSERT ON "+schema+".media_sources,"+schema+".media_source_versions,"+schema+".media_input_artifacts,"+schema+".media_occurrences,"+schema+".media_operations TO "+quotedRole+
 		"; GRANT UPDATE(source_version_id,visible,revoked_at) ON "+schema+".media_occurrences TO "+quotedRole+
-		"; GRANT UPDATE(receipt_json,updated_at) ON "+schema+".media_operations TO "+quotedRole)
+		"; GRANT UPDATE(receipt_json,updated_at,receipt_source_version_id,receipt_operation_state) ON "+schema+".media_operations TO "+quotedRole)
 	require.NoError(t, err)
 
 	_, err = setup.ExecContext(ctx, "GRANT INSERT ON "+schema+".visual_preview_generations TO "+quotedRole+

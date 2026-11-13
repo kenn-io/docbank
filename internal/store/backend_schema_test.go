@@ -51,6 +51,14 @@ func checkBackendSchemaPostgres(t *testing.T) {
 	assert.Equal(t, backendIndex{Columns: []string{"face_version_id", "receipt_id"}, Partial: true}, right["photo_change_receipts"].Indexes["photo_change_receipts_face_version"])
 	delete(left["photo_change_receipts"].Indexes, "photo_change_receipts_face_version")
 	delete(right["photo_change_receipts"].Indexes, "photo_change_receipts_face_version")
+	for _, column := range []string{"receipt_source_version_id", "receipt_operation_state"} {
+		assert.Equal(t, backendColumn{Kind: "bytes", Required: true}, right["media_operations"].Columns[column])
+		delete(right["media_operations"].Columns, column)
+	}
+
+	assert.Equal(t, backendColumn{Kind: "text", Required: true}, right["media_input_artifacts"].Columns["input_binding_json"])
+	delete(right["media_input_artifacts"].Columns, "input_binding_json")
+
 	// Accepted provenance strings permit NUL. PostgreSQL stores bytes while
 	// SQLite retains its released TEXT; logical exports remain strings.
 	for table, columns := range backendByteStringColumns {
@@ -351,10 +359,13 @@ func describePostgresIndexes(t *testing.T, s *Store, table string) map[string]ba
 // Accepted UTF-8 evidence and names need byte storage on PostgreSQL. This list
 // makes those intentional schema differences visible to the drift check.
 var backendByteStringColumns = map[string][]string{
+	"mailbox_transfer_receipts":  {"archive_id"},
+	"media_input_artifacts":      {"source_id", "source_version_id", "occurrence_id", "input_id", "origin", "provider", "language"},
+	"media_source_versions":      {"source_id", "source_version_id"},
 	"person_document_assertions": {"note"},
 	"document_people":            {"raw_label"},
-	"mailbox_archives":           {"description"},
-	"media_sources":              {"provider", "origin_scope"},
+	"mailbox_archives":           {"description", "id", "owner"},
+	"media_sources":              {"provider", "origin_scope", "source_id"},
 	"photo_technical_metadata":   {"camera_make", "camera_model", "body_serial_number", "lens_make", "lens_model", "camera_make_folded", "camera_model_folded", "lens_make_folded", "lens_model_folded", "capture_time_raw", "location_label"},
 	"ingests":                    {"source_kind", "source_desc"},
 	"provenance":                 {"original_path"},
@@ -367,6 +378,6 @@ var backendByteStringColumns = map[string][]string{
 	"rendition_lexical_segments": {"text"},
 	"rendition_lexical_index":    {"text"},
 	"extracted_text":             {"extractor", "error", "text"},
-	"media_occurrences":          {"caller_principal", "caller_occurrence_ref", "caller_revision", "caller_filename", "caller_person_ref", "speaker_label"},
-	"media_operations":           {"principal"},
+	"media_occurrences":          {"caller_principal", "caller_occurrence_ref", "caller_revision", "caller_filename", "caller_person_ref", "speaker_label", "source_id", "source_version_id", "occurrence_id"},
+	"media_operations":           {"principal", "source_id"},
 }

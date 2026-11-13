@@ -791,7 +791,7 @@ CREATE TABLE {{schema}}.storage_operations (
 );
 
 CREATE TABLE {{schema}}.media_sources (
-    source_id       TEXT COLLATE "C" PRIMARY KEY,
+    source_id       BYTEA PRIMARY KEY,
     kind            TEXT COLLATE "C" NOT NULL,
     provider        BYTEA NOT NULL,
     origin_scope    BYTEA NOT NULL,
@@ -800,8 +800,8 @@ CREATE TABLE {{schema}}.media_sources (
 );
 
 CREATE TABLE {{schema}}.media_source_versions (
-    source_version_id  TEXT COLLATE "C" PRIMARY KEY,
-    source_id          TEXT COLLATE "C" NOT NULL,
+    source_version_id  BYTEA PRIMARY KEY,
+    source_id          BYTEA NOT NULL,
     revision           BIGINT NOT NULL,
     content_version_id TEXT COLLATE "C" NOT NULL,
     capture_json       TEXT COLLATE "C" NOT NULL,
@@ -810,9 +810,9 @@ CREATE TABLE {{schema}}.media_source_versions (
 );
 
 CREATE TABLE {{schema}}.media_occurrences (
-    occurrence_id         TEXT COLLATE "C" PRIMARY KEY,
-    source_id             TEXT COLLATE "C" NOT NULL,
-    source_version_id     TEXT COLLATE "C",
+    occurrence_id         BYTEA PRIMARY KEY,
+    source_id             BYTEA NOT NULL,
+    source_version_id     BYTEA,
     caller_principal      BYTEA NOT NULL,
     caller_occurrence_ref BYTEA NOT NULL,
     caller_revision       BYTEA NOT NULL,
@@ -827,25 +827,28 @@ CREATE TABLE {{schema}}.media_occurrences (
 );
 
 CREATE TABLE {{schema}}.media_input_artifacts (
-    input_id           TEXT COLLATE "C" PRIMARY KEY,
-    occurrence_id      TEXT COLLATE "C" NOT NULL,
-    source_id          TEXT COLLATE "C" NOT NULL,
-    source_version_id  TEXT COLLATE "C",
+    input_binding_json TEXT COLLATE "C" NOT NULL,
+    input_id           BYTEA PRIMARY KEY,
+    occurrence_id      BYTEA NOT NULL,
+    source_id          BYTEA NOT NULL,
+    source_version_id  BYTEA,
     content_version_id TEXT COLLATE "C" NOT NULL,
     kind               TEXT COLLATE "C" NOT NULL,
-    origin             TEXT COLLATE "C" NOT NULL,
-    provider           TEXT COLLATE "C" NOT NULL,
-    language           TEXT COLLATE "C" NOT NULL,
+    origin             BYTEA NOT NULL,
+    provider           BYTEA NOT NULL,
+    language           BYTEA NOT NULL,
     input_sha256       TEXT COLLATE "C" NOT NULL,
     created_at         TEXT COLLATE "C" NOT NULL
 );
 
 CREATE TABLE {{schema}}.media_operations (
+    receipt_source_version_id BYTEA NOT NULL DEFAULT '',
+    receipt_operation_state BYTEA NOT NULL DEFAULT '',
     operation_id  TEXT COLLATE "C" PRIMARY KEY,
     principal     BYTEA NOT NULL,
     verb          TEXT COLLATE "C" NOT NULL,
     request_sha256 TEXT COLLATE "C" NOT NULL,
-    source_id     TEXT COLLATE "C",
+    source_id     BYTEA,
     receipt_json  TEXT COLLATE "C" NOT NULL,
     created_at    TEXT COLLATE "C" NOT NULL,
     updated_at    TEXT COLLATE "C" NOT NULL
@@ -1656,14 +1659,14 @@ CREATE TABLE {{schema}}.mailbox_chunks (
 );
 
 CREATE TABLE {{schema}}.mailbox_archives (
-    id TEXT COLLATE "C" PRIMARY KEY,
-    owner TEXT COLLATE "C" NOT NULL,
+    id BYTEA PRIMARY KEY,
+    owner BYTEA NOT NULL,
     description BYTEA NOT NULL
 );
 
 CREATE TABLE {{schema}}.mailbox_transfer_receipts (
     id TEXT COLLATE "C" PRIMARY KEY,
-    archive_id TEXT COLLATE "C" NOT NULL,
+    archive_id BYTEA NOT NULL,
     source_ref TEXT COLLATE "C" NOT NULL,
     target_version_id TEXT COLLATE "C" NOT NULL,
     document_publication_id TEXT COLLATE "C" NOT NULL,

@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"maps"
@@ -212,7 +213,7 @@ func (s *Store) importMediaMetadataRecord(ctx context.Context, tx *sql.Tx, kind 
 		if err := validateMetadataMediaSource(record); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO media_sources VALUES($1,$2,$3,$4,$5,$6)`, record.SourceID, record.Kind, storedString(s.postgresSchema != "", record.Provider), storedString(s.postgresSchema != "", record.OriginScope), record.IdentitySHA256, record.CreatedAt)
+		_, err := tx.ExecContext(ctx, `INSERT INTO media_sources VALUES($1,$2,$3,$4,$5,$6)`, storedString(s.postgresSchema != "", record.SourceID), record.Kind, storedString(s.postgresSchema != "", record.Provider), storedString(s.postgresSchema != "", record.OriginScope), record.IdentitySHA256, record.CreatedAt)
 		return err
 	case metadataMediaSourceVersionType:
 		var record metadataMediaSourceVersion
@@ -222,7 +223,7 @@ func (s *Store) importMediaMetadataRecord(ctx context.Context, tx *sql.Tx, kind 
 		if err := validateMetadataMediaSourceVersion(record); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO media_source_versions VALUES($1,$2,$3,$4,$5,$6)`, record.SourceVersionID, record.SourceID, record.Revision, record.ContentVersionID, record.CaptureJSON, record.CreatedAt)
+		_, err := tx.ExecContext(ctx, `INSERT INTO media_source_versions VALUES($1,$2,$3,$4,$5,$6)`, storedString(s.postgresSchema != "", record.SourceVersionID), storedString(s.postgresSchema != "", record.SourceID), record.Revision, record.ContentVersionID, record.CaptureJSON, record.CreatedAt)
 		return err
 	case metadataMediaOccurrenceType:
 		var record metadataMediaOccurrence
@@ -232,7 +233,7 @@ func (s *Store) importMediaMetadataRecord(ctx context.Context, tx *sql.Tx, kind 
 		if err := validateMetadataMediaOccurrence(record); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO media_occurrences VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, record.OccurrenceID, record.SourceID, record.SourceVersionID, storedString(s.postgresSchema != "", record.CallerPrincipal), storedString(s.postgresSchema != "", record.CallerOccurrenceRef), storedString(s.postgresSchema != "", record.CallerRevision), storedString(s.postgresSchema != "", record.CallerFilename), storedString(s.postgresSchema != "", record.CallerPersonRef), storedString(s.postgresSchema != "", record.SpeakerLabel), record.MessageJSON, record.Visible, record.FirstSeenAt, record.RevokedAt)
+		_, err := tx.ExecContext(ctx, `INSERT INTO media_occurrences VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, storedString(s.postgresSchema != "", record.OccurrenceID), storedString(s.postgresSchema != "", record.SourceID), storedOptionalString(s.postgresSchema != "", record.SourceVersionID), storedString(s.postgresSchema != "", record.CallerPrincipal), storedString(s.postgresSchema != "", record.CallerOccurrenceRef), storedString(s.postgresSchema != "", record.CallerRevision), storedString(s.postgresSchema != "", record.CallerFilename), storedString(s.postgresSchema != "", record.CallerPersonRef), storedString(s.postgresSchema != "", record.SpeakerLabel), record.MessageJSON, record.Visible, record.FirstSeenAt, record.RevokedAt)
 		return err
 	case metadataMediaInputArtifactType:
 		var record metadataMediaInputArtifact
@@ -242,8 +243,8 @@ func (s *Store) importMediaMetadataRecord(ctx context.Context, tx *sql.Tx, kind 
 		if err := validateMetadataMediaInputArtifact(record); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO media_input_artifacts VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, record.InputID, record.OccurrenceID, record.SourceID, record.SourceVersionID, record.ContentVersionID, record.Kind, record.Origin, record.Provider, record.Language, record.InputSHA256, record.CreatedAt)
-		return err
+		return insertMediaInputArtifactTx(ctx, tx, record, s.postgresSchema != "")
+
 	case metadataMediaOperationType:
 		var record metadataMediaOperation
 		if err := decodeMetadataRecord(raw, &record); err != nil {
@@ -267,8 +268,8 @@ func (s *Store) importMediaMetadataRecord(ctx context.Context, tx *sql.Tx, kind 
 				record.ReceiptJSON = string(encoded)
 			}
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO media_operations VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, record.OperationID, storedString(s.postgresSchema != "", record.Principal), record.Verb, record.RequestSHA256, record.SourceID, record.ReceiptJSON, record.CreatedAt, record.UpdatedAt)
-		return err
+		return insertMediaOperationTx(ctx, tx, record, s.postgresSchema != "")
+
 	default:
 		return fmt.Errorf("unknown media metadata type %q", kind)
 	}
@@ -460,4 +461,19 @@ func validateMediaMetadataState(ctx context.Context, query metadataQuerier) erro
 		}
 	}
 	return exportMediaMetadata(ctx, query, func(any) error { return nil })
+}
+
+func insertMediaInputArtifactTx(ctx context.Context, tx *sql.Tx, v metadataMediaInputArtifact, postgres bool) error {
+	columns := "input_id,occurrence_id,source_id,source_version_id,content_version_id,kind,origin,provider,language,input_sha256,created_at"
+	args := []any{storedString(postgres, v.InputID), storedString(postgres, v.OccurrenceID), storedString(postgres, v.SourceID), storedOptionalString(postgres, v.SourceVersionID), v.ContentVersionID, v.Kind, storedString(postgres, v.Origin), storedString(postgres, v.Provider), storedString(postgres, v.Language), v.InputSHA256, v.CreatedAt}
+	if postgres {
+		raw, err := json.Marshal(v.InputID)
+		if err != nil {
+			return err
+		}
+		columns += ",input_binding_json"
+		args = append(args, string(raw))
+	}
+	_, err := tx.ExecContext(ctx, "INSERT INTO media_input_artifacts("+columns+") VALUES("+numberedPlaceholders(len(args), 0)+")", args...)
+	return err
 }

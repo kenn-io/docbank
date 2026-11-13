@@ -26,6 +26,35 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
 	seeds := retainedMetadataCatalogSeeds()
+	seeds["NUL media identities and inputs"] = func(t *testing.T) *Store {
+		t.Helper()
+		s := newTestStore(t)
+		node, err := s.CreateFile(t.Context(), s.RootID(), "recording.wav", fakeHash("d6"), 10, "audio/wav")
+		require.NoError(t, err)
+		sourceID := "source\x00id"
+		_, err = s.RetainMediaReference(t.Context(), MediaReferencePublicationRequest{Operation: MediaOperation{ID: "00000000-0000-4000-8000-000000000801", Principal: "operator", Verb: "submit_remote_recording", SourceID: sourceID, RequestSHA256: fakeHash("d5")}, Provider: "url", OriginScope: "scope", IdentitySHA256: fakeHash("d4"), Outcome: "unsupported", Occurrence: MediaOccurrenceInput{ID: "appearance\x00id", SourceID: sourceID, Principal: "operator", Ref: "ref", Revision: "1", Filename: "recording.wav", MessageJSON: "{}"}})
+		require.NoError(t, err)
+		require.NoError(t, s.PublishMediaSourceVersion(t.Context(), MediaSourceVersionInput{ID: "version\x00id", SourceID: sourceID, ContentVersionID: node.CurrentVersionID, CaptureJSON: "{}", Revision: 1, BindOccurrenceIDs: []string{"appearance\x00id"}}))
+		_, err = s.ImportMediaInputArtifact(t.Context(), MediaInputArtifactRequest{Operation: MediaOperation{ID: "00000000-0000-4000-8000-000000000802", Principal: "operator", Verb: "import_recording_artifact", SourceID: sourceID, RequestSHA256: fakeHash("d3")}, InputID: "input\x00id", OccurrenceID: "appearance\x00id", SourceVersionID: "version\x00id", VirtualPath: "/inputs/transcript.txt", MediaType: "text/plain", ByteLength: 12, Physical: BlobPhysical{Encoding: "raw", StoredBytes: 12, Created: true}, Kind: "transcript", Origin: "origin\x00value", Provider: "provider\x00value", Language: "language\x00value", InputSHA: fakeHash("d2")})
+		require.NoError(t, err)
+		return s
+	}
+	seeds["NUL archive identities"] = func(t *testing.T) *Store {
+		t.Helper()
+		s := newTestStore(t)
+		require.NoError(t, s.RegisterMailboxArchive(t.Context(), MailboxArchive{ID: "archive\x00id", Owner: "owner\x00id", Description: "description"}))
+		email := newEmailFixture(t, s, "archive.eml")
+		source, err := emailVersion(t.Context(), s.db, email.publication.ContentVersionID)
+		require.NoError(t, err)
+		run, err := s.BeginIngest(t.Context(), "mailbox", "Synthetic archive")
+		require.NoError(t, err)
+		settings, err := (MailboxSettings{DestinationID: s.RootID()}).Canonical()
+		require.NoError(t, err)
+		_, err = s.PublishMailboxTransfer(t.Context(), MailboxTransferPublication{Owner: "owner\x00id", Run: run, Request: MailboxTransferRequest{ArchiveID: "archive\x00id", Reference: "reference", SHA256: source.BlobHash, Size: source.Size, Settings: settings, DestinationID: s.RootID(), Name: "message.eml"}, Email: email.publication})
+		require.NoError(t, err)
+
+		return s
+	}
 	seeds["NUL assertion note"] = func(t *testing.T) *Store {
 		t.Helper()
 		s := newTestStore(t)
@@ -331,6 +360,9 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 	// Verify these native fixtures actually produce the custom records whose
 	// insertion behavior the round trip must exercise.
 	requiredKinds := map[string][]string{
+		"NUL media identities and inputs": {"media_source", "media_source_version", "media_occurrence", "media_input_artifact", "media_operation"},
+		"NUL archive identities":          {"mailbox_archive", "mailbox_transfer_receipt"},
+
 		"NUL assertion note": {"person_document_assertion", "photo_change_receipt"},
 		"NUL archive":        {"mailbox_archive"},
 		"NUL photo facts":    {"source_metadata_generation"},
@@ -420,6 +452,42 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 			after, err := runtime.VerifyAudit(ctx, nil)
 			require.NoError(t, err)
 			require.Equal(t, before, after)
+
+			if name == "NUL archive identities" {
+				for _, store := range []*Store{runtime, recovered} {
+					receipt, err := store.MailboxTransfer(ctx, "owner\x00id", "archive\x00id", "reference")
+					require.NoError(t, err)
+					require.Equal(t, "archive\x00id", receipt.Request.ArchiveID)
+					require.NoError(t, store.RegisterMailboxArchive(ctx, MailboxArchive{ID: "archive\x00id", Owner: "owner\x00id", Description: "description"}))
+					require.NoError(t, store.RegisterMailboxArchive(ctx, MailboxArchive{ID: "new\x00archive", Owner: "owner\x00id", Description: "new"}))
+				}
+			}
+			if name == "NUL media identities and inputs" {
+				for _, store := range []*Store{runtime, recovered} {
+					item, err := store.MediaSourceVersion(ctx, "operator", "source\x00id", "version\x00id")
+					require.NoError(t, err)
+					require.Equal(t, "appearance\x00id", item.OccurrenceID)
+					require.Equal(t, "source\x00id", item.Receipt.SourceID)
+					input, err := store.SuppliedTranscriptForSourceVersion(ctx, "operator", "transcript", "source\x00id", "version\x00id", "")
+					require.NoError(t, err)
+					require.Equal(t, "input\x00id", input.InputID)
+					require.Equal(t, "origin\x00value", input.Origin)
+					require.Equal(t, "provider\x00value", input.Provider)
+					require.Equal(t, "language\x00value", input.Language)
+					visible, err := store.MediaInputBindingVisible(ctx, "operator", "source\x00id", "version\x00id", "input\x00id")
+					require.NoError(t, err)
+					require.True(t, visible)
+					_, err = store.ImportMediaInputArtifact(ctx, MediaInputArtifactRequest{Operation: MediaOperation{ID: "00000000-0000-4000-8000-000000000803", Principal: "operator", Verb: "import_recording_artifact", SourceID: "source\x00id", RequestSHA256: fakeHash("d3")}, InputID: "input\x00id", OccurrenceID: "appearance\x00id", SourceVersionID: "version\x00id", VirtualPath: "/inputs/transcript.txt", MediaType: "text/plain", ByteLength: 12, Physical: BlobPhysical{Encoding: "raw", StoredBytes: 12}, Kind: "transcript", Origin: "origin\x00value", Provider: "provider\x00value", Language: "language\x00value", InputSHA: fakeHash("d2")})
+					require.NoError(t, err)
+					page, total, more, err := store.MediaOccurrences(ctx, "operator", "source\x00id", "appearance\x00id", 10)
+					require.NoError(t, err)
+					require.Equal(t, 1, total)
+					require.False(t, more)
+					require.Empty(t, page)
+					_, err = store.RecordMediaOccurrenceRevocation(ctx, testMediaOperation("revoke_occurrence", "operator"), "appearance\x00id", "1")
+					require.NoError(t, err)
+				}
+			}
 			if name == "NUL assertion note" {
 				for _, store := range []*Store{runtime, recovered} {
 					node, err := store.NodeByPath(ctx, "/portrait.jpg")

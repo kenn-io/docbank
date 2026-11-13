@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"time"
@@ -109,7 +110,7 @@ func (s *Store) withMediaOperation(
 		args := []any{storedString(s.postgresSchema != "", op.Principal)}
 		if op.SourceID != "" {
 			sourcePredicate = "source_id=$2"
-			args = append(args, op.SourceID)
+			args = append(args, storedString(s.postgresSchema != "", op.SourceID))
 		}
 		var previous string
 		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(created_at),'') FROM media_operations
@@ -123,15 +124,17 @@ func (s *Store) withMediaOperation(
 			}
 			stamp = last.Add(time.Nanosecond).UTC().Format(timestampLayout)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO media_operations(
-			operation_id,principal,verb,request_sha256,source_id,receipt_json,created_at,updated_at
-		) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, op.ID, storedString(s.postgresSchema != "", op.Principal), op.Verb, op.RequestSHA256,
-			nullableMediaID(op.SourceID), receipt, stamp, stamp); err != nil {
+		var sourceID *string
+		if op.SourceID != "" {
+			sourceID = &op.SourceID
+		}
+		if err := insertMediaOperationTx(ctx, tx, metadataMediaOperation{OperationID: op.ID, Principal: op.Principal, Verb: op.Verb, RequestSHA256: op.RequestSHA256, SourceID: sourceID, ReceiptJSON: receipt, CreatedAt: stamp, UpdatedAt: stamp}, s.postgresSchema != ""); err != nil {
 			if s.isUniqueViolation(err) {
 				return ErrMediaOperationConflict
 			}
 			return fmt.Errorf("recording media operation: %w", err)
 		}
+
 		return nil
 	})
 	return receipt, err
@@ -178,4 +181,31 @@ func validateMediaReceipt(receipt string) error {
 		return errors.New("invalid media receipt")
 	}
 	return nil
+}
+
+// PostgreSQL JSON extraction rejects NUL in any receipt string. Keep query
+// keys as derived byte columns while preserving the receipt's original bytes.
+func insertMediaOperationTx(ctx context.Context, tx *sql.Tx, v metadataMediaOperation, postgres bool) error {
+	columns := "operation_id,principal,verb,request_sha256,source_id,receipt_json,created_at,updated_at"
+	args := []any{v.OperationID, storedString(postgres, v.Principal), v.Verb, v.RequestSHA256, storedOptionalString(postgres, v.SourceID), v.ReceiptJSON, v.CreatedAt, v.UpdatedAt}
+	if postgres {
+		version, state, err := mediaReceiptQueryKeys(v.ReceiptJSON)
+		if err != nil {
+			return err
+		}
+
+		columns += ",receipt_source_version_id,receipt_operation_state"
+		args = append(args, []byte(version), []byte(state))
+	}
+	_, err := tx.ExecContext(ctx, "INSERT INTO media_operations("+columns+") VALUES("+numberedPlaceholders(len(args), 0)+")", args...)
+	return err
+}
+
+func mediaReceiptQueryKeys(raw string) (string, string, error) {
+	var keys struct {
+		SourceVersionID string `json:"source_version_id"`
+		OperationState  string `json:"operation_state"`
+	}
+	err := json.Unmarshal([]byte(raw), &keys)
+	return keys.SourceVersionID, keys.OperationState, err
 }

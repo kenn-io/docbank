@@ -46,7 +46,7 @@ func (s *Store) RecordMediaOccurrenceRevocation(
 	// The source binding is immutable. Resolve it for the operation receipt,
 	// then check the caller's revision inside the revocation transaction.
 	err := s.db.QueryRowContext(ctx, `SELECT source_id FROM media_occurrences
-		WHERE occurrence_id=$1 AND caller_principal=$2`, occurrenceID, storedString(s.postgresSchema != "", op.Principal)).Scan(&op.SourceID)
+		WHERE occurrence_id=$1 AND caller_principal=$2`, storedString(s.postgresSchema != "", occurrenceID), storedString(s.postgresSchema != "", op.Principal)).Scan(&op.SourceID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MediaPublicationReceipt{}, ErrNotFound
 	}
@@ -56,7 +56,7 @@ func (s *Store) RecordMediaOccurrenceRevocation(
 	receiptRaw, err := s.withMediaOperation(ctx, op, func(tx *sql.Tx) (string, error) {
 		var revision string
 		err := tx.QueryRowContext(ctx, `SELECT caller_revision FROM media_occurrences
-			WHERE occurrence_id=$1 AND caller_principal=$2`, occurrenceID, storedString(s.postgresSchema != "", op.Principal)).Scan(&revision)
+			WHERE occurrence_id=$1 AND caller_principal=$2`, storedString(s.postgresSchema != "", occurrenceID), storedString(s.postgresSchema != "", op.Principal)).Scan(&revision)
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", ErrNotFound
 		}
@@ -85,7 +85,7 @@ func (s *Store) declareMediaOccurrenceTx(ctx context.Context, tx *sql.Tx, in Med
 	if err := validateMediaOccurrenceInput(in); err != nil {
 		return err
 	}
-	if err := validateMediaOccurrenceSourceTx(ctx, tx, in.SourceID, in.SourceVersionID); err != nil {
+	if err := s.validateMediaOccurrenceSourceTx(ctx, tx, in.SourceID, in.SourceVersionID); err != nil {
 		return err
 	}
 	stored, found, err := s.mediaOccurrenceByRevisionTx(ctx, tx, in.Principal, in.Ref, in.Revision)
@@ -102,7 +102,7 @@ func (s *Store) declareMediaOccurrenceTx(ctx context.Context, tx *sql.Tx, in Med
 			occurrence_id,source_id,source_version_id,caller_principal,caller_occurrence_ref,
 			caller_revision,caller_filename,caller_person_ref,speaker_label,message_json,
 			visible,first_seen_at,revoked_at
-		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,1,$11,NULL)`, in.ID, in.SourceID, nullableMediaID(in.SourceVersionID),
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,1,$11,NULL)`, storedString(s.postgresSchema != "", in.ID), storedString(s.postgresSchema != "", in.SourceID), s.nullableMediaID(in.SourceVersionID),
 		storedString(s.postgresSchema != "", in.Principal), storedString(s.postgresSchema != "", in.Ref), storedString(s.postgresSchema != "", in.Revision), storedString(s.postgresSchema != "", in.Filename), storedString(s.postgresSchema != "", in.PersonRef), storedString(s.postgresSchema != "", in.SpeakerLabel),
 		in.MessageJSON, nowRFC3339()); err != nil {
 		if s.isUniqueViolation(err) {
@@ -116,7 +116,7 @@ func (s *Store) declareMediaOccurrenceTx(ctx context.Context, tx *sql.Tx, in Med
 func (s *Store) revokeMediaOccurrenceTx(ctx context.Context, tx *sql.Tx, principal, id string) error {
 	var visible int
 	if err := tx.QueryRowContext(ctx, `SELECT visible FROM media_occurrences
-			WHERE occurrence_id=$1 AND caller_principal=$2`, id, storedString(s.postgresSchema != "", principal)).Scan(&visible); err != nil {
+			WHERE occurrence_id=$1 AND caller_principal=$2`, storedString(s.postgresSchema != "", id), storedString(s.postgresSchema != "", principal)).Scan(&visible); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -124,15 +124,19 @@ func (s *Store) revokeMediaOccurrenceTx(ctx context.Context, tx *sql.Tx, princip
 	}
 	if visible != 0 {
 		if _, err := tx.ExecContext(ctx, `UPDATE media_occurrences SET visible=0,revoked_at=$1
-				WHERE occurrence_id=$2 AND caller_principal=$3`, nowRFC3339(), id, storedString(s.postgresSchema != "", principal)); err != nil {
+				WHERE occurrence_id=$2 AND caller_principal=$3`, nowRFC3339(), storedString(s.postgresSchema != "", id), storedString(s.postgresSchema != "", principal)); err != nil {
 			return err
+		}
+		bindingMatch := `j.execution_identity_json LIKE '%"input_binding":"' || i.input_id || '"%'`
+		if s.postgresSchema != "" {
+			bindingMatch = `position('"input_binding":' || i.input_binding_json in j.execution_identity_json)>0`
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM rendition_heads WHERE attachment_id IN (
 			SELECT a.attachment_id FROM rendition_attachments a
 			JOIN rendition_jobs j ON j.job_id=a.build_id
 			JOIN media_input_artifacts i ON i.occurrence_id=$1
-			WHERE j.execution_identity_json LIKE '%"input_binding":"' || i.input_id || '"%'
-		)`, id); err != nil {
+			WHERE `+bindingMatch+`
+		)`, storedString(s.postgresSchema != "", id)); err != nil {
 			return fmt.Errorf("revoking input-bound rendition heads: %w", err)
 		}
 	}
@@ -176,10 +180,10 @@ func validateBoundedMediaText(name, value string, maxBytes int, allowEmpty bool)
 	return nil
 }
 
-func validateMediaOccurrenceSourceTx(ctx context.Context, tx *sql.Tx, sourceID, sourceVersionID string) error {
+func (s *Store) validateMediaOccurrenceSourceTx(ctx context.Context, tx *sql.Tx, sourceID, sourceVersionID string) error {
 	var found string
 	if sourceVersionID == "" {
-		if err := tx.QueryRowContext(ctx, `SELECT source_id FROM media_sources WHERE source_id=$1`, sourceID).Scan(&found); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT source_id FROM media_sources WHERE source_id=$1`, storedString(s.postgresSchema != "", sourceID)).Scan(&found); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrNotFound
 			}
@@ -188,7 +192,7 @@ func validateMediaOccurrenceSourceTx(ctx context.Context, tx *sql.Tx, sourceID, 
 		return nil
 	}
 	if err := tx.QueryRowContext(ctx, `SELECT source_id FROM media_source_versions
-		WHERE source_version_id=$1`, sourceVersionID).Scan(&found); err != nil {
+		WHERE source_version_id=$1`, storedString(s.postgresSchema != "", sourceVersionID)).Scan(&found); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -222,9 +226,9 @@ func (s *Store) mediaOccurrenceByRevisionTx(
 	return found, true, nil
 }
 
-func nullableMediaID(value string) any {
+func (s *Store) nullableMediaID(value string) any {
 	if value == "" {
 		return nil
 	}
-	return value
+	return storedString(s.postgresSchema != "", value)
 }

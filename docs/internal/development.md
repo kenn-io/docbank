@@ -611,7 +611,7 @@ GRANT INSERT ON documents.media_sources, documents.media_source_versions,
     documents.media_operations TO docbank_runtime;
 GRANT UPDATE(source_version_id, visible, revoked_at)
     ON documents.media_occurrences TO docbank_runtime;
-GRANT UPDATE(receipt_json, updated_at) ON documents.media_operations TO docbank_runtime;
+GRANT UPDATE(receipt_json, updated_at, receipt_source_version_id, receipt_operation_state) ON documents.media_operations TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(passcode_hash)
     ON documents.photo_hidden_credentials TO docbank_runtime;
 GRANT INSERT, DELETE ON documents.photo_hidden_failures TO docbank_runtime;
@@ -945,6 +945,24 @@ receipts. Native writes and import therefore populate an indexed
 lookup and the shared Go decoder. The lookup is derived, stays outside logical
 exports, and does not change receipt bytes. Face-protection reads keep one
 query, including candidate and receipt references.
+
+Media source, source-version, occurrence and input identifiers retain their raw
+UTF-8 bytes in PostgreSQL, including NUL. Input origin, provider and language,
+plus archive identifiers, owners and archive references in transfer receipts use the same byte
+bindings. Scans and logical exports retain their existing string format.
+
+Media receipts keep their original JSON bytes. PostgreSQL stores their selected
+source version and operation state separately, populated by the shared write and
+import helper and updated with the processing receipt. Input artifacts also keep
+the JSON-quoted input identity needed to revoke dependent renditions without
+converting a NUL-bearing value to PostgreSQL text. These derived lookup columns
+are excluded from logical exports and rebuilt during import.
+
+Batched media-version reads hex-encode identifiers only in the PostgreSQL query
+parameter. SQL decodes those parameters before comparing the indexed byte
+columns. SQLite keeps its existing query parameters and lookup expressions;
+no stored or exported identifier uses an escaping format. These paths add no
+database round trip.
 
 PostgreSQL foreign keys that normally check immediately allow explicit deferral.
 Logical import and collection snapshot sealing, including received packages,

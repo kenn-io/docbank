@@ -62,3 +62,12 @@ func (d metadataJSONDialect) arrayValues(parameter string) string {
 func (d metadataJSONDialect) originalFileWaiter() string {
 	return "NOT EXISTS(SELECT 1 FROM " + d.arrayValues("w.input_classes_json") + " WHERE value='derived_upload')"
 }
+
+// byteText reads hex-encoded request identifiers; persisted JSON stays unchanged.
+func (d metadataJSONDialect) byteText(path string) string {
+	text := d.text("value", path)
+	if d.postgres {
+		return "decode(" + text + ",'hex')"
+	}
+	return text
+}

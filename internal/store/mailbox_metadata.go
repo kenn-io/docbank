@@ -33,13 +33,13 @@ func validateRetainedMailboxContainer(ctx context.Context, q metadataQuerier, c 
 	}
 	return nil
 }
-func exportMailboxMetadata(ctx context.Context, q metadataQuerier, write metadataWrite) error {
+func exportMailboxMetadata(ctx context.Context, q metadataQuerier, write metadataWrite, postgres bool) error {
 	after := ""
 	for {
 		var id, owner string
 		err := q.QueryRowContext(ctx, `SELECT id,owner FROM mailbox_containers WHERE id>$1 ORDER BY id LIMIT 1`, after).Scan(&id, &owner)
 		if errors.Is(err, sql.ErrNoRows) {
-			return exportMailboxTransfers(ctx, q, write)
+			return exportMailboxTransfers(ctx, q, write, postgres)
 		}
 		if err != nil {
 			return err
@@ -78,7 +78,7 @@ var mailboxMetadataTables = []metadataRecordCodec{
 	newMetadataTable(metadataTable[metadataMailboxTransfer]{
 		record: metadataMailboxTransfer{Type: "mailbox_transfer_receipt"}, table: "mailbox_transfer_receipts",
 		insert: func(ctx context.Context, tx *sql.Tx, r metadataMailboxTransfer, postgres bool) error {
-			return insertMailboxTransferReceipt(ctx, tx, r.Receipt)
+			return insertMailboxTransferReceipt(ctx, tx, r.Receipt, postgres)
 		}}),
 	newMetadataTable(metadataTable[metadataMailboxContainer]{record: metadataMailboxContainer{Type: "mailbox_container"},
 		table: "mailbox_containers", insert: importMailboxContainer}),
@@ -89,7 +89,7 @@ func importMailboxArchive(ctx context.Context, tx *sql.Tx, r metadataMailboxArch
 	if !mailboxText(a.ID, 128) || !mailboxText(a.Owner, 256) || !mailboxText(a.Description, 1024) {
 		return ErrMailboxInvalid
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO mailbox_archives(id,owner,description) VALUES($1,$2,$3)`, a.ID, a.Owner, storedString(postgres, a.Description))
+	_, err := tx.ExecContext(ctx, `INSERT INTO mailbox_archives(id,owner,description) VALUES($1,$2,$3)`, storedString(postgres, a.ID), storedString(postgres, a.Owner), storedString(postgres, a.Description))
 	return err
 }
 
@@ -118,11 +118,11 @@ type metadataMailboxTransfer struct {
 	Receipt MailboxTransferReceipt `json:"receipt"`
 }
 
-func exportMailboxTransfers(ctx context.Context, q metadataQuerier, write metadataWrite) error {
+func exportMailboxTransfers(ctx context.Context, q metadataQuerier, write metadataWrite, postgres bool) error {
 	after := ""
 	for {
 		var a MailboxArchive
-		err := q.QueryRowContext(ctx, `SELECT id,owner,description FROM mailbox_archives WHERE id>$1 ORDER BY id LIMIT 1`, after).Scan(&a.ID, &a.Owner, &a.Description)
+		err := q.QueryRowContext(ctx, `SELECT id,owner,description FROM mailbox_archives WHERE id>$1 ORDER BY id LIMIT 1`, storedString(postgres, after)).Scan(&a.ID, &a.Owner, &a.Description)
 		if errors.Is(err, sql.ErrNoRows) {
 			break
 		}

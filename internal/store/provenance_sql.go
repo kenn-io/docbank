@@ -22,3 +22,10 @@ func (d provenanceSQLDialect) embedded(expression string) string {
 	}
 	return "LOWER(" + expression + ") LIKE 'embedded:%'"
 }
+
+func storedOptionalString(postgres bool, value *string) any {
+	if value == nil {
+		return nil
+	}
+	return storedString(postgres, *value)
+}

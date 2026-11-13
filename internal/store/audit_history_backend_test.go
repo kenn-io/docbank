@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json/v2"
 	"slices"
 	"strings"
 	"testing"
@@ -229,6 +230,14 @@ func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables 
 		if faceReceipt {
 			columns = append(columns, "face_version_id")
 		}
+		mediaInput := table == "media_input_artifacts"
+		if mediaInput {
+			columns = append(columns, "input_binding_json")
+		}
+		mediaReceipt := table == "media_operations"
+		if mediaReceipt {
+			columns = append(columns, "receipt_source_version_id", "receipt_operation_state")
+		}
 
 		insert := "INSERT INTO " + table + "(" + strings.Join(columns, ",") + ")" + override + " VALUES(" + numberedPlaceholders(len(columns), 0) + ")"
 		for rows.Next() {
@@ -252,6 +261,22 @@ func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables 
 				require.NoError(t, err)
 				args = append(slices.Clone(values), nullableString(version))
 			}
+			if mediaReceipt {
+				raw, ok := values[slices.Index(columns, "receipt_json")].(string)
+				require.True(t, ok)
+				version, state, err := mediaReceiptQueryKeys(raw)
+				require.NoError(t, err)
+				args = append(slices.Clone(values), []byte(version), []byte(state))
+			}
+
+			if mediaInput {
+				id, ok := values[slices.Index(columns, "input_id")].([]byte)
+				require.True(t, ok)
+				raw, err := json.Marshal(string(id))
+				require.NoError(t, err)
+				args = append(slices.Clone(values), string(raw))
+			}
+
 			_, err := to.ExecContext(ctx, insert, args...)
 			require.NoError(t, err)
 		}
