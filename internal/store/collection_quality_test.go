@@ -251,7 +251,7 @@ func TestCollectionQualityCensusKeepsMetadataCoverageAndGenerationInOneSnapshot(
 	require.NoError(t, err)
 	var snapshot CollectionQuality
 	err = s.withLexicalGenerationRead(t.Context(), func(q metadataQuerier, _ LexicalGeneration) error {
-		_, err := collectionSummaryByID(t.Context(), q, run.ID())
+		_, err := collectionSummaryByID(t.Context(), q, run.ID(), false)
 		if err != nil {
 			return err
 		}
@@ -307,7 +307,7 @@ func TestCollectionQualityScaleProof(t *testing.T) { //nolint:paralleltest // re
 		for seeded < target {
 			batchEnd := min(seeded+1000, target)
 			require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-				if _, err := ensureIngestRunTx(t.Context(), tx, run); err != nil {
+				if _, err := s.ensureIngestRunTx(t.Context(), tx, run); err != nil {
 					return err
 				}
 				for index := seeded; index < batchEnd; index++ {

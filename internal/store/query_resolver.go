@@ -85,7 +85,7 @@ func (r queryResolver) Resolve(
 		}
 		if err == nil {
 			var label CollectionLabel
-			label, _, err = collectionLabelTx(ctx, r.q, id)
+			label, _, err = collectionLabelTx(ctx, r.q, id, false)
 			ref.Dependency = query.Dependency{Kind: kind, ID: id, Revision: label.Revision}
 		}
 	case query.ReferenceSaved:

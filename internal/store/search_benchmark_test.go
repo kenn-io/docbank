@@ -110,7 +110,7 @@ func BenchmarkSemanticMemberships(b *testing.B) {
 			profile := embeddingCatalogProfile(b)
 			node, err := s.CreateFile(ctx, s.RootID(), "seed.txt", catalogSourceHash, 20, "text/plain")
 			require.NoError(b, err)
-			require.NoError(b, s.withStorageTx(ctx, func(tx *sql.Tx) error { return ensureProcessingProfileTx(ctx, tx, profile) }))
+			require.NoError(b, s.withStorageTx(ctx, func(tx *sql.Tx) error { return ensureProcessingProfileTx(ctx, tx, profile, s.postgresSchema != "") }))
 			record := embeddingSetFixture(ctx, s, node.CurrentVersionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 			require.NoError(b, s.StageEmbeddingSet(ctx, record))
 			require.NoError(b, s.PublishEmbeddingHead(ctx, EmbeddingHeadRecord{FencingToken: 1,

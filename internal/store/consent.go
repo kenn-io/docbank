@@ -257,14 +257,14 @@ func (s *Store) checkConsentUndecidedTx(ctx context.Context, tx *sql.Tx, request
 		if err != nil {
 			return err
 		}
-		fence, err := consentRevocationFenceTx(ctx, tx, s.vaultID, incarnation, authority.principal, authority.scope)
+		fence, err := consentRevocationFenceTx(ctx, tx, s.vaultID, incarnation, authority.principal, authority.scope, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
 		if fence != 0 {
 			return errConsentNotUndecided
 		}
-		_, err = authorizeProviderOperationTx(ctx, tx, s.vaultID, ProviderOperationAuthorizationRequest{Principal: request.Principal, Scope: request.Scope, ProfileFingerprint: request.ProfileFingerprint, DisclosureFingerprint: request.DisclosureFingerprint, InputClasses: request.InputClasses, RetainedArtifactClasses: request.RetainedArtifactClasses}, now)
+		_, err = authorizeProviderOperationTx(ctx, tx, s.vaultID, ProviderOperationAuthorizationRequest{Principal: request.Principal, Scope: request.Scope, ProfileFingerprint: request.ProfileFingerprint, DisclosureFingerprint: request.DisclosureFingerprint, InputClasses: request.InputClasses, RetainedArtifactClasses: request.RetainedArtifactClasses}, now, s.postgresSchema != "")
 		if errors.Is(err, ErrProcessingConsentRequired) {
 			continue
 		}
@@ -286,7 +286,7 @@ func (s *Store) grantConsentTx(
 	}
 	grant.ProcessingIncarnationID = incarnationID
 	grant.RevocationFence, err = consentRevocationFenceTx(ctx, tx, s.vaultID,
-		incarnationID, authority.principal, authority.scope)
+		incarnationID, authority.principal, authority.scope, s.postgresSchema != "")
 	if err != nil {
 		return err
 	}
@@ -296,7 +296,7 @@ func (s *Store) grantConsentTx(
 		WHERE vault_uid=$1 AND incarnation_id=$2 AND principal=$3 AND scope=$4
 		AND profile_fingerprint=$5 AND disclosure_fingerprint=$6
 		AND input_classes_json=$7 AND retained_classes_json=$8`, s.vaultID, incarnationID,
-		authority.principal, authority.scope, authority.profile, authority.disclosure,
+		storedString(s.postgresSchema != "", authority.principal), storedString(s.postgresSchema != "", authority.scope), authority.profile, authority.disclosure,
 		authority.inputsJSON, authority.retainedJSON).Scan(&latest); err != nil {
 		return fmt.Errorf("reading latest processing consent timestamp: %w", err)
 	}
@@ -314,7 +314,7 @@ func (s *Store) grantConsentTx(
 			disclosure_fingerprint,input_classes_json,retained_classes_json,
 			revocation_fence,issued_at,expires_at
 		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, grant.ID, grant.ConsentSetID, grant.VaultID,
-		grant.ProcessingIncarnationID, grant.Principal, grant.Scope,
+		grant.ProcessingIncarnationID, storedString(s.postgresSchema != "", grant.Principal), storedString(s.postgresSchema != "", grant.Scope),
 		grant.ProfileFingerprint, grant.DisclosureFingerprint, authority.inputsJSON,
 		authority.retainedJSON, grant.RevocationFence, issuedRaw, expiresRaw)
 	return err
@@ -363,7 +363,7 @@ func (s *Store) revokeConsentTx(
 		return err
 	}
 	prior, err := consentRevocationFenceTx(ctx, tx, s.vaultID,
-		result.ProcessingIncarnationID, principal, scope)
+		result.ProcessingIncarnationID, principal, scope, s.postgresSchema != "")
 	if err != nil {
 		return err
 	}
@@ -372,7 +372,7 @@ func (s *Store) revokeConsentTx(
 		INSERT INTO processing_consent_revocations(
 			revocation_id,vault_uid,incarnation_id,principal,scope,fence,revoked_at
 		) VALUES($1,$2,$3,$4,$5,$6,$7)`, result.ID, result.VaultID,
-		result.ProcessingIncarnationID, principal, scope, result.Fence,
+		result.ProcessingIncarnationID, storedString(s.postgresSchema != "", principal), storedString(s.postgresSchema != "", scope), result.Fence,
 		result.RevokedAt.Format(timestampLayout))
 	return err
 }
@@ -435,7 +435,7 @@ func (s *Store) AuthorizeProviderOperationFromConsentSet(ctx context.Context,
 	}
 	defer func() { _ = tx.Rollback() }()
 	authorization, err := authorizeProviderOperationInConsentSetTx(
-		ctx, tx, s.vaultID, request, time.Now().UTC(), admittedGrantID)
+		ctx, tx, s.vaultID, request, time.Now().UTC(), admittedGrantID, s.postgresSchema != "")
 	if err != nil {
 		return ProviderOperationAuthorization{}, err
 	}
@@ -448,19 +448,19 @@ func (s *Store) AuthorizeProviderOperationFromConsentSet(ctx context.Context,
 func (s *Store) authorizeProviderOperationTx(
 	ctx context.Context, tx *sql.Tx, request ProviderOperationAuthorizationRequest, now time.Time,
 ) (ProviderOperationAuthorization, error) {
-	return authorizeProviderOperationTx(ctx, tx, s.vaultID, request, now)
+	return authorizeProviderOperationTx(ctx, tx, s.vaultID, request, now, s.postgresSchema != "")
 }
 
 func authorizeProviderOperationTx(
 	ctx context.Context, querier metadataQuerier, vaultID string,
-	request ProviderOperationAuthorizationRequest, now time.Time,
+	request ProviderOperationAuthorizationRequest, now time.Time, postgres bool,
 ) (_ ProviderOperationAuthorization, retErr error) {
-	return authorizeProviderOperationInConsentSetTx(ctx, querier, vaultID, request, now, "")
+	return authorizeProviderOperationInConsentSetTx(ctx, querier, vaultID, request, now, "", postgres)
 }
 
 func authorizeProviderOperationInConsentSetTx(
 	ctx context.Context, querier metadataQuerier, vaultID string,
-	request ProviderOperationAuthorizationRequest, now time.Time, admittedGrantID string,
+	request ProviderOperationAuthorizationRequest, now time.Time, admittedGrantID string, postgres bool,
 ) (_ ProviderOperationAuthorization, retErr error) {
 	authority, err := normalizeConsentAuthority(request)
 	if err != nil {
@@ -471,7 +471,7 @@ func authorizeProviderOperationInConsentSetTx(
 		return ProviderOperationAuthorization{}, err
 	}
 	fence, err := consentRevocationFenceTx(ctx, querier, vaultID, incarnationID,
-		authority.principal, authority.scope)
+		authority.principal, authority.scope, postgres)
 	if err != nil {
 		return ProviderOperationAuthorization{}, err
 	}
@@ -487,7 +487,7 @@ func authorizeProviderOperationInConsentSetTx(
 		  AND profile_fingerprint=$5 AND disclosure_fingerprint=$6
 		  AND input_classes_json=$7 AND retained_classes_json=$8`
 	args := []any{vaultID, incarnationID,
-		authority.principal, authority.scope, authority.profile, authority.disclosure,
+		storedString(postgres, authority.principal), storedString(postgres, authority.scope), authority.profile, authority.disclosure,
 		authority.inputsJSON, authority.retainedJSON}
 	if request.PriorAuthorization != nil {
 		statement += ` AND grant_id=$9`
@@ -563,13 +563,13 @@ func consentRevocationFenceTx(
 	ctx context.Context, tx interface {
 		QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 	},
-	vaultID, incarnationID, principal, scope string,
+	vaultID, incarnationID, principal, scope string, postgres bool,
 ) (int64, error) {
 	var fence int64
 	if err := tx.QueryRowContext(ctx, `
 		SELECT COALESCE(MAX(fence),0) FROM processing_consent_revocations
 		WHERE vault_uid=$1 AND incarnation_id=$2 AND principal=$3 AND scope=$4`,
-		vaultID, incarnationID, principal, scope).Scan(&fence); err != nil {
+		vaultID, incarnationID, storedString(postgres, principal), storedString(postgres, scope)).Scan(&fence); err != nil {
 		return 0, fmt.Errorf("reading processing consent revocation fence: %w", err)
 	}
 	return fence, nil
@@ -591,7 +591,7 @@ func (s *Store) HasConsentRevocation(ctx context.Context, principal, scope strin
 		if err != nil {
 			return err
 		}
-		fence, err = consentRevocationFenceTx(ctx, tx, s.vaultID, incarnation, principal, scope)
+		fence, err = consentRevocationFenceTx(ctx, tx, s.vaultID, incarnation, principal, scope, s.postgresSchema != "")
 		return err
 	})
 	return fence != 0, err

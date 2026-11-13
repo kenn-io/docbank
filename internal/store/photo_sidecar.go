@@ -11,14 +11,14 @@ import (
 // sidecar Docbank generated keeps its target unless its packet names an
 // extension the attached original does not have; a sidecar without outside provenance pairs by vault names.
 // Checkout observations use their saved pairing because their paths are relative.
-func photoSidecarIntendedTarget(ctx context.Context, q metadataQuerier, sidecar PhotoFile, node Node, extension string) (string, error) {
+func (s *Store) photoSidecarIntendedTarget(ctx context.Context, q metadataQuerier, sidecar PhotoFile, node Node, extension string) (string, error) {
 	if sidecar.Role != PhotoRoleSidecar || sidecar.SidecarOfID == nil {
 		return "", ErrStaleRevision
 	}
 	path := node.Name
 	var kind, source string
 	err := q.QueryRowContext(ctx, `SELECT p.original_path,i.source_kind,i.source_desc FROM provenance p JOIN ingests i ON i.id=p.ingest_id JOIN provenance_version_bindings b ON b.provenance_identity=p.identity
- WHERE p.node_id=$1 AND b.content_version_id=$2 AND (LOWER(i.source_kind) NOT LIKE 'embedded:%' OR i.source_kind='embedded:photo-xmp') AND i.source_kind<>'url' AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
+ WHERE p.node_id=$1 AND b.content_version_id=$2 AND (NOT (`+(provenanceSQLDialect{postgres: s.postgresSchema != ""}).embedded("i.source_kind")+`) OR i.source_kind='embedded:photo-xmp') AND i.source_kind<>'url' AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
  ORDER BY b.observed_at DESC,p.identity DESC LIMIT 1`, node.ID, node.CurrentVersionID).Scan(&path, &kind, &source)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", err
@@ -49,7 +49,7 @@ func photoSidecarIntendedTarget(ctx context.Context, q metadataQuerier, sidecar 
 		}
 		return *sidecar.SidecarOfID, err
 	}
-	intended, bound, err := photoSidecarSourceTx(ctx, q, sidecar.AssetID, path, extension, errors.Is(err, sql.ErrNoRows))
+	intended, bound, err := s.photoSidecarSourceTx(ctx, q, sidecar.AssetID, path, extension, errors.Is(err, sql.ErrNoRows))
 	if err != nil {
 		return "", err
 	}

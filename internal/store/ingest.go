@@ -160,7 +160,7 @@ func activeProvenanceMatchesTx(
 // ensureIngestRunTx publishes run once and rejects any identity collision with
 // different immutable fields. The returned boolean reports whether this
 // transaction inserted the record.
-func ensureIngestRunTx(ctx context.Context, tx *sql.Tx, run IngestRun) (bool, error) {
+func (s *Store) ensureIngestRunTx(ctx context.Context, tx *sql.Tx, run IngestRun) (bool, error) {
 	if err := validateIngestRecord(run.record); err != nil {
 		return false, fmt.Errorf("validating ingest run: %w", err)
 	}
@@ -182,7 +182,7 @@ func ensureIngestRunTx(ctx context.Context, tx *sql.Tx, run IngestRun) (bool, er
 	result, err := tx.ExecContext(ctx,
 		`INSERT INTO ingests (id, started_at, source_kind, source_desc)
 		 VALUES ($1, $2, $3, $4) ON CONFLICT(id) DO NOTHING`,
-		run.record.ID, run.record.StartedAt, run.record.SourceKind, run.record.SourceDesc)
+		run.record.ID, run.record.StartedAt, storedString(s.postgresSchema != "", run.record.SourceKind), storedString(s.postgresSchema != "", run.record.SourceDesc))
 	if err != nil {
 		return false, fmt.Errorf("recording ingest run: %w", err)
 	}
@@ -580,7 +580,7 @@ func (s *Store) ingestFileTx(
 			identity, node_id, ingest_id, original_path, original_mtime, supersedes
 		 ) VALUES ($1, $2, $3, $4, $5, $6)`,
 		provenance.Identity, provenance.NodeID, provenance.IngestID,
-		provenance.OriginalPath, provenance.OriginalMTime, provenance.Supersedes); err != nil {
+		storedString(s.postgresSchema != "", provenance.OriginalPath), provenance.OriginalMTime, provenance.Supersedes); err != nil {
 		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("recording provenance for %q: %w", finalName, err)
 	}
 	binding := ProvenanceVersionBinding{
@@ -595,7 +595,7 @@ func (s *Store) ingestFileTx(
 	if run.operationalWatch {
 		if err := insertWatchSourceTx(
 			ctx, tx, run.record.SourceDesc, provenance.OriginalPath,
-			receipt.Node.ID, blobHash, size,
+			receipt.Node.ID, blobHash, size, s.postgresSchema != "",
 		); err != nil {
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 		}
@@ -664,7 +664,7 @@ func (s *Store) ingestFileTx(
 
 func insertWatchSourceTx(
 	ctx context.Context,
-	tx *sql.Tx, watchName, sourceRef string, nodeID int64, blobHash string, size int64,
+	tx *sql.Tx, watchName, sourceRef string, nodeID int64, blobHash string, size int64, postgres bool,
 ) error {
 	record := metadataWatchSource{
 		Type: metadataWatchSourceType, WatchName: watchName, SourceRef: sourceRef,
@@ -676,7 +676,7 @@ func insertWatchSourceTx(
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO watch_sources(watch_name,source_ref,node_id,blob_hash,size)
 		 VALUES($1,$2,$3,$4,$5)`,
-		watchName, sourceRef, nodeID, blobHash, size,
+		storedString(postgres, watchName), storedString(postgres, sourceRef), nodeID, blobHash, size,
 	); err != nil {
 		return fmt.Errorf("recording watched source %q/%q: %w", watchName, sourceRef, err)
 	}

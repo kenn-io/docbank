@@ -1671,7 +1671,7 @@ func TestPhotoTimelineRebuildsOnceDespiteSharedBlobVersions(t *testing.T) {
 				generationID, node.BlobHash, browseHash("fingerprint"), nowRFC3339()); err != nil {
 				return err
 			}
-			if _, err := insertPhotoTechnicalMetadataTx(ctx, tx, generationID, PhotoTechnicalFields{
+			if _, err := s.insertPhotoTechnicalMetadataTx(ctx, tx, generationID, PhotoTechnicalFields{
 				CaptureTime: &captureTime, CaptureTimePrecision: &precision,
 				CaptureTimeTimezone: &timezone, CaptureTimeOffset: &offset,
 			}); err != nil {

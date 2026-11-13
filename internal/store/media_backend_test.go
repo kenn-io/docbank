@@ -264,6 +264,7 @@ func checkMediaRevocationRemovesInputBoundRendition(t *testing.T, open func(*tes
 	t.Helper()
 	s := open(t)
 	ctx := t.Context()
+	principal := `operator\name`
 	seedRenditionCatalogVersions(t, s)
 	file, err := s.CreateFile(ctx, s.RootID(), "recording.wav", catalogSourceHash, 20, "audio/wav")
 	require.NoError(t, err)
@@ -271,9 +272,9 @@ func checkMediaRevocationRemovesInputBoundRendition(t *testing.T, open func(*tes
 	require.NoError(t, err)
 	sourceID := testSHA256([]byte("rendition-media-source"))
 	publication := MediaPublicationRequest{
-		Operation: testMediaOperation("submit_supplied_media", "operator:synthetic"),
+		Operation: testMediaOperation("submit_supplied_media", principal),
 		SourceID:  sourceID, ContentVersion: version, CaptureJSON: "{}",
-		Occurrence: MediaOccurrenceInput{SourceID: sourceID, Principal: "operator:synthetic", Ref: "recording", Revision: "1", MessageJSON: "{}"},
+		Occurrence: MediaOccurrenceInput{SourceID: sourceID, Principal: principal, Ref: "recording", Revision: "1", MessageJSON: "{}"},
 	}
 	publication.Operation.SourceID = sourceID
 	retained, err := s.RetainSuppliedMedia(ctx, publication)
@@ -290,6 +291,7 @@ func checkMediaRevocationRemovesInputBoundRendition(t *testing.T, open func(*tes
 	require.NoError(t, err)
 	profile := catalogProcessingProfile(t, false)
 	request := renditionJobTestRequest(version.ID, profile)
+	request.Authorization.Principal = principal
 	request.ExecutionIdentity.Upload.InputBinding = input.InputID
 	request.ExecutionIdentity.Upload.MediaFamily, request.ExecutionIdentity.Authorization.MediaFamily = "audio", "audio"
 	request.ExecutionIdentity.Upload.MediaType, request.ExecutionIdentity.Authorization.MediaType = "audio/wav", "audio/wav"

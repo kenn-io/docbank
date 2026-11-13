@@ -89,7 +89,7 @@ func TestAuditRecordValidationSQLite(t *testing.T) {
 			require.NoError(t, err)
 			defer func() { _ = tx.Rollback() }()
 			require.ErrorContains(t, insertAuditRecord(ctx, tx, tc.record), tc.want)
-			require.ErrorContains(t, importAuditRecord(ctx, tx, value), tc.want)
+			require.ErrorContains(t, importAuditRecord(ctx, tx, value, false), tc.want)
 			var count int
 			require.NoError(t, tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_records`).Scan(&count))
 			require.Zero(t, count)

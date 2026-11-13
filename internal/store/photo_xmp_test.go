@@ -628,7 +628,7 @@ func TestPhotoXMPBackupRoundTrip(t *testing.T) {
 				importXMP(t, s, raw.ID, PhotoAuthored{Rating: 3, Confirmed: PhotoConfirmedRating})
 				work, _, err = s.ClassifyPhotoXMP(t.Context(), raw.ID)
 				require.NoError(t, err)
-				sources, err := photoXMPSourceVersionsTx(t.Context(), s.db, sc.ID)
+				sources, err := s.photoXMPSourceVersionsTx(t.Context(), s.db, sc.ID)
 				require.NoError(t, err)
 				require.Len(t, sources, 1)
 				require.Equal(t, tc.key, sources[0].Path)
@@ -640,7 +640,7 @@ func TestPhotoXMPBackupRoundTrip(t *testing.T) {
 						alias = "C" + tc.source[1:]
 					}
 					require.NoError(t, restored.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-						unchanged, _, err := photoXMPSourceUnchangedTx(t.Context(), tx, sc, PhotoImportMember{OriginalPath: alias, BlobHash: sc.BlobHash})
+						unchanged, _, err := s.photoXMPSourceUnchangedTx(t.Context(), tx, sc, PhotoImportMember{OriginalPath: alias, BlobHash: sc.BlobHash})
 						require.True(t, unchanged, "drive-letter casing must reach the same persisted cursor")
 						return err
 					}))
@@ -656,7 +656,7 @@ func TestPhotoXMPBackupRoundTrip(t *testing.T) {
 				require.Zero(t, mask)
 				_, err = restored.PublishPhotoXMP(t.Context(), plan, "", 0, BlobPhysical{})
 				require.NoError(t, err)
-				restoredSources, err := photoXMPSourceVersionsTx(t.Context(), restored.db, sc.ID)
+				restoredSources, err := restored.photoXMPSourceVersionsTx(t.Context(), restored.db, sc.ID)
 				require.NoError(t, err)
 				require.Equal(t, sources, restoredSources)
 				require.Equal(t, PhotoXMPStateSynced, xmpState(t, restored, raw.ID).State)
@@ -738,7 +738,7 @@ func TestPhotoXMPSourceVersionRetention(t *testing.T) {
 		require.Len(t, pruned.DependencyRetained, 2)
 		require.ElementsMatch(t, []string{first, second}, []string{pruned.DependencyRetained[0].ID, pruned.DependencyRetained[1].ID})
 		restored := restoredXMPStore(t, s)
-		sources, err := photoXMPSourceVersionsTx(t.Context(), restored.db, sc.ID)
+		sources, err := restored.photoXMPSourceVersionsTx(t.Context(), restored.db, sc.ID)
 		require.NoError(t, err)
 		require.Len(t, sources, 2)
 		_, err = restored.ContentVersionByID(t.Context(), first)
@@ -768,7 +768,7 @@ func TestPhotoXMPSourceVersionRetention(t *testing.T) {
 		require.Equal(t, int64(1), purged.Deleted)
 		_, err = s.ContentVersionByID(t.Context(), second)
 		require.ErrorIs(t, err, ErrNotFound)
-		sources, err = photoXMPSourceVersionsTx(t.Context(), s.db, sc.ID)
+		sources, err = s.photoXMPSourceVersionsTx(t.Context(), s.db, sc.ID)
 		require.NoError(t, err)
 		require.Empty(t, sources)
 	})
@@ -810,7 +810,7 @@ func TestPhotoXMPSourceVersionRetention(t *testing.T) {
 			require.NoError(t, err)
 			held = append(held, sc.CurrentVersionID)
 		}
-		sources, err := photoXMPSourceVersionsTx(t.Context(), s.db, sc.ID)
+		sources, err := s.photoXMPSourceVersionsTx(t.Context(), s.db, sc.ID)
 		require.NoError(t, err)
 		require.Len(t, sources, len(held), "every live source path is enumerated, however many")
 		sc, _, err = s.ReplaceContent(t.Context(), sc.ID, UnconditionalRev, fakeHash("d5"), 5, "application/rdf+xml")

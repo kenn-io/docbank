@@ -145,7 +145,7 @@ func TestCollectionLabelRejectsArbitraryEmptyIngest(t *testing.T) {
 	run, err := s.BeginIngest(t.Context(), "cli", "No committed documents")
 	require.NoError(t, err)
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		_, err := ensureIngestRunTx(t.Context(), tx, run)
+		_, err := s.ensureIngestRunTx(t.Context(), tx, run)
 		return err
 	}))
 

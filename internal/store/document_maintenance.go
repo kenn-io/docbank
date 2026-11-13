@@ -123,8 +123,12 @@ func (s *Store) refreshPhotoTimelineTx(ctx context.Context, tx *sql.Tx, nodeID i
 	if err != nil {
 		return err
 	}
+	var pathBytes []byte
+	if path != nil {
+		pathBytes = []byte(*path)
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO photo_source_claims(file_id,original_path,original_mtime,folder_key) VALUES($1,$2,$3,$4)
-  ON CONFLICT(file_id) DO UPDATE SET original_path=excluded.original_path,original_mtime=excluded.original_mtime,folder_key=excluded.folder_key`, fileID, path, mtime, folder); err != nil {
+  ON CONFLICT(file_id) DO UPDATE SET original_path=excluded.original_path,original_mtime=excluded.original_mtime,folder_key=excluded.folder_key`, fileID, pathBytes, mtime, folder); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM photo_timeline WHERE file_id=$1`, fileID); err != nil {

@@ -279,7 +279,7 @@ func (s *Store) populateDuplicateReferenceDetails(ctx context.Context, tx *sql.T
 	if err != nil {
 		return fmt.Errorf("encoding duplicate nodes: %w", err)
 	}
-	rows, err := tx.QueryContext(ctx, `WITH `+CollectionMembershipCTE+`, ranked AS (
+	rows, err := tx.QueryContext(ctx, `WITH `+collectionMembershipSQL(s.postgresSchema != "")+`, ranked AS (
 		SELECT cm.node_id, cm.ingest_id,
 		       ROW_NUMBER() OVER (PARTITION BY cm.node_id ORDER BY cm.ingest_id) AS ordinal,
 		       COUNT(*) OVER (PARTITION BY cm.node_id) AS total

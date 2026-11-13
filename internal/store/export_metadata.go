@@ -229,7 +229,7 @@ func exportBundleMetadata(ctx context.Context, q metadataQuerier, write metadata
 var exportAuthorityMetadata = newMetadataTable(metadataTable[metadataExportRecord]{
 	record: metadataExportRecord{Type: metadataExportType}, table: "export_sources", insert: importBundleMetadata})
 
-func importBundleMetadata(ctx context.Context, tx *sql.Tx, r metadataExportRecord) error {
+func importBundleMetadata(ctx context.Context, tx *sql.Tx, r metadataExportRecord, postgres bool) error {
 	if r.Type != metadataExportType || validateUUIDv4(r.ID) != nil || len(r.CanonicalJSON) > bundle.MaxMemberBytes || pageChecksum(r.CanonicalJSON) != r.Checksum {
 		return bundle.ErrConflict
 	}
@@ -249,7 +249,7 @@ func importBundleMetadata(ctx context.Context, tx *sql.Tx, r metadataExportRecor
 		if s.ID != r.ID || s.State != "sealed" || s.Total < 1 || s.Total > bundle.MaxMembers {
 			return bundle.ErrConflict
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO export_sources(id,owner,request_sha256,request_json,canonical_json,state,expires_at) VALUES(?,'',?,'{}',?,'sealed',?)`, r.ID, s.RequestSHA256, []byte(r.CanonicalJSON), r.RetainUntil)
+		_, err := tx.ExecContext(ctx, `INSERT INTO export_sources(id,owner,request_sha256,request_json,canonical_json,state,expires_at) VALUES($1,'',$2,'{}',$3,'sealed',$4)`, r.ID, s.RequestSHA256, []byte(r.CanonicalJSON), r.RetainUntil)
 		return err
 	case "member":
 		var m bundle.Member
@@ -259,7 +259,7 @@ func importBundleMetadata(ctx context.Context, tx *sql.Tx, r metadataExportRecor
 		if err := validateExportMembers([]bundle.Member{m}); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO export_members(source_id,node_id,version_id,blob_hash,canonical_json) VALUES(?,?,?,?,?)`, r.ID, m.NodeID, m.VersionID, m.SHA256, []byte(r.CanonicalJSON))
+		_, err := tx.ExecContext(ctx, `INSERT INTO export_members(source_id,node_id,version_id,blob_hash,canonical_json) VALUES($1,$2,$3,$4,$5)`, r.ID, m.NodeID, m.VersionID, m.SHA256, []byte(r.CanonicalJSON))
 		return err
 	case "plan":
 		var p bundle.Plan
@@ -269,7 +269,7 @@ func importBundleMetadata(ctx context.Context, tx *sql.Tx, r metadataExportRecor
 		if p.ID != r.ID || !canonical.IsSHA256Hex(p.Fingerprint) {
 			return bundle.ErrConflict
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO export_plans(id,owner,source_id,request_sha256,canonical_json,expires_at) VALUES(?,'',?,'',?,?)`, r.ID, p.Source.ID, []byte(r.CanonicalJSON), r.RetainUntil)
+		_, err := tx.ExecContext(ctx, `INSERT INTO export_plans(id,owner,source_id,request_sha256,canonical_json,expires_at) VALUES($1,'',$2,'',$3,$4)`, r.ID, p.Source.ID, []byte(r.CanonicalJSON), r.RetainUntil)
 		return err
 	case "document":
 		if r.Ordinal < 0 || r.Ordinal >= bundle.MaxDocumentRows {
@@ -279,12 +279,12 @@ func importBundleMetadata(ctx context.Context, tx *sql.Tx, r metadataExportRecor
 		if err := json.Unmarshal(r.CanonicalJSON, &d, json.RejectUnknownMembers(true)); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO export_documents(plan_id,ordinal,canonical_json) VALUES(?,?,?)`, r.ID, r.Ordinal, []byte(r.CanonicalJSON)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO export_documents(plan_id,ordinal,canonical_json) VALUES($1,$2,$3)`, r.ID, r.Ordinal, []byte(r.CanonicalJSON)); err != nil {
 			return err
 		}
 		for _, role := range d.Roles {
 			if role.Status == "available" {
-				if _, err := tx.ExecContext(ctx, `INSERT INTO export_role_roots(plan_id,blob_hash) VALUES(?,?) ON CONFLICT DO NOTHING`, r.ID, role.SHA256); err != nil {
+				if _, err := tx.ExecContext(ctx, `INSERT INTO export_role_roots(plan_id,blob_hash) VALUES($1,$2) ON CONFLICT DO NOTHING`, r.ID, role.SHA256); err != nil {
 					return err
 				}
 			}

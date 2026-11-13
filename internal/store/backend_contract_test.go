@@ -22,6 +22,13 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
+	{name: "metadata-import", postgres: "native operations", scope: "Owner-only logical import into fresh PostgreSQL, SQLite round trips and derived-state recovery; excludes blob-byte verification, physical pack recovery and public opening.", scenarios: []backendScenario{
+		{"MetadataImportCatalogs", nil, checkMetadataImportCatalogsPostgres},
+		{"RetainedStringNativeWrites", nil, checkRetainedStringNativeWritesPostgres},
+		{"MetadataImportRollback", nil, checkMetadataImportRollbackPostgres},
+		{"MetadataImportAdmission", nil, checkMetadataImportAdmissionPostgres},
+		{"MetadataImportKeepsFreshConsent", nil, checkMetadataImportKeepsFreshConsentPostgres},
+	}},
 	{name: "multi-store", postgres: "native operations", scope: "Secondary registry, inventory, placement, evacuation, storage jobs, cleanup and native repair/salvage; excludes deployment adapters, filesystem workers and metadata recovery.", scenarios: []backendScenario{
 		{"StorageRepairRollback", nil, checkStorageRepairRollbackPostgres},
 		{"MultiStorePhysicalRoundTrip", nil, checkMultiStorePhysicalRoundTripPostgres},
@@ -328,12 +335,13 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkPackageTimelineInputsPreserveRawDateAndDeclaredZone(t, newPostgresQueryStore)
 		}},
+		{"PackageLabelCandidatesPreserveByteKeys", func(t *testing.T) { t.Helper(); checkPackageLabelCandidatesPreserveByteKeys(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPackageLabelCandidatesPreserveByteKeys(t, newPostgresQueryStore) }},
 		{"PackageLabelCandidatesPageAmbiguousSenderLabels", func(t *testing.T) { t.Helper(); checkPackageLabelCandidatesPageAmbiguousSenderLabels(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()
 			checkPackageLabelCandidatesPageAmbiguousSenderLabels(t, newPostgresQueryStore)
 		}},
 	}},
-	{name: "exports", postgres: "native operations", scope: "Explicit/node/chunk sources, pinned output plans, previews, export-job lifecycle and retained-output inspection; excludes query/mailbox source selection, filesystem execution and recovery.", scenarios: []backendScenario{
+	{name: "exports", postgres: "native operations", scope: "Explicit/node/chunk and completed-mailbox sources, pinned output plans, previews, export-job lifecycle and retained-output inspection; excludes query source selection, filesystem execution and recovery.", scenarios: []backendScenario{
 		{"ExportWorkerFailureAndCapacity", func(t *testing.T) { t.Helper(); checkExportWorkerFailureAndCapacity(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkExportWorkerFailureAndCapacity(t, newPostgresQueryStore) }},
 		{"ExportDiscoverySnapshots", nil, checkExportDiscoverySnapshotsPostgres},
 
@@ -369,6 +377,13 @@ var backendSuites = []backendSuite{
 			checkExportPlanPinsRolesAndCannotInventMissingText(t, newPostgresQueryStore)
 		}},
 		{"ExportPreviewUsesFrozenReceiptsAndOwner", func(t *testing.T) { t.Helper(); checkExportPreviewUsesFrozenReceiptsAndOwner(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkExportPreviewUsesFrozenReceiptsAndOwner(t, newPostgresQueryStore) }},
+		{"ExportCompletedMailboxCollectionPinsImportedVersions", func(t *testing.T) {
+			t.Helper()
+			checkExportCompletedMailboxCollectionPinsImportedVersions(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkExportCompletedMailboxCollectionPinsImportedVersions(t, newPostgresQueryStore)
+		}},
 		{"ExportPublicationReleasedOnlyAfterRetentionCleanup", func(t *testing.T) {
 			t.Helper()
 			checkExportPublicationReleasedOnlyAfterRetentionCleanup(t, newTestStore)
@@ -503,6 +518,7 @@ var backendSuites = []backendSuite{
 
 	{name: "document-people", postgres: "native operations", scope: "Document-person inputs, immutable attribution publication, freshness, failure coverage and rebuilds; excludes general People discovery and public vault opening.", scenarios: []backendScenario{
 		{"AuthorityInputs", func(t *testing.T) { t.Helper(); checkDocumentPeopleAuthorityInputs(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentPeopleAuthorityInputs(t, newPostgresQueryStore) }},
+		{"EvidenceIDs", func(t *testing.T) { t.Helper(); checkDocumentPeopleEvidenceIDs(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentPeopleEvidenceIDs(t, newPostgresQueryStore) }},
 		{"Snapshots", nil, checkDocumentPeopleSnapshotsPostgres},
 		{"Rollback", nil, checkDocumentPeopleRollbackPostgres},
 		{"DocumentPeopleResolverInputsProvisionEligibleIdentityOnce", func(t *testing.T) {
@@ -2214,7 +2230,7 @@ var backendSuites = []backendSuite{
 	{name: "processing-publication", postgres: "unqualified", scope: "Email PDF rendering and media provider execution remain unqualified; retained-state cleanup is covered above."},
 	{name: "photo-editing", postgres: "unqualified", scope: "Query-driven photo review remains unqualified. Explicit decisions use photo-review; people edits use people-curation; query selection stays with search."},
 	{name: "search", postgres: "unqualified", scope: "Lexical/vector search and query execution remain unqualified; matching metadata columns do not establish ranking or index parity."},
-	{name: "transfer-and-recovery", postgres: "unqualified", scope: "PostgreSQL metadata import, portable packages and physical backup/restore remain unqualified; metadata-export covers pinned logical export and recovery into fresh SQLite."},
+	{name: "transfer-and-recovery", postgres: "unqualified", scope: "Physical backup/restore remain unqualified; metadata-export and metadata-import cover native logical transfer between fresh metadata backends."},
 	{name: "organization", postgres: "native operations", scope: "Tags, audited bulk edits and saved definitions; excludes query execution and delivery.", scenarios: []backendScenario{
 		{"BatchTagsMixedChangesNoOpsAndCallerOrder", func(t *testing.T) {
 			t.Helper()
