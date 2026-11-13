@@ -69,17 +69,3 @@ func TestExistingReaderOwnership(t *testing.T) {
 		require.Equal(t, before, data)
 	})
 }
-
-type nonPrimaryCatalog struct{ packstore.Catalog }
-
-func TestExistingReaderRejectsNonPrimaryCatalog(t *testing.T) {
-	metadata, blobs, _, secondary := placementTestVault(t)
-	require.NotNil(t, blobs)
-	require.NotEmpty(t, secondary.ID)
-	path := filepath.Join(t.TempDir(), "missing")
-	catalog := nonPrimaryCatalog{Catalog: store.NewPackCatalog(metadata)}
-	_, err := NewExistingReader(catalog, path, nil)
-	require.ErrorContains(t, err, "primary location catalog")
-	_, err = os.Lstat(path)
-	require.ErrorIs(t, err, os.ErrNotExist)
-}

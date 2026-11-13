@@ -760,8 +760,11 @@ Newer, unsupported, or unreadable schemas, invalid identity, wrong ownership mar
 and non-regular database or handoff files retain their own errors. The existing
 `vault.lock` must be writable. The lock registry (`DOCBANK_LOCK_DIR` when set)
 must be writable and outside the vault; a registry inside it is a configuration
-error. Docbank code on this reader path does not use the OS temp directory;
-SQLite may use temporary files of its own. Only the
+error. When checking a current-schema database, Docbank creates a temporary
+`docbank-current-schema-*.db` file in the registry. The default registry is
+`.local/state/docbank/target-locks` in the account home. Docbank deletes the file
+before `OpenContentReader` returns, but a crash during the check can leave it
+there. SQLite may use temporary files of its own. Only the
 primary blob store is attached; content available only on a secondary store
 returns `ErrContentUnavailable`. Close every stream before closing the reader;
 reader close waits for all streams to close.

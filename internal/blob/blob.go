@@ -300,7 +300,7 @@ const (
 )
 
 // NewExistingReader opens existing primary authority without recovery or marker creation.
-func NewExistingReader(catalog packstore.Catalog, blobsDir string, registry *Registry) (*Store, error) {
+func NewExistingReader(catalog primaryLocationCatalog, blobsDir string, registry *Registry) (*Store, error) {
 	return newWithOptions(catalog, blobsDir, Options{Registry: registry}, readerExisting)
 }
 
@@ -328,8 +328,6 @@ func newWithOptions(
 				return nil, fmt.Errorf("recovering primary restore ownership: %w", err)
 			}
 		}
-	} else if mode == readerExisting {
-		return nil, errors.New("existing reader requires a primary location catalog")
 	}
 	coordinator := packstore.NewCoordinator()
 	maintainer, err := packstore.NewMaintainer(catalog, layout, packstore.MaintainerOptions{
