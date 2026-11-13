@@ -12,6 +12,8 @@ import (
 	"go.kenn.io/kit/agentmcp"
 	"go.kenn.io/kit/agentsetup"
 	"go.kenn.io/kit/clisearch"
+
+	docmcp "go.kenn.io/docbank/internal/mcp"
 )
 
 const codexFeature = "mcp_2026_07_28"
@@ -28,6 +30,15 @@ func newAgentSetupCommand() *cobra.Command {
 			item := agentsetup.MCP(agent, "docbank", server)
 			if agent != "codex" {
 				return []agentsetup.Item{item}, nil
+			}
+			check := item.Check
+			item.Check = func(ctx context.Context) (agentsetup.Status, error) {
+				status, err := check(ctx)
+				if err == nil && status.State == agentsetup.StateFailed && strings.Contains(status.Reason, "Docbank supports only MCP protocol version "+docmcp.ProtocolVersion+"; use server/discover") {
+					status.Reason = "Codex MCP protocol version mismatch"
+					status.NextStep = codexEnable
+				}
+				return status, err
 			}
 			return []agentsetup.Item{codexFeatureItem(), item}, nil
 		},

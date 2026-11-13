@@ -56,6 +56,7 @@ func TestAgentSetupCheckAndPrint(t *testing.T) {
 	code := runProcess([]string{"agent", "setup", "--agent", "codex", "--check", "--json"}, &out, &stderr)
 	assert.Equal(t, 1, code)
 	assert.Contains(t, out.String(), `"state":"failed"`)
+	assert.Contains(t, out.String(), `"state":"missing"`)
 	assert.Contains(t, out.String(), codexEnable)
 	assert.Empty(t, stderr.String())
 	resetFlags(rootCmd)
@@ -64,6 +65,49 @@ func TestAgentSetupCheckAndPrint(t *testing.T) {
 	code = runProcess([]string{"agent", "setup", "--agent", "codex", "--print"}, &out, &stderr)
 	require.Equal(t, 0, code, stderr.String())
 	assert.True(t, strings.HasPrefix(out.String(), codexEnable+"\n"))
+}
+
+func TestAgentSetupCodexServerDiagnostics(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell stub")
+	}
+	for _, tc := range []struct {
+		name, reason, want string
+	}{
+		{"version mismatch", "JSON-RPC error: -32022: Docbank supports only MCP protocol version 2026-07-28; use server/discover", "Codex MCP protocol version mismatch: " + codexEnable},
+		{"other failure", "synthetic server failure", "synthetic server failure: Correct the server error and retry"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("HOME", dir)
+			t.Setenv("CODEX_HOME", dir)
+			t.Setenv("DOCBANK_HOME", filepath.Join(dir, "vault"))
+			t.Setenv("PATH", dir)
+			t.Setenv("STUB_ERROR", tc.reason)
+			stub := `#!/bin/sh
+if [ "$1 $2" = "features list" ]; then
+  echo 'mcp_2026_07_28 under development false'
+elif [ "$1 $2" = "app-server --stdio" ]; then
+  read -r line
+  echo '{"id":1,"result":{}}'
+  read -r line
+  read -r line
+  printf '{"id":2,"result":{"data":[{"name":"docbank","toolsError":"%s"}]}}\n' "$STUB_ERROR"
+  while read -r line; do :; done
+fi
+`
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "codex"), []byte(stub), 0o700))
+			manual, err := runCLI(t, "mcp", "config", "--client", "codex")
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(manual), 0o600))
+			out, err := runCLI(t, "agent", "setup", "--agent", "codex", "--check")
+			require.ErrorIs(t, err, agentsetup.ErrNotReady)
+			assert.Contains(t, out, tc.want)
+			if tc.name == "version mismatch" {
+				assert.NotContains(t, out, "server/discover")
+			}
+		})
+	}
 }
 
 func TestAgentSetupFeatureEnable(t *testing.T) {
