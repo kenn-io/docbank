@@ -245,18 +245,7 @@ func PathWithin(parent, child string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("checking parent path: %w", err)
 	}
-	for current := child; ; current = filepath.Dir(current) {
-		info, statErr := os.Stat(current)
-		if statErr == nil && os.SameFile(info, parentInfo) {
-			return true, nil
-		}
-		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
-			return false, fmt.Errorf("checking path ancestor %s: %w", current, statErr)
-		}
-		if filepath.Dir(current) == current {
-			return false, nil
-		}
-	}
+	return containsFileIdentity(parentInfo, child, true)
 }
 
 func pathContains(parent, child string) bool {

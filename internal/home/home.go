@@ -117,12 +117,19 @@ func (l Layout) ContainsDirectory(dir string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	return containsFileIdentity(rootInfo, dir, false)
+}
+
+func containsFileIdentity(rootInfo os.FileInfo, dir string, allowMissing bool) (bool, error) {
 	for {
 		info, err := os.Stat(dir)
-		if err != nil {
+		if err != nil && (!allowMissing || !errors.Is(err, os.ErrNotExist)) {
+			if allowMissing {
+				return false, fmt.Errorf("checking path ancestor %s: %w", dir, err)
+			}
 			return false, err
 		}
-		if os.SameFile(info, rootInfo) {
+		if err == nil && os.SameFile(info, rootInfo) {
 			return true, nil
 		}
 		up := filepath.Dir(dir)
