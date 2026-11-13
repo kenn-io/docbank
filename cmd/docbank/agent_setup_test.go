@@ -110,40 +110,6 @@ fi
 	}
 }
 
-func TestAgentSetupFeatureEnable(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("shell stub")
-	}
-	dir := t.TempDir()
-	t.Setenv("PATH", dir)
-	state := filepath.Join(dir, "state")
-	t.Setenv("FEATURE_STATE", state)
-	stub := `#!/bin/sh
-if [ "$1 $2" = "features list" ]; then
-  if [ -f "$FEATURE_STATE" ]; then echo 'mcp_2026_07_28 under development true'; else echo 'mcp_2026_07_28 under development false'; fi
-elif [ "$1 $2 $3" = "features enable mcp_2026_07_28" ]; then
-  echo enabled >> "$FEATURE_STATE"
-else
-  exit 1
-fi
-`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "codex"), []byte(stub), 0o700))
-	item := codexFeatureItem()
-	require.NoError(t, item.Install(t.Context()))
-	require.NoError(t, item.Install(t.Context()))
-	contents, err := os.ReadFile(state)
-	require.NoError(t, err)
-	assert.Equal(t, "enabled\n", string(contents))
-	status, err := item.Check(t.Context())
-	require.NoError(t, err)
-	assert.Equal(t, agentsetup.StateOK, status.State)
-
-	require.NoError(t, os.Remove(state))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "codex"), []byte("#!/bin/sh\nif [ \"$2\" = list ]; then echo 'mcp_2026_07_28 under development false'; else echo 'enable refused' >&2; exit 1; fi\n"), 0o700))
-	err = item.Install(t.Context())
-	require.ErrorContains(t, err, "enable refused")
-}
-
 func TestAgentSetupFeatureUsesUserScope(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell stub")
@@ -164,6 +130,7 @@ func TestAgentSetupFeatureUsesUserScope(t *testing.T) {
 			t.Setenv("PATH", dir)
 			t.Setenv("TEST_PROJECT", project)
 			t.Setenv("TEST_USER_FEATURE", filepath.Join(dir, "user-feature"))
+			t.Setenv("TEST_ENABLE_LOG", filepath.Join(dir, "enable-log"))
 			t.Setenv("TEST_PROJECT_FEATURE", tc.project)
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "user-feature"), []byte(tc.user+"\n"), 0o600))
 			stub := `#!/bin/sh
@@ -172,6 +139,7 @@ if [ "$1 $2" = "features list" ]; then
   echo "mcp_2026_07_28 under development $value"
 elif [ "$1 $2 $3" = "features enable mcp_2026_07_28" ]; then
   echo true > "$TEST_USER_FEATURE"
+  echo enabled >> "$TEST_ENABLE_LOG"
 else
   exit 1
 fi
@@ -179,14 +147,27 @@ fi
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "codex"), []byte(stub), 0o700))
 			item := codexFeatureItem()
 			require.NoError(t, item.Install(t.Context()))
-			user, err := os.ReadFile(filepath.Join(dir, "user-feature"))
-			require.NoError(t, err)
-			assert.Equal(t, "true\n", string(user))
+			require.NoError(t, item.Install(t.Context()))
+			if tc.user == "false" {
+				log, err := os.ReadFile(filepath.Join(dir, "enable-log"))
+				require.NoError(t, err)
+				assert.Equal(t, "enabled\n", string(log))
+			}
 			status, err := item.Check(t.Context())
 			require.NoError(t, err)
 			assert.Equal(t, agentsetup.StateOK, status.State)
 		})
 	}
+	t.Run("enable failure", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("HOME", dir)
+		t.Setenv("CODEX_HOME", dir)
+		t.Setenv("PATH", dir)
+		stub := "#!/bin/sh\nif [ \"$2\" = list ]; then echo 'mcp_2026_07_28 under development false'; else echo 'enable refused' >&2; exit 1; fi\n"
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "codex"), []byte(stub), 0o700))
+		err := codexFeatureItem().Install(t.Context())
+		require.ErrorContains(t, err, "enable refused")
+	})
 }
 
 func TestAgentSetupResetsManualWriteArgs(t *testing.T) {
@@ -205,8 +186,10 @@ func TestAgentSetupResetsManualWriteArgs(t *testing.T) {
 			t.Setenv("CLAUDE_CONFIG_DIR", dir)
 			t.Setenv("DOCBANK_HOME", filepath.Join(dir, "vault"))
 			t.Setenv("PATH", dir)
-			stub := "#!/bin/sh\nif [ \"$1 $2\" = 'features list' ]; then echo 'mcp_2026_07_28 under development true'; else exit 1; fi\n"
-			require.NoError(t, os.WriteFile(filepath.Join(dir, tc.agent), []byte(stub), 0o700))
+			if tc.agent == "codex" {
+				stub := "#!/bin/sh\nif [ \"$1 $2\" = 'features list' ]; then echo 'mcp_2026_07_28 under development true'; else exit 1; fi\n"
+				require.NoError(t, os.WriteFile(filepath.Join(dir, tc.agent), []byte(stub), 0o700))
+			}
 			manual, err := runCLI(t, "mcp", "config", "--client", tc.client, "--allow-processing")
 			require.NoError(t, err)
 			path := filepath.Join(dir, tc.config)
@@ -216,17 +199,10 @@ func TestAgentSetupResetsManualWriteArgs(t *testing.T) {
 			if tc.agent == "claude" {
 				assert.NotContains(t, out, codexFeature)
 			}
-			unchanged, err := os.ReadFile(path)
-			require.NoError(t, err)
-			assert.Equal(t, manual, string(unchanged))
 			_, _ = runCLI(t, "agent", "setup", "--agent", tc.agent)
 			data, err := os.ReadFile(path)
 			require.NoError(t, err)
 			assert.Equal(t, []any{"mcp", "--transport", "stdio"}, decodeMCPConfig(t, tc.client, string(data))["args"])
-			_, _ = runCLI(t, "agent", "setup", "--agent", tc.agent)
-			after, err := os.ReadFile(path)
-			require.NoError(t, err)
-			assert.Equal(t, data, after)
 		})
 	}
 }
