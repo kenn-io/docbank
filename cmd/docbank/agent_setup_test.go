@@ -34,8 +34,12 @@ func TestAgentSetupFeatureStatus(t *testing.T) {
 			assert.Contains(t, status.Reason+status.NextStep, tc.detail)
 		})
 	}
-	require.NoError(t, os.Remove(stub))
+	require.NoError(t, os.WriteFile(stub, []byte("#!/bin/sh\nexit 1\n"), 0o700))
 	status, err := codexFeatureItem().Check(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, agentsetup.StateUnknown, status.State)
+	require.NoError(t, os.Remove(stub))
+	status, err = codexFeatureItem().Check(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, agentsetup.StateUnknown, status.State)
 }
@@ -127,4 +131,25 @@ func TestAgentSetupWritesCodexEntry(t *testing.T) {
 	data, err = os.ReadFile(config)
 	require.NoError(t, err)
 	assert.Equal(t, []any{"mcp", "--transport", "stdio"}, decodeMCPConfig(t, "codex", string(data))["args"])
+}
+
+func TestAgentSetupClaudeEntry(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell stub")
+	}
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	t.Setenv("DOCBANK_HOME", filepath.Join(dir, "vault"))
+	t.Setenv("PATH", dir)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "claude"), []byte("#!/bin/sh\nexit 1\n"), 0o700))
+	out, _ := runCLI(t, "agent", "setup", "--agent", "claude", "--json")
+	assert.Contains(t, out, `"piece":"mcp docbank"`)
+	assert.NotContains(t, out, codexFeature)
+	data, err := os.ReadFile(filepath.Join(dir, ".claude.json"))
+	require.NoError(t, err)
+	entry := decodeMCPConfig(t, "claude-code", string(data))
+	assert.Equal(t, []any{"mcp", "--transport", "stdio"}, entry["args"])
+	assert.Equal(t, filepath.Join(dir, "vault"), entry["env"].(map[string]any)["DOCBANK_HOME"])
 }
