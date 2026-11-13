@@ -38,7 +38,16 @@ docbank mcp
 # equivalent to: docbank mcp --transport stdio
 ```
 
-Print configuration for your client:
+Register Docbank with installed Claude Code and Codex clients:
+
+```bash
+docbank agent setup
+docbank agent setup --check
+```
+
+Setup enables Codex's `mcp_2026_07_28` feature. Codex then shows an under-development feature notice each session. Include any `--allow-*` flags you need each time you run setup; setup replaces the Docbank entry.
+
+For manual setup, print configuration for your client:
 
 ```bash
 docbank mcp config --client claude-code
@@ -63,7 +72,7 @@ client files untouched. Your client must support MCP `2026-07-28` and
 `server/discover`; configuration alone cannot add protocol support.
 
 Tested clients are Claude Code 2.1.301 and Codex 0.164.0.
-For Codex, run this once to persist the client's MCP protocol support in
+The Codex snippet includes this command to persist the client's MCP protocol support in
 `config.toml` for either transport:
 
 ```bash

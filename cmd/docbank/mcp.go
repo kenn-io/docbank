@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	kitlogging "go.kenn.io/kit/logging"
 
 	"go.kenn.io/docbank/internal/config"
@@ -188,17 +189,21 @@ func init() {
 	mcpCmd.PersistentFlags().StringVar(&mcpTransport, "transport", "stdio", "transport: stdio or http")
 	mcpCmd.PersistentFlags().StringVar(&mcpListen, "listen", "", "explicit IP and port for authenticated HTTP (plain HTTP requires a trusted network)")
 	mcpCmd.Flags().StringSliceVar(&mcpAllowedHosts, "allowed-host", nil, "additional HTTP Host values, optionally with ports (repeatable)")
-	mcpCmd.PersistentFlags().BoolVar(&mcpAllowProcessing, "allow-processing", false,
-		"expose guarded start_processing (still requires prior operator consent)")
-	mcpCmd.PersistentFlags().BoolVar(&mcpAllowPackageWrites, "allow-package-writes", false,
-		"allow load-file preflight, import, package custodian writes, and Bates exports")
-	mcpCmd.PersistentFlags().BoolVar(&mcpAllowPhotoEdits, "allow-photo-edits", false,
-		"expose guarded photo asset mutations")
-	mcpCmd.PersistentFlags().BoolVar(&mcpAllowExportWrites, "allow-export-writes", false,
-		"allow native export preview, start, cancel, local download, and explicit release")
-	mcpCmd.PersistentFlags().BoolVar(&mcpAllowReportWrites, "allow-report-writes", false,
-		"allow frozen report creation, reviewed revisions, verified downloads, and explicit release")
-	mcpCmd.PersistentFlags().BoolVar(&mcpAllowKataWrites, "allow-kata-writes", false,
-		"allow quoting exact verified Docbank passages into Kata issues")
+	registerMCPAllowFlags(mcpCmd.PersistentFlags())
 	rootCmd.AddCommand(mcpCmd)
+}
+
+func registerMCPAllowFlags(flags *pflag.FlagSet) {
+	flags.BoolVar(&mcpAllowProcessing, "allow-processing", false,
+		"expose guarded start_processing (still requires prior operator consent)")
+	flags.BoolVar(&mcpAllowPackageWrites, "allow-package-writes", false,
+		"allow load-file preflight, import, package custodian writes, and Bates exports")
+	flags.BoolVar(&mcpAllowPhotoEdits, "allow-photo-edits", false,
+		"expose guarded photo asset mutations")
+	flags.BoolVar(&mcpAllowExportWrites, "allow-export-writes", false,
+		"allow native export preview, start, cancel, local download, and explicit release")
+	flags.BoolVar(&mcpAllowReportWrites, "allow-report-writes", false,
+		"allow frozen report creation, reviewed revisions, verified downloads, and explicit release")
+	flags.BoolVar(&mcpAllowKataWrites, "allow-kata-writes", false,
+		"allow quoting exact verified Docbank passages into Kata issues")
 }

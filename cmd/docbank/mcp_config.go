@@ -23,8 +23,7 @@ func newMCPConfigCommand() *cobra.Command {
 		Use:   "config",
 		Short: "Print MCP client configuration",
 		Long: "Print client configuration without editing client files.\n" +
-			"For Codex 0.164.0, run once to persist MCP protocol support in config.toml:\n" +
-			"  codex features enable mcp_2026_07_28\nThen launch with plain codex for either transport.",
+			"For automatic setup, run docbank agent setup.",
 		Example: `  docbank mcp config --client claude-code
   docbank mcp config --client codex --allow-processing`,
 		Args: cobra.NoArgs,
@@ -49,6 +48,9 @@ func newMCPConfigCommand() *cobra.Command {
 		if err != nil {
 			return fmt.Errorf("rendering MCP configuration: %w", err)
 		}
+		if agent == agentmcp.AgentCodex {
+			data = append([]byte("# Run once first: codex features enable mcp_2026_07_28 (or run docbank agent setup). Codex then shows an under-development feature notice each session.\n"), data...)
+		}
 		if _, err := cmd.OutOrStdout().Write(data); err != nil {
 			return fmt.Errorf("writing MCP configuration: %w", err)
 		}
@@ -66,7 +68,7 @@ func mcpConfigServer(cmd *cobra.Command, agent agentmcp.Agent) (agentmcp.Server,
 		return agentmcp.Server{}, err
 	}
 	args := []string{"mcp", "--transport", "stdio"}
-	cmd.InheritedFlags().VisitAll(func(flag *pflag.Flag) {
+	cmd.Flags().VisitAll(func(flag *pflag.Flag) {
 		if strings.HasPrefix(flag.Name, "allow-") && flag.Value.String() == "true" {
 			args = append(args, "--"+flag.Name)
 		}

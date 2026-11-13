@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -32,6 +33,9 @@ func TestMCPConfigStdio(t *testing.T) {
 		t.Run(client, func(t *testing.T) {
 			out, err := runCLI(t, append([]string{"mcp", "config", "--client", client}, test.flags...)...)
 			require.NoError(t, err)
+			if client == "codex" {
+				assert.True(t, strings.HasPrefix(out, "# Run once first: codex features enable mcp_2026_07_28"))
+			}
 			entry := decodeMCPConfig(t, client, out)
 			assert.Equal(t, test.want, entry["args"])
 			env := map[string]any{"DOCBANK_HOME": root}

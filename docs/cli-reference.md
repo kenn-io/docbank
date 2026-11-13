@@ -1515,6 +1515,14 @@ See [Model Context Protocol](usage/mcp.md) for client setup, tool and resource
 catalogs, transport limits, caching, and unsupported capabilities. For read-only
 HTTP hosting in the daemon process, see [docbank daemon](#docbank-daemon).
 
+### docbank agent setup
+
+```text
+docbank agent setup [--agent claude|codex] [--check] [--json] [--print] [--allow-*]
+```
+
+Registers the selected vault with installed Claude Code and Codex clients. `--check` reports readiness without installing; `--print` prints manual commands. Setup enables Codex's MCP feature, which causes an under-development feature notice each session. Setup replaces the Docbank entry, so include the write flags you need on every run.
+
 ### docbank mcp config
 
 ```text
@@ -1535,7 +1543,7 @@ secret stays unresolved. With no selected binding, printing uses the listener's
 conventional `DOCBANK_MCP_HTTP_TOKEN` variable. HTTP write flags belong on a standalone listener's
 startup command.
 
-Clients must support MCP `2026-07-28`. With Codex 0.164.0, run
+Clients must support MCP `2026-07-28`. The Codex snippet includes a reminder to run
 `codex features enable mcp_2026_07_28` once to persist the client's MCP protocol
 support in `config.toml` for either transport. Then launch with plain `codex`.
 Generated Codex stdio configuration also sets
