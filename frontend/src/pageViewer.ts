@@ -47,7 +47,7 @@ export interface PageViewerState {
 function pending(job: PageJob): boolean {
   return job.state === "queued" || job.state === "running";
 }
-function pause(signal: AbortSignal): Promise<void> {
+export function pause(signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     const abort = () => {
       clearTimeout(timer);

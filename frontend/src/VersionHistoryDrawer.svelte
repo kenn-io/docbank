@@ -4,8 +4,9 @@
   import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
   import HistoryIcon from "@lucide/svelte/icons/history";
-  import { Chip, EmptyState, Spinner } from "@kenn-io/kit-ui";
+  import { Button, Chip, EmptyState, Spinner } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
+  import { readHistory, retryableHistoryError } from "./historyRead.js";
   import { type ContentVersion, type ContentVersionPage, type Node } from "./generated/docbank.js";
   import DownloadButton from "./DownloadButton.svelte";
   import DrawerShell from "./DrawerShell.svelte";
@@ -40,8 +41,10 @@
   let page = $state<ContentVersionPage | null>(null);
   let opened = $state<Set<string>>(new Set());
   let loading = $state(true);
-  let error = $state("");
+  let error = $state<string | null>(null);
   let generation = 0;
+  let controller: AbortController | undefined;
+  let retryable = $state(false);
 
   // A link that is still resolving or failed offers no download, so the list can't stand in for it.
   const locked = $derived(Boolean(onselect) && (resolving || unavailable !== ""));
@@ -69,18 +72,27 @@
     untrack(() => void load());
     return () => {
       generation += 1;
+      controller?.abort();
     };
   });
 
-  async function load(): Promise<void> {
+  async function load(automatic = true): Promise<void> {
+    controller?.abort();
+    const pending = new AbortController();
+    controller = pending;
     const request = ++generation;
     loading = true;
-    error = "";
+    error = null;
     try {
-      const next = await generated.listContentVersions(
-        node.id,
-        { limit: 1000, offset: 0 },
-        { session },
+      const next = await readHistory(
+        () =>
+          generated.listContentVersions(
+            node.id,
+            { limit: 1000, offset: 0 },
+            { session, signal: pending.signal },
+          ),
+        pending.signal,
+        automatic,
       );
       if (request !== generation) return;
       page = next;
@@ -91,6 +103,7 @@
         if (!onselect) onclose();
         return;
       }
+      retryable = retryableHistoryError(cause);
       error = cause instanceof Error ? cause.message : String(cause);
     } finally {
       if (request === generation) loading = false;
@@ -142,7 +155,8 @@
   <div class="versions">
     <p class="summary">
       <span class="path">{path}</span>
-      {#if page}<span>{page.total} version{page.total === 1 ? "" : "s"}</span>{/if}
+      {#if page && error === null}<span>{page.total} version{page.total === 1 ? "" : "s"}</span
+        >{/if}
       {#if node.trashed_at}<Chip size="xs" tone="warning">Trash</Chip>{/if}
     </p>
     {#if node.trashed_at}
@@ -156,8 +170,13 @@
 
     {#if loading}
       <div class="status"><Spinner size={16} /> Loading versions…</div>
-    {:else if error}
-      <p class="error" role="alert">{error}</p>
+    {:else if error !== null}
+      <div class="error-block">
+        <p class="error" role="alert">
+          Couldn't load versions{#if error}: {error}{/if}
+        </p>
+        {#if retryable}<Button size="sm" onclick={() => void load(false)}>Try again</Button>{/if}
+      </div>
     {:else if !page || page.items.length === 0}
       <EmptyState title="No versions">
         {#snippet icon()}<HistoryIcon size="22" />{/snippet}
@@ -245,7 +264,13 @@
     gap: var(--space-3);
     color: var(--text-secondary);
   }
+  .error-block {
+    display: grid;
+    justify-items: start;
+    gap: var(--space-4);
+  }
   .error {
+    margin: 0;
     color: var(--accent-red);
   }
   ol {

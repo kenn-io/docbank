@@ -1,6 +1,8 @@
 <script lang="ts">
   import { Button } from "@kenn-io/kit-ui";
+  import { untrack } from "svelte";
   import { APIError } from "./api-transport.js";
+  import { readHistory, retryableHistoryError } from "./historyRead.js";
   import {
     appendRelationPage,
     attachmentIdentity,
@@ -33,7 +35,8 @@
   } = $props();
   let page = $state<RelationPage>();
   let loading = $state(false);
-  let error = $state("");
+  let error = $state<string | null>(null);
+  let retryable = $state(false);
   let names = $state<Record<number, string>>({});
   let controller: AbortController | undefined;
   let epoch = 0;
@@ -49,53 +52,64 @@
   }
   $effect(() => {
     const selected = attachmentIdentity(source);
-    const identity = `${session}:${source.key}:${direction}`;
-    void identity;
+    void session;
+    void source.key;
+    void direction;
+    page = undefined;
+    names = {};
+    untrack(() => void load(selected));
+    return () => {
+      ++epoch;
+      controller?.abort();
+    };
+  });
+  async function load(selected = attachmentIdentity(source), automatic = true): Promise<void> {
+    controller?.abort();
     const request = ++epoch;
     const pending = new AbortController();
     controller = pending;
-    page = undefined;
-    error = "";
-    names = {};
     loading = true;
-    void readRelationPage(session, selected, direction, pending.signal)
-      .then((next) => {
-        if (request === epoch) {
-          page = next;
-          void loadNames(next, pending.signal);
-        }
-      })
-      .catch((cause: unknown) => {
-        if (request === epoch && !pending.signal.aborted) error = message(cause);
-      })
-      .finally(() => {
-        if (request === epoch) loading = false;
-      });
-    return () => {
-      ++epoch;
-      pending.abort();
-    };
-  });
-  async function loadMore(): Promise<void> {
+    error = null;
+    try {
+      const next = await readHistory(
+        () => readRelationPage(session, selected, direction, pending.signal),
+        pending.signal,
+        automatic,
+      );
+      if (request === epoch) {
+        page = next;
+        void loadNames(next, pending.signal);
+      }
+    } catch (cause) {
+      if (request === epoch && !pending.signal.aborted) {
+        retryable = retryableHistoryError(cause);
+        error = message(cause);
+      }
+    } finally {
+      if (request === epoch) loading = false;
+    }
+  }
+  async function loadMore(automatic = true): Promise<void> {
     if (!page?.next || loading || !controller) return;
     const before = page,
       request = epoch,
       signal = controller.signal;
     loading = true;
-    error = "";
     try {
-      const next = await readRelationPage(
-        session,
-        attachmentIdentity(source),
-        direction,
+      const next = await readHistory(
+        () => readRelationPage(session, attachmentIdentity(source), direction, signal, before.next),
         signal,
-        before.next,
+        automatic,
       );
       if (request !== epoch) return;
       page = appendRelationPage(before, next);
+      error = null;
       void loadNames(next, signal);
     } catch (cause) {
-      if (request === epoch && !signal.aborted) error = message(cause);
+      if (request === epoch && !signal.aborted) {
+        retryable = retryableHistoryError(cause);
+        error = message(cause);
+      }
     } finally {
       if (request === epoch) loading = false;
     }
@@ -116,14 +130,9 @@
   }
 </script>
 
-{#if error || page?.items.length}
+{#if error !== null || page?.items.length}
   <section aria-label={outgoing ? "Attachments" : "Attached to"}>
     <strong>{outgoing ? "Attachments" : "Attached to"}</strong>
-    {#if error}<p class="problem" role="status">
-        {outgoing
-          ? "Couldn't load attachments"
-          : "Couldn't load the document this file is attached to"}: {error}
-      </p>{/if}
     {#if page}
       <ul>
         {#each page.items as item (relationKey(item.relation))}
@@ -138,7 +147,7 @@
           </li>
         {/each}
       </ul>
-      {#if page.next}
+      {#if page.next && error === null}
         {#if page.items.length >= relationDisplayLimit}<p role="status">
             Showing the first {relationDisplayLimit}.
           </p>
@@ -146,6 +155,22 @@
             >Show more</Button
           >{/if}
       {/if}
+    {/if}
+    {#if error !== null}
+      <div class="problem-row">
+        <p class="problem" role="status">
+          {outgoing
+            ? "Couldn't load attachments"
+            : "Couldn't load the document this file is attached to"}{#if error}: {error}{/if}
+        </p>
+        {#if retryable}<Button
+            size="sm"
+            surface="soft"
+            disabled={loading}
+            onclick={() => (page ? void loadMore(false) : void load(undefined, false))}
+            >Try again</Button
+          >{/if}
+      </div>
     {/if}
   </section>
 {/if}
@@ -197,6 +222,11 @@
   .unavailable {
     color: var(--text-primary);
     font-size: var(--font-size-sm);
+  }
+  .problem-row {
+    display: grid;
+    justify-items: start;
+    gap: var(--space-2);
   }
   .problem {
     color: var(--text-primary);
