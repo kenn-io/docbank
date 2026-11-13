@@ -51,7 +51,7 @@ type metadataPersonIdentity struct {
 	Normalization   string `json:"normalization" db:"normalization"`
 	Origin          string `json:"origin" db:"origin"`
 	EvidenceKind    string `json:"evidence_kind" db:"evidence_kind"`
-	EvidenceID      string `json:"evidence_id" db:"evidence_id"`
+	EvidenceID      string `json:"evidence_id" db:"evidence_id,bytes"`
 	Confidence      string `json:"confidence" db:"confidence"`
 	RecordedAt      string `json:"recorded_at" db:"recorded_at"`
 }

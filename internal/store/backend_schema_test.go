@@ -371,6 +371,7 @@ func describePostgresIndexes(t *testing.T, s *Store, table string) map[string]ba
 // Accepted UTF-8 evidence and names need byte storage on PostgreSQL. This list
 // makes those intentional schema differences visible to the drift check.
 var backendByteStringColumns = map[string][]string{
+	"person_identities":          {"evidence_id"},
 	"mailbox_containers":         {"id", "owner"},
 	"mailbox_chunks":             {"container_id"},
 	"mailbox_jobs":               {"id", "owner", "container_id"},

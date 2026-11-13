@@ -366,7 +366,7 @@ func (s *Store) provisionActorPersonTx(ctx context.Context, tx *sql.Tx, claim Do
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO person_identities(identity_id,person_id,kind,value_normalized,value_display,scope_kind,scope_value,normalization,origin,evidence_kind,evidence_id,confidence,recorded_at)
 		VALUES($1,$2,$3,$4,$5,'','',$6,'derived',$7,$8,'exact_identifier',$9)`, identityID, personID, kind,
-		normalized.ValueNormalized, normalized.ValueDisplay, normalized.Normalization, claim.EvidenceKind, claim.EvidenceID, now); err != nil {
+		normalized.ValueNormalized, normalized.ValueDisplay, normalized.Normalization, claim.EvidenceKind, storedString(s.postgresSchema != "", claim.EvidenceID), now); err != nil {
 		return Person{}, err
 	}
 	return Person{PersonID: personID, DisplayName: display, DisplayNameFolded: document.FoldPersonName(display),

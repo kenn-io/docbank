@@ -1456,7 +1456,7 @@ CREATE TABLE {{schema}}.person_identities (
     normalization TEXT COLLATE "C" NOT NULL,
     origin TEXT COLLATE "C" NOT NULL,
     evidence_kind TEXT COLLATE "C" NOT NULL,
-    evidence_id TEXT COLLATE "C" NOT NULL,
+    evidence_id BYTEA NOT NULL,
     confidence TEXT COLLATE "C" NOT NULL,
     recorded_at TEXT COLLATE "C" NOT NULL
 );

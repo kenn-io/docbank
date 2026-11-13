@@ -211,6 +211,10 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 		require.NoError(t, err)
 		_, err = s.LinkExternalIdentity(t.Context(), PersonExternalIdentity{PersonID: person.PersonID, System: "msgvault", ArchiveID: "synthetic", UID: "synthetic-id", UIDKind: "vcard_uid", UIDState: "current", DisplayNameSnapshot: "Ada\x00snapshot"}, person.Revision)
 		require.NoError(t, err)
+		person, _, err = s.PersonByID(t.Context(), person.PersonID)
+		require.NoError(t, err)
+		_, err = s.AddPersonIdentity(t.Context(), person.PersonID, person.Revision, PersonIdentity{Kind: "email", ValueDisplay: "evidence@example.test", Origin: "operator", EvidenceKind: "operator_assertion", EvidenceID: "claim\x00\\evidence", Confidence: "operator_asserted"})
+		require.NoError(t, err)
 		asset := albumAsset(t, s, "portrait.jpg")
 		photo := requireNodeByID(t, s, asset.Files[0].NodeID)
 		_, err = s.MarkPersonInPhoto(t.Context(), photo.CurrentVersionID, person.PersonID, "")
@@ -436,7 +440,7 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 		"processing":                   {"processing_profile", "rendition_head", "rendition_lexical_generation", "current_rendition_root"},
 		"processing jobs":              {"processing_incarnation", "processing_consent_grant", "rendition_job", "rendition_job_waiter"},
 		"NUL source description":       {"ingest", "provenance", "audit_record"},
-		"NUL person name":              {"person", "custodian_assignment", "person_external_identity"},
+		"NUL person name":              {"person", "person_identity", "custodian_assignment", "person_external_identity"},
 		"NUL extraction":               {"extracted_text"},
 		"NUL email text":               {"extracted_text", "rendition_lexical_segment", "rendition_lexical_generation"},
 		"NUL leading email text":       {"extracted_text", "rendition_lexical_segment", "rendition_lexical_generation"},
@@ -669,6 +673,10 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 					page, _, err := store.PeopleByDisplayName(ctx, "", "", "", 1, false, PeopleSearchOptions{})
 					require.NoError(t, err)
 					require.Equal(t, first, page)
+					identities, err := store.PersonIdentities(ctx, page[0].PersonID)
+					require.NoError(t, err)
+					require.Len(t, identities, 1)
+					require.Equal(t, "claim\x00\\evidence", identities[0].EvidenceID)
 					next, _, err := store.PeopleByDisplayName(ctx, "", page[0].DisplayNameFolded, page[0].PersonID, 1, false, PeopleSearchOptions{})
 					require.NoError(t, err)
 					require.Len(t, next, 1)
