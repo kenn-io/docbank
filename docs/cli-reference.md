@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-04
+last_edited: 2026-11-13
 title: CLI reference
 description: Every docbank command, with its flags, output formats, and error behavior.
 ---

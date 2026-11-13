@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-10
+last_edited: 2026-11-13
 title: Model Context Protocol
 description: Connect a local MCP client to Docbank's read-mostly document tools through the daemon.
 ---
