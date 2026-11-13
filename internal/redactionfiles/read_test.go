@@ -3,6 +3,7 @@ package redactionfiles
 import (
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -40,6 +41,13 @@ func TestReadInputsAndReview(t *testing.T) {
 	got, err := ReadReview(t.Context(), reviewPath, inputs)
 	require.NoError(t, err)
 	require.Equal(t, "[REDACTED]", got.Resolved.Runs[0].Text)
+	// Otherwise valid inputs isolate strict decoding from later identity checks.
+	for _, extra := range []string{`"unknown":"synthetic private value",`, fmt.Sprintf(`"contract":%q,`, prep.Contract)} {
+		changed := append([]byte("{"+extra), data[1:]...)
+		require.NoError(t, os.WriteFile(preparation, changed, 0600))
+		_, err := ReadInputs(t.Context(), preparation, maskPath)
+		require.ErrorIs(t, err, ErrInvalidInput)
+	}
 	inputs.Masks[0].Selector.Span.End = 7
 	_, err = ReadReview(t.Context(), reviewPath, inputs)
 	require.ErrorIs(t, err, processing.ErrRedactionReviewChanged)
@@ -58,9 +66,4 @@ func TestReadPrivateInputBounds(t *testing.T) {
 	cancel()
 	_, err = ReadFile(ctx, file, 16)
 	require.ErrorIs(t, err, context.Canceled)
-	for _, data := range []string{`{"unknown":"synthetic private value"}`, `{"contract":"a","contract":"b"}`} {
-		require.NoError(t, os.WriteFile(file, []byte(data), 0600))
-		_, err = ReadInputs(t.Context(), file, file)
-		require.ErrorIs(t, err, ErrInvalidInput)
-	}
 }
