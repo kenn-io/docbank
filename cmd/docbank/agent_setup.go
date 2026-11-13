@@ -29,16 +29,7 @@ func newAgentSetupCommand() *cobra.Command {
 			if agent != "codex" {
 				return []agentsetup.Item{item}, nil
 			}
-			feature := codexFeatureItem()
-			check := item.Check
-			item.Check = func(ctx context.Context) (agentsetup.Status, error) {
-				status, err := feature.Check(ctx)
-				if err == nil && status.State == agentsetup.StateFailed {
-					return agentsetup.Status{State: agentsetup.StateFailed, Reason: "needs the Codex feature step above"}, nil
-				}
-				return check(ctx)
-			}
-			return []agentsetup.Item{feature, item}, nil
+			return []agentsetup.Item{codexFeatureItem(), item}, nil
 		},
 	})
 	cmd.Short = "Connect Claude Code and Codex to Docbank"

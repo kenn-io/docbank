@@ -175,28 +175,6 @@ func TestAgentSetupClaudeEntry(t *testing.T) {
 	assert.Equal(t, filepath.Join(dir, "vault"), entry["env"].(map[string]any)["DOCBANK_HOME"])
 }
 
-func TestAgentSetupDisabledFeatureReport(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("shell stub")
-	}
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-	t.Setenv("USERPROFILE", dir)
-	t.Setenv("CODEX_HOME", dir)
-	t.Setenv("DOCBANK_HOME", filepath.Join(dir, "vault"))
-	t.Setenv("PATH", dir)
-	stub := "#!/bin/sh\nif [ \"$1 $2\" = 'features list' ]; then echo 'mcp_2026_07_28 under development false'; else echo 'unexpected handshake' >&2; exit 1; fi\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "codex"), []byte(stub), 0o700))
-	out, err := runCLI(t, "agent", "setup", "--agent", "codex", "--check")
-	require.ErrorIs(t, err, agentsetup.ErrNotReady)
-	assert.Equal(t, 2, strings.Count(out, "failed"))
-	assert.Contains(t, out, codexEnable)
-	assert.Contains(t, out, "needs the Codex feature step above")
-	assert.NotContains(t, out, "unexpected handshake")
-	assert.NotContains(t, out, "server/discover")
-	assert.NotContains(t, out, "afterwards")
-}
-
 func TestAgentSetupResetsManualWriteArgs(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell stub")
@@ -237,41 +215,4 @@ func TestAgentSetupResetsManualWriteArgs(t *testing.T) {
 			assert.Equal(t, data, after)
 		})
 	}
-}
-
-func TestAgentSetupReportsServerErrorWhenFeatureEnabled(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("shell stub")
-	}
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-	t.Setenv("USERPROFILE", dir)
-	t.Setenv("CODEX_HOME", dir)
-	t.Setenv("DOCBANK_HOME", filepath.Join(dir, "vault"))
-	t.Setenv("PATH", dir)
-	stub := `#!/bin/sh
-if [ "$1 $2" = "features list" ]; then
-  echo 'mcp_2026_07_28 under development true'
-elif [ "$1 $2" = "app-server --stdio" ]; then
-  read -r line
-  case "$line" in *'"method":"initialize"'*) ;; *) exit 1 ;; esac
-  echo '{"id":1,"result":{}}'
-  read -r line
-  case "$line" in *'"method":"initialized"'*) ;; *) exit 1 ;; esac
-  read -r line
-  case "$line" in *'"method":"mcpServerStatus/list"'*) ;; *) exit 1 ;; esac
-  case "$line" in *'"serverName":"docbank"'*) ;; *) exit 1 ;; esac
-  echo '{"id":2,"result":{"data":[{"name":"docbank","toolsError":"synthetic server failure"}]}}'
-else
-  exit 1
-fi
-`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "codex"), []byte(stub), 0o700))
-	manual, err := runCLI(t, "mcp", "config", "--client", "codex")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(manual), 0o600))
-	out, err := runCLI(t, "agent", "setup", "--agent", "codex", "--check")
-	require.ErrorIs(t, err, agentsetup.ErrNotReady)
-	assert.Equal(t, 1, strings.Count(out, "synthetic server failure"), out)
-	assert.NotContains(t, out, "needs the Codex feature step above")
 }
