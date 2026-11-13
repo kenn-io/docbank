@@ -95,6 +95,30 @@ func checkNULXMP(t *testing.T, s *Store) {
 func checkRetainedStringNativeWritesPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
+	t.Run("consent", func(t *testing.T) {
+		t.Parallel()
+		s := newPostgresQueryStore(t)
+		request := testProviderAuthorizationRequest()
+		request.Principal, request.Scope = "operator\x00id", "scope\x00id"
+		grants := []ProcessingConsentGrantRequest{grantRequestForAuthorization(request, nil)}
+		created, err := s.GrantConsentSetIfUndecided(t.Context(), grants)
+		require.NoError(t, err)
+		require.True(t, created)
+		created, err = s.GrantConsentSetIfUndecided(t.Context(), grants)
+		require.NoError(t, err)
+		require.False(t, created)
+		revoked, err := s.HasConsentRevocation(t.Context(), request.Principal, request.Scope)
+		require.NoError(t, err)
+		require.False(t, revoked)
+		_, err = s.RevokeConsent(t.Context(), ProcessingConsentRevocationRequest{Principal: request.Principal, Scope: request.Scope})
+		require.NoError(t, err)
+		revoked, err = s.HasConsentRevocation(t.Context(), request.Principal, request.Scope)
+		require.NoError(t, err)
+		require.True(t, revoked)
+		created, err = s.GrantConsentSetIfUndecided(t.Context(), grants)
+		require.NoError(t, err)
+		require.False(t, created)
+	})
 	t.Run("mailbox", func(t *testing.T) {
 		t.Parallel()
 		s := seedNULMailbox(t, newPostgresQueryStore(t))
