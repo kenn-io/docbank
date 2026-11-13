@@ -18,12 +18,11 @@ const codexFeature = "mcp_2026_07_28"
 const codexEnable = "codex features enable " + codexFeature
 
 func newAgentSetupCommand() *cobra.Command {
-	var cmd *cobra.Command
-	cmd = agentsetup.NewCommand(agentsetup.Options{
+	cmd := agentsetup.NewCommand(agentsetup.Options{
 		SetupCommand:  "docbank agent setup",
 		RepairCommand: "docbank agent setup",
 		Items: func(agent string) ([]agentsetup.Item, error) {
-			server, err := mcpConfigServer(cmd, agentmcp.Agent(agent))
+			server, err := mcpConfigServer(agentmcp.Agent(agent), "stdio", "", nil)
 			if err != nil {
 				return nil, err
 			}
@@ -35,11 +34,10 @@ func newAgentSetupCommand() *cobra.Command {
 		},
 	})
 	cmd.Short = "Connect Claude Code and Codex to Docbank"
-	cmd.Long = "Register the Docbank MCP server with installed agents. Running setup again\nreplaces the entry; include any --allow-* flags you still need."
+	cmd.Long = "Register the read-only Docbank MCP server with installed agents."
 	cmd.Flags().Lookup("json").Usage = "print JSON to stdout"
 	clisearch.SetKeywords(cmd, "connect Claude Code and Codex to docbank")
-	cmd.Example = "  docbank agent setup\n  docbank agent setup --agent codex --check\n  docbank agent setup --allow-processing"
-	registerMCPAllowFlags(cmd.Flags())
+	cmd.Example = "  docbank agent setup\n  docbank agent setup --agent codex --check"
 	return cmd
 }
 

@@ -1518,10 +1518,10 @@ HTTP hosting in the daemon process, see [docbank daemon](#docbank-daemon).
 ### docbank agent setup
 
 ```text
-docbank agent setup [--agent claude|codex] [--check] [--json] [--print] [--allow-*]
+docbank agent setup [--agent claude|codex] [--check] [--json] [--print]
 ```
 
-Registers the selected vault with installed Claude Code and Codex clients. `--check` reports readiness without installing; `--print` prints manual commands. Setup enables Codex's MCP feature, which causes an under-development feature notice each session. Setup replaces the Docbank entry, so include the write flags you need on every run.
+Registers the selected vault with installed Claude Code and Codex clients. `--check` reports readiness without installing; `--print` prints manual commands. Setup enables Codex's MCP feature, which causes an under-development feature notice each session. Setup registers the read-only tools.
 
 ### docbank mcp config
 

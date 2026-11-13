@@ -45,7 +45,7 @@ docbank agent setup
 docbank agent setup --check
 ```
 
-Setup enables Codex's `mcp_2026_07_28` feature. Codex then shows an under-development feature notice each session. Include any `--allow-*` flags you need each time you run setup; setup replaces the Docbank entry.
+Setup enables Codex's `mcp_2026_07_28` feature. Codex then shows an under-development feature notice each session. Setup registers the read-only tools.
 
 For manual setup, print configuration for your client:
 

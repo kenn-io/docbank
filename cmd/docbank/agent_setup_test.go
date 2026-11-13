@@ -67,10 +67,9 @@ func TestAgentSetupCheckAndPrint(t *testing.T) {
 	resetFlags(rootCmd)
 	out.Reset()
 	stderr.Reset()
-	code = runProcess([]string{"agent", "setup", "--agent", "codex", "--print", "--allow-processing"}, &out, &stderr)
+	code = runProcess([]string{"agent", "setup", "--agent", "codex", "--print"}, &out, &stderr)
 	require.Equal(t, 0, code, stderr.String())
 	assert.True(t, strings.HasPrefix(out.String(), codexEnable+"\n"))
-	assert.Contains(t, out.String(), "--allow-processing")
 }
 
 func TestAgentSetupFeatureEnable(t *testing.T) {
@@ -130,7 +129,7 @@ else
 fi
 `
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "codex"), []byte(stub), 0o700))
-	out, err := runCLI(t, "agent", "setup", "--agent", "codex", "--allow-processing")
+	out, err := runCLI(t, "agent", "setup", "--agent", "codex")
 	require.ErrorIs(t, err, agentsetup.ErrNotReady)
 	assert.Contains(t, out, "on; Codex shows an under-development feature notice")
 	state, err := os.ReadFile(filepath.Join(dir, "state"))
@@ -139,9 +138,10 @@ fi
 	data, err := os.ReadFile(config)
 	require.NoError(t, err)
 	entry := decodeMCPConfig(t, "codex", string(data))
-	assert.Equal(t, []any{"mcp", "--transport", "stdio", "--allow-processing"}, entry["args"])
+	assert.Equal(t, []any{"mcp", "--transport", "stdio"}, entry["args"])
 	assert.Equal(t, "2026-07-28", entry["env"].(map[string]any)["CODEX_MCP_PROTOCOL_VERSION"])
 	assert.Contains(t, string(data), "[mcp_servers.other]")
+	first := bytes.Clone(data)
 	out, err = runCLI(t, "agent", "setup", "--agent", "codex")
 	require.ErrorIs(t, err, agentsetup.ErrNotReady)
 	assert.Contains(t, out, "on; Codex shows an under-development feature notice")
@@ -150,7 +150,7 @@ fi
 	assert.Equal(t, "enabled\n", string(state))
 	data, err = os.ReadFile(config)
 	require.NoError(t, err)
-	assert.Equal(t, []any{"mcp", "--transport", "stdio"}, decodeMCPConfig(t, "codex", string(data))["args"])
+	assert.Equal(t, first, data)
 }
 
 func TestAgentSetupClaudeEntry(t *testing.T) {
