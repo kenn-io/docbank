@@ -940,7 +940,7 @@ an opaque caller value. These groups describe the boundary:
 | UUIDs, digests, timestamps, closed vocabulary | Keep text when the owning format or vocabulary check excludes NUL. Empty optional values keep their existing nullability. |
 | Node names, tags, saved-query names/descriptions, push references, authored photo text, photo suggestions | Keep text. Their name, control-character, path or XML validators already exclude NUL. |
 | Provenance, media and mailbox identities, owners and source references | Use bytes. Bounded UTF-8 validation does not forbid NUL. Matching references and cursor parameters use the same bytes. |
-| Person names, identity evidence IDs, retained labels, notes, extracted text and technical photo strings | Use bytes, including derived name folds and copied labels. Rebuilding a projection keeps the original evidence. |
+| Person names, identity and attribution evidence IDs, retained labels, notes, extracted text and technical photo strings | Use bytes, including derived name folds and copied labels. Rebuilding a projection keeps the original evidence. |
 | Snapshot occurrence/family keys, display names, representation roles and media types; package labels, volume names and declared roots | Use bytes. Snapshot and package validators enforce relationships and bounds without restricting these strings to ASCII. |
 | Processing subjects/scopes, worker owners, trust boundaries, provider operation IDs, rendition artifact/unit/segment keys and retention-root names | Use bytes. Format-constrained build IDs and resume handles remain text. |
 | Embedding descriptor labels and retained vector/input keys | Use bytes. Vector-space fingerprints and fixed metric/encoding names remain text. |

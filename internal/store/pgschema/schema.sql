@@ -1626,7 +1626,7 @@ CREATE TABLE {{schema}}.document_people (
     role TEXT COLLATE "C" NOT NULL,
     actor_key TEXT COLLATE "C" NOT NULL,
     evidence_kind TEXT COLLATE "C" NOT NULL,
-    evidence_id TEXT COLLATE "C" NOT NULL,
+    evidence_id BYTEA NOT NULL,
     confidence TEXT COLLATE "C" NOT NULL,
     basis TEXT COLLATE "C" NOT NULL,
     raw_label BYTEA NOT NULL,

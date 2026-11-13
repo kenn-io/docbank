@@ -518,6 +518,7 @@ var backendSuites = []backendSuite{
 
 	{name: "document-people", postgres: "native operations", scope: "Document-person inputs, immutable attribution publication, freshness, failure coverage and rebuilds; excludes general People discovery and public vault opening.", scenarios: []backendScenario{
 		{"AuthorityInputs", func(t *testing.T) { t.Helper(); checkDocumentPeopleAuthorityInputs(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentPeopleAuthorityInputs(t, newPostgresQueryStore) }},
+		{"EvidenceIDs", func(t *testing.T) { t.Helper(); checkDocumentPeopleEvidenceIDs(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentPeopleEvidenceIDs(t, newPostgresQueryStore) }},
 		{"Snapshots", nil, checkDocumentPeopleSnapshotsPostgres},
 		{"Rollback", nil, checkDocumentPeopleRollbackPostgres},
 		{"DocumentPeopleResolverInputsProvisionEligibleIdentityOnce", func(t *testing.T) {

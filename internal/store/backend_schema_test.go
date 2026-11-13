@@ -380,7 +380,7 @@ var backendByteStringColumns = map[string][]string{
 	"media_input_artifacts":      {"source_id", "source_version_id", "occurrence_id", "input_id", "origin", "provider", "language"},
 	"media_source_versions":      {"source_id", "source_version_id"},
 	"person_document_assertions": {"note"},
-	"document_people":            {"raw_label"},
+	"document_people":            {"raw_label", "evidence_id"},
 	"mailbox_archives":           {"description", "id", "owner"},
 	"media_sources":              {"provider", "origin_scope", "source_id"},
 	"photo_technical_metadata":   {"camera_make", "camera_model", "body_serial_number", "lens_make", "lens_model", "camera_make_folded", "camera_model_folded", "lens_make_folded", "lens_model_folded", "capture_time_raw", "location_label"},
