@@ -693,8 +693,11 @@ func TestRoleSearchSavedRunPreservesMergedDefinitionReceipt(t *testing.T) {
 	require.Equal(t, definition.Fingerprint, run.QueryFingerprint)
 	require.Equal(t, definition.Fingerprint, page.QueryFingerprint)
 	require.Len(t, page.Rows, 1)
-	require.Equal(t, retired.PersonID, page.Query.Filters.People[0].PersonID)
+	require.Len(t, page.Query.Filters.People, 1)
+	require.Len(t, page.Facets, 1)
+	require.Len(t, page.Facets[0].Values, 1)
 	require.Equal(t, survivor.PersonID, page.Facets[0].Values[0].Key)
+	require.Equal(t, page.Facets[0].Values[0].Key, page.Query.Filters.People[0].PersonID)
 }
 
 func TestRoleSearchNestedSavedAndNegatedAttribution(t *testing.T) {
