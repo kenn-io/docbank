@@ -50,7 +50,12 @@ func (c queryCompiler) compilePersonPredicate(id string, roles []string) compile
 			args = append(args, role)
 		}
 	}
-	return compiledQueryFragment{sql: predicate + `)`, args: args, personEdges: true}
+	predicate += `)`
+	// A retained but stale publication cannot prove absence. Preserve SQL's
+	// unknown value so NOT does not turn stale evidence into a match.
+	stale := `EXISTS(SELECT 1 FROM document_people_heads h WHERE h.content_version_id=cv.version_id) AND NOT EXISTS(SELECT 1 FROM document_people_heads h JOIN document_event_heads eh ON eh.content_version_id=h.content_version_id JOIN document_event_generations eg ON eg.generation_id=eh.generation_id JOIN document_event_attempts ea ON ea.content_version_id=h.content_version_id LEFT JOIN document_event_dirty ed ON ed.content_version_id=h.content_version_id CROSS JOIN document_people_state ps WHERE h.content_version_id=cv.version_id AND ` + currentPersonPublishedFence(false, "1") + `)`
+	args = append(args, document.PersonResolverFingerprint(), c.eventState.InputEpoch, c.eventState.ContractVersion, c.eventState.DeriverFingerprint)
+	return compiledQueryFragment{sql: `(CASE WHEN ` + predicate + ` THEN TRUE WHEN ` + stale + ` THEN NULL ELSE FALSE END)`, args: args, personEdges: true}
 }
 
 var betweenPersonRoles = func() []string {

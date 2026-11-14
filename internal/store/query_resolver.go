@@ -139,7 +139,7 @@ func (r queryResolver) personMentionNames(ctx context.Context, id string) ([]str
 		return nil, err
 	}
 	names := []string{name}
-	seen := map[string]bool{document.FoldPersonName(name): true}
+	seen := map[string]bool{name: true}
 	q, ok := r.q.(rowsQuerier)
 	if !ok {
 		return nil, errors.New("person aliases require a rows querier")
@@ -155,10 +155,9 @@ func (r queryResolver) personMentionNames(ctx context.Context, id string) ([]str
 		if err := rows.Scan(&alias); err != nil {
 			return nil, err
 		}
-		folded := document.FoldPersonName(alias)
-		if folded != "" && !seen[folded] {
+		if alias != "" && !seen[alias] {
 			names = append(names, alias)
-			seen[folded] = true
+			seen[alias] = true
 		}
 	}
 	if err := rows.Err(); err != nil {

@@ -249,6 +249,66 @@ func TestRoleSearchMentionNamesAreLiteral(t *testing.T) {
 	require.Equal(t, []string{"mentioned"}, result.Rows[0].MatchedRoles)
 }
 
+func TestRoleSearchMentionsFTSDistinctAlias(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	person, err := s.CreatePerson(ctx, "Ａda Lovelace", "operator")
+	require.NoError(t, err)
+	_, _ = addTestPersonIdentity(t, s, person, "name_alias", "Ada Lovelace", "ascii-alias")
+	file, err := s.CreateFile(ctx, s.RootID(), "ascii.txt", testSHA256([]byte("Ada Lovelace")), 12, "text/plain")
+	require.NoError(t, err)
+	seedCompiledLegacyText(t, s, file, "Ada Lovelace")
+	value := snapshotTestQuery(t, `{"syntax":"advanced","text":"mentions:\"Ａda Lovelace\""}`)
+	result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	require.Equal(t, "ascii.txt", result.Rows[0].Name)
+}
+
+func TestRoleSearchNegationWithStaleEvents(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	version := seedCurrentRoleSearchEvent(t, s, "sender.txt", "a3", []document.DocumentEventActorV1{{
+		Role: "sender", ActorKey: "email:sender@example.test", Address: "sender@example.test", DisplayName: "Sender Person", Claim: `"sender"`,
+	}})
+	input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
+	require.NoError(t, err)
+	publication := documentPeoplePublicationForInput(t, input)
+	_, err = s.PublishDocumentPeople(ctx, publication)
+	require.NoError(t, err)
+	value := snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT from:\"Sender Person\""}`)
+	result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+	_, err = s.db.ExecContext(ctx, `UPDATE document_event_state SET input_epoch=input_epoch+1`)
+	require.NoError(t, err)
+	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+	other, err := s.CreatePerson(ctx, "Other Person", "operator")
+	require.NoError(t, err)
+	value = snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT from:\"Other Person\""}`)
+	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+	value = snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT from:\"Other Person\" OR name:sender"}`)
+	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: other.PersonID, Role: "sender", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	value = snapshotTestQuery(t, `{"syntax":"advanced","text":"from:\"Other Person\""}`)
+	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	value = snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT from:\"Other Person\""}`)
+	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+}
+
 // Restored identity authority is visible to both callers even though no
 // published name_alias document-person edge exists.
 func TestRoleSearchMentionsRestoredDerivedAlias(t *testing.T) {
