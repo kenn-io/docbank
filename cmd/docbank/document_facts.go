@@ -79,7 +79,7 @@ func writeVersionDatesTable(out io.Writer, result *apiclient.VersionDates) error
 		if claim.Primary {
 			mark = "*"
 		}
-		_, _ = fmt.Fprintf(w, "%s %s\t%s\t%q (state=%s, zone=%q)\t%s\t%s\n", mark, claim.DateKind, claim.DateValue, claim.ZoneText, claim.When.State, claim.When.ZoneState, claim.Precision, documentFactLabel(claim.ClaimBasis))
+		_, _ = fmt.Fprintf(w, "%s %s\t%s\t%q (state=%s, zone=%q)\t%s\t%s\n", mark, documentFactLabel(string(claim.DateKind)), claim.DateValue, claim.ZoneText, claim.When.State, claim.When.ZoneState, claim.Precision, documentFactLabel(claim.ClaimBasis))
 	}
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("writing dates table: %w", err)
@@ -130,6 +130,10 @@ func documentFactLabel(value string) string {
 		return "From transfer"
 	case "blind_copy":
 		return "Bcc"
+	case "vault_recorded":
+		return "Recorded"
+	case "last_saved_by":
+		return "Last editor"
 	case "identifier_match":
 		return "Matched by identity"
 	case "external_uid":

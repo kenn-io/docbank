@@ -70,6 +70,14 @@ func TestDocumentFactsTableEscapesAndTimezones(t *testing.T) {
 		require.NoError(t, writeVersionDatesTable(&output, result))
 		require.Equal(t, "State: published\n* sent  2024-03-15  \"America/Vancouver\" (state=date, zone=\"\")  date  From document\n", output.String())
 	})
+	t.Run("recorded date", func(t *testing.T) {
+		result := &api.VersionDates{State: "published", Claims: []api.VersionDateClaim{{DateKind: "vault_recorded", DateValue: "2024-03-15", Precision: "date", When: api.WhenV1{State: "date"}}}}
+		var table, jsonOutput strings.Builder
+		require.NoError(t, writeVersionDatesTable(&table, result))
+		require.Contains(t, table.String(), "Recorded  2024-03-15")
+		require.NoError(t, writeVersionJSON(&jsonOutput, result))
+		require.Contains(t, jsonOutput.String(), `"date_kind":"vault_recorded"`)
+	})
 	require.Equal(t, "From transfer", documentFactLabel("transfer_record"))
 
 	result := &api.VersionPeople{State: "published",
@@ -138,7 +146,7 @@ func TestDocumentFactsCommands(t *testing.T) {
 
 func TestDocumentPeopleTableBccLabels(t *testing.T) {
 	result := api.VersionPeople{State: "published",
-		Edges:      []api.VersionPersonEdge{{Role: "blind_copy", DisplayName: "Edge", Basis: "package_column"}},
+		Edges:      []api.VersionPersonEdge{{Role: "blind_copy", DisplayName: "Edge", Basis: "package_column"}, {Role: "last_saved_by", DisplayName: "Editor"}},
 		Assertions: []api.VersionPersonAssertion{{Role: "blind_copy", DisplayName: "Assertion", Action: "assert"}},
 		Unresolved: []api.VersionUnresolvedName{{Role: "blind_copy", RawLabel: "Unresolved"}},
 	}
@@ -146,9 +154,11 @@ func TestDocumentPeopleTableBccLabels(t *testing.T) {
 	require.NoError(t, writeVersionPeopleTable(&table, &result))
 	require.Equal(t, 3, strings.Count(table.String(), "Bcc"))
 	require.Contains(t, table.String(), "From package")
+	require.Contains(t, table.String(), `Last editor  "Editor"`)
 	var output strings.Builder
 	require.NoError(t, writeVersionJSON(&output, &result))
 	require.Equal(t, 3, strings.Count(output.String(), "blind_copy"))
+	require.Contains(t, output.String(), `"last_saved_by"`)
 }
 
 func TestDocumentPeopleTableAssertionSupport(t *testing.T) {
