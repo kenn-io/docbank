@@ -146,6 +146,7 @@ func checkDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T, newStore fun
 	actor := document.DocumentEventActorV1{ActorKey: "name_alias:private author", Claim: `"Private Author"`, DisplayName: "Private Author", Role: "recipient", Sensitive: true}
 	version, target := ingestDocumentEventTarget(t, s, "sensitive.txt", "d9")
 	record := documentEventRecord(t, s.VaultID(), version.ID, "d9")
+	record.Events[0].Sensitive = true
 	record.Events[0].Actors = []document.DocumentEventActorV1{actor,
 		{ActorKey: "email:sender@example.test", Address: "sender@example.test", Claim: `"Private Name" <sender@example.test>`, DisplayName: "Private Name", Role: "blind_copy", Sensitive: true},
 		{ActorKey: "email:sender@example.test", Address: "sender@example.test", Claim: `<sender@example.test>`, Role: "sender"}}
@@ -203,6 +204,37 @@ func checkDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T, newStore fun
 	require.NoError(t, err)
 	require.Equal(t, "pending", pending.State)
 	require.Empty(t, pending.Candidates)
+}
+
+func TestDocumentPeopleFactsCandidateQueueOverflow(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	_, err := s.db.ExecContext(ctx, `WITH RECURSIVE seq(value) AS (
+		VALUES(1) UNION ALL SELECT value+1 FROM seq WHERE value<?
+	) INSERT INTO person_match_candidates(candidate_id,actor_key,display_name,reason,evidence_json,evidence_sha256,occurrence_count,revision,state,created_at)
+	SELECT printf('00000000-0000-4000-8000-%012x',value),printf('name_alias:synthetic-%d',value),'Synthetic','name_only','[]',printf('%064x',value),1,1,'open',? FROM seq`, maxOpenPersonCandidates, nowRFC3339())
+	require.NoError(t, err)
+	version, target := ingestDocumentEventTarget(t, s, "overflow.txt", "d4")
+	record := documentEventRecord(t, s.VaultID(), version.ID, "d4")
+	record.Events[0].Actors = []document.DocumentEventActorV1{{ActorKey: "name_alias:queue overflow", Claim: "Queue Overflow", DisplayName: "Queue Overflow", Role: "author"}}
+	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+	require.NoError(t, err)
+	input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, input.CandidateOverflow)
+	_, err = s.PublishDocumentPeople(ctx, DocumentPeoplePublication{
+		People:     document.DocumentPeopleV1{ContractVersion: document.PersonContractV1, ContentVersionID: version.ID, EventGenerationID: input.EventGenerationID, Edges: []document.DocumentPersonEdgeV1{}},
+		Resolution: DocumentPeopleResolution{UnresolvedActors: 1, CandidateOverflow: input.CandidateOverflow}, InputsSHA256: fakeHash("a3"), ResolverFingerprint: document.PersonResolverFingerprint(), NodeID: input.NodeID, BindingEpoch: input.BindingEpoch, NodeRevision: input.NodeRevision,
+	})
+	require.NoError(t, err)
+	facts, err := s.DocumentPeopleFacts(ctx, version.ID, true)
+	require.NoError(t, err)
+	require.Equal(t, "published", facts.State)
+	require.Len(t, facts.Candidates, 1)
+	require.Empty(t, facts.Candidates[0].CandidateID)
+	require.Len(t, facts.Candidates[0].Occurrences, 1)
+	require.Equal(t, "Queue Overflow", facts.Candidates[0].Occurrences[0].Label)
 }
 
 func checkDocumentPeopleFactsPublicationAndFailure(t *testing.T, newStore func(*testing.T) *Store) {

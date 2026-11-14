@@ -19,7 +19,8 @@ Use `docbank document people <path-or-id>` or
 
 People reads wait for current dates. Pending or failed reads withhold derived
 people and unresolved names but retain operator assertions. While Hidden is
-locked, facts return HTTP 404, even with an API key. Unlock Hidden to read them.
+locked, facts for Hidden photos return HTTP 404, even with an API key. Unlock
+Hidden to read them.
 
 ## People in Photos
 
