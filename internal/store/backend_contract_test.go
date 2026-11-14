@@ -2011,7 +2011,7 @@ var backendSuites = []backendSuite{
 		{"AuditEnrollmentChangedPreview", nil, checkAuditEnrollmentChangedPreviewPostgres},
 		{"AuditEnrollmentPhotoReceipt", nil, checkAuditEnrollmentPhotoReceiptPostgres},
 	}},
-	{name: "documents", postgres: "native operations", scope: "Ordinary and audited creation, replacement, revert and moves; physical and photo effects.", scenarios: []backendScenario{
+	{name: "documents", postgres: "native operations", scope: "Ordinary and audited creation, replacement, revert and moves; retained validity metadata validation; physical and photo effects.", scenarios: []backendScenario{
 		{"DocumentWrites", func(t *testing.T) {
 			t.Helper()
 			checkDocumentWrites(t, newTestStore)
@@ -2020,6 +2020,7 @@ var backendSuites = []backendSuite{
 			checkDocumentWrites(t, newPostgresQueryStore)
 		}},
 		{"DocumentNegativeSize", nil, checkDocumentNegativeSizePostgres},
+		{"SupersessionMetadataGraphValidation", nil, checkSupersessionMetadataGraphValidationPostgres},
 		{"DocumentPhotoMaintenance", nil, checkDocumentPhotoMaintenancePostgres},
 		{"DocumentSidecarWork", nil, checkDocumentSidecarWorkPostgres},
 		{"DocumentTextSuppression", nil, checkDocumentTextSuppressionPostgres},

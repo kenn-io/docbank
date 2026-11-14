@@ -186,5 +186,22 @@ Plans accept at most 1,000 moves so validation and responses remain bounded.
 Repeated `docbank document move` commands are independent transactions. Use `docbank document move batch`
 when partial completion is not acceptable.
 
+## Document validity
+
+Declare a replacement and the dates a document is in force:
+
+```bash
+docbank document supersede /leases/lease-2025.pdf --replaces /leases/lease-2024.pdf
+docbank document effective /leases/lease-2025.pdf --from 2025-03-01 --to 2026-02-28
+docbank document validity /leases/lease-2024.pdf --as-of 2025-06-01
+```
+
+Dates are inclusive calendar dates. An undated successor takes effect after the predecessor's own end date, or at every inspection date if that end is open. Validity reports that uncertainty. Use `supersede --remove`
+to remove a link. Omit `--note` to keep an existing note; pass `--note ""` to
+clear it. Use `effective --clear` to clear a window. Select trashed files by `id:<positive-decimal>` when removing a link or clearing a window; paths resolve only live nodes. These declarations do
+not change document content or search order.
+Links are retained when a successor is trashed and take effect again on restore.
+Audited vaults reject declaration changes until replayable audit support exists.
+
 Next: find what you filed with [Searching](searching.md), or manage
 deletion and recovery with [Trash, garbage collection, repack, and verify](trash-and-gc.md).

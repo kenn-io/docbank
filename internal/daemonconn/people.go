@@ -15,12 +15,8 @@ import (
 )
 
 func validatePersonETag(etag string, revision int64) error {
-	if etag == "" {
-		return errors.New("person response is missing ETag")
-	}
-	want := revisionIfMatch(revision)
-	if etag != want {
-		return fmt.Errorf("person response ETag %q, expected %q", etag, want)
+	if err := validateRevisionETag(etag, revision); err != nil {
+		return fmt.Errorf("person %w", err)
 	}
 	return nil
 }

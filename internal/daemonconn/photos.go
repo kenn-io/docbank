@@ -49,11 +49,8 @@ func validatePhotoAssetResponse(asset api.PhotoAsset, etag, requestedID string) 
 }
 
 func validatePhotoETag(etag string, revision int64) error {
-	if etag == "" {
-		return errors.New("photo response is missing ETag")
-	}
-	if etag != revisionIfMatch(revision) {
-		return fmt.Errorf("photo response ETag %q, expected %q", etag, revisionIfMatch(revision))
+	if err := validateRevisionETag(etag, revision); err != nil {
+		return fmt.Errorf("photo %w", err)
 	}
 	return nil
 }
