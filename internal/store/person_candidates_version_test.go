@@ -41,11 +41,11 @@ func checkOpenCandidatesForVersionScopesOccurrences(t *testing.T, postgres bool)
 		_, err := setup.ExecContext(t.Context(), `UPDATE `+table+` SET created_at=$1 WHERE candidate_id=$2`, fmt.Sprintf("2026-01-0%dT00:00:00Z", 3-i), id)
 		require.NoError(t, err)
 	}
-	keys := []string{"name_alias:example", "name_alias:example", "name_alias:other"}
+	keys := []string{"name_alias:example", "name_alias:other"}
 	for i := range 400 {
 		keys = append(keys, fmt.Sprintf("name_alias:unused%d", i))
 	}
-	keys = append(keys, "name_alias:third")
+	keys = append(keys, "name_alias:example", "name_alias:third")
 	got, err := s.openCandidatesForVersion(t.Context(), s.db, first, keys)
 	require.NoError(t, err)
 	require.Len(t, got, 3)
