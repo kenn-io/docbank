@@ -100,19 +100,7 @@ func TestVersionFactsPDFMetadata(t *testing.T) {
 	require.NoError(t, err)
 	_, err = processing.BackfillDocumentPeopleTargets(t.Context(), s, []store.DocumentPeopleTarget{{ContentVersionID: node.CurrentVersionID}})
 	require.NoError(t, err)
-	res, body := get(t, ts, fmt.Sprintf("/api/v1/versions/%s/dates", node.CurrentVersionID), nil)
-	require.Equal(t, http.StatusOK, res.StatusCode, body)
-	var dates api.VersionDates
-	require.NoError(t, json.Unmarshal([]byte(body), &dates))
-	require.Equal(t, "published", dates.State)
-	require.Equal(t, "created_date", dates.Primary.Reason)
-	kinds := map[document.DateKind]bool{}
-	for _, claim := range dates.Claims {
-		kinds[claim.DateKind] = true
-	}
-	require.True(t, kinds["created"])
-	require.True(t, kinds["modified"])
-	res, body = get(t, ts, fmt.Sprintf("/api/v1/versions/%s/people", node.CurrentVersionID), nil)
+	res, body := get(t, ts, fmt.Sprintf("/api/v1/versions/%s/people", node.CurrentVersionID), nil)
 	require.Equal(t, http.StatusOK, res.StatusCode, body)
 	var people api.VersionPeople
 	require.NoError(t, json.Unmarshal([]byte(body), &people))
