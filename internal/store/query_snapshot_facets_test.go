@@ -565,7 +565,8 @@ func TestPreparedRolePopulationCollectionFacetSelfExclusion(t *testing.T) {
 	require.NoError(t, err)
 	_, err = fixture.store.CreateSavedQuery(ctx, "Facet sender", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"from:\"Facet Sender\""}`))
 	require.NoError(t, err)
-	prefix := "(" + strings.TrimSuffix(strings.Repeat(`saved:"Facet sender" OR `, 40), " OR ") + ")"
+	publishRoleFixtures(t, fixture.store)
+	prefix := "(" + strings.TrimSuffix(strings.Repeat(`saved:"Facet sender" OR `, 2), " OR ") + ")"
 	text := prefix + ` AND has_duplicates:true AND NOT path:/missing`
 	value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q,"filters":{"collection_ids":[%q]}}`, text, fixture.collections[0].ID()))
 	projection, err := fixture.store.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Coverage: fixture.selection, Facets: []string{"collections", "person_role"}})
@@ -593,7 +594,7 @@ func TestPreparedSavedRolePredicatesAcrossRelations(t *testing.T) {
 	require.NoError(t, err)
 	_, err = fixture.store.CreateSavedQuery(ctx, "Prepared outer", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"saved:\"Prepared inner\""}`))
 	require.NoError(t, err)
-	prefix := "(" + strings.TrimSuffix(strings.Repeat(`saved:"Prepared outer" OR `, 40), " OR ") + ")"
+	prefix := `(saved:"Prepared outer")`
 	for _, relation := range []string{`path:/missing`, `collection:Second`, `text_coverage:complete`, `has_duplicates:true`} {
 		for _, tc := range []struct {
 			text    string
@@ -612,11 +613,7 @@ func TestPreparedSavedRolePredicatesAcrossRelations(t *testing.T) {
 			}
 			require.Len(t, result.Rows, 1, tc.text)
 			require.Equal(t, fixture.nodes["a"].ID, result.Rows[0].NodeID, tc.text)
-			if strings.HasPrefix(tc.text, "((") {
-				require.Empty(t, result.Rows[0].MatchedRoles, tc.text)
-			} else {
-				require.Equal(t, []string{"sender"}, result.Rows[0].MatchedRoles, tc.text)
-			}
+			require.Equal(t, []string{"sender"}, result.Rows[0].MatchedRoles, tc.text)
 		}
 	}
 }

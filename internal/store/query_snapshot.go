@@ -266,9 +266,14 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 				return err
 			}
 		}
-		if options.SavedQuery == nil {
-			value.Filters.People = compiled.Query.Filters.People
+		definitionFingerprint := ""
+		if options.SavedQuery != nil && !request.FacetsOnly {
+			definitionFingerprint, err = query.Fingerprint(value)
+			if err != nil {
+				return err
+			}
 		}
+		value.Filters.People = compiled.Query.Filters.People
 		projection = SnapshotProjection{
 			PhotoProjection: request.PhotoProjection, PhotoRanking: request.PhotoRanking, Photos: options.Photos, Query: value, Dependencies: slices.Clone(compiled.Dependencies),
 			Coverage: coverage, PageSize: pageSize,
@@ -282,6 +287,9 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 			projection.QueryFingerprint, err = query.Fingerprint(projection.Query)
 			if err != nil {
 				return err
+			}
+			if definitionFingerprint != "" {
+				projection.QueryFingerprint = definitionFingerprint
 			}
 			execution := compiled
 			if options.PhotoRanking != nil {

@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"crypto/sha256"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
@@ -8,8 +9,10 @@ import (
 	"uuid"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/report"
 )
@@ -31,6 +34,27 @@ func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
 		{public.CurrentVersionID, visible.PersonID, "sender"},
 	} {
 		_, err = s.AssertDocumentPerson(ctx, store.PersonDocumentAssertion{ContentVersionID: edge.version, PersonID: edge.id, Role: edge.role, Action: "assert", Revision: 1})
+		require.NoError(t, err)
+	}
+	require.NoError(t, s.EnsureDocumentEventRecipe(ctx, store.DocumentEventsDeriverFingerprint))
+	targets, err := s.MissingDocumentEventTargetsAfter(ctx, store.DocumentEventsDeriverFingerprint, "", 100)
+	require.NoError(t, err)
+	for _, target := range targets {
+		evidence, err := s.LoadDocumentEventEvidence(ctx, target)
+		require.NoError(t, err)
+		record := document.DocumentEventsV1{VaultUID: s.VaultID(), ContentVersionID: target.ContentVersionID, ContractVersion: document.DocumentEventsContractV1, DocumentKind: store.DocumentEventKindForMIMEType(target.MIMEType), Diagnostics: []document.DocumentEventDiagnosticV1{}, Events: []document.DocumentEventV1{}, Primaries: []document.DocumentEventPrimaryV1{}, Sources: []document.DocumentEventSourceV1{}}
+		raw, _, err := document.MarshalDocumentEventsV1(record)
+		require.NoError(t, err)
+		_, err = s.PublishDocumentEvents(ctx, target, store.DocumentEventsDeriverFingerprint, evidence.InputsSHA256, raw)
+		require.NoError(t, err)
+	}
+	for _, id := range []string{private.CurrentVersionID, public.CurrentVersionID} {
+		input, err := s.PrepareDocumentPeopleInputs(ctx, id)
+		require.NoError(t, err)
+		raw, err := canonical.Marshal(input)
+		require.NoError(t, err)
+		digest := sha256.Sum256(raw)
+		_, err = s.PublishDocumentPeople(ctx, store.DocumentPeoplePublication{People: document.DocumentPeopleV1{ContractVersion: document.PersonContractV1, ContentVersionID: id, EventGenerationID: input.EventGenerationID, Edges: []document.DocumentPersonEdgeV1{}}, InputsSHA256: fmt.Sprintf("%x", digest), ResolverFingerprint: document.PersonResolverFingerprint(), NodeID: input.NodeID, NodeRevision: input.NodeRevision, BindingEpoch: input.BindingEpoch})
 		require.NoError(t, err)
 	}
 	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "If-Match": `"1"`}
