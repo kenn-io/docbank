@@ -33,9 +33,10 @@ func TestDocumentFactsPagesRejectChangedFacts(t *testing.T) {
 		require.NoError(t, err)
 		_, err = f.catalog.AssertDocumentPerson(t.Context(), store.PersonDocumentAssertion{ContentVersionID: file.VersionID, PersonID: person.PersonID, Role: "custodian", Action: "assert", Revision: 1})
 		require.NoError(t, err)
-		if i == 0 {
+		switch i {
+		case 0:
 			first = person
-		} else if i == 1 {
+		case 1:
 			second = person
 		}
 	}

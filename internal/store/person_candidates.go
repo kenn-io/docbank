@@ -818,6 +818,7 @@ type VersionCandidate struct {
 
 type VersionCandidateOccurrence struct {
 	PersonCandidateOccurrence
+
 	Label string
 }
 
