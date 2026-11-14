@@ -192,6 +192,9 @@ func TestMCPReportRefusesSavedBcc(t *testing.T) {
 	request.Terms[0].Expression = `from:"Sender Person"`
 	output = exportCall(t, server, "create_report", map[string]any{"request": request})
 	require.Contains(t, output, "report_id")
+	request.Terms[0].Expression = `from:(`
+	output = exportCall(t, server, "create_report", map[string]any{"request": request})
+	require.Equal(t, "invalid_query", output["code"])
 }
 
 func TestMCPReportWriteDoesNotReplay(t *testing.T) {

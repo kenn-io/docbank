@@ -252,7 +252,7 @@ Advanced QueryV1 expressions can select what a person did on a current document 
 
 For example, `from:"Mara Okonkwo-Fell"`, `custodian:"Mara Okonkwo-Fell"`, and `between:("Mara Okonkwo-Fell", "Ines Albarrán")` are ordinary queries that can be saved and exported. `between:` accepts exactly two distinct people, separated by a comma or whitespace; invalid pairs report `between: needs two different people`. `mentions:` searches all distinct names as literal phrases and labels a matched result `Mentioned`.
 
-Browser searches refuse `bcc:` and structured `blind_copy` role filters. Their other role searches omit Bcc evidence. MCP reports refuse `bcc:`, including inside saved queries; their other role searches and API-key queries include Bcc evidence. `person:` retains its any-role meaning.
+Browser searches refuse `bcc:` and structured `blind_copy` role filters. Their other role searches omit Bcc evidence. MCP reports refuse `bcc:`, including inside saved queries. API-key searches and other MCP role searches retain full evidence. `person:` retains its any-role meaning.
 
 While people evidence is incomplete, a version matches neither a role search nor its `NOT` unless an operator assertion establishes the role; an independent `OR` branch can still match it. Use the document event coverage report to inspect pending and failed work.
 

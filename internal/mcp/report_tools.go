@@ -191,10 +191,7 @@ func (r *reportTools) create(ctx context.Context, raw []byte) (reportReceiptOutp
 	}
 	for _, term := range request.Terms {
 		expression, err := query.ParseExpression(term.Expression, term.Syntax)
-		if err != nil {
-			return reportReceiptOutput{}, invalidToolArgumentsError()
-		}
-		if reportContainsBcc(expression) {
+		if err == nil && reportContainsBcc(expression) {
 			return reportReceiptOutput{}, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: "Bcc searches are unavailable here."}
 		}
 	}
