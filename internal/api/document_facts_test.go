@@ -128,3 +128,16 @@ func TestVersionPeopleProjectionHidesUnsupportedPeople(t *testing.T) {
 		t.Fatalf("full: %+v", full)
 	}
 }
+
+func TestVersionPeopleUnresolvedWithoutCandidateID(t *testing.T) {
+	t.Parallel()
+	f := store.DocumentPeopleFacts{Candidates: []store.VersionCandidate{{Occurrences: []store.VersionCandidateOccurrence{{Role: "author", Label: "Unknown"}}}}}
+	result := versionPeopleAPI(f, true)
+	raw, err := json.Marshal(result.Unresolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != `[{"raw_label":"Unknown","role":"author","evidence_kind":""}]` {
+		t.Fatalf("unresolved = %s", raw)
+	}
+}

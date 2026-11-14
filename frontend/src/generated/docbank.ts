@@ -9275,7 +9275,7 @@ export interface VersionPersonEdge {
 }
 
 export interface VersionUnresolvedName {
-  candidate_id: string;
+  candidate_id?: string;
   evidence_kind: string;
   raw_label: string;
   role: string;

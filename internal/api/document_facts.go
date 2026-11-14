@@ -138,7 +138,7 @@ type VersionPersonAssertion struct {
 type VersionUnresolvedName struct {
 	RawLabel     string `json:"raw_label"`
 	Role         string `json:"role"`
-	CandidateID  string `json:"candidate_id"`
+	CandidateID  string `json:"candidate_id,omitempty"`
 	EvidenceKind string `json:"evidence_kind"`
 }
 type VersionPeople struct {

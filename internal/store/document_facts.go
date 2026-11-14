@@ -157,6 +157,7 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 			sensitive bool
 		}
 		evidence := make(map[actorOccurrence]occurrenceEvidence)
+		var occurrences []actorOccurrence
 		var actorKeys []string
 		for _, event := range view.Events.Events {
 			for _, actor := range event.Actors {
@@ -166,14 +167,18 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 					kind, id = event.EvidenceKind, event.EvidenceID
 				}
 				key := actorOccurrence{actor.ActorKey, PersonCandidateOccurrence{ContentVersionID: versionID, Role: string(actor.Role), EvidenceKind: string(kind), EvidenceID: id}}
-				prior := evidence[key]
-				evidence[key] = occurrenceEvidence{label: (DocumentPeopleActor{DisplayName: actor.DisplayName, Address: actor.Address, ActorKey: actor.ActorKey}).DisplayLabel(), sensitive: prior.sensitive || event.Sensitive || actor.Sensitive}
+				prior, exists := evidence[key]
+				if !exists {
+					occurrences = append(occurrences, key)
+				}
+				evidence[key] = occurrenceEvidence{label: (DocumentPeopleActor{DisplayName: actor.DisplayName, Address: actor.Address, ActorKey: actor.ActorKey}).DisplayLabel(), sensitive: prior.sensitive || actor.Sensitive}
 			}
 		}
 		facts.Candidates, err = s.openCandidatesForVersion(ctx, tx, versionID, actorKeys)
 		if err != nil {
 			return DocumentPeopleFacts{}, err
 		}
+		matched := make(map[actorOccurrence]bool)
 		for i := range facts.Candidates {
 			c := &facts.Candidates[i]
 			kept := c.Occurrences[:0]
@@ -183,10 +188,18 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 				if !found || resolved[key] || safe && (o.Role == "blind_copy" || match.sensitive) {
 					continue
 				}
+				matched[key] = true
 				o.Label = match.label
 				kept = append(kept, o)
 			}
 			c.Occurrences = kept
+		}
+		for _, key := range occurrences {
+			match := evidence[key]
+			if matched[key] || resolved[key] || safe && (key.occurrence.Role == "blind_copy" || match.sensitive) {
+				continue
+			}
+			facts.Candidates = append(facts.Candidates, VersionCandidate{ActorKey: key.actorKey, Occurrences: []VersionCandidateOccurrence{{PersonCandidateOccurrence: key.occurrence, Label: match.label}}})
 		}
 	}
 	ids := map[string]bool{}

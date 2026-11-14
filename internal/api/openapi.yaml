@@ -22512,7 +22512,6 @@ components:
       required:
         - raw_label
         - role
-        - candidate_id
         - evidence_kind
       type: object
       x-go-type: api.VersionUnresolvedName

@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"encoding/json/v2"
 	"fmt"
 	"maps"
 	"strings"
@@ -157,7 +158,7 @@ func TestDocumentPeoplePagePreservesAllArraysWithinEnvelope(t *testing.T) {
 		people.Edges = append(people.Edges, edge)
 	}
 	people.Assertions = []api.VersionPersonAssertion{{AssertionID: "00000000-0000-4000-8000-000000000101", PersonID: people.Edges[0].PersonID, DisplayName: "Example Person", Role: "author", Action: "assert", RecordedAt: "2026-03-10T00:00:00Z", Revision: 1}}
-	people.Unresolved = []api.VersionUnresolvedName{{RawLabel: "Unresolved Person", Role: "author", CandidateID: "00000000-0000-4000-8000-000000000102", EvidenceKind: "source_metadata"}}
+	people.Unresolved = []api.VersionUnresolvedName{{RawLabel: "Unresolved Person", Role: "author", CandidateID: "00000000-0000-4000-8000-000000000102", EvidenceKind: "source_metadata"}, {RawLabel: "Without Candidate", Role: "author", EvidenceKind: "source_metadata"}}
 	var edges []api.VersionPersonEdge
 	var assertions []api.VersionPersonAssertion
 	var unresolved []api.VersionUnresolvedName
@@ -174,6 +175,14 @@ func TestDocumentPeoplePagePreservesAllArraysWithinEnvelope(t *testing.T) {
 		edges = append(edges, page.Edges...)
 		assertions = append(assertions, page.Assertions...)
 		unresolved = append(unresolved, page.Unresolved...)
+		if len(page.Unresolved) != 0 {
+			raw, err := json.Marshal(page)
+			require.NoError(t, err)
+			var wire any
+			require.NoError(t, json.Unmarshal(raw, &wire))
+			_, outputSchema := getDocumentPeopleSchemas()
+			assertSchemaAccepts(t, outputSchema, wire)
+		}
 		if page.NextOffset == nil {
 			break
 		}
