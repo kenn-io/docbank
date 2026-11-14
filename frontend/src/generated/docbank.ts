@@ -10537,21 +10537,6 @@ offset?: number;
 limit?: number;
 };
 
-export type CreateTermReportParams = {
-/**
- * People evidence allowed in report searches
- */
-people_disclosure?: CreateTermReportPeopleDisclosure;
-};
-
-export type CreateTermReportPeopleDisclosure = typeof CreateTermReportPeopleDisclosure[keyof typeof CreateTermReportPeopleDisclosure];
-
-
-export const CreateTermReportPeopleDisclosure = {
-  safe: 'safe',
-  full: 'full',
-} as const;
-
 export type SearchTextCoverageParams = {
 /**
  * @maxLength 16384
@@ -20927,26 +20912,18 @@ export const listTermReportHistory = async (params?: ListTermReportHistoryParams
 
 
 
-export const getCreateTermReportUrl = (params?: CreateTermReportParams,) => {
-  const normalizedParams = new URLSearchParams();
+export const getCreateTermReportUrl = () => {
 
-  Object.entries(params || {}).forEach(([key, value]) => {
 
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? 'null' : String(value))
-    }
-  });
 
-  const stringifiedParams = normalizedParams.toString();
 
-  return stringifiedParams.length > 0 ? `/api/v1/search-exports?${stringifiedParams}` : `/api/v1/search-exports`
+  return `/api/v1/search-exports`
 }
 
 /**
  * @summary Prepare a frozen search export
  */
-export const createTermReport = async (request: NonReadonly<Request>,
-    params?: CreateTermReportParams, options?: Parameters<typeof sessionJSON>[1]): Promise<Summary> => {
+export const createTermReport = async (request: NonReadonly<Request>, options?: Parameters<typeof sessionJSON>[1]): Promise<Summary> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -20962,7 +20939,7 @@ export const createTermReport = async (request: NonReadonly<Request>,
     }
     return headers;
   };
-return sessionJSON<Summary>(getCreateTermReportUrl(params),
+return sessionJSON<Summary>(getCreateTermReportUrl(),
   {
     ...options,
     method: 'POST',

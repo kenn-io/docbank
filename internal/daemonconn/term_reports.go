@@ -51,16 +51,12 @@ func validateTermReportSummary(summary report.Summary) error {
 	return nil
 }
 
-func (c *Connection) CreateTermReport(ctx context.Context, disclosure string, request report.Request) (report.Summary, error) {
-	if disclosure != "safe" && disclosure != "full" {
-		return report.Summary{}, errors.New("invalid people disclosure")
-	}
+func (c *Connection) CreateTermReport(ctx context.Context, request report.Request) (report.Summary, error) {
 	request, err := report.NormalizeRequest(request)
 	if err != nil {
 		return report.Summary{}, err
 	}
-	selection := apiclient.CreateTermReportQueryPeopleDisclosure(disclosure)
-	response, err := c.API().CreateTermReport(ctx, &apiclient.CreateTermReportRequestOptions{Query: &apiclient.CreateTermReportQuery{PeopleDisclosure: &selection}, Body: &request})
+	response, err := c.API().CreateTermReport(ctx, &apiclient.CreateTermReportRequestOptions{Body: &request})
 	if err != nil {
 		return report.Summary{}, err
 	}

@@ -37,51 +37,6 @@ function response(overrides: Record<string, unknown> = {}): Response {
 describe("query preview transport", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("accepts a merged person in the returned query and validates its fingerprint", async () => {
-    const requested = parseQuery(
-      JSON.stringify({
-        text: "report",
-        filters: { people: [{ person_id: tagID, roles: ["sender"] }] },
-      }),
-    );
-    const returned = parseQuery(
-      JSON.stringify({
-        ...requested,
-        filters: { people: [{ person_id: savedID, roles: ["sender"] }] },
-      }),
-    );
-    const fingerprint = await queryFingerprint(returned);
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(
-        response({ query: returned, query_fingerprint: fingerprint, dependencies: [] }),
-      );
-    await expect(previewQuery("session", requested, new AbortController().signal)).resolves.toEqual(
-      { query: returned, query_fingerprint: fingerprint, dependencies: [] },
-    );
-    fetchMock.mockResolvedValue(
-      response({
-        query: returned,
-        query_fingerprint: await queryFingerprint(requested),
-        dependencies: [],
-      }),
-    );
-    await expect(previewQuery("session", requested, new AbortController().signal)).rejects.toThrow(
-      /fingerprint/i,
-    );
-    const changed = { ...returned, text: "other" };
-    fetchMock.mockResolvedValue(
-      response({
-        query: changed,
-        query_fingerprint: await queryFingerprint(changed),
-        dependencies: [],
-      }),
-    );
-    await expect(previewQuery("session", requested, new AbortController().signal)).rejects.toThrow(
-      /query does not match/i,
-    );
-  });
-
   it("accepts a person query and its dependency", async () => {
     const personQuery = parseQuery(JSON.stringify({ syntax: "advanced", text: "person:Ada" }));
     const dependencies = [{ kind: "person", id: tagID, revision: 4 }];

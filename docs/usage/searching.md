@@ -245,14 +245,14 @@ Advanced QueryV1 expressions can select what a person did on a current document 
 | `from:` | Sender or organizer |
 | `to:` | Recipient, copied or attendee; full access also includes blind copy |
 | `cc:` | Copied |
-| `bcc:` | Blind copy; full-disclosure API-key access only |
+| `bcc:` | Blind copy; API-key access only |
 | `custodian:`, `participant:`, `organizer:`, `attendee:` | The named role |
 | `between:(A, B)` | Both people have a non-custodian role on the same version |
 | `mentions:` | Text contains the person's display name or a name alias |
 
 For example, `from:"Mara Okonkwo-Fell"`, `custodian:"Mara Okonkwo-Fell"`, and `between:("Mara Okonkwo-Fell", "Ines Albarrán")` are ordinary queries that can be saved and exported. `between:` accepts exactly two distinct people, separated by a comma or whitespace; invalid pairs report `between: needs two different people`. `mentions:` searches all distinct names as literal phrases and labels a matched result `Mentioned`.
 
-Browsers and MCP search exports refuse `bcc:` and structured `blind_copy` role filters. Their other role searches omit Bcc evidence. API-key queries use full disclosure by default. `person:` retains its any-role meaning.
+Browser searches refuse `bcc:` and structured `blind_copy` role filters. Their other role searches omit Bcc evidence. API-key and MCP queries include Bcc evidence. `person:` retains its any-role meaning.
 
 While people evidence is pending, a version matches neither a role search nor its `NOT` unless an operator assertion establishes the role; an independent `OR` branch can still match it. Use the document event coverage report to inspect pending and failed work.
 

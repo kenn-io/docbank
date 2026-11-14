@@ -27,7 +27,7 @@ func currentPhotoSourcePredicate(file, node, version string) string {
 func (c queryCompiler) compileRoleGroup(entries []query.PersonFilter) (compiledQueryFragment, error) {
 	fragment := c.compileRolePredicate(entries[0].PersonID, []string{entries[0].Roles[0]})
 	person := `COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?)`
-	fragment.sql = strings.ReplaceAll(fragment.sql, person, `json_extract(j.value,'$.person_id')`)
+	fragment.sql = strings.ReplaceAll(fragment.sql, person, `COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=json_extract(j.value,'$.person_id')),json_extract(j.value,'$.person_id'))`)
 	fragment.sql = strings.ReplaceAll(fragment.sql, `role IN (?)`, `role IN (SELECT value FROM json_each(j.value,'$.roles'))`)
 	raw, err := json.Marshal(entries)
 	if err != nil {

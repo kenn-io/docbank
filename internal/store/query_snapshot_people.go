@@ -152,7 +152,7 @@ func annotateMatchedRoles(ctx context.Context, q metadataQuerier, compiled Compi
 		return err
 	}
 	args := []any{string(encoded), document.PersonResolverFingerprint(), compiled.eventState.InputEpoch, compiled.eventState.ContractVersion, compiled.eventState.DeriverFingerprint}
-	found, err := q.QueryContext(ctx, `SELECT n.id,json_extract(e.value,'$.person_id'),json_extract(e.value,'$.role') FROM json_each(?) ids JOIN nodes n ON n.id=ids.value JOIN content_versions cv ON cv.version_id=n.current_version_id JOIN json_each((SELECT json_group_array(json_object('person_id',edge.person_id,'role',edge.role)) FROM `+currentDocumentPersonEdgesSQL("cv.version_id", compiled.safePeople)+` edge)) e`, args...)
+	found, err := q.QueryContext(ctx, `SELECT n.id,person.value,json_extract(e.value,'$.role') FROM json_each(?) ids JOIN nodes n ON n.id=ids.value JOIN content_versions cv ON cv.version_id=n.current_version_id JOIN json_each((SELECT json_group_array(json_object('person_id',edge.person_id,'role',edge.role)) FROM `+currentDocumentPersonEdgesSQL("cv.version_id", compiled.safePeople)+` edge)) e LEFT JOIN person_aliases pa ON pa.surviving_person_id=json_extract(e.value,'$.person_id') JOIN json_each(json_array(json_extract(e.value,'$.person_id'),COALESCE(pa.retired_person_id,json_extract(e.value,'$.person_id')))) person`, args...)
 	if err != nil {
 		return fmt.Errorf("loading matched roles: %w", err)
 	}

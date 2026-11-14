@@ -20,7 +20,7 @@ func TestTermReportClientReviewsAndDownloadsFrozenExport(t *testing.T) {
 	client, catalog := newClient(t, serverKey)
 	_, err := catalog.CreateFile(t.Context(), catalog.RootID(), "alpha.txt", strings.Repeat("a", 64), 1, "text/plain")
 	require.NoError(t, err)
-	summary, err := client.CreateTermReport(t.Context(), "full", report.Request{
+	summary, err := client.CreateTermReport(t.Context(), report.Request{
 		Version: 1, AllDocuments: true, Timezone: "UTC", CoverageMode: "available_only",
 		Terms: []report.Term{{Number: 1, Expression: "alpha", Syntax: "simple",
 			Dates: report.DateRange{Start: "2020-01-01", End: "2100-01-01"}}},
@@ -61,7 +61,7 @@ func TestTermReportClientReviewsAndDownloadsFrozenExport(t *testing.T) {
 
 func TestReleaseTermReport(t *testing.T) {
 	client, _ := newClient(t, serverKey)
-	summary, err := client.CreateTermReport(t.Context(), "full", report.Request{
+	summary, err := client.CreateTermReport(t.Context(), report.Request{
 		Version: 1, AllDocuments: true, Timezone: "UTC", CoverageMode: "available_only",
 		Terms: []report.Term{{Number: 1, Expression: "alpha", Syntax: "simple",
 			Dates: report.DateRange{Start: "2024-01-01", End: "2024-12-31"}}},

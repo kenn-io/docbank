@@ -32639,17 +32639,6 @@ paths:
       summary: List recent exports
     post:
       operationId: createTermReport
-      parameters:
-        - description: People evidence allowed in report searches
-          explode: false
-          in: query
-          name: people_disclosure
-          schema:
-            description: People evidence allowed in report searches
-            enum:
-              - safe
-              - full
-            type: string
       requestBody:
         content:
           application/json:

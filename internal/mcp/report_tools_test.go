@@ -87,7 +87,6 @@ func TestMCPReportRequestBoundary(t *testing.T) {
 	var calls atomic.Int32
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		assert.Equal(t, "safe", r.URL.Query().Get("people_disclosure"))
 		var request report.Request
 		assert.NoError(t, json.UnmarshalRead(r.Body, &request))
 		assert.Equal(t, "strict", request.CoverageMode)
@@ -375,7 +374,7 @@ func TestMCPReportResultMetadataLimit(t *testing.T) {
 		Documents: []report.Identity{{NodeID: member.NodeID, VersionID: member.VersionID, SHA256: member.SHA256}}},
 		Timezone: "UTC", CoverageMode: "available_only", Terms: []report.Term{{Number: 1, Expression: "alpha",
 			Syntax: "simple", Dates: report.DateRange{Start: "2020-01-01", End: "2100-01-01"}}}}
-	summary, err := f.connection.CreateTermReport(t.Context(), "full", request)
+	summary, err := f.connection.CreateTermReport(t.Context(), request)
 	require.NoError(t, err)
 	implementation := testImplementation()
 	implementation.Name = strings.Repeat("x", 1<<20)

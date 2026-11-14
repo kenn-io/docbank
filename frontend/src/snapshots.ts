@@ -11,7 +11,6 @@ import {
   normalizeCaptureDate,
   parseQuery,
   queryFingerprint as fingerprintQuery,
-  resolvesRequestedQuery,
   type Query,
   personRoles,
   type PersonRole,
@@ -537,11 +536,7 @@ function parseFacet(
   };
 }
 
-function parseQueryEvidence(
-  raw: Record<string, unknown>,
-  expectedQuery?: Query,
-  match: "exact" | "resolved" = "exact",
-) {
+function parseQueryEvidence(raw: Record<string, unknown>, expectedQuery?: Query) {
   const queryRaw = record(raw.query, "query");
   let decodedQuery: Query;
   try {
@@ -551,8 +546,7 @@ function parseQueryEvidence(
   }
   if (
     expectedQuery !== undefined &&
-    canonicalQuery(decodedQuery) !== canonicalQuery(expectedQuery) &&
-    (match === "exact" || !resolvesRequestedQuery(decodedQuery, expectedQuery))
+    canonicalQuery(decodedQuery) !== canonicalQuery(expectedQuery)
   ) {
     malformed("query does not match the request");
   }
@@ -634,11 +628,7 @@ function photoSearchStatus(raw: Record<string, unknown>): PhotoSearchStatus {
   return status;
 }
 
-async function parseSnapshot(
-  value: unknown,
-  expectedQuery?: Query,
-  match: "exact" | "resolved" = "exact",
-): Promise<SnapshotPage> {
+async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<SnapshotPage> {
   const raw = record(value, "receipt");
   keys(
     raw,
@@ -675,7 +665,7 @@ async function parseSnapshot(
   );
   if (raw.$schema !== undefined && string(raw.$schema, "receipt.$schema").length === 0)
     malformed("receipt.$schema is invalid");
-  const evidence = parseQueryEvidence(raw, expectedQuery, match);
+  const evidence = parseQueryEvidence(raw, expectedQuery);
   const decodedQuery = evidence.query;
   const queryFingerprint = string(raw.query_fingerprint, "query_fingerprint");
   if (
@@ -849,7 +839,7 @@ export async function createSnapshot(
     { query: JSON.parse(canonical), ...normalized },
     { session, signal },
   );
-  const result = await parseSnapshot(await boundedJSON(response), query, "resolved");
+  const result = await parseSnapshot(await boundedJSON(response), query);
   validateFirstPage(result, normalized);
   return result;
 }
@@ -878,7 +868,7 @@ export async function fetchPhotoTimeline(
   if (!Array.isArray(raw.facets) || raw.facets.length !== 1)
     malformed("timeline response is inconsistent");
   const facet = parseFacet(raw.facets[0], 0, true);
-  return { ...parseQueryEvidence(raw, query, "resolved"), facets: [facet] };
+  return { ...parseQueryEvidence(raw, query), facets: [facet] };
 }
 
 function sameAuthority(left: SnapshotPage, right: SnapshotPage): boolean {

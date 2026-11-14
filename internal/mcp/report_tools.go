@@ -191,7 +191,7 @@ func (r *reportTools) create(ctx context.Context, raw []byte) (reportReceiptOutp
 	summary, err := daemonProcessingStart(ctx, r.lease, func(
 		c *daemonconn.Connection,
 	) (report.Summary, error) {
-		return c.CreateTermReport(ctx, "safe", request)
+		return c.CreateTermReport(ctx, request)
 	})
 	return reportReceipt(summary), err
 }

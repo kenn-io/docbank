@@ -348,59 +348,6 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
       },
       parts,
     );
-
-    // Merge the provisioned Teodor into a new survivor. A query that still names
-    // the retired ID shows the survivor selected in the People facet.
-    const provisioned = await freeze(query, ["person_role"]);
-    const retiredID = provisioned?.facets[0]?.values.find(
-      (value) => value.label === "Teodor Vask",
-    )?.key;
-    if (!retiredID) throw new Error("Synthetic Teodor person missing");
-    const retired = JSON.parse(await run("people", "show", retiredID));
-    const survivor = JSON.parse(await run("people", "create", "Teodor Vask-Ruiz"));
-    await run(
-      "people",
-      "merge",
-      survivor.person_id,
-      retiredID,
-      "--revision",
-      String(survivor.revision),
-      "--absorbed-revision",
-      String(retired.revision),
-    );
-    const retiredQuery = advanced(query.text, {
-      people: [{ person_id: retiredID, roles: ["copied", "recipient"] }],
-    });
-    await expect
-      .poll(
-        async () => summary(await freeze(retiredQuery, ["person_role"])).people["Teodor Vask-Ruiz"],
-        { timeout: 120_000, intervals: [1_000] },
-      )
-      .toEqual([2, ["copied", "recipient"]]);
-
-    await open(retiredQuery);
-    const survivorSelected = people.getByRole("button", {
-      name: "Teodor Vask-Ruiz, Cc, Recipient, 2 documents, selected",
-    });
-    await captureStates(
-      page,
-      testInfo,
-      "merged-survivor-selected",
-      async () => {
-        await expect(
-          results.getByRole("cell", {
-            name: "/board-update.eml, people evidence: Cc, Sender",
-          }),
-        ).toBeVisible();
-        await expect(
-          results.getByRole("cell", {
-            name: "/budget-follow-up.eml, people evidence: Recipient, Sender",
-          }),
-        ).toBeVisible();
-        await expect(survivorSelected).toHaveAttribute("aria-pressed", "true");
-      },
-      parts,
-    );
   } catch (error) {
     failure = error;
     throw error;

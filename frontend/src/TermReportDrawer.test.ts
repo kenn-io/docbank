@@ -80,17 +80,14 @@ it.each(["", "/archive"])("downloads report CSV and bundles under mount %s", asy
   const formats: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
     const path = String(url);
-    if (init?.method === "GET" && path.startsWith(`${basePath}/api/v1/collections?`))
-      return json({ items: [], total: 0, offset: 0, limit: 100 });
-    if (init?.method === "GET" && path.startsWith(`${basePath}/api/v1/search-exports?`))
-      return json({ items: [], total: 0 });
     if (
-      init?.method === "POST" &&
-      path === `${basePath}/api/v1/search-exports`
-    ) {
-      expect(new Headers(init.headers).get("X-Docbank-Web-Session")).toBe("session");
+      init?.method === "GET" &&
+      (path.startsWith(`${basePath}/api/v1/collections?`) ||
+        path.startsWith(`${basePath}/api/v1/search-exports?`))
+    )
+      return json({ items: [], total: 0 });
+    if (init?.method === "POST" && path === `${basePath}/api/v1/search-exports`)
       return json(oldSummary);
-    }
     if (
       init?.method === "POST" &&
       path === `${basePath}/api/v1/search-exports/${oldSummary.id}/download`

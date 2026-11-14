@@ -1070,10 +1070,7 @@ All paths below start with `/api/v1/search-exports` and require authentication.
 | `GET /{id}/bundle` | API-key download of `search-export.zip`. |
 | `POST /{id}/download` | Browser-session JSON `{"format":"csv"}` or `{"format":"bundle"}`; returns a one-use download `url`. |
 
-Create accepts all-document, collection, or exact current-document scope. The
-optional `people_disclosure=safe|full` selects role evidence for API-key requests,
-defaulting to `full`. Browser requests always use `safe`; MCP search exports
-request `safe`. Safe searches refuse `bcc:` and `blind_copy` role filters.
+Create accepts all-document, collection, or exact current-document scope. Browser searches refuse `bcc:` and `blind_copy` role filters.
 The selected identities are admitted together in the same read observation as the
 report. Stale selection returns `409 report_selection_changed`. Use `/selection` to compare the full set before choosing replacements. Malformed
 selection or a wrong hash for a current version returns

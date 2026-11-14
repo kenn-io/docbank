@@ -256,37 +256,6 @@ describe("snapshot request-epoch state", () => {
     expect(states.filter((state) => state.status === "ready")).toHaveLength(1);
   });
 
-  it("adopts the receipt's resolved survivor", async () => {
-    const retired = "00000000-0000-4000-8000-0000000000aa";
-    const survivor = "00000000-0000-4000-8000-0000000000bb";
-    const requested = parseQuery(
-      JSON.stringify({
-        text: "synthetic",
-        filters: {
-          people: [
-            { person_id: retired, roles: ["recipient"] },
-            { person_id: survivor, roles: ["recipient"] },
-          ],
-        },
-      }),
-    );
-    const resolved = parseQuery(
-      JSON.stringify({
-        text: "synthetic",
-        filters: { people: [{ person_id: survivor, roles: ["recipient"] }] },
-      }),
-    );
-    const states: Readonly<SnapshotState>[] = [];
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(response(await receipt({ query: resolved })));
-    const session = new SnapshotSession("session", (state) => states.push(state));
-
-    await session.run(requested, { page_size: 50 });
-
-    const ready = states.at(-1)!;
-    expect(ready.status).toBe("ready");
-    expect(ready.query).toEqual(resolved);
-  });
-
   it("suppresses delayed work after dispose", async () => {
     const states: Readonly<SnapshotState>[] = [];
     const pending = deferred<Response>();

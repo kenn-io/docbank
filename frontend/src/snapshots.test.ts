@@ -110,41 +110,6 @@ describe("snapshot transport and receipt validation", () => {
     ).rejects.toThrow("rows[0].flag is invalid");
   });
 
-  it("rejects a receipt that changes more than resolved people identities", async () => {
-    const requested = parseQuery(
-      JSON.stringify({
-        filters: {
-          people: [{ person_id: "00000000-0000-4000-8000-0000000000aa", roles: ["recipient"] }],
-        },
-      }),
-    );
-    const changedRoles = parseQuery(
-      JSON.stringify({
-        filters: {
-          people: [{ person_id: "00000000-0000-4000-8000-0000000000bb", roles: ["sender"] }],
-        },
-      }),
-    );
-    const changedText = parseQuery(
-      JSON.stringify({
-        text: "other",
-        filters: {
-          people: [{ person_id: "00000000-0000-4000-8000-0000000000bb", roles: ["recipient"] }],
-        },
-      }),
-    );
-    for (const returned of [changedRoles, changedText, query]) {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-        jsonResponse(
-          await page({ query: returned, query_fingerprint: await queryFingerprint(returned) }),
-        ),
-      );
-      await expect(
-        createSnapshot("session", requested, { page_size: 50 }, new AbortController().signal),
-      ).rejects.toThrow("query does not match the request");
-    }
-  });
-
   it("accepts a person dependency", async () => {
     const dependencies = [{ kind: "person", id: tagID, revision: 4 }];
     const receipt = await page({ dependencies });

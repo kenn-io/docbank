@@ -1,11 +1,5 @@
 import * as generated from "./generated/docbank.js";
-import {
-  canonicalQuery,
-  parseQuery,
-  queryFingerprint,
-  resolvesRequestedQuery,
-  type Query,
-} from "./query.js";
+import { canonicalQuery, parseQuery, queryFingerprint, type Query } from "./query.js";
 
 export interface QueryPreview {
   query: Query;
@@ -49,6 +43,7 @@ export async function previewQuery(
   signal: AbortSignal,
 ): Promise<QueryPreview> {
   const canonical = canonicalQuery(query);
+  const expected = await queryFingerprint(query);
   const raw = await generated.parseQuery(JSON.parse(canonical), { session, signal });
 
   const receipt = object(raw, "receipt");
@@ -75,10 +70,8 @@ export async function previewQuery(
   } catch {
     malformed("query does not satisfy QueryV1");
   }
-  if (!resolvesRequestedQuery(decoded, query)) malformed("query does not match the request");
-  const expected = await queryFingerprint(decoded);
-  if (receipt.query_fingerprint !== expected)
-    malformed("fingerprint does not match the returned query");
+  if (canonicalQuery(decoded) !== canonical) malformed("query does not match the request");
+  if (receipt.query_fingerprint !== expected) malformed("fingerprint does not match the request");
   if (!Array.isArray(receipt.dependencies) || receipt.dependencies.length > 256) {
     malformed("dependencies must be an array of at most 256 identities");
   }

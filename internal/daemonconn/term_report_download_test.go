@@ -49,7 +49,7 @@ func TestTermReportWriteInvalidReply(t *testing.T) {
 				client := daemonconn.New(server.URL, "synthetic-key")
 				var err error
 				if operation == "create" {
-					_, err = client.CreateTermReport(t.Context(), "full", request)
+					_, err = client.CreateTermReport(t.Context(), request)
 				} else {
 					_, err = client.ReviseTermReport(t.Context(), id, nil)
 				}
@@ -75,7 +75,7 @@ func TestTermReportDownloadBindsSummaryAndPacket(t *testing.T) {
 	request := report.Request{Version: 1, AllDocuments: true, Timezone: "UTC", CoverageMode: "available_only",
 		Terms: []report.Term{{Number: 1, Expression: "alpha", Syntax: "simple",
 			Dates: report.DateRange{Start: "2020-01-01", End: "2100-01-01"}}}}
-	summary, err := client.CreateTermReport(t.Context(), "full", request)
+	summary, err := client.CreateTermReport(t.Context(), request)
 	require.NoError(t, err)
 	stream, err := client.OpenTermReport(t.Context(), summary.ID, "bundle")
 	require.NoError(t, err)
@@ -83,7 +83,7 @@ func TestTermReportDownloadBindsSummaryAndPacket(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, stream.Close())
 	request.Terms[0].Expression = "beta"
-	other, err := client.CreateTermReport(t.Context(), "full", request)
+	other, err := client.CreateTermReport(t.Context(), request)
 	require.NoError(t, err)
 	otherStream, err := client.OpenTermReport(t.Context(), other.ID, "bundle")
 	require.NoError(t, err)

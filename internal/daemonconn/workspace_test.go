@@ -31,7 +31,7 @@ func TestWorkspaceClientSavedRunAfterPersonMerge(t *testing.T) {
 	run, err := c.RunSavedQuery(ctx, saved.ID, saved.Revision, api.SavedQueryRunRequest{PageSize: 50})
 	require.NoError(t, err)
 	require.Equal(t, saved.Fingerprint, run.Run.QueryFingerprint)
-	require.NotEqual(t, run.Run.QueryFingerprint, run.Snapshot.QueryFingerprint)
+	require.Equal(t, run.Run.QueryFingerprint, run.Snapshot.QueryFingerprint)
 	require.Equal(t, saved.ID, run.Run.SavedQueryID)
 	require.Equal(t, saved.Revision, run.Run.SavedQueryRevision)
 	for _, tc := range []struct {

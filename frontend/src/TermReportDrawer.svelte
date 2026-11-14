@@ -367,11 +367,7 @@
         terms: draft.terms.map((term) => ({ ...term, dates: { ...term.dates } })),
         date_choices: [],
       };
-      const summary = await api.createTermReport(
-        request,
-        undefined,
-        { session: currentSession },
-      );
+      const summary = await api.createTermReport(request, { session: currentSession });
       if (epoch !== generation || currentSession !== session) return;
       if (submittedSelection === JSON.stringify(draft.selected_documents)) clearSelectionConflict();
       review = [];
