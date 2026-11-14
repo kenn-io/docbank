@@ -121,6 +121,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /people/by-id/{person_id}` | inspect one person, its identities, and its external UIDs | Implemented |
 | `PATCH /people/by-id/{person_id}` · `POST /people/by-id/{person_id}/retire` | rename or retire one person under `If-Match` | Implemented |
 | `POST /people/by-id/{person_id}/merge` · `POST /people/by-id/{person_id}/split` | merge or split person authority under revision and operation fences | Implemented |
+| `POST /versions/{version_id}/download-ticket` | issue a two-minute single-use original download capability for an exact vault, live file node, retained version, hash and size | Implemented |
 | `GET /versions/{version_id}` · `GET /versions/{version_id}/content` | inspect or stream one immutable version by stable UUID | Implemented |
 | `GET\|POST /versions/{version_id}/email` | read or synchronously ensure canonical email metadata for one immutable version | Implemented |
 | `GET /versions/{version_id}/email/generations/{generation_id}` | read one immutable email generation attached to that version | Implemented |
@@ -211,7 +212,7 @@ modification timestamps, such as nodes restored together.
 `GET /api/v1/search/text-coverage` takes the ordinary search filters and counts
 current files after an empty text search. `no_text` counts files a processing
 profile could make searchable, by `families` (`pdf`, `office`, `other`), and
-`pending` counts native-text files still queued for extraction.
+`pending` counts native-text files still queued for extraction. PDF page coverage reads at most 16 distinct evidence builds; `pdf_page_coverage_partial` marks incomplete coverage, and the PDF and page counts are lower bounds when it is true.
 
 Set `fuzzy=true` on ordinary `GET /search` to append bounded ASCII filename
 and path discovery after existing hits. Blank text returns `422 validation`;
@@ -783,6 +784,8 @@ current source visibility and serving evidence. Missing required coverage keeps
 the aggregate state `partial` even if another class is rebuilding. This read
 does not grant consent or start provider work.
 
+For `docbank-pdf-text`, `pages_without_text` lists source version IDs and one-based PDF page numbers without a text layer. Each response inspects at most 16 candidate builds and contains at most 8,192 page numbers. When `page_coverage` is `partial`, narrow the source fence to inspect more pages. `page_coverage_unavailable` reports evidence that could not be read. Text rendition receipts also expose `pages_without_text` for the source PDF independently of the selected profile, or `page_coverage: "unavailable"` when its evidence could not be read.
+
 `POST /search` uses JSON, separately from ordinary lexical `GET /search`:
 
 ```json
@@ -1043,6 +1046,7 @@ All paths below start with `/api/v1/search-exports` and require authentication.
 | Method and suffix | Request and response |
 | --- | --- |
 | `POST /` | Version 1 request, up to 8 MiB; returns a summary with state `complete` or `needs_review`. Counts and downloads are withheld in `needs_review`. |
+| `POST /selection` | Read-only comparison of exact document identities in one snapshot. Returns each selected identity with status `current`, `changed`, `trashed`, or `missing`, and current identity, path, and version dates when available. The request uses `{"documents":[...]}` and the same selection limits as report creation. Results are ordered by node ID. |
 | `GET /` | `offset` (0–100) and `limit` (1–50, default 20); returns `items` containing reusable `request` and `summary`, and `total`. Lists vault history, including expired receipts. |
 | `GET /{id}` | Returns the caller's live frozen summary. |
 | `DELETE /{id}` | API-key release of an owned live handle; returns 204 without a body. ID must be 48 lowercase hexadecimal characters. |
@@ -1054,11 +1058,17 @@ All paths below start with `/api/v1/search-exports` and require authentication.
 
 Create accepts all-document, collection, or exact current-document scope. The
 selected identities are admitted together in the same read observation as the
-report. Stale selection returns `409 report_selection_changed`. Malformed
+report. Stale selection returns `409 report_selection_changed`. Use `/selection` to compare the full set before choosing replacements. Malformed
 selection or a wrong hash for a current version returns
 `422 invalid_report_request`. Selected-member overflow returns `413 report_limit`,
 while collection-count overflow still returns 422. See the guide for null/empty
 semantics and identity requirements.
+
+The selection comparison accepts up to 8 MiB. An empty, malformed, or duplicate
+selection returns `422 invalid_report_request`; more than 50,000 identities
+returns `413 report_limit`. Comparison checks the full identity, so a wrong
+hash on the current version is `changed` here, although report creation rejects
+that hash as an invalid request.
 
 History pages are also limited to 16 MiB. Advance `offset` by the number of
 returned items when the byte limit shortens a page. Source deletion does not
@@ -1282,8 +1292,13 @@ configured-backup, verified-download, map-tile, and usage-event workflows.
 They are not another general API credential. Browser file bytes use the
 hidden `/api/daemon/web-upload` WebSocket instead. The page verifies a
 challenge proof over the upload secret before sending bytes, binds the socket
-to one session, and never reconnects it. An ordinary browser token is
-forbidden from `POST /api/v1/uploads`.
+to one session, and verifies a fresh proof when replacing it. The daemon checks
+for an existing matching upload before receiving bytes on an unconfirmed file
+retry. During stored-content verification, `verification_progress` messages
+carry the request ID and the increasing `verified_size` read from storage.
+Each message renews the browser's 60-second inactivity deadline; a stalled
+check ends without sending file bytes. An ordinary browser token is forbidden
+from `POST /api/v1/uploads`.
 
 Photo folders use `plan_photo_import` and `begin_photo_group` on `/api/daemon/web-upload`, with server grouping and hash verification before each group commits. The plan declares `expected_hash` as an empty string for files the browser has not hashed. When such a file's size equals an eligible earlier browser photo's, the server replies `photo_import_hashes_needed` with those `indexes`, and the browser resends the plan with only those hashes. Other files hash with their group, and the server pins each hash at its first attempt. The plan returns an `import_id` owned by that connection; each group must reference it and match the planned paths and sizes. The selection shares one ingest run. An optional `source_id` UUID in the plan is retained separately from the connection's plan ID and appears in browser provenance paths; omitting it creates a new source. Browser source IDs preserve provenance and grouping. Browser photo imports create files and deduplicate identical content; reusing a source ID and path with changed bytes creates or resolves to a separate node and preserves the existing node's content, revision, and current version. The browser saves the source ID, destination, picker kind, and a versioned SHA-256 digest over the sorted complete manifest of paths, sizes, and modified times through authenticated `/api/daemon/photo-import-checkpoint` routes before uploading. The vault keeps one private version-2 JSONL checkpoint per browser profile outside database, audit, and backup records. A persistent HttpOnly, SameSite=Strict cookie scoped to `docbank.localhost` locates it across fresh random daemon origins; the cookie carries no authorization. A header round trip confirms cookie persistence before saving or uploading. `GET /api/daemon/photo-import-checkpoint/header` reads only the bounded identity record, `GET /api/daemon/photo-import-checkpoint` reads the selection digest and picker kind, and `PUT /api/daemon/photo-import-checkpoint` compares the expected source and revision before atomic replacement or clearing. Both PUT fields are required and nullable: `expected: null` creates a checkpoint, and `next: null` clears it. Checkpoint requests allow 64 KiB; the upload plan allows at most 32,768 files in an 8 MiB declaration. Successful writes refresh the 365-day profile cookie. Clearing removes the checkpoint file. Minting a new profile cookie removes matching checkpoints and atomic temporary files older than 366 days. Host and Origin must match the current browser origin. Resume verifies the full selection and reuses that source ID on a fresh connection. A new selection gets a new source ID. Checkpoint replacement detects a competing tab, and confirmed completion clears it. Receipts include the ambiguity reason when pairing needs manual review; daemon-host path imports still require the master key. Control messages are limited by their `type`: 8 MiB for `plan_photo_import`, about 2.1 MiB for `begin_photo_group`, and 4 KiB for every other message. The server closes the socket with status 1009 when a message is over its limit.
 
@@ -1794,7 +1809,8 @@ trailer on a fixed-length message, and pre-reading a large loose or packed
 blob solely to populate a header would double physical I/O. Clients that need
 independent transfer proof hash the body themselves and compare both their
 digest and the trailer with the node's `blob_hash`. The version header must
-equal `current_version_id`.
+equal `current_version_id`. A failed copy or blob verification aborts the
+transfer without a digest trailer.
 
 `GET /nodes/{id}/versions` returns a bounded, newest-first page with `items`,
 `total`, `limit`, and `offset`. `GET /versions/{version_id}` resolves immutable
@@ -1809,6 +1825,25 @@ whole version. The `Content-Digest` trailer covers only the returned window.
 MCP clients verify the assembled bytes against the selected version's size
 and SHA-256. Every window streams from the beginning of the blob up to the
 requested bytes, so a window costs time in proportion to its offset.
+
+`POST /api/v1/versions/{version_id}/download-ticket` issues an original
+download ticket. It requires API authentication and a live file node.
+The request body binds `vault_id`, `node_id`, `blob_hash`,
+and `size` to the path's `version_id`. A retained older version is valid;
+a mismatched selection returns 409 `download_selection_stale`.
+The response contains `url`, `name`, and `expires_in_seconds: 120`.
+Issuance does not stage content and does not require the web app.
+
+The returned relative `/api/daemon/web-download/file?ticket=…` URL needs
+no API key. GET atomically consumes the ticket, rechecks its selection,
+and streams the whole original through the verified blob reader. Identity
+headers name the selected version, SHA-256 and size; the `Content-Digest`
+trailer covers the returned bytes. Verification or streaming failure fails the
+response. HEAD returns 405 without spending the ticket. One GET spends the
+ticket. Reuse or expiry returns 404
+`download_not_found`. Expiry and shutdown revoke capabilities without
+removing retained content. See [Download originals](../usage/mcp.md#download-originals)
+for the MCP relay, proxy setup, and transfer limits.
 
 `GET /nodes/{id}/provenance` returns the requested file node, its live path when
 one exists, and a bounded newest-ingest-first page from one read snapshot. Each

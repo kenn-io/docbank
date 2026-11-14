@@ -64,10 +64,14 @@ type toolDefinition struct {
 	destructive bool
 	// openWorld marks reads that reach a service outside the vault.
 	openWorld bool
+
+	// nonIdempotent marks reads that issue a fresh capability on each call.
+	nonIdempotent bool
 }
 
 var readToolDefinitions = []toolDefinition{
 	originalContentTool,
+	originalDownloadTool,
 	textCitationTool, checkAnswerTool, textOutlineTool, textSectionTool,
 	kataContextTool,
 	exportPlanTool, exportProblemsTool,
@@ -76,7 +80,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_vault_info", title: "Get vault info", description: "Summarize the selected vault without exposing its host path.", schemas: getVaultInfoSchemas},
 	{name: "list_changes", title: "List changes", description: "Without a cursor, return an empty page and the current checkpoint. Save next_cursor before scanning documents, then resume from it. Later calls return up to 500 changes; repeat while has_more is true.", schemas: listChangesSchemas},
 	{name: "list_documents", title: "List documents", description: "Page through current, live documents with bounded stable ordering.", schemas: listDocumentsSchemas},
-	{name: "answer_question", openWorld: true, title: "Answer question", description: "Return matched evidence and coverage without synthesizing an answer. Content passages require every prepared word and exact quoted phrase in one segment; common words may be dropped and regular word forms match. Use key terms. Open sources to verify excerpts. coverage_complete reports embedding coverage only; INCOMPLETE_COVERAGE can also reflect missing passage text or omitted evidence.", schemas: answerQuestionSchemas},
+	{name: "answer_question", openWorld: true, title: "Answer question", description: "Return matched evidence and coverage without synthesizing an answer. Content passages require every prepared word and exact quoted phrase in one segment; common words may be dropped and regular word forms match. Use key terms. Open sources to verify excerpts. coverage_complete includes embedding coverage and PDF pages without text. OCR can read scanned pages. Page gaps are bounded; narrow the scope or call get_processing_coverage with specific content_version_ids to list more. INCOMPLETE_COVERAGE can also reflect missing passage text or omitted evidence.", schemas: answerQuestionSchemas},
 	{name: "search_documents", title: "Search documents", description: "Search current live documents matching metadata filters, or an exact list of up to 4,096 versions, and report coverage. Omit profile to use answer_question's profile selection; results name the profile used. Skipped reasons can include failure codes and setup guidance. With no profile, auto may send query text to a query-capable provider under existing query-text consent and falls back to lexical results when search by meaning is unavailable. Opt-in reranking sends the query and bounded candidate excerpts to the configured provider under the profile's consent.", schemas: searchDocumentsSchemas, openWorld: true},
 	findConflictsTool,
 	{name: "get_document", title: "Get document", description: "Read metadata for one exact current document identity.", schemas: getDocumentSchemas},
@@ -84,7 +88,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "read_rendition_text", title: "Read rendition text", description: "Read a bounded Unicode window from an active sanitized Markdown rendition.", schemas: readRenditionTextSchemas},
 	{name: "get_processing_plan", title: "Get processing plan", description: "Preview the exact provider disclosure and consent state for one document version.", schemas: getProcessingPlanSchemas},
 	{name: "get_processing_status", title: "Get processing status", description: "Read the current state of one stable processing job.", schemas: getProcessingStatusSchemas},
-	{name: "get_processing_coverage", title: "Get processing coverage", description: "Read rendition and embedding coverage for an exact source fence.", schemas: getProcessingCoverageSchemas},
+	{name: "get_processing_coverage", title: "Get processing coverage", description: "Read rendition and embedding coverage for an exact source fence. Narrow the source fence to inspect more PDF pages when coverage is partial.", schemas: getProcessingCoverageSchemas},
 	{name: "get_package_import", title: "Get package import", description: "Read durable progress for one load-file import operation.", schemas: getPackageImportSchemas},
 	{name: "get_package_preflight", title: "Get package preflight", description: "Read one exact retained load-file package preflight.", schemas: getPackagePreflightSchemas},
 	{name: "list_package_preflight_diagnostics", title: "List package preflight diagnostics", description: "Page through bounded diagnostics for one retained package preflight.", schemas: listPackagePreflightDiagnosticsSchemas},
@@ -156,8 +160,13 @@ var publishBatesExportToolDefinition = toolDefinition{
 
 var exportBatesFileToolDefinition = toolDefinition{
 	name: "export_bates_file", title: "Export Bates file",
-	description: "Write a retained Bates PDF to a local path. The verification field reports stamped_labels for ordinary exports with a matching engine or recorded_bytes_and_numbers for numbered redactions and different recorded engine versions. Recorded-byte recovery does not recheck masks, approved text or rendered numbers.",
-	schemas:     exportBatesFileSchemas, write: true, destructive: true,
+	description: "Write a retained Bates PDF to a local path. " +
+		"Supply preparation_path, masks_path and review_path together as absolute MCP-host paths " +
+		"for full checking of a numbered redaction, reported as masks_text_and_numbers. " +
+		"Full checking never falls back to recovery. Without these paths, verification is " +
+		"stamped_labels for matching ordinary exports or recorded_bytes_and_numbers for numbered " +
+		"redactions and different recorded engines; recovery does not recheck masks, approved text or rendered numbers.",
+	schemas: exportBatesFileSchemas, write: true, destructive: true,
 }
 
 var exportLoadFilePackageToolDefinition = toolDefinition{
@@ -204,7 +213,7 @@ func toolCatalog(options ServerOptions) []*sdkmcp.Tool {
 		openWorld := definition.write || definition.openWorld
 		annotation := &sdkmcp.ToolAnnotations{
 			Title: definition.title, ReadOnlyHint: !definition.write,
-			IdempotentHint: !definition.write || definition.idempotent, DestructiveHint: &definition.destructive, OpenWorldHint: &openWorld,
+			IdempotentHint: (!definition.write || definition.idempotent) && !definition.nonIdempotent, DestructiveHint: &definition.destructive, OpenWorldHint: &openWorld,
 		}
 		tools = append(tools, &sdkmcp.Tool{
 			Name: definition.name, Title: definition.title, Description: definition.description,
@@ -450,6 +459,9 @@ func stableDomainError(err error) (string, int) {
 	if err == nil {
 		return "", 0
 	}
+	if full, ok := errors.AsType[*reviewedBatesError](err); ok {
+		return full.code, 0
+	}
 	var scope *daemonconn.SourceFenceScopeTooLargeError
 	switch {
 	case errors.As(err, &scope):
@@ -539,6 +551,8 @@ func stableDomainError(err error) (string, int) {
 		return facts.Code, 0
 	case "not_found":
 		return "not_found", 0
+	case "download_selection_stale":
+		return facts.Code, 0
 	case "stale_version":
 		return "stale_version", 0
 	case "processing_plan_changed":
@@ -573,6 +587,26 @@ func domainErrorMessage(code string) string {
 		return message
 	}
 	switch code {
+	case "redaction_busy":
+		return "Another full PDF check is running in this MCP process; retry when it finishes."
+	case "redaction_review_changed":
+		return "The review does not match these inputs or this numbered delivery; select the matching files."
+	case "redaction_verifier_version":
+		return "The preparation, review or recorded delivery requires a different verifier version."
+	case "redaction_integrity":
+		return "The retained PDF failed its recorded identity or reviewed masks, text and numbers check."
+	case "redaction_memory":
+		return "The MCP process exceeds the PDF verifier memory ceiling; retry when other work has finished."
+	case "redaction_canceled":
+		return "The full PDF check was canceled."
+	case "redaction_timeout":
+		return "The full PDF check exceeded the request deadline."
+	case "redaction_worker_timeout":
+		return "The PDF verifier exceeded its per-page deadline."
+	case "bates_local_io":
+		return "The local PDF could not be staged or saved; check the destination and available disk space."
+	case "download_selection_stale":
+		return "Refresh the live document and list_document_versions, then select its vault, node, version, hash and size again."
 	case "kata_token_invalid":
 		return "Kata token was rejected; configure Kata with that token"
 	case "kata_idempotency_deleted":
@@ -755,7 +789,7 @@ func sanitizedRPCError(_ error) *jsonrpc.Error {
 
 func logOperationError(logger *slog.Logger, operation string, err error) {
 	code, _ := stableDomainError(err)
-	if errors.Is(err, errExportLocalIO) || errors.Is(err, errReportLocalIO) {
+	if errors.Is(err, errExportLocalIO) || errors.Is(err, errReportLocalIO) || code == "bates_local_io" {
 		logger.Error("MCP operation failed", "operation", operation,
 			"error_code", code, "error", err)
 		return

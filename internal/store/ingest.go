@@ -160,7 +160,7 @@ func activeProvenanceMatchesTx(
 // ensureIngestRunTx publishes run once and rejects any identity collision with
 // different immutable fields. The returned boolean reports whether this
 // transaction inserted the record.
-func ensureIngestRunTx(ctx context.Context, tx *sql.Tx, run IngestRun) (bool, error) {
+func (s *Store) ensureIngestRunTx(ctx context.Context, tx *sql.Tx, run IngestRun) (bool, error) {
 	if err := validateIngestRecord(run.record); err != nil {
 		return false, fmt.Errorf("validating ingest run: %w", err)
 	}
@@ -182,7 +182,7 @@ func ensureIngestRunTx(ctx context.Context, tx *sql.Tx, run IngestRun) (bool, er
 	result, err := tx.ExecContext(ctx,
 		`INSERT INTO ingests (id, started_at, source_kind, source_desc)
 		 VALUES ($1, $2, $3, $4) ON CONFLICT(id) DO NOTHING`,
-		run.record.ID, run.record.StartedAt, run.record.SourceKind, run.record.SourceDesc)
+		run.record.ID, run.record.StartedAt, storedString(s.postgresSchema != "", run.record.SourceKind), storedString(s.postgresSchema != "", run.record.SourceDesc))
 	if err != nil {
 		return false, fmt.Errorf("recording ingest run: %w", err)
 	}
@@ -256,28 +256,18 @@ func resolveIngestCandidatesQueryTx(ctx context.Context, tx *sql.Tx, blobHash st
 	}
 }
 
-// resolveIngestNameTx applies the import idempotency rule: a live suffix
-// candidate of name under parentID that carries blobHash AND was originally
-// imported under this same basename means the file is already imported
-// (skip). Content alone is not enough: a real source file named like an
-// auto-suffixed copy ("report (2).pdf" next to an identical "report.pdf")
-// is a distinct file, not a re-import. Otherwise returns the smallest free
-// candidate name.
-func resolveIngestNameTx(
-	ctx context.Context,
-	tx *sql.Tx, parentID int64, name, blobHash, sourceKind, sourceRef string,
-) (string, int64, bool, error) {
+func findIngestMatchTx(ctx context.Context, tx *sql.Tx, parentID int64, name, blobHash, sourceKind, sourceRef string) (int64, error) {
 	base, ext := splitSuffix(name)
 	candidateQuery, err := resolveIngestCandidatesQueryTx(ctx, tx, blobHash, parentID)
 	if err != nil {
-		return "", 0, false, err
+		return 0, err
 	}
 	if candidateQuery != "" {
 		// Join active origins only after selecting matching content in this folder.
 		// The left join preserves the name fallback for unknown origins.
 		rows, err := tx.QueryContext(ctx, candidateQuery, blobHash, parentID)
 		if err != nil {
-			return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
+			return 0, fmt.Errorf("listing siblings for %q: %w", name, err)
 		}
 		defer func() { _ = rows.Close() }()
 
@@ -286,7 +276,7 @@ func resolveIngestNameTx(
 			var sibName string
 			var storedSourceKind, originalPath sql.NullString
 			if err := rows.Scan(&sibID, &sibName, &storedSourceKind, &originalPath); err != nil {
-				return "", 0, false, fmt.Errorf("scanning sibling: %w", err)
+				return 0, fmt.Errorf("scanning sibling: %w", err)
 			}
 			match := false
 			if sourceKind == "url" {
@@ -302,12 +292,31 @@ func resolveIngestNameTx(
 				match = err == nil && originName == name
 			}
 			if match {
-				return "", sibID, true, nil // already imported (possibly renamed)
+				return sibID, nil // already imported (possibly renamed)
 			}
 		}
 		if err := rows.Err(); err != nil {
-			return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
+			return 0, fmt.Errorf("listing siblings for %q: %w", name, err)
 		}
+	}
+	return 0, nil
+}
+
+// resolveIngestNameTx applies the import idempotency rule: a live suffix
+// candidate of name under parentID that carries blobHash AND was originally
+// imported under this same basename means the file is already imported
+// (skip). Content alone is not enough: a real source file named like an
+// auto-suffixed copy ("report (2).pdf" next to an identical "report.pdf")
+// is a distinct file, not a re-import. Otherwise returns the smallest free
+// candidate name.
+func resolveIngestNameTx(
+	ctx context.Context,
+	tx *sql.Tx, parentID int64, name, blobHash, sourceKind, sourceRef string,
+) (string, int64, bool, error) {
+	base, ext := splitSuffix(name)
+	existingID, err := findIngestMatchTx(ctx, tx, parentID, name, blobHash, sourceKind, sourceRef)
+	if err != nil || existingID != 0 {
+		return "", existingID, existingID != 0, err
 	}
 	// Two disjoint index ranges cover the original name and every possible
 	// suffix. The upper bound ends in ')' (the byte after '('), so arbitrary
@@ -344,6 +353,34 @@ func resolveIngestNameTx(
 			return suffixedName(base, ext, n), 0, false, nil
 		}
 	}
+}
+
+// FindUploadedFile finds an existing upload without changing vault authority.
+func (s *Store) FindUploadedFile(ctx context.Context, parentID int64, name, hash string, size int64) (Node, bool, error) {
+	name, err := NormalizeName(name)
+	if err != nil {
+		return Node{}, false, err
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return Node{}, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := liveDirTx(ctx, tx, parentID); err != nil {
+		return Node{}, false, err
+	}
+	id, err := findIngestMatchTx(ctx, tx, parentID, name, hash, "upload", "")
+	if err != nil || id == 0 {
+		return Node{}, false, err
+	}
+	node, err := nodeByIDTx(ctx, tx, id)
+	if err != nil {
+		return Node{}, false, err
+	}
+	if node.Size != size {
+		return Node{}, false, nil
+	}
+	return node, true, nil
 }
 
 // IngestFile imports one already-durable blob as a node under parentID,
@@ -580,7 +617,7 @@ func (s *Store) ingestFileTx(
 			identity, node_id, ingest_id, original_path, original_mtime, supersedes
 		 ) VALUES ($1, $2, $3, $4, $5, $6)`,
 		provenance.Identity, provenance.NodeID, provenance.IngestID,
-		provenance.OriginalPath, provenance.OriginalMTime, provenance.Supersedes); err != nil {
+		storedString(s.postgresSchema != "", provenance.OriginalPath), provenance.OriginalMTime, provenance.Supersedes); err != nil {
 		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("recording provenance for %q: %w", finalName, err)
 	}
 	binding := ProvenanceVersionBinding{
@@ -595,7 +632,7 @@ func (s *Store) ingestFileTx(
 	if run.operationalWatch {
 		if err := insertWatchSourceTx(
 			ctx, tx, run.record.SourceDesc, provenance.OriginalPath,
-			receipt.Node.ID, blobHash, size,
+			receipt.Node.ID, blobHash, size, s.postgresSchema != "",
 		); err != nil {
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 		}
@@ -664,7 +701,7 @@ func (s *Store) ingestFileTx(
 
 func insertWatchSourceTx(
 	ctx context.Context,
-	tx *sql.Tx, watchName, sourceRef string, nodeID int64, blobHash string, size int64,
+	tx *sql.Tx, watchName, sourceRef string, nodeID int64, blobHash string, size int64, postgres bool,
 ) error {
 	record := metadataWatchSource{
 		Type: metadataWatchSourceType, WatchName: watchName, SourceRef: sourceRef,
@@ -676,7 +713,7 @@ func insertWatchSourceTx(
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO watch_sources(watch_name,source_ref,node_id,blob_hash,size)
 		 VALUES($1,$2,$3,$4,$5)`,
-		watchName, sourceRef, nodeID, blobHash, size,
+		storedString(postgres, watchName), storedString(postgres, sourceRef), nodeID, blobHash, size,
 	); err != nil {
 		return fmt.Errorf("recording watched source %q/%q: %w", watchName, sourceRef, err)
 	}

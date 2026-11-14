@@ -29,7 +29,7 @@ func TestMailboxJobsNewestFirstWithStablePages(t *testing.T) {
 		j, err := s.BeginMailboxJob(ctx, c.Owner, MailboxJobRequest{ID: item.id, ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: MailboxSettings{DestinationID: s.RootID()}})
 		require.NoError(t, err)
 		j.StartedAt = item.started
-		require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error { return saveMailboxJob(ctx, tx, j, false) }))
+		require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error { return saveMailboxJob(ctx, tx, j, false, false) }))
 		if j.ID == "newer-b" {
 			_, err = s.ClaimMailboxJob(ctx)
 			require.NoError(t, err)

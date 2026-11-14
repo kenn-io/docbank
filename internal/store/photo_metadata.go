@@ -207,7 +207,7 @@ var (
 
 // importPhotoSettingsWithoutSequence defaults an absent sequence while preserving
 // explicit null and numeric values through the current typed codec.
-func importPhotoSettingsWithoutSequence(ctx context.Context, tx *sql.Tx, raw jsontext.Value) error {
+func importPhotoSettingsWithoutSequence(ctx context.Context, tx *sql.Tx, raw jsontext.Value, postgres bool) error {
 	required, nullable := photoSettingsMetadata.fields()
 	required = slices.DeleteFunc(slices.Clone(required), func(field string) bool { return field == "representative_sequence" })
 	if err := requireMetadataFields(raw, required, nullable); err != nil {
@@ -215,7 +215,7 @@ func importPhotoSettingsWithoutSequence(ctx context.Context, tx *sql.Tx, raw jso
 	}
 	codec := *photoSettingsMetadata
 	codec.record.RepresentativeSequence = new(int64(0))
-	return codec.importRecord(ctx, tx, raw)
+	return codec.importRecord(ctx, tx, raw, postgres)
 }
 
 // photoMetadataTables exports the photo records in dependency order.
@@ -225,7 +225,7 @@ var photoMetadataTables = []metadataRecordCodec{
 	newMetadataTable(metadataTable[metadataPhotoSetMember]{record: metadataPhotoSetMember{Type: "photo_set_member"}, table: "photo_set_members", suffix: "ORDER BY set_id,added_at,asset_id", validate: validatePhotoSetMemberRecord, checkExport: true}),
 	newMetadataTable(metadataTable[metadataPhotoReceipt]{record: metadataPhotoReceipt{Type: metadataPhotoReceiptType},
 		table: "photo_change_receipts", suffix: "ORDER BY receipt_id", validate: validatePhotoReceiptMetadataRecord,
-		checkExport: true}),
+		checkExport: true, insert: importPhotoReceipt}),
 }
 
 // photoMetadataTablesV28 exports the photo records of v0.15.0, which predate
@@ -396,7 +396,7 @@ func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier, version
 	if version >= photoCheckoutsStorageSchemaVersion {
 		var invalid int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_files f LEFT JOIN provenance p ON p.identity=f.source_provenance_identity LEFT JOIN ingests i ON i.id=p.ingest_id
- WHERE f.source_provenance_identity IS NOT NULL AND (p.identity IS NULL OR p.node_id<>f.node_id OR LOWER(i.source_kind) LIKE 'embedded:%')`).Scan(&invalid); err != nil {
+ WHERE f.source_provenance_identity IS NOT NULL AND (p.identity IS NULL OR p.node_id<>f.node_id OR `+(provenanceSQLDialect{postgres: postgres}).embedded("i.source_kind")+`)`).Scan(&invalid); err != nil {
 			return err
 		}
 		if invalid != 0 {
@@ -429,8 +429,8 @@ func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier, version
 			return err
 		}
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_change_receipts r
- LEFT JOIN photo_checkouts c ON c.checkout_id=`+j.text("r.after_json", "checkout_id")+`
- LEFT JOIN photo_checkout_entries e ON e.checkout_id=c.checkout_id AND e.file_id=`+j.text("r.after_json", "file_id")+` AND e.asset_id=r.asset_id
+ LEFT JOIN photo_checkouts c ON c.checkout_id=`+j.text(j.receiptColumn("r"), "checkout_id")+`
+ LEFT JOIN photo_checkout_entries e ON e.checkout_id=c.checkout_id AND e.file_id=`+j.text(j.receiptColumn("r"), "file_id")+` AND e.asset_id=r.asset_id
  WHERE r.operation='checkout_commit' AND (c.checkout_id IS NULL OR e.file_id IS NULL)`).Scan(&orphans); err != nil {
 			return fmt.Errorf("checking checkout commit receipt references: %w", err)
 		}
@@ -489,11 +489,11 @@ func validatePhotoAuthoredReferences(ctx context.Context, q metadataQuerier, pos
 	}
 
 	err = q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_change_receipts r
- LEFT JOIN photo_files sidecar ON sidecar.file_id=`+j.text("r.after_json", "sidecar.file_id")+`
- LEFT JOIN content_versions version ON version.version_id=`+j.text("r.after_json", "sidecar.version_id")+`
+ LEFT JOIN photo_files sidecar ON sidecar.file_id=`+j.text(j.receiptColumn("r"), "sidecar.file_id")+`
+ LEFT JOIN content_versions version ON version.version_id=`+j.text(j.receiptColumn("r"), "sidecar.version_id")+`
  WHERE r.operation='authored_sidecar' AND
- (sidecar.file_id IS NULL OR sidecar.node_id<>`+j.number("r.after_json", "sidecar.node_id")+`
- OR (version.version_id IS NOT NULL AND version.node_id<>`+j.number("r.after_json", "sidecar.node_id")+`))`).Scan(&invalid)
+ (sidecar.file_id IS NULL OR sidecar.node_id<>`+j.number(j.receiptColumn("r"), "sidecar.node_id")+`
+ OR (version.version_id IS NOT NULL AND version.node_id<>`+j.number(j.receiptColumn("r"), "sidecar.node_id")+`))`).Scan(&invalid)
 	if err != nil {
 		return err
 	}
@@ -501,7 +501,7 @@ func validatePhotoAuthoredReferences(ctx context.Context, q metadataQuerier, pos
 		return errors.New("authored receipt sidecar provenance references missing or different nodes")
 	}
 	err = q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_change_receipts r
- LEFT JOIN photo_change_receipts original ON original.receipt_id=`+j.text("r.after_json", "undo_of")+`
+ LEFT JOIN photo_change_receipts original ON original.receipt_id=`+j.text(j.receiptColumn("r"), "undo_of")+`
  WHERE r.operation='authored_undo' AND (original.receipt_id IS NULL OR original.receipt_id=r.receipt_id OR original.operation NOT IN ('authored','authored_undo','authored_sidecar'))`).Scan(&invalid)
 	if err != nil {
 		return err
@@ -513,22 +513,22 @@ func validatePhotoAuthoredReferences(ctx context.Context, q metadataQuerier, pos
 	// original's outcomes once. A live settled boundary must exist; Outside
 	// snapshots retain their semantics after their bytes have been pruned.
 	if err := q.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM photo_change_receipts r
- LEFT JOIN photo_files f ON f.file_id=`+j.text("r.after_json", "file_id")+`
- LEFT JOIN photo_files sf ON sf.file_id=`+j.text("r.after_json", "sync.sidecar.file_id")+`
- LEFT JOIN content_versions settled ON settled.version_id=`+j.text("r.after_json", "sync.settled.version_id")+`
- WHERE r.operation='xmp_sync' AND (f.file_id IS NULL OR f.node_id<>`+j.number("r.after_json", "node_id")+`
- OR `+j.kind("r.after_json", "sync")+` IS NOT NULL AND sf.file_id IS NOT NULL AND sf.node_id<>`+j.number("r.after_json", "sync.sidecar.node_id")+`
+ LEFT JOIN photo_files f ON f.file_id=`+j.text(j.receiptColumn("r"), "file_id")+`
+ LEFT JOIN photo_files sf ON sf.file_id=`+j.text(j.receiptColumn("r"), "sync.sidecar.file_id")+`
+ LEFT JOIN content_versions settled ON settled.version_id=`+j.text(j.receiptColumn("r"), "sync.settled.version_id")+`
+ WHERE r.operation='xmp_sync' AND (f.file_id IS NULL OR f.node_id<>`+j.number(j.receiptColumn("r"), "node_id")+`
+ OR `+j.kind(j.receiptColumn("r"), "sync")+` IS NOT NULL AND sf.file_id IS NOT NULL AND sf.node_id<>`+j.number(j.receiptColumn("r"), "sync.sidecar.node_id")+`
  OR sf.sidecar_of_file_id=f.file_id AND settled.version_id IS NULL
- OR settled.node_id<>`+j.number("r.after_json", "sync.sidecar.node_id")+`
+ OR settled.node_id<>`+j.number(j.receiptColumn("r"), "sync.sidecar.node_id")+`
  OR EXISTS(SELECT 1 FROM `+j.receiptArray("sync.outside")+` o JOIN content_versions outside ON outside.version_id=`+j.text("o.value", "version_id")+`
- WHERE outside.node_id<>`+j.number("r.after_json", "sync.sidecar.node_id")+`)))`).Scan(&invalid); err != nil {
+ WHERE outside.node_id<>`+j.number(j.receiptColumn("r"), "sync.sidecar.node_id")+`)))`).Scan(&invalid); err != nil {
 		return fmt.Errorf("checking XMP receipt references: %w", err)
 	}
 	if invalid != 0 {
 		return errors.New("XMP receipts reference missing or different nodes")
 	}
 	if err := q.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT 1 FROM photo_change_receipts WHERE operation='xmp_sync'
- GROUP BY `+j.text("after_json", "file_id")+` HAVING count(*)>1)`).Scan(&invalid); err != nil {
+ GROUP BY `+j.text(j.receiptColumn(""), "file_id")+` HAVING count(*)>1)`).Scan(&invalid); err != nil {
 		return fmt.Errorf("checking XMP receipt sequence: %w", err)
 	}
 	if invalid != 0 {
@@ -625,14 +625,16 @@ type metadataHiddenLockout struct {
 	LockedUntil string `json:"locked_until" db:"locked_until"`
 }
 
+var photoHiddenFailureMetadata = newMetadataTable(metadataTable[metadataHiddenFailure]{record: metadataHiddenFailure{Type: "photo_hidden_failure"}, table: "photo_hidden_failures", suffix: "ORDER BY failure_id", validate: func(v metadataHiddenFailure) error {
+	if v.ID < 1 {
+		return errors.New("invalid hidden failure ID")
+	}
+	return validateMetadataTime("hidden failure occurred_at", v.OccurredAt)
+}, checkExport: true})
+
 var photoHiddenMetadataTables = []metadataRecordCodec{
 	newMetadataTable(metadataTable[metadataHiddenCredential]{record: metadataHiddenCredential{Type: "photo_hidden_credential", Singleton: 1}, table: "photo_hidden_credentials", suffix: "WHERE singleton=1", validate: func(v metadataHiddenCredential) error { _, _, err := hiddenHashParts(v.Hash); return err }, checkExport: true}),
-	newMetadataTable(metadataTable[metadataHiddenFailure]{record: metadataHiddenFailure{Type: "photo_hidden_failure"}, table: "photo_hidden_failures", suffix: "ORDER BY failure_id", validate: func(v metadataHiddenFailure) error {
-		if v.ID < 1 {
-			return errors.New("invalid hidden failure ID")
-		}
-		return validateMetadataTime("hidden failure occurred_at", v.OccurredAt)
-	}, checkExport: true}),
+	photoHiddenFailureMetadata,
 	newMetadataTable(metadataTable[metadataHiddenLockout]{record: metadataHiddenLockout{Type: "photo_hidden_lockout", Singleton: 1}, table: "photo_hidden_lockout", suffix: "WHERE singleton=1", validate: func(v metadataHiddenLockout) error {
 		return validateMetadataTime("hidden lockout locked_until", v.LockedUntil)
 	}, checkExport: true}),
@@ -641,3 +643,35 @@ var photoHiddenMetadataTables = []metadataRecordCodec{
 var photoAssetMetadataBeforeHidden = newMetadataTable(metadataTable[metadataPhotoAssetBeforeHidden]{record: metadataPhotoAssetBeforeHidden{Type: metadataPhotoAssetType}, table: "photo_assets", suffix: "ORDER BY asset_id", validate: func(v metadataPhotoAssetBeforeHidden) error {
 	return validatePhotoAssetMetadataRecord(metadataPhotoAsset{Type: v.Type, AssetID: v.AssetID, Kind: v.Kind, Revision: v.Revision, ExcludedAt: v.ExcludedAt, DisplayFileID: v.DisplayFileID, DisplayOverrideFileID: v.DisplayOverrideFileID, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt})
 }, checkExport: true})
+
+func importPhotoReceipt(ctx context.Context, tx *sql.Tx, v metadataPhotoReceipt, postgres bool) error {
+	if err := insertMetadataRecord(ctx, tx, "photo_change_receipts", v, postgres); err != nil {
+		return err
+	}
+	if postgres {
+		version, err := photoReceiptFaceVersion(v.Operation, v.BeforeJSON)
+		if err != nil {
+			return err
+		}
+		query, err := photoReceiptQueryJSON(v.Operation, v.AfterJSON)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE photo_change_receipts SET face_version_id=$1,query_json=$2 WHERE receipt_id=$3`, nullableString(version), query, v.ReceiptID)
+		return err
+	}
+	return nil
+}
+
+// PostgreSQL JSON operators decode all strings in a receipt and reject NUL.
+// Keep the structural lookup separate from the unmodified receipt evidence.
+func photoReceiptFaceVersion(operation, before string) (string, error) {
+	if operation != "face_decision" {
+		return "", nil
+	}
+	var state PhotoFaceDecisionState
+	if err := json.Unmarshal([]byte(before), &state); err != nil {
+		return "", err
+	}
+	return state.VersionID, nil
+}

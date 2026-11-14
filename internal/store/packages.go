@@ -319,15 +319,15 @@ func (s *Store) sealCollectionSnapshotTx(ctx context.Context, tx *sql.Tx, reques
 		if !errors.Is(loadErr, ErrNotFound) {
 			return loadErr
 		}
-		if err := validateSnapshotMembersTx(ctx, tx, request); err != nil {
+		if err := validateSnapshotMembersTx(ctx, tx, request, s.postgresSchema != ""); err != nil {
 			return err
 		}
-		return insertCollectionSnapshotTx(ctx, tx, s.vaultID, result, request.Members)
+		return insertCollectionSnapshotTx(ctx, tx, s.vaultID, result, request.Members, s.postgresSchema != "")
 	}()
 	return result, err
 }
 
-func validateSnapshotMembersTx(ctx context.Context, tx metadataQuerier, request SnapshotSealRequest) error {
+func validateSnapshotMembersTx(ctx context.Context, tx metadataQuerier, request SnapshotSealRequest, postgres bool) error {
 	for _, member := range request.Members {
 		var hash string
 		var size int64
@@ -379,7 +379,7 @@ func validateSnapshotMembersTx(ctx context.Context, tx metadataQuerier, request 
 		return nil
 	}
 	matched := make(map[string]bool, len(request.SourceCollectionIDs))
-	if err := matchSnapshotSourcesBatch(ctx, tx, request.SourceCollectionIDs, matched, request.Members); err != nil {
+	if err := matchSnapshotSourcesBatch(ctx, tx, request.SourceCollectionIDs, matched, request.Members, postgres); err != nil {
 		return err
 	}
 	for _, id := range request.SourceCollectionIDs {
@@ -402,11 +402,11 @@ func snapshotPDFRepresentationValid(member CollectionSnapshotMember) bool {
 	return false
 }
 
-func insertCollectionSnapshotTx(ctx context.Context, tx *sql.Tx, vaultID string, snapshot CollectionSnapshot, members []CollectionSnapshotMember) error {
+func insertCollectionSnapshotTx(ctx context.Context, tx *sql.Tx, vaultID string, snapshot CollectionSnapshot, members []CollectionSnapshotMember, postgres bool) error {
 	if err := insertCollectionSnapshotHeaderTx(ctx, tx, vaultID, snapshot); err != nil {
 		return err
 	}
-	return insertCollectionSnapshotMembersTx(ctx, tx, snapshot.SnapshotID, members)
+	return insertCollectionSnapshotMembersTx(ctx, tx, snapshot.SnapshotID, members, postgres)
 }
 
 func insertCollectionSnapshotHeaderTx(ctx context.Context, tx *sql.Tx, vaultID string, snapshot CollectionSnapshot) error {
@@ -434,7 +434,7 @@ func insertCollectionSnapshotHeaderTx(ctx context.Context, tx *sql.Tx, vaultID s
 	return nil
 }
 
-func insertCollectionSnapshotMembersTx(ctx context.Context, tx *sql.Tx, snapshotID string, members []CollectionSnapshotMember) error {
+func insertCollectionSnapshotMembersTx(ctx context.Context, tx *sql.Tx, snapshotID string, members []CollectionSnapshotMember, postgres bool) error {
 	for _, member := range members {
 		representations := member.Representations
 		member.Representations = nil
@@ -450,16 +450,7 @@ func insertCollectionSnapshotMembersTx(ctx context.Context, tx *sql.Tx, snapshot
 		if member.SelectedSourcePages != nil {
 			selected = selectedJSON
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO collection_snapshot_members(
-			snapshot_id,ordinal,occurrence_id,node_id,content_version_id,blob_sha256,size,
-			family_id,parent_occurrence_id,family_order,display_name,frozen_fields_json,
-			document_kind,selected_source_pages_json,selected_pdf_sha256,source_page_count,
-			canonical_json,checksum
-		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`, snapshotID, member.Ordinal,
-			member.OccurrenceID, member.NodeID, member.ContentVersionID, member.BlobSHA256,
-			member.Size, member.FamilyID, member.ParentOccurrenceID, member.FamilyOrder,
-			member.DisplayName, member.FrozenFieldsJSON, member.DocumentKind, selected,
-			member.SelectedPDFSHA256, member.SourcePageCount, encoded, checksum)
+		err = insertSnapshotMemberTx(ctx, tx, snapshotID, member, selected, encoded, checksum, postgres)
 		if err != nil {
 			return err
 		}
@@ -472,9 +463,9 @@ func insertCollectionSnapshotMembersTx(ctx context.Context, tx *sql.Tx, snapshot
 				snapshot_id,occurrence_id,role,ordinal,status,text_authority,content_version_id,
 				blob_sha256,size,media_type,page_number,verified_page_count,rendition_build_id,
 				lexical_generation_id,recipe_sha256,canonical_json,checksum
-			) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`, snapshotID, rep.OccurrenceID,
-				rep.Role, rep.Ordinal, rep.Status, rep.TextAuthority, rep.ContentVersionID,
-				rep.BlobSHA256, rep.Size, rep.MediaType, rep.PageNumber, rep.VerifiedPageCount,
+			) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`, snapshotID, storedString(postgres, rep.OccurrenceID),
+				storedString(postgres, rep.Role), rep.Ordinal, rep.Status, rep.TextAuthority, rep.ContentVersionID,
+				rep.BlobSHA256, rep.Size, storedString(postgres, rep.MediaType), rep.PageNumber, rep.VerifiedPageCount,
 				rep.RenditionBuildID, rep.LexicalGenerationID, rep.RecipeSHA256, encoded, checksum)
 			if err != nil {
 				return err
@@ -531,20 +522,20 @@ func (s *Store) SnapshotMembers(ctx context.Context, id string, afterOrdinal, li
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	members, err := loadSnapshotMembersTx(ctx, tx, id, afterOrdinal, limit)
+	members, err := loadSnapshotMembersTx(ctx, tx, id, afterOrdinal, limit, s.postgresSchema != "")
 	if err != nil {
 		return nil, err
 	}
 	return members, tx.Commit()
 }
 
-func loadSnapshotMembersTx(ctx context.Context, tx metadataQuerier, id string, afterOrdinal, limit int) ([]CollectionSnapshotMember, error) {
+func loadSnapshotMembersTx(ctx context.Context, tx metadataQuerier, id string, afterOrdinal, limit int, postgres bool) ([]CollectionSnapshotMember, error) {
 	members, err := loadSnapshotMemberRows(ctx, tx, id, afterOrdinal, limit)
 	if err != nil {
 		return nil, err
 	}
 	for i := range members {
-		members[i].Representations, err = loadSnapshotRepresentationRows(ctx, tx, id, members[i].OccurrenceID)
+		members[i].Representations, err = loadSnapshotRepresentationRows(ctx, tx, id, members[i].OccurrenceID, postgres)
 		if err != nil {
 			return nil, err
 		}
@@ -589,9 +580,9 @@ func loadSnapshotMemberRows(ctx context.Context, tx metadataQuerier, id string, 
 	return members, nil
 }
 
-func loadSnapshotRepresentationRows(ctx context.Context, tx metadataQuerier, snapshotID, occurrenceID string) ([]CollectionSnapshotRepresentation, error) {
+func loadSnapshotRepresentationRows(ctx context.Context, tx metadataQuerier, snapshotID, occurrenceID string, postgres bool) ([]CollectionSnapshotRepresentation, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT canonical_json,checksum FROM collection_snapshot_representations
-		WHERE snapshot_id=$1 AND occurrence_id=$2 ORDER BY role,ordinal`, snapshotID, occurrenceID)
+		WHERE snapshot_id=$1 AND occurrence_id=$2 ORDER BY role,ordinal`, snapshotID, storedString(postgres, occurrenceID))
 	if err != nil {
 		return nil, err
 	}

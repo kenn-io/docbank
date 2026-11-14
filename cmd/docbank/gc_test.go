@@ -1,0 +1,35 @@
+package main
+
+import (
+	"encoding/json/v2"
+	"net/http"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/docbank/internal/api"
+)
+
+func TestGCPackedRepackGuidance(t *testing.T) {
+	report := api.GCReport{CandidateBlobs: 1, PendingPackedBlobs: 1, PendingPackedBytes: 100}
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.MarshalWrite(w, report))
+	})
+
+	out, err := runCLI(t, "vault", "gc")
+	require.NoError(t, err)
+	assert.Contains(t, out, "1 packed blob(s), 100 stored byte(s) pending repack")
+	assert.NotContains(t, out, "storage repack")
+
+	report = api.GCReport{Run: true, CandidateBlobs: 1, RemovedBlobs: 1, Removed: 1, PendingPackedBlobs: 1, PendingPackedBytes: 100}
+	out, err = runCLI(t, "vault", "gc", "--run")
+	require.NoError(t, err)
+	assert.Contains(t, out, "1 packed blob(s), 100 stored byte(s) pending repack\nRun docbank storage repack to reclaim space. Default thresholds can skip recent or small sparse packs; see docbank storage repack --help.\n")
+
+	report = api.GCReport{Run: true}
+	out, err = runCLI(t, "vault", "gc", "--run")
+	require.NoError(t, err)
+	assert.NotContains(t, out, "storage repack")
+}

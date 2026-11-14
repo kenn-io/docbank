@@ -1,4 +1,5 @@
 import { APIError } from "./api-transport.js";
+import { retryOnce } from "./retryOnce.js";
 import * as generated from "./generated/docbank.js";
 import type {
   Member,
@@ -475,17 +476,13 @@ async function boundedJSON(response: Response): Promise<unknown> {
 // Only ambiguous transport/server failures are retried, with identical request
 // identity. Validation/authentication/conflicts are never a new operation.
 export async function retryExportRequest<T>(fn: () => Promise<T>, signal: AbortSignal): Promise<T> {
-  try {
-    return await fn();
-  } catch (error) {
+  return retryOnce(fn, (error) => {
     signal.throwIfAborted();
-    if (
-      !(error instanceof TypeError) &&
-      !(error instanceof APIError && error.status >= 500 && error.code !== "export_timeout")
-    )
-      throw error;
-    return fn();
-  }
+    return (
+      error instanceof TypeError ||
+      (error instanceof APIError && error.status >= 500 && error.code !== "export_timeout")
+    );
+  });
 }
 
 export async function sealExportSource(

@@ -682,7 +682,7 @@ func (s *Store) applyPhotoStackFlagsTx(ctx context.Context, tx *sql.Tx, targets 
 	if err := checkPhotoAuthoredReceiptSize(result); err != nil {
 		return result, err
 	}
-	return result, persistPhotoAuthoredReceiptTx(ctx, tx, result)
+	return result, s.persistPhotoAuthoredReceiptTx(ctx, tx, result)
 }
 
 // choosePhotoRepresentativeTx stores an explicit choice with the next rank.
@@ -706,7 +706,7 @@ func (s *Store) choosePhotoRepresentativeTx(ctx context.Context, tx *sql.Tx, fra
 	if err := s.auditPhotoBurstTx(ctx, tx, prior, []PhotoRepresentativeChange{change}); err != nil {
 		return PhotoAuthoredReceipt{}, err
 	}
-	return persistPhotoRepresentativeReceiptTx(ctx, tx, PhotoAuthoredReceipt{Representatives: []PhotoRepresentativeChange{change}})
+	return s.persistPhotoRepresentativeReceiptTx(ctx, tx, PhotoAuthoredReceipt{Representatives: []PhotoRepresentativeChange{change}})
 }
 
 // setPhotoRepresentativeTx changes one asset's rank and revision. A

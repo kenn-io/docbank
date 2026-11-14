@@ -38,8 +38,10 @@ or complete retained text, use [document export bundles](export-bundles.md).
 outcomes in the vault. **Use as draft** copies the request without its old date
 choices. Selected-document drafts keep their version identities, even if the
 workspace refreshes. A new run checks those versions again. If any changed or
-disappeared, refresh the workspace and reselect the documents. A rename or move
-alone does not invalidate their content identity. This history has no naming or
+disappeared, choose **Refresh selection** in the drawer. Review the changed
+versions and choose which current versions to include. Missing and trashed
+documents are left out. Choose **Use this selection**, then create the report
+again. A rename or move alone does not invalidate their content identity. This history has no naming or
 deletion controls. Use
 [Saved queries and highlights](web.md#saved-queries-and-highlights) to manage
 named search definitions.

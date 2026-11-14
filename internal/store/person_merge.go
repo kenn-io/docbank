@@ -249,7 +249,7 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		receipt = PersonMergeReceipt{MergeID: mergeID, OperationID: operationID, RequestSHA256: requestHash,
 			SurvivorPersonID: survivorID, AbsorbedPersonID: absorbedID, AbsorbedDisplayName: absorbedName,
 			Moved: moved, SurvivorRevisionBefore: survivorRevision, SurvivorRevisionAfter: survivorRevision + 1, CreatedAt: now}
-		_, err = tx.ExecContext(ctx, `INSERT INTO person_merges(merge_id,operation_id,request_sha256,survivor_person_id,absorbed_person_id,absorbed_display_name,moved_json,survivor_revision_before,survivor_revision_after,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, mergeID, operationID, requestHash, survivorID, absorbedID, absorbedName, movedRaw, survivorRevision, survivorRevision+1, now)
+		_, err = tx.ExecContext(ctx, `INSERT INTO person_merges(merge_id,operation_id,request_sha256,survivor_person_id,absorbed_person_id,absorbed_display_name,moved_json,survivor_revision_before,survivor_revision_after,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, mergeID, operationID, requestHash, survivorID, absorbedID, storedString(s.postgresSchema != "", absorbedName), movedRaw, survivorRevision, survivorRevision+1, now)
 		return err
 	})
 	return receipt, err
@@ -263,7 +263,7 @@ func (s *Store) fenceBrowserMergeHiddenTx(ctx context.Context, tx *sql.Tx, survi
 		return err
 	}
 	var hidden bool
-	if err := tx.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
+	if err := tx.QueryRowContext(ctx, `WITH `+collectionMembershipSQL(s.postgresSchema != "")+`
 	SELECT EXISTS(SELECT 1 FROM (
 		SELECT content_version_id FROM person_document_assertions WHERE person_id IN ($1,$2)
 		UNION
@@ -554,7 +554,7 @@ func (s *Store) SplitPerson(ctx context.Context, request PersonSplitRequest) (Pe
 			return err
 		}
 		now := nowRFC3339()
-		if _, err := tx.ExecContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,created_at,updated_at) VALUES($1,$2,$3,'operator','curated',$4,$5)`, newID, request.DisplayName, document.FoldPersonName(request.DisplayName), now, now); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,created_at,updated_at) VALUES($1,$2,$3,'operator','curated',$4,$5)`, newID, storedString(s.postgresSchema != "", request.DisplayName), storedString(s.postgresSchema != "", document.FoldPersonName(request.DisplayName)), now, now); err != nil {
 			return err
 		}
 		for _, selection := range []struct {

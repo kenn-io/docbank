@@ -26,7 +26,7 @@ var emailDocumentPublicationMetadata = newMetadataTable(metadataTable[metadataEm
 	validate: func(v metadataEmailDocumentPublication) error {
 		return document.ValidateEmailDocumentReceipt(v.Receipt)
 	},
-	insert: func(ctx context.Context, tx *sql.Tx, v metadataEmailDocumentPublication) error {
+	insert: func(ctx context.Context, tx *sql.Tx, v metadataEmailDocumentPublication, postgres bool) error {
 		return insertEmailDocumentPublication(ctx, tx, v.Request, v.Receipt)
 	}})
 

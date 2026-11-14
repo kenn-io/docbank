@@ -12990,6 +12990,92 @@ func (c *Client) PublishNumberedPDF(ctx context.Context, options *PublishNumbere
 	return responseParser(ctx, resp)
 }
 
+// DiscardRecipientPackages Cancel this owner's recipient package and transfer
+func (c *Client) DiscardRecipientPackages(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/redaction/recipient-packages",
+		Method:     "DELETE",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DiscardRecipientPackagesErrorResponse](resp, "DiscardRecipientPackagesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/redaction/recipient-packages")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
+// BuildRecipientPackage Prepare a recipient ZIP from one completed numbered review
+func (c *Client) BuildRecipientPackage(ctx context.Context, options *BuildRecipientPackageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*BuildRecipientPackageResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/redaction/recipient-packages",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*BuildRecipientPackageResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(BuildRecipientPackageResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "BuildRecipientPackageResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[BuildRecipientPackageErrorResponse](resp, "BuildRecipientPackageErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/redaction/recipient-packages")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
 // RenderNativePDF Render and verify a reviewed native PDF into one ZIP
 func (c *Client) RenderNativePDF(ctx context.Context, options *RenderNativePDFRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RenderNativePDFResponse, error) {
 	var err error
@@ -13849,6 +13935,53 @@ func (c *Client) CreateTermReport(ctx context.Context, options *CreateTermReport
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search-exports")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RefreshTermReportSelection Compare selected document versions
+func (c *Client) RefreshTermReportSelection(ctx context.Context, options *RefreshTermReportSelectionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RefreshTermReportSelectionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/search-exports/selection",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RefreshTermReportSelectionResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RefreshTermReportSelectionResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RefreshTermReportSelectionResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RefreshTermReportSelectionErrorResponse](resp, "RefreshTermReportSelectionErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search-exports/selection")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -16043,6 +16176,53 @@ func (c *Client) GetContentVersionBytes(ctx context.Context, options *GetContent
 	}
 	if resp.Streaming {
 		return nil, c.acceptStream(resp, 200, 206)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PrepareOriginalDownload Issue a single-use original download URL valid for two minutes
+func (c *Client) PrepareOriginalDownload(ctx context.Context, options *PrepareOriginalDownloadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PrepareOriginalDownloadResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/versions/{version_id}/download-ticket",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PrepareOriginalDownloadResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PrepareOriginalDownloadResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PrepareOriginalDownloadResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PrepareOriginalDownloadErrorResponse](resp, "PrepareOriginalDownloadErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/versions/{version_id}/download-ticket")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -24781,6 +24961,34 @@ func (o *PublishNumberedPDFRequestOptions) GetHeader() (map[string]string, error
 	return nil, nil
 }
 
+// BuildRecipientPackageRequestOptions is the options needed to make a request to BuildRecipientPackage.
+type BuildRecipientPackageRequestOptions struct {
+	Body *BuildRecipientPackageBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *BuildRecipientPackageRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *BuildRecipientPackageRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *BuildRecipientPackageRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *BuildRecipientPackageRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // RenderNativePDFRequestOptions is the options needed to make a request to RenderNativePDF.
 type RenderNativePDFRequestOptions struct {
 	Body *RenderNativePDFBody
@@ -25352,6 +25560,34 @@ func (o *CreateTermReportRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *CreateTermReportRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// RefreshTermReportSelectionRequestOptions is the options needed to make a request to RefreshTermReportSelection.
+type RefreshTermReportSelectionRequestOptions struct {
+	Body *RefreshTermReportSelectionBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RefreshTermReportSelectionRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *RefreshTermReportSelectionRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RefreshTermReportSelectionRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *RefreshTermReportSelectionRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -26683,6 +26919,41 @@ func (o *GetContentVersionBytesRequestOptions) GetHeader() (map[string]string, e
 	return headers, err
 }
 
+// PrepareOriginalDownloadRequestOptions is the options needed to make a request to PrepareOriginalDownload.
+type PrepareOriginalDownloadRequestOptions struct {
+	PathParams *PrepareOriginalDownloadPath
+	Body       *PrepareOriginalDownloadBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PrepareOriginalDownloadRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *PrepareOriginalDownloadRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PrepareOriginalDownloadRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PrepareOriginalDownloadRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetEmailMetadataRequestOptions is the options needed to make a request to GetEmailMetadata.
 type GetEmailMetadataRequestOptions struct {
 	PathParams *GetEmailMetadataPath
@@ -26935,6 +27206,12 @@ const (
 	RenditionTextProfileConfigurationConfigured      RenditionTextProfileConfiguration = "configured"
 	RenditionTextProfileConfigurationProfileRequired RenditionTextProfileConfiguration = "profile_required"
 	RenditionTextProfileConfigurationUnconfigured    RenditionTextProfileConfiguration = "unconfigured"
+)
+
+type RenditionTextReceiptPageCoverage string
+
+const (
+	RenditionTextReceiptPageCoverageUnavailable RenditionTextReceiptPageCoverage = "unavailable"
 )
 
 type RenditionTextReceiptState string
@@ -27935,6 +28212,10 @@ type GetContentVersionBytesPath struct {
 	VersionID string `json:"version_id"`
 }
 
+type PrepareOriginalDownloadPath struct {
+	VersionID uuid.UUID `json:"version_id"`
+}
+
 type GetEmailMetadataPath struct {
 	VersionID uuid.UUID `json:"version_id"`
 }
@@ -28268,6 +28549,8 @@ type DownloadRedactionPreviewBody = RedactionPreviewConfirmation
 
 type PublishNumberedPDFBody = RedactionRenderRequest
 
+type BuildRecipientPackageBody = RedactionRenderRequest
+
 type RenderNativePDFBody = RedactionRenderRequest
 
 type ReserveNumberedPDFBody = NumberedReservationRequest
@@ -28289,6 +28572,8 @@ type RunSavedQueryBody = SavedQueryRunRequest
 type SearchDocumentsBody = DocumentSearchRequest
 
 type CreateTermReportBody = Request
+
+type RefreshTermReportSelectionBody = SelectedDocuments
 
 type GetTermReportDatesBody = DatePageRequest
 
@@ -28341,6 +28626,8 @@ type EmptyTrashBody = EmptyTrashRequest
 type UploadFileBody struct {
 	File runtime.File `json:"file"`
 }
+
+type PrepareOriginalDownloadBody = OriginalDownloadSelection
 
 type EnsureEmailMetadataBody = map[string]any
 
@@ -30003,6 +30290,12 @@ type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON503 api.Error
 
 type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON504 api.Error
 
+type DiscardRecipientPackagesErrorResponse = Error
+
+type BuildRecipientPackageResponse = RecipientPackageDownload
+
+type BuildRecipientPackageErrorResponse = Error
+
 type RenderNativePDFResponse = []byte
 
 type RenderNativePDFErrorResponse = Error
@@ -30112,6 +30405,10 @@ type ListTermReportHistoryErrorResponse = Error
 type CreateTermReportResponse = report.Summary
 
 type CreateTermReportErrorResponse = Error
+
+type RefreshTermReportSelectionResponse []TermReportSelectionItem
+
+type RefreshTermReportSelectionErrorResponse = Error
 
 type ReleaseTermReportErrorResponse = Error
 
@@ -30350,6 +30647,10 @@ type GetContentVersionBytesResponse = runtime.File
 type GetContentVersionBytesResponse206 = runtime.File
 
 type GetContentVersionBytesErrorResponse = Error
+
+type PrepareOriginalDownloadResponse = api.OriginalDownloadTicket
+
+type PrepareOriginalDownloadErrorResponse = Error
 
 type GetEmailMetadataResponse = api.EmailMetadata
 
@@ -31131,6 +31432,10 @@ type NumberedReservation = processing.NumberedReservation
 
 type NumberedReservationRequest = processing.NumberedReservationRequest
 
+type OriginalDownloadSelection = api.OriginalDownloadSelection
+
+type OriginalDownloadTicket = api.OriginalDownloadTicket
+
 type OutputCounts = bundle.OutputCounts
 
 type OutputProblem = bundle.OutputProblem
@@ -31248,6 +31553,8 @@ type PageRuntimeIdentity = document.PageRuntimeIdentity
 type PageSelectionRequest = api.PageSelectionRequest
 
 type PageSource = document.PageSource
+
+type PageTextGap = api.PageTextGap
 
 type Pending = kataevidence.Pending
 
@@ -31568,6 +31875,8 @@ type ProcessingSelector = api.ProcessingSelector
 
 type ProcessingStatus = api.ProcessingStatus
 
+type Profile = loadfile.Profile
+
 type PromotePhotoNodeRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string                      `json:"$schema,omitempty"`
@@ -31624,6 +31933,27 @@ type QueryPreview = api.QueryPreview
 type Receipt = bundle.Receipt
 
 type Recipe = pdfstamp.Recipe
+
+type RecipientPackageDocument = processing.RecipientPackageDocument
+
+type RecipientPackageDownload struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema       *string                 `json:"$schema,omitempty"`
+	AllocationID uuid.UUID               `json:"allocation_id"`
+	Contract     string                  `json:"contract"`
+	ExpiresAt    time.Time               `json:"expires_at"`
+	ID           string                  `json:"id"`
+	Name         string                  `json:"name"`
+	Receipt      RecipientPackageReceipt `json:"receipt"`
+	Sha256       string                  `json:"sha256"`
+	Size         int64                   `json:"size"`
+	URL          string                  `json:"url"`
+	Verification string                  `json:"verification"`
+}
+
+type RecipientPackageFile = processing.RecipientPackageFile
+
+type RecipientPackageReceipt = processing.RecipientPackageReceipt
 
 type RedactionArchive = processing.RedactionArchive
 
@@ -31719,14 +32049,16 @@ type RenditionTextProfile struct {
 
 type RenditionTextReceipt struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema       *string                   `json:"$schema,omitempty"`
-	Artifact     *RenditionTextArtifact    `json:"artifact,omitempty"`
-	AttachmentID string                    `json:"attachment_id"`
-	BuildID      string                    `json:"build_id"`
-	GenerationID string                    `json:"generation_id"`
-	Profile      RenditionTextProfile      `json:"profile"`
-	Source       RenditionTextSource       `json:"source"`
-	State        RenditionTextReceiptState `json:"state"`
+	Schema           *string                           `json:"$schema,omitempty"`
+	Artifact         *RenditionTextArtifact            `json:"artifact,omitempty"`
+	AttachmentID     string                            `json:"attachment_id"`
+	BuildID          string                            `json:"build_id"`
+	GenerationID     string                            `json:"generation_id"`
+	PageCoverage     *RenditionTextReceiptPageCoverage `json:"page_coverage,omitempty"`
+	PagesWithoutText []int64                           `json:"pages_without_text,omitempty"`
+	Profile          RenditionTextProfile              `json:"profile"`
+	Source           RenditionTextSource               `json:"source"`
+	State            RenditionTextReceiptState         `json:"state"`
 }
 
 type RenditionTextRequest struct {
@@ -32003,6 +32335,8 @@ type Term = report.Term
 type TermReportHistory = store.TermReportHistory
 
 type TermReportHistoryPage = store.TermReportHistoryPage
+
+type TermReportSelectionItem = store.TermReportSelectionItem
 
 type TextCitation = document.TextCitation
 

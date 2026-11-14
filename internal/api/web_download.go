@@ -51,26 +51,28 @@ type webDownloadRegistry struct {
 }
 
 type webDownloadTicket struct {
-	previewID       string
-	previewReview   string
-	reportID        string
-	reportFormat    string
-	path            string
-	name            string
-	mediaType       string
-	versionID       string
-	blobHash        string
-	size            int64
-	owner           string
-	expiresAt       time.Time
-	timer           *time.Timer
-	archiveFile     *os.File
-	releaseArchive  func()
-	planFingerprint string
+	original           *originalDownloadSelection
+	recipientPackageID string
+	previewID          string
+	previewReview      string
+	reportID           string
+	reportFormat       string
+	path               string
+	name               string
+	mediaType          string
+	versionID          string
+	blobHash           string
+	size               int64
+	owner              string
+	expiresAt          time.Time
+	timer              *time.Timer
+	archiveFile        *os.File
+	releaseArchive     func()
+	planFingerprint    string
 }
 
 func (t webDownloadTicket) release() {
-	if t.reportID != "" || t.previewID != "" {
+	if t.reportID != "" || t.previewID != "" || t.recipientPackageID != "" {
 		return
 	}
 	if t.releaseArchive != nil {
@@ -414,6 +416,11 @@ func registerWebDownload(
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	mux.HandleFunc("HEAD "+webDownloadFilePath, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Allow", http.MethodGet)
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	})
+
 	mux.HandleFunc("GET "+webDownloadFilePath, func(w http.ResponseWriter, r *http.Request) {
 		ticket, ok := downloads.consume(r.URL.Query().Get("ticket"))
 		if !ok {
@@ -422,6 +429,14 @@ func registerWebDownload(
 			return
 		}
 		defer ticket.release()
+		if ticket.original != nil {
+			deliverOriginalDownload(w, r, d, ticket)
+			return
+		}
+		if ticket.recipientPackageID != "" {
+			deliverRecipientPackage(w, r, d.Processing, ticket)
+			return
+		}
 		if ticket.previewID != "" {
 			deliverRedactionPreview(w, r, d.Processing, ticket.owner, ticket.previewID, "bundle", 0, ticket.previewReview, ticket.blobHash)
 			return

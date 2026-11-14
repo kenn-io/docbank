@@ -36,7 +36,9 @@ func TestProcessingCoveragePreflight(t *testing.T) {
 
 func TestProcessingCoverageCLI(t *testing.T) {
 	coverage := api.CoverageReport{VaultUID: inspectionTestVaultID,
-		ProfileFingerprint: strings.Repeat("b", 64), State: "partial",
+		PageCoverageUnavailable: true,
+		PagesWithoutText:        []api.PageTextGap{{ContentVersionID: processingTestVersionID, Pages: []int{2, 4}}},
+		ProfileFingerprint:      strings.Repeat("b", 64), State: "partial",
 		Renditions: api.CoverageClass{Name: "rendition", Required: true, State: "rebuilding",
 			Total: 1, Complete: 1, Rebuilding: 1, PreviousGenerationServing: 1},
 		Embeddings: []api.CoverageClass{{Name: "semantic\nquoted", State: "unavailable",
@@ -76,7 +78,7 @@ func TestProcessingCoverageCLI(t *testing.T) {
 	output.Reset()
 	require.NoError(t, runProcessingCoverage(cmd, c, processingTestVersionID, "archive", false))
 	for _, want := range []string{processingTestVersionID, inspectionTestVaultID,
-		coverage.ProfileFingerprint, `"semantic\nquoted"`, "previous-generation-serving", "partial"} {
+		coverage.ProfileFingerprint, `"semantic\nquoted"`, "previous-generation-serving", "partial", "page coverage: unavailable", "pages without text: [2 4]"} {
 		require.Contains(t, output.String(), want)
 	}
 }

@@ -228,7 +228,7 @@ func TestEmbeddingCatalogRejectsGenerationOutsideInputAuthority(t *testing.T) {
 				normalized, err := normalizeEmbeddingSetRecord(record)
 				require.NoError(t, err)
 				require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-					return insertInputGenerationTx(t.Context(), tx, normalized.InputGeneration)
+					return insertInputGenerationTx(t.Context(), tx, normalized.InputGeneration, s.postgresSchema != "")
 				}))
 				var metadata bytes.Buffer
 				require.NoError(t, s.ExportMetadata(t.Context(), &metadata))

@@ -16,9 +16,24 @@ Instructions for autonomous coding agents working in this repository.
   its database. An explicitly configured but unavailable server fails the test.
   Store query tests use `pgschema.Setup` and a separate runtime role; do not
   maintain a second copy of the catalog DDL in fixtures.
+  Share runtime grants through `internal/pgstoretest`; Store and backup tests
+  open the same validation-only runtime path.
   Do not start a container per test or repeat unrelated SQLite suites in the
   PostgreSQL lane. Follow the existing main-pinned PR dispatcher and cache
   ownership; branch changes to `ci.yml` only take effect for PRs after merge.
+- Preserve accepted UTF-8 strings, including NUL, across backends. PostgreSQL
+  `TEXT` cannot hold NUL: use `BYTEA` for unrestricted names and evidence,
+  `db:"column,bytes"` in the metadata codec, and explicit native bind conversion.
+  Keep SQLite acceptance and canonical metadata bytes unchanged; qualify native
+  reads, comparisons and writes along with restore. Use boolean presence flags
+  for optional byte filters, and bind each byte-valued cursor component explicitly.
+- Keep opaque JSON evidence unchanged. PostgreSQL JSONB operators can reject a
+  record because an unrelated string contains NUL. Derive the fields SQL needs
+  in Go in the native write transaction, and rebuild them through import and
+  fixture copying. Keep their indexes and query predicates aligned.
+- Metadata-transfer tests populate every custom import hook with native records.
+  Assert expected derived rows exist before comparing backend projections;
+  equality between empty lists does not qualify their recovery.
 - Go 1.27+ (go.mod is authoritative). Go 1.26 value-form `new(v)` and Go
   1.27 generic methods, promoted struct-literal fields, and assignment-context
   inference are in use; verify against the toolchain before treating unfamiliar
@@ -193,15 +208,45 @@ Instructions for autonomous coding agents working in this repository.
    the user explicitly asks you to monitor them. A request to open, update, or
    make a pull request merge-ready does not authorize ongoing CI monitoring.
 9. Pull requests must have a user-facing benefit or improve the developer
-   experience, and the body must say which one. A pull request must be useful
-   if nothing after it merges: put groundwork in the first PR that uses it, and
-   open a stack's PRs one at a time, each after the one below has been reviewed.
+   experience, and the body must say which one.
 10. Write issues and pull requests in English.
 11. End every commit message with a `Co-authored-by:` trailer naming the agent
     that wrote the change.
 12. End the pull request description with a `Model used:` line naming the model,
     such as `Model used: Opus 5.5` or `Model used: GPT-6.1 Sol`. Squash-merge
     keeps only the description, so put the `Co-authored-by:` trailer there too.
+
+## Before opening a pull request
+
+- Build for a use you have. Run the change on your own real data, such as an
+  export, archive, or photo library, and say in the body what it did there. If
+  nothing you use needs it yet, don't open it.
+- Make it useful if nothing after it merges. Don't add code that works only
+  once a later PR lands, or a guard for something `main` can't do yet.
+- Start from what the repo already does. Find the closest command, importer,
+  query, or library it already uses, extend it, and name it in the body. If it
+  can't be extended, say why.
+- Add only what the change uses now. Leave out options, states, paging, flags,
+  and API surface until something calls them.
+- Review your diff as a maintainer would: cut what `main` already does and
+  anything without a caller.
+- When review findings keep landing in the same code, rethink the design there
+  instead of patching each one.
+- Before each push, check that your schema, API, and protocol version numbers
+  are still the next ones free on `main`.
+
+## Pull requests from a fork
+
+This section applies only to PRs opened from a fork. PRs from branches in this
+repository are not limited by it.
+
+- Keep one unreviewed PR per stack. Open the next only after a maintainer has
+  reviewed the one below, even if you were asked to open the whole plan.
+  Review usually reshapes a PR, and everything built on it then has to be
+  rebuilt.
+- Keep at most 10 PRs open. Each one waits for a maintainer, and the ones
+  nobody gets to go stale. At 10, hold the next PR and tell the user. Leave
+  open PRs as they are.
 
 ## Commit Messages
 
@@ -279,6 +324,9 @@ release, from a breaking change to `feat` to `fix`.
   the existing `database/sql` store boundary, explicit schema and schema-owner
   settings, setup-only DDL and validation-only runtime opening. Reuse existing
   query, search and fixture facilities before adding another abstraction.
+  Logical PostgreSQL import uses the schema owner and a pristine target. Never
+  grant runtime credentials identity writes for restore; verify physical bytes
+  before publishing a restored vault.
   PostgreSQL schemas remain disposable until the first deployment whose data
   must survive upgrades. Until then, edit canonical DDL directly. Setup records
   the embedded SQL's SHA-256 fingerprint; setup and runtime validation refuse a
@@ -341,7 +389,9 @@ release, from a breaking change to `feat` to `fix`.
   released-schema fixture and direct oldest-supported-to-current coverage in
   both SQLite modes. Register each release's schema version and fixture as
   described in the development guide's "Change schema" section; CI fails
-  otherwise. Every post-v0.9 layout records an explicit monotonically
+  otherwise.
+  Keep released schema-contract records; released fixtures check compatibility.
+  Every post-v0.9 layout records an explicit monotonically
   increasing storage schema version; v0.9 is the only layout recognized by an
   inferred structural fingerprint. Keep source-version readers available for
   every supported release, and keep metadata JSONL at format v1 until a

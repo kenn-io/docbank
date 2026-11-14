@@ -42,7 +42,7 @@ func validateCollectionLabelRecord(record metadataCollectionLabel) error {
 	return validateMetadataTime("collection label updated_at", record.UpdatedAt)
 }
 
-func validateCollectionLabelMetadataState(ctx context.Context, tx metadataQuerier) error {
+func validateCollectionLabelMetadataState(ctx context.Context, tx metadataQuerier, postgres bool) error {
 	if err := collectionLabelMetadata.validateRows(ctx, tx); err != nil {
 		return err
 	}
@@ -54,7 +54,7 @@ func validateCollectionLabelMetadataState(ctx context.Context, tx metadataQuerie
 			message: "collection label references a caller-supplied ingest",
 			query: `SELECT EXISTS(SELECT 1 FROM collection_labels l
 				JOIN ingests i ON i.id=l.ingest_id
-				WHERE LOWER(i.source_kind) LIKE 'embedded:%')`,
+				WHERE ` + (provenanceSQLDialect{postgres: postgres}).embedded("i.source_kind") + `)`,
 		},
 		{
 			message: "collection label timestamp precedes ingest start",

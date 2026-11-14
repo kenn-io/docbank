@@ -29,7 +29,7 @@ func (s *Store) StageEmailBodyBuild(ctx context.Context, record RenditionBuildRe
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("reading email body completion: %w", err)
 		}
-		return stageRenditionBuildTx(ctx, tx, normalized)
+		return stageRenditionBuildTx(ctx, tx, normalized, s.postgresSchema != "")
 	})
 }
 

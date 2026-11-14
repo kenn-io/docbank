@@ -135,7 +135,7 @@ func (s *Store) PrepareDocumentPeopleInputs(ctx context.Context, versionID strin
 		if err := tx.QueryRowContext(ctx, `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&input.BindingEpoch); err != nil {
 			return err
 		}
-		if err := checkDocumentPeopleInputRowBoundsTx(ctx, tx, versionID); err != nil {
+		if err := s.checkDocumentPeopleInputRowBoundsTx(ctx, tx, versionID); err != nil {
 			return err
 		}
 		actors, err := documentEventActorClaimsTx(ctx, tx, input.EventGenerationID)
@@ -166,7 +166,7 @@ func (s *Store) PrepareDocumentPeopleInputs(ctx context.Context, versionID strin
 				if len(matches) == 0 && actorKeyAutoProvisionEligible(claim.ActorKey) {
 					// Provisioning an unbound exact key cannot change prior resolutions.
 					// Only authority edits need to advance the global binding epoch.
-					person, err := provisionActorPersonTx(ctx, tx, claim)
+					person, err := s.provisionActorPersonTx(ctx, tx, claim)
 					if err != nil {
 						return err
 					}
@@ -186,7 +186,7 @@ func (s *Store) PrepareDocumentPeopleInputs(ctx context.Context, versionID strin
 			}
 			input.Bindings[actorKey] = matches
 		}
-		if err := loadDocumentPeopleCustodiansTx(ctx, tx, versionID, &input); err != nil {
+		if err := s.loadDocumentPeopleCustodiansTx(ctx, tx, versionID, &input); err != nil {
 			return err
 		}
 		if err := loadDocumentPeopleAssertionsTx(ctx, tx, versionID, &input); err != nil {
@@ -213,10 +213,10 @@ func (s *Store) PrepareDocumentPeopleInputs(ctx context.Context, versionID strin
 	return input, nil
 }
 
-func checkDocumentPeopleInputRowBoundsTx(ctx context.Context, tx *sql.Tx, versionID string) error {
+func (s *Store) checkDocumentPeopleInputRowBoundsTx(ctx context.Context, tx *sql.Tx, versionID string) error {
 	const maxRows = document.MaxPersonEdgesPerVersion + 1
 	var custodians int64
-	err := tx.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
+	err := tx.QueryRowContext(ctx, `WITH `+collectionMembershipSQL(s.postgresSchema != "")+`
 		SELECT count(*) FROM custodian_assignments ca WHERE ca.retired_at IS NULL AND (
 		(ca.scope_kind='document' AND ca.content_version_id=$1) OR
 		(ca.scope_kind='collection' AND EXISTS(SELECT 1 FROM collection_members cm JOIN nodes n ON n.id=cm.node_id WHERE cm.ingest_id=ca.ingest_id AND n.current_version_id=$2)))`,
@@ -341,7 +341,7 @@ func actorKeyAutoProvisionEligible(key string) bool {
 	return ok && (kind == "email" || (kind == "phone" && strings.HasPrefix(value, "+")))
 }
 
-func provisionActorPersonTx(ctx context.Context, tx *sql.Tx, claim DocumentPeopleActor) (Person, error) {
+func (s *Store) provisionActorPersonTx(ctx context.Context, tx *sql.Tx, claim DocumentPeopleActor) (Person, error) {
 	kind, value, _ := strings.Cut(claim.ActorKey, ":")
 	display := claim.DisplayLabel()
 	if !validPersonName(display) {
@@ -361,12 +361,12 @@ func provisionActorPersonTx(ctx context.Context, tx *sql.Tx, claim DocumentPeopl
 	}
 	now := nowRFC3339()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at)
-		VALUES($1,$2,$3,'derived','provisional',1,$4,$5)`, personID, display, document.FoldPersonName(display), now, now); err != nil {
+		VALUES($1,$2,$3,'derived','provisional',1,$4,$5)`, personID, storedString(s.postgresSchema != "", display), storedString(s.postgresSchema != "", document.FoldPersonName(display)), now, now); err != nil {
 		return Person{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO person_identities(identity_id,person_id,kind,value_normalized,value_display,scope_kind,scope_value,normalization,origin,evidence_kind,evidence_id,confidence,recorded_at)
 		VALUES($1,$2,$3,$4,$5,'','',$6,'derived',$7,$8,'exact_identifier',$9)`, identityID, personID, kind,
-		normalized.ValueNormalized, normalized.ValueDisplay, normalized.Normalization, claim.EvidenceKind, claim.EvidenceID, now); err != nil {
+		normalized.ValueNormalized, normalized.ValueDisplay, normalized.Normalization, claim.EvidenceKind, storedString(s.postgresSchema != "", claim.EvidenceID), now); err != nil {
 		return Person{}, err
 	}
 	return Person{PersonID: personID, DisplayName: display, DisplayNameFolded: document.FoldPersonName(display),
@@ -410,8 +410,8 @@ func (s *Store) openActorCandidatesTx(ctx context.Context, tx *sql.Tx, versionID
 	return retained, nil
 }
 
-func loadDocumentPeopleCustodiansTx(ctx context.Context, tx *sql.Tx, versionID string, input *DocumentPeopleInputs) error {
-	rows, err := tx.QueryContext(ctx, `WITH `+CollectionMembershipCTE+`
+func (s *Store) loadDocumentPeopleCustodiansTx(ctx context.Context, tx *sql.Tx, versionID string, input *DocumentPeopleInputs) error {
+	rows, err := tx.QueryContext(ctx, `WITH `+collectionMembershipSQL(s.postgresSchema != "")+`
 		SELECT `+custodianColumns+` FROM custodian_assignments ca WHERE ca.retired_at IS NULL AND (
 		(ca.scope_kind='document' AND ca.content_version_id=$1) OR
 		(ca.scope_kind='collection' AND EXISTS(SELECT 1 FROM collection_members cm JOIN nodes n ON n.id=cm.node_id WHERE cm.ingest_id=ca.ingest_id AND n.current_version_id=$2)))
@@ -529,7 +529,7 @@ func (s *Store) PublishDocumentPeople(ctx context.Context, p DocumentPeoplePubli
 				for _, edge := range p.People.Edges {
 					if _, err := tx.ExecContext(ctx, `INSERT INTO document_people(content_version_id,node_id,person_id,generation_id,role,actor_key,evidence_kind,evidence_id,confidence,basis,raw_label,claim_count,first_axis_key,last_axis_key,sensitive) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
 						p.People.ContentVersionID, p.NodeID, edge.PersonID, generationID, edge.Role, edge.ActorKey,
-						edge.EvidenceKind, edge.EvidenceID, edge.Confidence, edge.Basis, edge.RawLabel, edge.ClaimCount,
+						edge.EvidenceKind, storedString(s.postgresSchema != "", edge.EvidenceID), edge.Confidence, edge.Basis, storedString(s.postgresSchema != "", edge.RawLabel), edge.ClaimCount,
 						nullablePeopleText(edge.FirstAxisKey), nullablePeopleText(edge.LastAxisKey), boolInt(edge.Sensitive)); err != nil {
 						return err
 					}

@@ -379,15 +379,23 @@ func TestReleasedSchemaFixturesMatchVersions(t *testing.T) {
 
 func releasedSchemaCatalog(t *testing.T, db *sql.DB, indexes bool) map[string][3]string {
 	t.Helper()
+	catalog := make(map[string][3]string)
+	for _, row := range releasedSchemaCatalogRows(t, db, indexes) {
+		catalog[row[1]] = [3]string{row[0], row[2], row[3]}
+	}
+	return catalog
+}
+
+func releasedSchemaCatalogRows(t *testing.T, db *sql.DB, indexes bool) [][4]string {
+	t.Helper()
 	rows, err := db.QueryContext(t.Context(), `SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' AND (? OR type<>'index') ORDER BY type,name`, indexes)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
-	catalog := make(map[string][3]string)
+	var catalog [][4]string
 	for rows.Next() {
-		var name string
-		var object [3]string
-		require.NoError(t, rows.Scan(&object[0], &name, &object[1], &object[2]))
-		catalog[name] = object
+		var object [4]string
+		require.NoError(t, rows.Scan(&object[0], &object[1], &object[2], &object[3]))
+		catalog = append(catalog, object)
 	}
 	require.NoError(t, rows.Err())
 	return catalog
@@ -438,14 +446,14 @@ func TestImportMetadataProcessingIncarnationAcceptsOnlyIdenticalExistingRow(t *t
 	require.NoError(t, err)
 	defer func() { require.NoError(t, tx.Rollback()) }()
 
-	require.NoError(t, importMetadataProcessingIncarnation(t.Context(), tx, current))
+	require.NoError(t, importMetadataProcessingIncarnation(t.Context(), tx, current, false))
 	changed := current
 	changed.CreatedAt = "2026-01-01T00:00:00.000000000Z"
-	require.ErrorContains(t, importMetadataProcessingIncarnation(t.Context(), tx, changed),
+	require.ErrorContains(t, importMetadataProcessingIncarnation(t.Context(), tx, changed, false),
 		"processing incarnation "+current.ID+" already exists with created_at")
 	older := metadataProcessingIncarnation{Type: metadataProcessingIncarnationType,
 		ID: "60000000-0000-4000-8000-000000000001", CreatedAt: "2026-01-01T00:00:00.000000000Z"}
-	require.NoError(t, importMetadataProcessingIncarnation(t.Context(), tx, older))
+	require.NoError(t, importMetadataProcessingIncarnation(t.Context(), tx, older, false))
 
 	var count int
 	require.NoError(t, tx.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM processing_incarnations`).Scan(&count))
@@ -565,7 +573,7 @@ func TestUpgradeReleasedV0150KeepsFailedEmbeddingJobs(t *testing.T) {
 			versions := seedRenditionCatalogVersions(t, legacy)
 			profile := embeddingCatalogProfile(t)
 			require.NoError(t, legacy.withStorageTx(ctx, func(tx *sql.Tx) error {
-				return ensureProcessingProfileTx(ctx, tx, profile)
+				return ensureProcessingProfileTx(ctx, tx, profile, legacy.postgresSchema != "")
 			}))
 			request := embeddingJobTestRequest(t, legacy, versions[0], profile, "upgrade-failed")
 			_, err := legacy.EnqueueEmbeddingJob(ctx, request)

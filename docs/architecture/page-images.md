@@ -368,8 +368,9 @@ ceiling. PNGs are capped at 128 MiB each and 1 GiB total; the ZIP at 544 MiB.
 | Packaging | 2,080 MiB plus bounded text/receipt: PNGs, PDF and ZIP |
 | Ready | 1,568 MiB: PNGs and ZIP only |
 
-One ready preview plus another native operation may use about 3.7 GiB. These
-are file-payload bounds, not a global disk quota; tmpfs space is outside process
+One ready preview plus another native operation may use about 3.7 GiB. A ready
+recipient package adds up to 512 MiB, bringing the combined bound to about
+4.2 GiB. These are file-payload bounds, not a global disk quota; tmpfs space is outside process
 RSS accounting. Preview handles, masks and reviews are not persisted to SQLite.
 The browser keeps the original's verified bytes in one EmbedPDF reader during
 reading and review. Original downloads use the latest observed node revision.
@@ -516,9 +517,56 @@ bindings, independently of installed dependency versions. Current-engine
 qualification runs before creation, rendering or full verification; an engine
 mismatch is a verifier-version refusal, not an integrity claim. Presentation
 geometry is derived from the recorded footer without loading the installed font.
+
 The offline ZIP verifier derives the same expectations from its checked receipt.
 The receipt is not cryptographic proof of issuance, and neither scope proves
 unmasked pixels match the original.
+
+### Browser recipient packages
+
+`POST /api/v1/redaction/recipient-packages` takes one completed allocation and
+its preparation, masks and review digest. It checks the retained recipe and
+allocation against the review, pins the PDF and label-free text descriptors,
+and copies the verified retained blob under capture. `VerifySaved` checks that
+same handle against the reviewed plan and numbered presentation. The recipient
+writer and finished-archive checker then enforce the ordinary recipient-package
+contract. This path does not inspect or render the source, create a snapshot,
+reserve numbers, or publish a new artifact. It works without the page runtime.
+Unsupported verifier versions are refused before packaging.
+
+The POST has a 17 MiB body limit and a finite 60-second upload deadline, cleared
+after strict decoding. Building and delivery each have a ten-minute deadline.
+The response is at most 256 KiB and contains the checked receipt and an existing
+one-use web-download ticket. Browser code checks its single document against the
+completed delivery and independently hashes the approved UTF-8 text. ZIP bytes
+stream through the browser's download path, rather than a JavaScript buffer.
+The build POST is counted as a read by the browser transport. API-key clients
+can use the same build, release and ticket endpoints; CLI users can package
+multiple completed deliveries with `redaction package`.
+
+A separate, global one-entry store owns the package directory and verified ZIP
+handle. The native-operation slot is released when building finishes; the entry
+expires after two minutes if unused. An admitted transfer pins that handle and
+cancels expiry, with request, owner and service cancellation interrupting blocked
+socket writes. Only the ZIP remains when ready. `DELETE` on the build path
+cancels this owner's build or transfer, waits for it to stop, then removes its
+files. It answers 204 only after removal. Removal failure, or the 60-second
+request deadline expiring first, is reported as an error, and the browser keeps
+a release-retry state. Logout and shutdown revoke without waiting. Lost or
+ambiguous POST responses use a fresh owner-scoped DELETE before another attempt.
+There is no admission fence for a POST that has not reached the service yet;
+the single entry and expiry bound that race. Closing the review releases only
+its package, without revoking the browser session.
+
+As with previews, deletion failure retains files and capacity for retry. A
+retired entry releases lifecycle registration once creation and readers finish,
+independently of deletion success, so shutdown drains. Startup spool recovery
+removes abandoned `native-pdf-*` directories. A failed build can retain both its
+512 MiB PDF and 512 MiB ZIP, rather than only the ready ZIP. Together with a ready
+preview and a new native operation, this is at most 4,768 MiB of file payload.
+If preview cleanup also failed at its 2,176 MiB ceiling, the conservative combined
+bound is 5,376 MiB. These bounds are not a global disk quota; tmpfs storage is
+outside the RSS limit.
 
 The retained object is the PDF, not the ZIP or review inputs. Backup and restore
 retain its artifact records, number lookup and snapshot source. The original

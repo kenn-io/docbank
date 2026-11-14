@@ -183,20 +183,20 @@ func (s *Store) CreatePackage(ctx context.Context, request PackageRequest) (Pack
 			mapping_sha256,mapping_json,manifest_sha256,manifest_blob_sha256,
 			predecessor_package_id,relation,ingest_id,export_plan_id,state,produced_on,created_at
 		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`, request.PackageID,
-			nullableString(request.SnapshotID), request.Direction, request.PackageName, request.PartyLabel,
+			nullableString(request.SnapshotID), request.Direction, request.PackageName, storedString(s.postgresSchema != "", request.PartyLabel),
 			request.ProfileSHA256, request.ProfileJSON, request.MappingSHA256, request.MappingJSON,
 			request.ManifestSHA256, request.ManifestBlobSHA256,
-			nullableString(request.PredecessorPackageID), request.Relation,
+			nullableString(request.PredecessorPackageID), storedString(s.postgresSchema != "", request.Relation),
 			nullableString(request.IngestID), nullableString(request.ExportPlanID),
-			request.State, nullableString(request.ProducedOn), result.CreatedAt)
+			request.State, storedNullableString(s.postgresSchema != "", request.ProducedOn), result.CreatedAt)
 		if err != nil {
 			return err
 		}
 		for _, volume := range request.Volumes {
 			_, err := tx.ExecContext(ctx, `INSERT INTO package_volumes(
 				package_id,ordinal,volume_name,declared_root,mapped_root,resolved_root_sha256
-			) VALUES($1,$2,$3,$4,$5,$6)`, request.PackageID, volume.Ordinal, volume.VolumeName,
-				volume.DeclaredRoot, volume.MappedRoot, volume.ResolvedRootSHA256)
+			) VALUES($1,$2,$3,$4,$5,$6)`, request.PackageID, volume.Ordinal, storedString(s.postgresSchema != "", volume.VolumeName),
+				storedString(s.postgresSchema != "", volume.DeclaredRoot), storedString(s.postgresSchema != "", volume.MappedRoot), volume.ResolvedRootSHA256)
 			if err != nil {
 				return err
 			}
