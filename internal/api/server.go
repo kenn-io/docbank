@@ -298,9 +298,8 @@ func NewServer(d Deps) *Server {
 	registerOriginalDownload(humaAPI, d, s.webDownloads)
 	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads, s.webSessions, s.termReports)
 
-	h := photoHiddenMiddleware(http.Handler(mux))
-	h = authMiddleware(h, d.Cfg.Server.APIKey, s.webSessions, s.masterOwner)
-	h = documentFactsCacheMiddleware(h)
+	h := authMiddleware(http.Handler(mux), d.Cfg.Server.APIKey, s.webSessions, s.masterOwner)
+	h = photoHiddenMiddleware(h)
 	h = webHostMiddleware(h, s.webSessions.login)
 	h = loopbackMiddleware(h)
 	h = timeoutMiddleware(h)
