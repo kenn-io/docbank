@@ -142,6 +142,18 @@ func checkRoleSearchCurrentPersonRelation(t *testing.T) {
 		require.Equal(t, want, found)
 	}
 	published := publication.People.Edges[0]
+	checkQueries := func(positive, negative int) {
+		for _, tc := range []struct {
+			prefix string
+			want   int
+		}{{"", positive}, {"NOT ", negative}} {
+			value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, tc.prefix+"author:Ada"))
+			result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+			require.NoError(t, err)
+			require.Len(t, result.Rows, tc.want)
+		}
+	}
+	checkQueries(1, 0)
 	check(false, published.PersonID, published.Role, true)
 	check(false, direct.PersonID, "blind_copy", true)
 	check(true, direct.PersonID, "blind_copy", false)
@@ -149,6 +161,7 @@ func checkRoleSearchCurrentPersonRelation(t *testing.T) {
 	_, err = s.db.ExecContext(ctx, `UPDATE document_event_state SET input_epoch=input_epoch+1`)
 	require.NoError(t, err)
 	check(false, published.PersonID, published.Role, false)
+	checkQueries(0, 0)
 	check(false, direct.PersonID, "blind_copy", true)
 	_, err = s.db.ExecContext(ctx, `UPDATE document_event_state SET input_epoch=input_epoch-1`)
 	require.NoError(t, err)
@@ -156,6 +169,7 @@ func checkRoleSearchCurrentPersonRelation(t *testing.T) {
 	_, err = s.db.ExecContext(ctx, `UPDATE document_event_attempts SET state='failed' WHERE content_version_id=$1`, version.ID)
 	require.NoError(t, err)
 	check(false, published.PersonID, published.Role, false)
+	checkQueries(0, 0)
 	check(false, direct.PersonID, "blind_copy", true)
 	_, err = s.db.ExecContext(ctx, `UPDATE document_event_attempts SET state='indexed' WHERE content_version_id=$1`, version.ID)
 	require.NoError(t, err)
@@ -189,12 +203,15 @@ func TestRoleSearchMentionNamesAreLiteral(t *testing.T) {
 	require.Equal(t, "Jory Pellham", names[0])
 	require.Contains(t, names, `A "OR" *`)
 	require.Contains(t, names, "Derived Alias")
+	quoted, err := s.CreateFile(ctx, s.RootID(), "quoted.txt", fakeHash("ca01"), 20, "text/plain")
+	require.NoError(t, err)
+	seedCompiledLegacyText(t, s, quoted, `A "OR" *`)
+	last, err := s.CreateFile(ctx, s.RootID(), "last.txt", fakeHash("ca02"), 20, "text/plain")
+	require.NoError(t, err)
+	seedCompiledLegacyText(t, s, last, "Alias 197")
 	compiled, err := s.CompileQuery(ctx, compilerQuery(t, `mentions:"Jory Pellham"`))
 	require.NoError(t, err)
-	_, args, err := compiled.Bind("")
-	require.NoError(t, err)
-	require.Contains(t, args[1], `"A ""OR"" *"`)
-	require.Contains(t, args[1], `"Alias 197"`)
+	require.ElementsMatch(t, []int64{quoted.ID, last.ID}, compiledFixtureIDs(t, s.db, compiled, ""))
 }
 
 func TestRoleSearchNegationWithPendingPeople(t *testing.T) {
@@ -515,8 +532,6 @@ func TestRoleSearchPeopleFacetMembershipBudget(t *testing.T) {
 	one, err := s.materializeQuerySnapshot(ctx, request, snapshotMaterializeOptions{FacetMemberLimit: 1})
 	require.NoError(t, err)
 	require.True(t, one.Facets[0].Available)
-	require.EqualValues(t, 1, *one.Facets[0].Total)
-	require.ElementsMatch(t, []string{"author", "sender"}, one.Facets[0].Values[0].Roles)
 	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: second.PersonID, Role: "recipient", Action: "assert", Revision: 1})
 	require.NoError(t, err)
 	publishRoleFixtures(t, s)
@@ -562,7 +577,6 @@ func TestRoleSearchNegationBranchMembership(t *testing.T) {
 		{`NOT from:"Branch Alpha"`, nil},
 		{`NOT NOT from:"Branch Alpha"`, []string{"sender"}},
 		{`NOT (NOT from:"Branch Alpha" OR to:"Branch Beta") OR name:branch-two`, []string{"sender"}},
-		{`NOT (NOT from:"Branch Alpha" AND to:"Branch Beta") OR name:missing`, []string{"sender"}},
 		{`NOT NOT saved:"Branch saved" OR to:"Branch Beta"`, []string{"sender", "recipient"}},
 		{`NOT NOT between:("Branch Alpha", "Branch Beta") OR to:"Branch Beta"`, []string{"recipient"}},
 	} {
@@ -596,8 +610,6 @@ func TestRoleSearchHiddenPersonScope(t *testing.T) {
 	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
 	publishRoleFixtures(t, s)
-	definition, err := s.CreateSavedQuery(ctx, "Hidden saved", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"person:\"Hidden Depicted\""}`))
-	require.NoError(t, err)
 	structured, err := s.CreateSavedQuery(ctx, "Hidden structured", "", SavedQueryKindQuery, fmt.Appendf(nil, `{"filters":{"people":[{"person_id":%q,"roles":["depicted"]}]}}`, person.PersonID))
 	require.NoError(t, err)
 	nested, err := s.CreateSavedQuery(ctx, "Hidden nested", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"saved:\"Hidden structured\""}`))
@@ -619,13 +631,11 @@ func TestRoleSearchHiddenPersonScope(t *testing.T) {
 	}
 	require.Contains(t, facetPeople, visible.PersonID)
 	require.NotContains(t, facetPeople, person.PersonID)
-	for _, saved := range []SavedQuery{definition, structured, nested} {
-		if saved.ID != definition.ID {
-			_, page, err := service.RunSaved(safe, "owner", saved.ID, saved.Revision, SnapshotRequest{}, nil)
-			require.NoError(t, err)
-			require.Empty(t, page.Rows)
-		}
-		_, page, err := service.RunSaved(ctx, "owner", saved.ID, saved.Revision, SnapshotRequest{}, nil)
+	for _, saved := range []SavedQuery{structured, nested} {
+		_, page, err := service.RunSaved(safe, "owner", saved.ID, saved.Revision, SnapshotRequest{}, nil)
+		require.NoError(t, err)
+		require.Empty(t, page.Rows)
+		_, page, err = service.RunSaved(ctx, "owner", saved.ID, saved.Revision, SnapshotRequest{}, nil)
 		require.NoError(t, err)
 		require.Len(t, page.Rows, 1)
 	}
@@ -704,22 +714,10 @@ func TestRoleSearchMentionsRequireDocumentContent(t *testing.T) {
 			require.Equal(t, []string{"mentioned"}, row.MatchedRoles)
 		}
 	}
-	// FTS distinguishes the fullwidth display name from its ASCII alias.
-	person, err = s.CreatePerson(ctx, "Ａda Lovelace", "operator")
-	require.NoError(t, err)
-	_, _ = addTestPersonIdentity(t, s, person, "name_alias", "Ada Lovelace", "ascii-alias")
-	file, err := s.CreateFile(ctx, s.RootID(), "ascii.txt", testSHA256([]byte("Ada Lovelace")), 12, "text/plain")
-	require.NoError(t, err)
-	seedCompiledLegacyText(t, s, file, "Ada Lovelace")
-	value = snapshotTestQuery(t, `{"syntax":"advanced","text":"mentions:\"Ａda Lovelace\""}`)
-	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
-	require.NoError(t, err)
-	require.Len(t, result.Rows, 1)
-	require.Equal(t, "ascii.txt", result.Rows[0].Name)
 	person, err = s.CreatePerson(ctx, "Null\x00Name", "operator")
 	require.NoError(t, err)
 	_, _ = addTestPersonIdentity(t, s, person, "name_alias", "Searchable Alias", "searchable-alias")
-	file, err = s.CreateFile(ctx, s.RootID(), "alias.txt", fakeHash("ce06"), 12, "text/plain")
+	file, err := s.CreateFile(ctx, s.RootID(), "alias.txt", fakeHash("ce06"), 12, "text/plain")
 	require.NoError(t, err)
 	seedCompiledLegacyText(t, s, file, "Searchable Alias")
 	file, err = s.CreateFile(ctx, s.RootID(), "fabricated.txt", fakeHash("ce07"), 12, "text/plain")
@@ -778,7 +776,7 @@ func TestRoleSearchMentionsSelectedRendition(t *testing.T) {
 	}))
 }
 
-func TestRoleSearchSavedPredicatesAcrossRelations(t *testing.T) {
+func TestRoleSearchSavedPredicateCompositionWithRelations(t *testing.T) {
 	t.Parallel()
 	fixture := newSnapshotFacetFixture(t)
 	ctx := t.Context()

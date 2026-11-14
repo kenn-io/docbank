@@ -27,12 +27,12 @@ it("shows frozen people evidence below the name", () => {
   const view = render(ResultName, {
     name: "board-memo.eml",
     folder: "/synthetic",
-    roles: ["sender", "copied", "mentioned"],
+    roles: ["copied", "mentioned", "sender"],
   });
   expect(screen.getByText("board-memo.eml")).toBeTruthy();
   expect(
     [...view.container.querySelectorAll(".roles > *")].map((chip) => chip.textContent?.trim()),
-  ).toEqual(["Sender", "Cc", "Mentioned"]);
+  ).toEqual(["Cc", "Mentioned", "Sender"]);
   view.unmount();
   const plain = render(ResultName, { name: "board-memo.eml", folder: "/synthetic" });
   expect(plain.container.querySelector(".roles")).toBeNull();
