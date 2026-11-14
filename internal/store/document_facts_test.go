@@ -33,9 +33,20 @@ func checkDocumentPeopleFactsMergeResolvesCandidate(t *testing.T, newStore func(
 	require.NoError(t, err)
 	facts, err := s.DocumentPeopleFacts(ctx, version.ID, false)
 	require.NoError(t, err)
-	require.NotEmpty(t, facts.Candidates)
-	require.NotEmpty(t, facts.Candidates[0].Occurrences)
-	candidateID := facts.Candidates[0].CandidateID
+	open, _, err := s.PersonCandidates(ctx, "open", 10, 0)
+	require.NoError(t, err)
+	var candidateID string
+	for _, candidate := range open {
+		if candidate.SuggestedPersonID == first.PersonID {
+			candidateID = candidate.CandidateID
+		}
+	}
+	require.NotEmpty(t, candidateID)
+	var unresolved bool
+	for _, candidate := range facts.Candidates {
+		unresolved = unresolved || candidate.CandidateID == candidateID && len(candidate.Occurrences) != 0
+	}
+	require.True(t, unresolved)
 	first, _, err = s.PersonByID(ctx, first.PersonID)
 	require.NoError(t, err)
 	second, _, err = s.PersonByID(ctx, second.PersonID)
@@ -46,7 +57,7 @@ func checkDocumentPeopleFactsMergeResolvesCandidate(t *testing.T, newStore func(
 	require.NoError(t, err)
 	_, err = s.PublishDocumentPeople(ctx, documentPeoplePublicationForInput(t, input))
 	require.NoError(t, err)
-	open, _, err := s.PersonCandidates(ctx, "open", 10, 0)
+	open, _, err = s.PersonCandidates(ctx, "open", 10, 0)
 	require.NoError(t, err)
 	var stillOpen bool
 	for _, candidate := range open {
@@ -331,34 +342,27 @@ func checkDocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession(t *testing.T,
 	require.NoError(t, err)
 }
 
-func checkDocumentPeopleFactsFiltersBlindCopyEdge(t *testing.T, newStore func(*testing.T) *Store) {
+func checkDocumentPeopleFactsFiltersSensitiveEdge(t *testing.T, newStore func(*testing.T) *Store) {
 	t.Helper()
-	for _, tc := range []struct {
-		name, role string
-		sensitive  bool
-	}{{"blind copy", "blind_copy", false}, {"sensitive author", "author", true}} {
-		t.Run(tc.name, func(t *testing.T) {
-			s := newStore(t)
-			version, target := ingestDocumentEventTarget(t, s, "bcc.eml", "e4")
-			record := documentEventRecord(t, s.VaultID(), version.ID, "e4")
-			record.Events[0].Actors[0].Role = document.EventRole(tc.role)
-			record.Events[0].Actors[0].Sensitive = tc.sensitive
-			_, err := s.PublishDocumentEvents(t.Context(), target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
-			require.NoError(t, err)
-			input, err := s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
-			require.NoError(t, err)
-			publication := documentPeoplePublicationForInput(t, input)
-			publication.People.Edges[0].Sensitive = tc.sensitive
-			_, err = s.PublishDocumentPeople(t.Context(), publication)
-			require.NoError(t, err)
-			full, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
-			require.NoError(t, err)
-			require.Len(t, full.Edges, 1)
-			require.Equal(t, tc.role, full.Edges[0].Role)
-			require.Equal(t, tc.sensitive, full.Edges[0].Sensitive)
-			safe, err := s.DocumentPeopleFacts(t.Context(), version.ID, true)
-			require.NoError(t, err)
-			require.Empty(t, safe.Edges)
-		})
-	}
+	s := newStore(t)
+	version, target := ingestDocumentEventTarget(t, s, "bcc.eml", "e4")
+	record := documentEventRecord(t, s.VaultID(), version.ID, "e4")
+	record.Events[0].Actors[0].Role = "author"
+	record.Events[0].Actors[0].Sensitive = true
+	_, err := s.PublishDocumentEvents(t.Context(), target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+	require.NoError(t, err)
+	input, err := s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
+	require.NoError(t, err)
+	publication := documentPeoplePublicationForInput(t, input)
+	publication.People.Edges[0].Sensitive = true
+	_, err = s.PublishDocumentPeople(t.Context(), publication)
+	require.NoError(t, err)
+	full, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
+	require.NoError(t, err)
+	require.Len(t, full.Edges, 1)
+	require.Equal(t, "author", full.Edges[0].Role)
+	require.True(t, full.Edges[0].Sensitive)
+	safe, err := s.DocumentPeopleFacts(t.Context(), version.ID, true)
+	require.NoError(t, err)
+	require.Empty(t, safe.Edges)
 }

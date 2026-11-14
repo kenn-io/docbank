@@ -872,7 +872,7 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkDocumentPeopleFactsPublicationAndFailure(t, newPostgresQueryStore)
 		}},
-		{"DocumentPeopleFactsFiltersBlindCopyEdge", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsFiltersBlindCopyEdge(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsFiltersBlindCopyEdge(t, newPostgresQueryStore) }},
+		{"DocumentPeopleFactsFiltersSensitiveEdge", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsFiltersSensitiveEdge(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsFiltersSensitiveEdge(t, newPostgresQueryStore) }},
 		{"DocumentPeopleFactsAssertionsAndRetiredPerson", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsAssertionsAndRetiredPerson(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()
 			checkDocumentPeopleFactsAssertionsAndRetiredPerson(t, newPostgresQueryStore)

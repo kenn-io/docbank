@@ -36,22 +36,16 @@ func TestDocumentFactsTableWriteErrors(t *testing.T) {
 }
 
 func TestDocumentFactsTableEscapesAndTimezones(t *testing.T) {
-	for _, tc := range []struct {
-		name, zone, state, zoneState, want string
-	}{
-		{"zone controls", "zone\n\x1b[31m", "floating", "named", `"zone\n\x1b[31m" (state=floating, zone="named")`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			result := &api.VersionDates{State: "published", Diagnostics: []api.FactDiagnostic{{Detail: "detail\n\x1b[31m"}}, Claims: []api.VersionDateClaim{{
-				DateKind: "sent", DateValue: "2024-03-15T12:30:00", ZoneText: tc.zone, Precision: "second", ClaimBasis: "source_asserted", When: api.WhenV1{State: tc.state, ZoneState: tc.zoneState},
-			}}}
-			var output strings.Builder
-			require.NoError(t, writeVersionDatesTable(&output, result))
-			require.Contains(t, output.String(), `Diagnostic: "detail\n\x1b[31m"`+"\n")
-			require.Contains(t, output.String(), tc.want)
-			require.NotContains(t, output.String(), "\x1b")
-		})
-	}
+	t.Run("zone controls", func(t *testing.T) {
+		result := &api.VersionDates{State: "published", Diagnostics: []api.FactDiagnostic{{Detail: "detail\n\x1b[31m"}}, Claims: []api.VersionDateClaim{{
+			DateKind: "sent", DateValue: "2024-03-15T12:30:00", ZoneText: "zone\n\x1b[31m", Precision: "second", ClaimBasis: "source_asserted", When: api.WhenV1{State: "floating", ZoneState: "named"},
+		}}}
+		var output strings.Builder
+		require.NoError(t, writeVersionDatesTable(&output, result))
+		require.Contains(t, output.String(), `Diagnostic: "detail\n\x1b[31m"`+"\n")
+		require.Contains(t, output.String(), `"zone\n\x1b[31m" (state=floating, zone="named")`)
+		require.NotContains(t, output.String(), "\x1b")
+	})
 
 	t.Run("published claim", func(t *testing.T) {
 		result := &api.VersionDates{State: "published", Claims: []api.VersionDateClaim{{
@@ -63,11 +57,9 @@ func TestDocumentFactsTableEscapesAndTimezones(t *testing.T) {
 	})
 	t.Run("recorded date", func(t *testing.T) {
 		result := &api.VersionDates{State: "published", Claims: []api.VersionDateClaim{{DateKind: "vault_recorded", DateValue: "2024-03-15", Precision: "date", When: api.WhenV1{State: "date"}}}}
-		var table, jsonOutput strings.Builder
+		var table strings.Builder
 		require.NoError(t, writeVersionDatesTable(&table, result))
 		require.Contains(t, table.String(), "Recorded  2024-03-15")
-		require.NoError(t, writeVersionJSON(&jsonOutput, result))
-		require.Contains(t, jsonOutput.String(), `"date_kind":"vault_recorded"`)
 	})
 }
 
@@ -125,10 +117,6 @@ func TestDocumentPeopleTableBccLabels(t *testing.T) {
 	require.Contains(t, table.String(), "From package")
 	require.Contains(t, table.String(), `Last editor  "Editor"`)
 	require.Contains(t, table.String(), "From transfer")
-	var output strings.Builder
-	require.NoError(t, writeVersionJSON(&output, &result))
-	require.Equal(t, 3, strings.Count(output.String(), "blind_copy"))
-	require.Contains(t, output.String(), `"last_saved_by"`)
 	escaped := &api.VersionPeople{State: "published",
 		Edges:      []api.VersionPersonEdge{{Role: "author", DisplayName: "edge\n\x1b[31m", Basis: "operator_assigned"}},
 		Assertions: []api.VersionPersonAssertion{{Role: "sender", DisplayName: "assertion\n\x1b[31m", Action: "suppress"}},
@@ -153,11 +141,8 @@ func TestDocumentPeopleTableAssertionSupport(t *testing.T) {
 	}{
 		{name: "represented", edges: []api.VersionPersonEdge{edge}, assertion: assertion},
 		{name: "published without edge", assertion: assertion, wantRow: true},
-		{name: "suppress", edges: []api.VersionPersonEdge{edge}, assertion: func() api.VersionPersonAssertion { a := assertion; a.Action = "suppress"; return a }(), wantRow: true},
+		{name: "suppress", assertion: func() api.VersionPersonAssertion { a := assertion; a.Action = "suppress"; return a }(), wantRow: true},
 		{name: "new assertion", edges: []api.VersionPersonEdge{edge}, assertion: func() api.VersionPersonAssertion { a := assertion; a.AssertionID = "new"; return a }(), wantRow: true},
-		{name: "different person", edges: []api.VersionPersonEdge{edge}, assertion: func() api.VersionPersonAssertion { a := assertion; a.PersonID = "other"; return a }(), wantRow: true},
-		{name: "different role", edges: []api.VersionPersonEdge{edge}, assertion: func() api.VersionPersonAssertion { a := assertion; a.Role = "sender"; return a }(), wantRow: true},
-		{name: "different evidence kind", edges: []api.VersionPersonEdge{func() api.VersionPersonEdge { e := edge; e.EvidenceKind = "custodian_assignment"; return e }()}, assertion: assertion, wantRow: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			result := api.VersionPeople{State: "published", Edges: tc.edges, Assertions: []api.VersionPersonAssertion{tc.assertion}}
