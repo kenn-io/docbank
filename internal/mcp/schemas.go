@@ -18,6 +18,7 @@ const (
 	versionField              = "content_version_id"
 	personIDField             = "person_id"
 	schemaStateField          = "state"
+	schemaRoleField           = "role"
 	schemaVaultIDField        = "vault_id"
 	schemaRevisionField       = "revision"
 	schemaLimitField          = "limit"
@@ -1064,4 +1065,39 @@ func promotePhotoNodeSchemas() (schema, schema) {
 
 func fenceFingerprintSchema() schema {
 	return schema{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "maxLength": 71}
+}
+
+func documentFactsInputSchema(maxOffset int64) schema {
+	s := rootObjectSchema(schema{"node_id": integerSchema(1, 0), "content_version_id": uuidSchema(), "offset": integerSchema(0, maxOffset), "snapshot": fenceFingerprintSchema()})
+	s["description"] = "Choose node_id or content_version_id; pass snapshot with offset."
+	return s
+}
+
+// Facts fields share definitions to keep the MCP tool catalog bounded.
+func factsOutputSchema(properties schema, required ...string) schema {
+	out := rootObjectSchema(properties, required...)
+	id := uuidSchema()
+	// The UUID pattern already fixes its length.
+	delete(id, "minLength")
+	delete(id, "maxLength")
+	out["$defs"] = schema{"s": stringSchema(maxToolResponseBytes), "u": id}
+	return out
+}
+func factStringSchema() schema { return schema{"$ref": "#/$defs/s"} }
+func factWhenSchema() schema {
+	return objectSchema(schema{schemaStateField: factStringSchema(), "precision": factStringSchema(), "at": factStringSchema(), "local": factStringSchema(), "zone_state": factStringSchema(), "source_zone": factStringSchema(), "source_offset_seconds": schema{"type": "integer"}, "date": factStringSchema(), "period": factStringSchema(), "placed_by": objectSchema(schema{"source": factStringSchema(), "rule": factStringSchema(), "fallback": booleanSchema(), "event_id": factStringSchema(), "claim_basis": factStringSchema()}, "source", "rule", "fallback", "event_id", "claim_basis")}, schemaStateField, "precision")
+}
+func getDocumentDatesSchemas() (schema, schema) {
+	claim := objectSchema(schema{"event_id": factStringSchema(), "date_kind": factStringSchema(), "primary": booleanSchema(), "date_value": factStringSchema(), "raw_value": stringSchema(document.MaxDocumentEventRawValueBytes), "precision": factStringSchema(), "timezone_kind": factStringSchema(), "zone_text": factStringSchema(), "offset_seconds": schema{"type": "integer"}, "axis_key": factStringSchema(), "utc_key": factStringSchema(), "claim_basis": factStringSchema(), "parse_confidence": factStringSchema(), "evidence_kind": factStringSchema(), "evidence_id": factStringSchema(), "source_kind_raw": factStringSchema(), "when": factWhenSchema()}, "event_id", "date_kind", "primary", "date_value", "raw_value", "precision", "timezone_kind", "zone_text", "axis_key", "claim_basis", "parse_confidence", "evidence_kind", "evidence_id", "when")
+	primary := objectSchema(schema{"event_id": factStringSchema(), "reason": factStringSchema(), "rule_id": factStringSchema(), "disclosure": factStringSchema()}, "event_id", "reason", "rule_id", "disclosure")
+	diagnostic := objectSchema(schema{"code": factStringSchema(), "detail": factStringSchema()}, "code", "detail")
+	input := documentFactsInputSchema(document.MaxDocumentEvents + document.MaxDocumentEventsEncodedBytes/32)
+	return input, factsOutputSchema(withPrivateCache(schema{"content_version_id": schema{"$ref": "#/$defs/u"}, "node_id": integerSchema(1, 0), schemaStateField: factStringSchema(), "document_kind": factStringSchema(), "primary": primary, "claims": arraySchema(claim, 100), "diagnostics": arraySchema(diagnostic, 100), "offset": integerSchema(0, 0), "next_offset": integerSchema(1, 0), "snapshot": fenceFingerprintSchema()}), cacheRequired("content_version_id", "node_id", schemaStateField, "claims", "diagnostics", "offset", "snapshot")...)
+}
+func getDocumentPeopleSchemas() (schema, schema) {
+	external := objectSchema(schema{"system": factStringSchema(), "archive_id": stringSchema(document.MaxPersonArchiveIDBytes), "uid": stringSchema(document.MaxPersonExternalUIDBytes)}, "system", "archive_id", "uid")
+	edge := objectSchema(schema{"person_id": schema{"$ref": "#/$defs/u"}, "display_name": stringSchema(document.MaxPersonDisplayNameBytes), schemaRoleField: factStringSchema(), "basis": factStringSchema(), "confidence": factStringSchema(), "evidence_kind": factStringSchema(), "evidence_id": factStringSchema(), "raw_label": stringSchema(document.MaxPersonDisplayNameBytes), "claim_count": integerSchema(0, 0), "linked_contact": booleanSchema(), "external": arraySchema(external, document.MaxPersonExternalIdentities)}, "person_id", "display_name", schemaRoleField, "basis", "confidence", "evidence_kind", "evidence_id", "raw_label", "claim_count", "linked_contact", "external")
+	assertion := objectSchema(schema{"assertion_id": schema{"$ref": "#/$defs/u"}, "person_id": schema{"$ref": "#/$defs/u"}, "display_name": stringSchema(document.MaxPersonDisplayNameBytes), schemaRoleField: factStringSchema(), "action": factStringSchema(), "note": factStringSchema(), "recorded_at": factStringSchema(), "revision": integerSchema(1, 0)}, "assertion_id", "person_id", "display_name", schemaRoleField, "action", "note", "recorded_at", "revision")
+	unresolved := objectSchema(schema{"raw_label": stringSchema(document.MaxPersonDisplayNameBytes), schemaRoleField: factStringSchema(), "candidate_id": schema{"$ref": "#/$defs/u"}, "evidence_kind": factStringSchema()}, "raw_label", schemaRoleField, "evidence_kind")
+	return documentFactsInputSchema(1<<31 - 1), factsOutputSchema(withPrivateCache(schema{"content_version_id": schema{"$ref": "#/$defs/u"}, schemaStateField: factStringSchema(), "edges": arraySchema(edge, 100), "assertions": arraySchema(assertion, 100), "unresolved": arraySchema(unresolved, 100), "offset": integerSchema(0, 0), "next_offset": integerSchema(1, 0), "snapshot": fenceFingerprintSchema()}), cacheRequired("content_version_id", schemaStateField, "edges", "assertions", "unresolved", "offset", "snapshot")...)
 }

@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -61,7 +62,8 @@ func photoHiddenMiddleware(next http.Handler) http.Handler {
 		if cookie, err := r.Cookie(photoHiddenCookie(r.Host)); err == nil {
 			r = r.WithContext(store.WithPhotoHiddenToken(r.Context(), cookie.Value))
 		}
-		if r.URL.Path == "/api/v1/people" || r.URL.Path == "/api/v1/people/face-candidates" || (len(r.URL.Path) >= len("/api/v1/photos/") && r.URL.Path[:len("/api/v1/photos/")] == "/api/v1/photos/") {
+		_, factsPath := versionFactsPath(r.URL.Path)
+		if r.URL.Path == "/api/v1/people" || r.URL.Path == "/api/v1/people/face-candidates" || strings.HasPrefix(r.URL.Path, "/api/v1/photos/") || factsPath {
 			w.Header().Set("Cache-Control", "no-store")
 			w.Header().Set("Vary", "X-Api-Key, Authorization, Cookie, "+WebSessionHeader)
 		}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 
 	"go.kenn.io/docbank/document"
 )
@@ -47,10 +48,13 @@ func (s *Store) DocumentEventCoverageReport(ctx context.Context) (DocumentEventC
 		ContractVersion: state.ContractVersion, DeriverFingerprint: state.DeriverFingerprint,
 		InputEpoch: state.InputEpoch, PublicationEpoch: state.PublicationEpoch,
 	}
-	const freshIndexed = `a.input_epoch=$1 AND a.input_revision=COALESCE(d.revision,0)
-		AND a.state='indexed' AND h.input_epoch=a.input_epoch
-		AND g.inputs_sha256=a.inputs_sha256 AND g.contract_version=$2
-		AND g.deriver_fingerprint=$3`
+	freshIndexed := documentEventFreshIndexedSQL("$1", "$2", "$3")
+	args := []any{state.InputEpoch, state.ContractVersion, state.DeriverFingerprint, document.SourceMetadataContractV1}
+	var fallbackParams []string
+	for _, kind := range document.FallbackDateKinds() {
+		args = append(args, kind)
+		fallbackParams = append(fallbackParams, fmt.Sprintf("$%d", len(args)))
+	}
 	query := `SELECT count(*),
 		COALESCE(sum(CASE WHEN ` + freshIndexed + ` THEN 1 ELSE 0 END),0),
 		COALESCE(sum(CASE WHEN a.input_epoch=$1 AND a.input_revision=COALESCE(d.revision,0)
@@ -70,7 +74,7 @@ func (s *Store) DocumentEventCoverageReport(ctx context.Context) (DocumentEventC
 			SELECT 1 FROM document_event_primaries dep
 			JOIN document_events de ON de.generation_id=dep.generation_id AND de.event_id=dep.event_id
 			WHERE dep.generation_id=g.generation_id AND dep.scope_class='vault'
-			AND dep.disclosure='safe' AND de.date_kind IN ('imported','vault_recorded')
+			AND dep.disclosure='safe' AND de.date_kind IN (` + strings.Join(fallbackParams, ",") + `)
 		) THEN 1 ELSE 0 END),0)
 		FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id
 		LEFT JOIN document_event_dirty d ON d.content_version_id=cv.version_id
@@ -78,10 +82,7 @@ func (s *Store) DocumentEventCoverageReport(ctx context.Context) (DocumentEventC
 		LEFT JOIN document_event_heads h ON h.content_version_id=cv.version_id
 		LEFT JOIN document_event_generations g ON g.generation_id=h.generation_id
 		WHERE n.kind='file'`
-	err = tx.QueryRowContext(ctx, query,
-		state.InputEpoch, state.ContractVersion, state.DeriverFingerprint,
-		document.SourceMetadataContractV1,
-	).Scan(&coverage.Selected, &coverage.Indexed, &coverage.Failed, &coverage.Unavailable,
+	err = tx.QueryRowContext(ctx, query, args...).Scan(&coverage.Selected, &coverage.Indexed, &coverage.Failed, &coverage.Unavailable,
 		&coverage.MissingMetadata, &coverage.UnboundProvenance, &coverage.OperationalFallbacks)
 	if err != nil {
 		return DocumentEventCoverage{}, fmt.Errorf("counting document event coverage: %w", err)
@@ -110,9 +111,7 @@ func countSafeInvalidDateDiagnostics(
 		LEFT JOIN document_event_generations g ON g.generation_id=h.generation_id
 		WHERE n.kind='file' AND a.input_epoch=$1
 		AND a.input_revision=COALESCE(d.revision,0) AND (
-			a.state IN ('failed','unavailable') OR (a.state='indexed'
-			AND h.input_epoch=a.input_epoch AND g.inputs_sha256=a.inputs_sha256
-			AND g.contract_version=$2 AND g.deriver_fingerprint=$3))`,
+			a.state IN ('failed','unavailable') OR (`+documentEventFreshIndexedSQL("$1", "$2", "$3")+`))`,
 		state.InputEpoch, state.ContractVersion, state.DeriverFingerprint)
 	if err != nil {
 		return fmt.Errorf("listing document event diagnostics: %w", err)
@@ -193,4 +192,12 @@ func (s *Store) DocumentEventRebuildCoverage(ctx context.Context) (DocumentEvent
 		return DocumentEventCoverage{}, fmt.Errorf("closing document event rebuild coverage: %w", err)
 	}
 	return coverage, nil
+}
+
+// documentEventFreshIndexedSQL is shared by coverage and version reads.
+func documentEventFreshIndexedSQL(epoch, contract, fingerprint string) string {
+	return `a.input_epoch=` + epoch + ` AND a.input_revision=COALESCE(d.revision,0)
+		AND a.state='indexed' AND h.input_epoch=a.input_epoch
+		AND g.inputs_sha256=a.inputs_sha256 AND g.contract_version=` + contract + `
+		AND g.deriver_fingerprint=` + fingerprint
 }

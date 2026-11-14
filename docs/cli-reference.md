@@ -380,6 +380,17 @@ merge and split operation IDs make retries replayable. When you omit one, the
 CLI generates it and prints it to stderr before the request. A split needs at
 least one identity, assertion, assignment, or external UID.
 
+## docbank document dates and people
+
+```sh
+docbank document dates <path-or-id> [--json] [--full]
+docbank document people <path-or-id> [--json] [--full]
+```
+
+Read current date claims or people; dates also show diagnostics.
+Use `--full` to include sensitive claims and `--json` for structured output.
+A locked Hidden photo returns HTTP 404; these commands do not unlock Hidden.
+
 ## docbank document stat
 
 ```

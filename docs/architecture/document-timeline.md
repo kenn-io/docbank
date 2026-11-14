@@ -186,3 +186,13 @@ operation ID after the prerequisite or failure is resolved.
 
 Backups preserve person and custody records. Restore rebuilds the links without
 copying old rebuild receipts. See [Backup and recovery](backup.md).
+
+## Read date claims
+
+`GET /api/v1/versions/{version_id}/dates` reads claims and the `primary-rule/v1`
+primary. Safe disclosure omits claims that are sensitive or have sensitive
+actors; only API-key clients can request `disclosure=full`. Each `when` describes
+its precision and source zone without inventing an instant for floating or
+date-only values. Only the primary has `when.placed_by`, naming the rule and
+fallback decision. Responses report `published`, `pending`, `failed`, or
+`none` and omit stale claims.

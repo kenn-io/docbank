@@ -11,6 +11,18 @@ daemon API and CLI can list, search, create, rename, retire, merge, and split
 these records. MCP can find and read them. Every edit to an existing person
 uses the revision returned by the preceding read.
 
+## Read a document's people
+
+Use `docbank document people <path-or-id>` or
+`GET /api/v1/versions/{version_id}/people`. Only API keys can use
+`disclosure=full`; safe reads omit Bcc and unsupported provisional people.
+
+People reads stay pending until dates and the first people result are ready.
+Pending or failed reads withhold derived
+people and unresolved names but retain operator assertions. While Hidden is
+locked, a Hidden photo's facts return HTTP 404, even with an API key. Unlock
+Hidden to read them.
+
 ## People in Photos
 
 Open **Photos → People** to browse the people in your visible photos, 24 cards at a time. Each card shows an assigned face and the number of Library photos depicting that person. Several faces or paired RAW and JPEG files count as one photo. A card shows a person icon when no readable assigned face is available. People with no visible photo, such as email contacts, get no card.

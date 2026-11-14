@@ -844,6 +844,50 @@ var backendSuites = []backendSuite{
 		{"SplitPersonMovesCustodianAndExternalUID", func(t *testing.T) { t.Helper(); checkSplitPersonMovesCustodianAndExternalUID(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkSplitPersonMovesCustodianAndExternalUID(t, newPostgresQueryStore) }},
 		{"PersonSplitMissingAssertion", func(t *testing.T) { t.Helper(); checkPersonSplitMissingAssertion(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPersonSplitMissingAssertion(t, newPostgresQueryStore) }},
 		{"MergePersonsPreservesKeyFace", func(t *testing.T) { t.Helper(); checkMergePersonsPreservesKeyFace(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMergePersonsPreservesKeyFace(t, newPostgresQueryStore) }},
+
+		{"DocumentPeopleFactsAwaitFirstPeopleHead", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsAwaitFirstPeopleHead(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFactsAwaitFirstPeopleHead(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleFactsSensitiveUnresolvedActor", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsSensitiveUnresolvedActor(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFactsSensitiveUnresolvedActor(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleFactsCandidateQueueOverflow", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsCandidateQueueOverflow(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFactsCandidateQueueOverflow(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleFactsMergeResolvesCandidate", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsMergeResolvesCandidate(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFactsMergeResolvesCandidate(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession(t, newPostgresQueryStore)
+		}},
+		{"DocumentDateFactsNeverReturnsStaleClaims", func(t *testing.T) { t.Helper(); checkDocumentDateFactsNeverReturnsStaleClaims(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentDateFactsNeverReturnsStaleClaims(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleFactsPublicationAndFailure", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsPublicationAndFailure(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFactsPublicationAndFailure(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleFactsFiltersSensitiveEdge", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsFiltersSensitiveEdge(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsFiltersSensitiveEdge(t, newPostgresQueryStore) }},
+		{"DocumentPeopleFactsAssertionsAndRetiredPerson", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsAssertionsAndRetiredPerson(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFactsAssertionsAndRetiredPerson(t, newPostgresQueryStore)
+		}},
+		{"OpenCandidatesForVersionScopesOccurrences", func(t *testing.T) {
+			t.Helper()
+			checkOpenCandidatesForVersionScopesOccurrences(t, false)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkOpenCandidatesForVersionScopesOccurrences(t, true)
+		}},
 		{"OpenPersonCandidateReplaysDecisionAndSeparatesNewEvidence", func(t *testing.T) {
 			t.Helper()
 			checkOpenPersonCandidateReplaysDecisionAndSeparatesNewEvidence(t, newTestStore)
