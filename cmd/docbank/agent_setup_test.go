@@ -22,7 +22,7 @@ func TestAgentSetupFeatureStatus(t *testing.T) {
 	stub := filepath.Join(dir, "codex")
 	for _, tc := range []struct{ output, state, detail string }{
 		{"mcp_2026_07_28 under development true", "ok", "under-development"},
-		{"mcp_2026_07_28 under development false", "failed", "support is off"},
+		{"mcp_2026_07_28 under development false", "failed", "off"},
 		{"other under development true", "failed", "upgrade Codex"},
 		{"mcp_2026_07_28 under development perhaps", "unknown", "parse"},
 	} {
@@ -92,6 +92,19 @@ func TestAgentSetupCheckAndPrint(t *testing.T) {
 	assert.Contains(t, out.String(), `"state":"missing"`)
 	assert.Contains(t, out.String(), codexEnable)
 	assert.Empty(t, stderr.String())
+	resetFlags(rootCmd)
+	out.Reset()
+	stderr.Reset()
+	code = runProcess([]string{"agent", "setup", "--agent", "codex", "--check"}, &out, &stderr)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, out.String(), codexFeature+" feature")
+	for _, line := range strings.Split(out.String(), "\n") {
+		if strings.Contains(line, codexFeature+" feature") {
+			assert.LessOrEqual(t, len([]rune(line)), 140, line)
+			assert.Contains(t, line, ".codex/config.toml")
+			assert.Contains(t, line, "project")
+		}
+	}
 	resetFlags(rootCmd)
 	out.Reset()
 	stderr.Reset()

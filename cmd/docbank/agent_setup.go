@@ -20,7 +20,7 @@ const codexFeature = "mcp_2026_07_28"
 const codexEnable = "codex features enable " + codexFeature
 
 // codexOffStep also covers a trusted project that disables the feature, which codexEnable cannot override.
-const codexOffStep = codexEnable + " (or docbank agent setup); if it stays off, set " + codexFeature + " = true under [features] in the trusted project's .codex/config.toml"
+const codexOffStep = codexEnable + "; set true in project .codex/config.toml [features] if off"
 
 func newAgentSetupCommand() *cobra.Command {
 	cmd := agentsetup.NewCommand(agentsetup.Options{
@@ -72,7 +72,7 @@ func codexFeatureItem() agentsetup.Item {
 				case "true":
 					return agentsetup.Status{State: agentsetup.StateOK, Reason: "on; Codex shows an under-development feature notice each session"}, false
 				case "false":
-					return agentsetup.Status{State: agentsetup.StateFailed, Reason: "Codex's MCP 2026-07-28 support is off", NextStep: codexOffStep}, true
+					return agentsetup.Status{State: agentsetup.StateFailed, Reason: "off", NextStep: codexOffStep}, true
 				}
 				return agentsetup.Status{State: agentsetup.StateUnknown, Reason: "cannot parse Codex feature state", NextStep: codexEnable}, false
 			}
