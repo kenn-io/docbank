@@ -27,6 +27,7 @@ import (
 
 func registerProcessingRoutes(api huma.API, d Deps) {
 	registerLocalTextRoutes(api, d)
+	registerFaceSetupRoutes(api, d)
 	registerTextCitationRoute(api, d)
 	registerRedactionPreparationRoute(api, d)
 	registerTextNavigationRoutes(api, d)

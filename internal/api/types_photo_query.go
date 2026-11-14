@@ -155,6 +155,7 @@ func (PhotoQuality) Schema(r huma.Registry) *huma.Schema {
 }
 
 type PreparePhotoPreviewRequest struct {
+	FaceID           string `json:"face_id,omitzero" format:"uuid"`
 	PersonID         string `json:"person_id,omitzero" format:"uuid"`
 	Hidden           bool   `json:"hidden,omitempty" default:"false"`
 	ContentVersionID string `json:"content_version_id" format:"uuid"`

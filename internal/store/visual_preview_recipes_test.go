@@ -312,3 +312,99 @@ func TestRestoreRetainsVisualPreviewRecipes(t *testing.T) {
 		require.NotContains(t, outputs, candidate.Hash)
 	}
 }
+
+func faceMemberPreviewFixture(t *testing.T, s *Store) (Node, Node, PhotoAsset, string) {
+	t.Helper()
+	ctx := t.Context()
+	raw, err := s.CreateFile(ctx, s.RootID(), "pair.dng", fakeHash("d1"), 12, "image/x-adobe-dng")
+	require.NoError(t, err)
+	image, err := s.CreateFile(ctx, s.RootID(), "pair.jpg", fakeHash("d2"), 12, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, image.ID)
+	require.NoError(t, err)
+	singleton, err := s.PhotoAssetForNode(ctx, raw.ID)
+	require.NoError(t, err)
+	_, err = s.DetachPhotoFile(ctx, singleton.ID, singleton.Revision, singleton.Files[0].ID, PhotoDetachOptions{})
+	require.NoError(t, err)
+	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, raw.ID, PhotoRoleRAW, nil)
+	require.NoError(t, err)
+	imageFile := fileByRole(asset.Files, PhotoRoleImage)
+	asset, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &imageFile.ID)
+	require.NoError(t, err)
+	faceID := "00000000-0000-4000-8000-000000000001"
+	_, _, err = s.CreatePhotoFace(ctx, raw.CurrentVersionID, faceID, document.FaceBox{Width: .2, Height: .2}, "")
+	require.NoError(t, err)
+	return raw, image, asset, faceID
+}
+
+func checkFaceMemberGridPreviews(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	t.Parallel()
+	s := open(t)
+	ctx := t.Context()
+	raw, image, asset, faceID := faceMemberPreviewFixture(t, s)
+	grid, err := document.CurrentPhotoQualityFingerprints()
+	require.NoError(t, err)
+	targets, err := s.MissingPhotoVisualPreviewTargetsAfter(ctx, grid.GridRecipe, "", 100)
+	require.NoError(t, err)
+	require.Len(t, targets, 2)
+	var source PhotoVisualPreviewTarget
+	for _, target := range targets {
+		if target.VersionID == raw.CurrentVersionID {
+			source = target
+		}
+	}
+	require.Equal(t, raw.CurrentVersionID, source.VersionID)
+	eligible, err := s.PhotoVisualPreviewTargetEligible(ctx, source, grid.GridRecipe)
+	require.NoError(t, err)
+	require.True(t, eligible)
+	_, fit, err := document.MarshalVisualPreviewRecipeV1(visualPreviewRecipe())
+	require.NoError(t, err)
+	targets, err = s.MissingPhotoVisualPreviewTargetsAfter(ctx, fit, "", 100)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	require.Equal(t, image.CurrentVersionID, targets[0].VersionID)
+	eligible, err = s.PhotoVisualPreviewTargetEligible(ctx, source, fit)
+	require.NoError(t, err)
+	require.False(t, eligible)
+	require.ErrorIs(t, s.FacePhotoPreviewSource(ctx, asset.ID, image.CurrentVersionID, faceID), ErrNotFound)
+	recipe, err := document.BuiltInVisualPreviewRecipe("grid")
+	require.NoError(t, err)
+	generation, err := s.PublishVisualPreviewGeneration(ctx, raw.CurrentVersionID, readyVisualPreviewWithRecipe(t, raw.BlobHash, fakeHash("d3"), 9, recipe), &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 9})
+	require.NoError(t, err)
+	require.NoError(t, s.FacePhotoPreviewSource(ctx, asset.ID, raw.CurrentVersionID, faceID))
+	view, err := s.PhotoVisualPreviewByGeneration(ctx, asset.ID, generation.GenerationID, "", faceID)
+	require.NoError(t, err)
+	require.Equal(t, raw.CurrentVersionID, view.Version.ID)
+	for _, change := range []string{"excluded", "trashed"} {
+		asset, err = s.PhotoAssetByID(ctx, asset.ID)
+		require.NoError(t, err)
+		if change == "excluded" {
+			_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+		} else {
+			_, _, err = s.Trash(ctx, raw.ID, UnconditionalRev)
+		}
+		require.NoError(t, err)
+		require.ErrorIs(t, s.FacePhotoPreviewSource(ctx, asset.ID, raw.CurrentVersionID, faceID), ErrNotFound, change)
+		_, err = s.PhotoVisualPreviewByGeneration(ctx, asset.ID, generation.GenerationID, "", faceID)
+		require.ErrorIs(t, err, ErrNotFound, change)
+		if change == "excluded" {
+			asset, err = s.PhotoAssetByID(ctx, asset.ID)
+			require.NoError(t, err)
+			_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, false)
+		} else {
+			_, _, err = s.Restore(ctx, raw.ID, UnconditionalRev)
+		}
+		require.NoError(t, err)
+		require.NoError(t, s.FacePhotoPreviewSource(ctx, asset.ID, raw.CurrentVersionID, faceID))
+		_, err = s.PhotoVisualPreviewByGeneration(ctx, asset.ID, generation.GenerationID, "", faceID)
+		require.NoError(t, err)
+	}
+	raw, err = s.NodeByID(ctx, raw.ID)
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContent(ctx, raw.ID, raw.Revision, fakeHash("d4"), 12, "image/x-adobe-dng")
+	require.NoError(t, err)
+	require.ErrorIs(t, s.FacePhotoPreviewSource(ctx, asset.ID, raw.CurrentVersionID, faceID), ErrNotFound)
+	_, err = s.PhotoVisualPreviewByGeneration(ctx, asset.ID, generation.GenerationID, "", faceID)
+	require.ErrorIs(t, err, ErrNotFound)
+}

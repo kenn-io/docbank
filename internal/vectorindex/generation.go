@@ -444,7 +444,7 @@ func (generation *Generation) scoreRow(query []float32, index int) Neighbor {
 	case document.VectorMetricDotProduct:
 		neighbor.Score = dot(query, generation.vector(index))
 	case document.VectorMetricL2:
-		neighbor.Distance = euclidean(query, generation.vector(index))
+		neighbor.Distance = Euclidean(query, generation.vector(index))
 	}
 	return neighbor
 }
@@ -856,7 +856,11 @@ func Cosine(left, right []float32) float64 {
 	return dotProduct / (math.Sqrt(leftNorm) * math.Sqrt(rightNorm))
 }
 
-func euclidean(left, right []float32) float64 {
+// Euclidean returns the distance between vectors in the same space.
+func Euclidean(left, right []float32) float64 {
+	if len(left) != len(right) || len(left) == 0 {
+		return math.Inf(1)
+	}
 	squared := 0.0
 	for index := range left {
 		delta := float64(left[index]) - float64(right[index])
@@ -923,4 +927,30 @@ func checkedProduct(values ...uint64) (uint64, bool) {
 
 func maxInt() int {
 	return int(^uint(0) >> 1)
+}
+
+// UnitCentroid returns the normalized sum of vectors from one vector space.
+func UnitCentroid(vectors [][]float32) []float32 {
+	if len(vectors) == 0 {
+		return nil
+	}
+	sum := make([]float64, len(vectors[0]))
+	for _, v := range vectors {
+		for i, x := range v {
+			sum[i] += float64(x)
+		}
+	}
+	var norm float64
+	for _, x := range sum {
+		norm += x * x
+	}
+	if norm == 0 {
+		return nil
+	}
+	norm = math.Sqrt(norm)
+	result := make([]float32, len(sum))
+	for i, x := range sum {
+		result[i] = float32(x / norm)
+	}
+	return result
 }

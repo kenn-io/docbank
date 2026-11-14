@@ -893,7 +893,8 @@
     ].filter((photos): photos is Photos => !!photos);
     // The People directory reloads on return, so only an open one refreshes.
     const people = photoPath === "/photos/people" ? peopleView : undefined;
-    if (lists.some((photos) => photos.loading) || people?.loading) return false;
+    if (lists.some((photos) => photos.loading) || people?.loading || people?.suggestions.loading)
+      return false;
     // Documents show the same files, so they reload when the user returns to them.
     pendingPhotoDocuments = true;
     for (const photos of lists)
@@ -907,6 +908,7 @@
         people?.refresh(),
       ]);
       listRefreshed = true;
+      if (people?.suggestions.error) throw new Error(people.suggestions.error);
     } finally {
       // A viewer's unavailable result must land after any older list rows.
       await settleReads(lists.map((photos) => photos.changed({ ...change, listRefreshed })));

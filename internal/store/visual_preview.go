@@ -371,7 +371,20 @@ func liveIncludedPhotoDisplayPredicate(alias string) string {
  AND a.kind='photo' AND ` + liveIncludedDisplayPredicate + `)`
 }
 
-// MissingPhotoVisualPreviewTargetsAfter lists display versions without a recorded recipe.
+func liveIncludedPhotoPreviewPredicate(alias, recipe string) string {
+	quality, _ := document.CurrentPhotoQualityFingerprints()
+	member := "a.display_file_id=f.file_id"
+	if recipe == quality.GridRecipe {
+		member = "(" + member + " OR (f.role IN ('image','raw') AND EXISTS(SELECT 1 FROM photo_faces face WHERE face.content_version_id=" + alias + ".version_id)))"
+	}
+	return `EXISTS (
+ SELECT 1 FROM nodes n JOIN photo_files f ON f.node_id=n.id
+ JOIN photo_assets a ON a.asset_id=f.asset_id AND ` + member + `
+ WHERE n.id=` + alias + `.node_id AND n.current_version_id=` + alias + `.version_id
+ AND a.kind='photo' AND ` + liveIncludedDisplayPredicate + `)`
+}
+
+// MissingPhotoVisualPreviewTargetsAfter lists display sources, plus face-bearing members for grids.
 func (s *Store) MissingPhotoVisualPreviewTargetsAfter(
 	ctx context.Context, recipeFingerprint, afterVersionID string, limit int,
 ) ([]PhotoVisualPreviewTarget, error) {
@@ -381,7 +394,7 @@ func (s *Store) MissingPhotoVisualPreviewTargetsAfter(
 	rows, err := s.db.QueryContext(ctx, `SELECT v.version_id,v.blob_hash,v.size,COALESCE(v.mime_type,'')
  FROM content_versions v WHERE v.version_id>$1 AND NOT EXISTS (
  SELECT 1 FROM visual_preview_generations g WHERE g.content_version_id=v.version_id AND g.recipe_fingerprint=$2)
- AND `+liveIncludedPhotoDisplayPredicate("v")+`
+ AND `+liveIncludedPhotoPreviewPredicate("v", recipeFingerprint)+`
  ORDER BY v.version_id LIMIT $3`, afterVersionID, recipeFingerprint, limit)
 	if err != nil {
 		return nil, err
@@ -408,7 +421,7 @@ func (s *Store) PhotoVisualPreviewTargetEligible(
  SELECT 1 FROM content_versions v WHERE v.version_id=$1 AND v.blob_hash=$2
  AND v.size=$3 AND COALESCE(v.mime_type,'')=$4 AND NOT EXISTS (
  SELECT 1 FROM visual_preview_generations g WHERE g.content_version_id=v.version_id AND g.recipe_fingerprint=$5)
- AND `+liveIncludedPhotoDisplayPredicate("v")+`)`,
+ AND `+liveIncludedPhotoPreviewPredicate("v", recipeFingerprint)+`)`,
 		target.VersionID, target.SourceSHA256, target.Size, storedString(s.postgresSchema != "", target.MediaType), recipeFingerprint).Scan(&eligible)
 	if err != nil {
 		return false, fmt.Errorf("checking photo visual preview eligibility for version %q: %w", target.VersionID, err)
@@ -445,9 +458,9 @@ func (s *Store) personPhotoPreviewSourceTx(ctx context.Context, tx *sql.Tx, asse
 	return nil
 }
 
-// PhotoVisualPreviewByGeneration binds a generation to a live display or assigned source grid.
-func (s *Store) PhotoVisualPreviewByGeneration(ctx context.Context, assetID, generationID, personID string) (VisualPreviewView, error) {
-	if validateUUIDv4(assetID) != nil || validateCatalogSHA256(generationID, "preview generation") != nil {
+// PhotoVisualPreviewByGeneration binds a generation to a live display or an authorized source grid.
+func (s *Store) PhotoVisualPreviewByGeneration(ctx context.Context, assetID, generationID, personID, faceID string) (VisualPreviewView, error) {
+	if validateUUIDv4(assetID) != nil || validateCatalogSHA256(generationID, "preview generation") != nil || personID != "" && faceID != "" {
 		return VisualPreviewView{}, ErrNotFound
 	}
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
@@ -457,10 +470,14 @@ func (s *Store) PhotoVisualPreviewByGeneration(ctx context.Context, assetID, gen
 	defer func() { _ = tx.Rollback() }()
 	var versionID, recipe string
 	var hidden *string
-	if personID != "" {
-		err = tx.QueryRowContext(ctx, `SELECT a.hidden_at,g.content_version_id,g.recipe_fingerprint FROM photo_assets a JOIN visual_preview_generations g ON g.generation_id=? WHERE a.asset_id=?`, generationID, assetID).Scan(&hidden, &versionID, &recipe)
+	if personID != "" || faceID != "" {
+		err = tx.QueryRowContext(ctx, `SELECT a.hidden_at,g.content_version_id,g.recipe_fingerprint FROM photo_assets a JOIN visual_preview_generations g ON g.generation_id=$1 WHERE a.asset_id=$2`, generationID, assetID).Scan(&hidden, &versionID, &recipe)
 		if err == nil {
-			err = s.personPhotoPreviewSourceTx(ctx, tx, assetID, versionID, personID)
+			if faceID != "" {
+				err = s.facePhotoPreviewSourceTx(ctx, tx, assetID, versionID, faceID)
+			} else {
+				err = s.personPhotoPreviewSourceTx(ctx, tx, assetID, versionID, personID)
+			}
 		}
 	} else {
 		err = tx.QueryRowContext(ctx, `SELECT a.hidden_at,v.version_id,g.recipe_fingerprint FROM photo_assets a JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id JOIN visual_preview_generations g ON g.content_version_id=v.version_id WHERE `+liveIncludedDisplayPredicate+` AND a.asset_id=? AND g.generation_id=?`, assetID, generationID).Scan(&hidden, &versionID, &recipe)
@@ -477,7 +494,7 @@ func (s *Store) PhotoVisualPreviewByGeneration(ctx context.Context, assetID, gen
 			return VisualPreviewView{}, err
 		}
 	}
-	version, err := scanContentVersion(tx.QueryRowContext(ctx, `SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=?`, versionID))
+	version, err := scanContentVersion(tx.QueryRowContext(ctx, `SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=$1`, versionID))
 	if err != nil {
 		return VisualPreviewView{}, err
 	}
@@ -485,7 +502,7 @@ func (s *Store) PhotoVisualPreviewByGeneration(ctx context.Context, assetID, gen
 	if err != nil {
 		return VisualPreviewView{}, err
 	}
-	if personID != "" {
+	if personID != "" || faceID != "" {
 		fingerprints, err := document.CurrentPhotoQualityFingerprints()
 		if err != nil {
 			return VisualPreviewView{}, err

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"time"
 
 	"go.kenn.io/docbank/document"
@@ -146,10 +147,8 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 				profiles[generation.ProcessingProfileFingerprint] = cached
 			}
 			profile, portable, fingerprints := cached.record, cached.portable, cached.fingerprints
-			// Image generations carry the image producer policy; original-file generations never do.
-			imageGeneration := generation.ChunkPolicyFingerprint == ImageEmbeddingPolicyFingerprint()
 			for _, binding := range portable.Embeddings {
-				if (binding.InputKind == document.EmbeddingInputRenditionChunk) != (generation.GenerationBlobHash != "") || (binding.InputKind == document.EmbeddingInputOriginalFile && imageGeneration) {
+				if (binding.InputKind == document.EmbeddingInputRenditionChunk) != (generation.GenerationBlobHash != "") {
 					continue
 				}
 				selected := request.VectorSpaces[profile.Fingerprint+"/"+binding.Name]
@@ -175,8 +174,8 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 					descriptor.Fingerprint != binding.Descriptor.Fingerprint {
 					continue
 				}
-				if binding.InputKind == document.EmbeddingInputImage {
-					if err := validateImageEmbeddingGenerationTx(ctx, tx, generation, binding.Name); err != nil {
+				if binding.InputKind != document.EmbeddingInputRenditionChunk {
+					if err := validateEmbeddingJobGenerationTx(ctx, tx, binding, generation); err != nil {
 						continue
 					}
 				}
@@ -383,17 +382,28 @@ func (s *Store) discoverImageEmbeddingJobs(ctx context.Context, request Embeddin
 			if err := json.Unmarshal(profiles[name].CanonicalProfile, &portable); err != nil {
 				return err
 			}
-			if !slices.ContainsFunc(portable.Embeddings, func(b document.EmbeddingBindingV1) bool {
-				_, ok := executable[b.Descriptor.Fingerprint]
-				return b.InputKind == document.EmbeddingInputImage && ok
-			}) {
+			var eligibility []string
+			for _, binding := range portable.Embeddings {
+				if _, ok := executable[binding.Descriptor.Fingerprint]; !ok {
+					continue
+				}
+				switch binding.InputKind {
+				case document.EmbeddingInputImage:
+					eligibility = append(eligibility, "(a.display_file_id=f.file_id AND "+photoDescriptionEligibility+")")
+				case document.EmbeddingInputFace:
+					eligibility = append(eligibility, "("+liveFaceEmbeddingSourcePredicate+" AND EXISTS(SELECT 1 FROM photo_faces face WHERE face.content_version_id=v.version_id))")
+				case document.EmbeddingInputQueryText, document.EmbeddingInputOriginalFile, document.EmbeddingInputRenditionChunk:
+					continue
+				}
+			}
+			if len(eligibility) == 0 {
 				continue
 			}
 			after := ""
 			if name == request.ImageAfter.ProfileFingerprint {
 				after = request.ImageAfter.ContentVersionID
 			}
-			versions, err := stringColumnTx(ctx, tx, "image reconciliation versions", `SELECT v.version_id FROM content_versions v JOIN nodes n ON n.id=v.node_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id>$1 AND n.current_version_id=v.version_id AND a.display_file_id=f.file_id AND `+photoDescriptionEligibility+` ORDER BY v.version_id LIMIT $2`, after, request.Limit+1-len(pairs))
+			versions, err := stringColumnTx(ctx, tx, "image reconciliation versions", `SELECT v.version_id FROM content_versions v JOIN nodes n ON n.id=v.node_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id>$1 AND n.current_version_id=v.version_id AND (`+strings.Join(eligibility, " OR ")+`) ORDER BY v.version_id LIMIT $2`, after, request.Limit+1-len(pairs))
 			if err != nil {
 				return err
 			}
@@ -414,13 +424,18 @@ func (s *Store) discoverImageEmbeddingJobs(ctx context.Context, request Embeddin
 				return err
 			}
 			for _, binding := range portable.Embeddings {
-				if binding.InputKind != document.EmbeddingInputImage {
+				if binding.InputKind != document.EmbeddingInputImage && binding.InputKind != document.EmbeddingInputFace {
 					continue
 				}
 				if _, ok := executable[binding.Descriptor.Fingerprint]; !ok {
 					continue
 				}
-				missing, err := imageEmbeddingMissingTx(ctx, tx, p.version, profile.Fingerprint, binding, quality.GridRecipe)
+				var missing bool
+				if binding.InputKind == document.EmbeddingInputFace {
+					missing, err = faceEmbeddingMissingTx(ctx, tx, p.version, profile.Fingerprint, binding, quality.GridRecipe)
+				} else {
+					missing, err = imageEmbeddingMissingTx(ctx, tx, p.version, profile.Fingerprint, binding, quality.GridRecipe)
+				}
 				if err != nil {
 					return err
 				}
@@ -485,6 +500,9 @@ func (s *Store) discoverImageEmbeddingJobs(ctx context.Context, request Embeddin
 // imageEmbeddingMissingTx reports whether the version's ready preview still
 // lacks a head or job for the binding and no derivative purge suppresses it.
 func imageEmbeddingMissingTx(ctx context.Context, tx *sql.Tx, version, profile string, binding document.EmbeddingBindingV1, recipe string) (bool, error) {
+	if eligible, err := photoDescriptionEligibleTx(ctx, tx, version); err != nil || !eligible {
+		return false, err
+	}
 	var missing bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM visual_preview_generations vp WHERE vp.content_version_id=$1 AND vp.recipe_fingerprint=$2 AND vp.state='ready'
                   AND NOT EXISTS(SELECT 1 FROM embedding_heads eh JOIN embedding_sets es ON es.embedding_set_id=eh.embedding_set_id JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id WHERE eh.content_version_id=vp.content_version_id AND eh.profile_fingerprint=$3 AND eh.binding_id=$4 AND eh.input_kind='image' AND eig.evidence_fingerprint=vp.checksum)

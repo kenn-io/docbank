@@ -77,7 +77,7 @@ func applyLocalText(ctx context.Context, plan api.LocalTextPlan) (retErr error) 
 
 func writeLocalTextPlan(cmd *cobra.Command, p api.LocalTextPlan) error {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintf(w, "profile:\t%s\nserver:\t%s\nindex:\t%s\nscope:\tthis vault and new imports\n", p.Profile, p.Server, p.VectorEffect)
+	_, _ = fmt.Fprintf(w, "profile:\t%s\nserver:\t%s\nindex:\t%s\nscope:\t%s\n", p.Profile, p.Server, p.VectorEffect, p.Scope)
 	_, _ = fmt.Fprintf(w, "retained:\t%s\n", strings.Join(p.RetainedClasses, ", "))
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("write local text plan: %w", err)
@@ -89,10 +89,10 @@ func writeLocalTextPlan(cmd *cobra.Command, p api.LocalTextPlan) error {
 // Running the command is the approval, so Kit's pre-download callback only
 // reports the download size.
 func installLocalText(cmd *cobra.Command, managed bool) error {
-	return installLocalTextWithRuntime(cmd, managed, embedlocal.Endpoint, embedlocal.Install)
+	return installLocalTextWithRuntime(cmd, managed, embedlocal.TextModel, embedlocal.Endpoint, embedlocal.Install)
 }
 
-func installLocalTextWithRuntime(cmd *cobra.Command, managed bool,
+func installLocalTextWithRuntime(cmd *cobra.Command, managed bool, model string,
 	endpoint func(context.Context, embedlocal.Options) (string, error),
 	install func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error),
 ) error {
@@ -105,6 +105,6 @@ func installLocalTextWithRuntime(cmd *cobra.Command, managed bool,
 		}
 		return true, nil
 	}
-	_, err := localEmbeddingOriginWithRuntime(cmd.Context(), confirm, endpoint, install)
+	_, err := localEmbeddingOriginWithRuntime(cmd.Context(), model, confirm, endpoint, install)
 	return err
 }

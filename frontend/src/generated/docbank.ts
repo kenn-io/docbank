@@ -3328,6 +3328,91 @@ export interface ExportJob {
   state: string;
 }
 
+export interface PersonFacePreview {
+  asset_id: string;
+  box?: FaceBox;
+  content_version_id: string;
+  generation_id: string;
+  rotation: number;
+}
+
+export interface FaceSuggestionFace {
+  assertion_id?: string;
+  box: FaceBox;
+  content_version_id: string;
+  created_at: string;
+  detector_fingerprint?: string;
+  dismissed: boolean;
+  /** @nullable */
+  eyes_open?: boolean | null;
+  face_id: string;
+  /** @nullable */
+  facing?: number | null;
+  hidden: boolean;
+  person_id?: string;
+  person_name?: string;
+  photo_recorded_at: string;
+  preview: PersonFacePreview;
+  /** @maxItems 1000 */
+  rejected_person_ids?: string[];
+  revision: number;
+  /** @nullable */
+  roll?: number | null;
+  /** @nullable */
+  smile?: boolean | null;
+}
+
+export interface FaceCandidate {
+  candidate_id: string;
+  display_name: string;
+  faces: FaceSuggestionFace[];
+  revision: number;
+  suggested_person_id?: string;
+}
+
+export type FaceCandidateDecisionRequestAction = typeof FaceCandidateDecisionRequestAction[keyof typeof FaceCandidateDecisionRequestAction];
+
+
+export const FaceCandidateDecisionRequestAction = {
+  link: 'link',
+  reject: 'reject',
+  new_person: 'new_person',
+} as const;
+
+export interface FaceCandidateDecisionRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  action: FaceCandidateDecisionRequestAction;
+  /** @maxLength 200 */
+  display_name?: string;
+  /** @maxItems 48 */
+  face_ids?: string[];
+  person_id?: string;
+}
+
+export interface FaceCandidateDecisionResult {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  candidate_id: string;
+  revision: number;
+  state: string;
+}
+
+export interface FaceCandidatePage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: FaceCandidate[];
+  total: number;
+}
+
+export interface FaceSetupApplyRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  consent: boolean;
+  /** @pattern ^[0-9a-f]{64}$ */
+  plan_fingerprint: string;
+}
+
 export interface GPSBounds {
   east: string;
   north: string;
@@ -5291,14 +5376,6 @@ export interface PersonExternalUID {
   uid: string;
 }
 
-export interface PersonFacePreview {
-  asset_id: string;
-  box?: FaceBox;
-  content_version_id: string;
-  generation_id: string;
-  rotation: number;
-}
-
 export interface PersonFacePreviewPage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -7236,6 +7313,7 @@ export interface PreparePhotoPreviewRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   content_version_id: string;
+  face_id?: string;
   hidden?: boolean;
   person_id?: string;
   size: PreparePhotoPreviewRequestSize;
@@ -10086,6 +10164,10 @@ cursor?: string;
  */
 photo_summary?: boolean;
 /**
+ * Rank people by similarity to this face
+ */
+face_id?: string;
+/**
  * Rank name groups by their newest visible depicted evidence, then by name. Namesakes stay together.
  */
 recent_first?: boolean;
@@ -10114,6 +10196,23 @@ export type RetirePersonHeaders = {
 
 export type SplitPersonHeaders = {
 'If-Match': string;
+};
+
+export type ListFaceCandidatesParams = {
+/**
+ * @minimum 1
+ * @maximum 250
+ */
+limit?: number;
+/**
+ * @minimum 0
+ * @maximum 10000
+ */
+offset?: number;
+};
+
+export type DecideFaceCandidateHeaders = {
+'If-Match'?: string;
 };
 
 export type DeletePhotoAlbumHeaders = {
@@ -10166,6 +10265,7 @@ export type HidePhotoAssetHeaders = {
 
 export type ReadPhotoPreviewParams = {
 person_id?: string;
+face_id?: string;
 };
 
 export type ReadPhotoPreviewHeaders = {
@@ -17006,6 +17106,77 @@ export const getPeopleCoverage = async ( options?: Parameters<typeof sessionJSON
 
 
 
+export const getListFaceCandidatesUrl = (params?: ListFaceCandidatesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/people/face-candidates?${stringifiedParams}` : `/api/v1/people/face-candidates`
+}
+
+/**
+ * @summary Review suggested face groups
+ */
+export const listFaceCandidates = async (params?: ListFaceCandidatesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<FaceCandidatePage> => {
+
+  return sessionJSON<FaceCandidatePage>(getListFaceCandidatesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getDecideFaceCandidateUrl = (candidateId: string,) => {
+
+
+
+
+  return `/api/v1/people/face-candidates/${encodeURIComponent(String(candidateId))}/decision`
+}
+
+/**
+ * @summary Confirm or dismiss a suggested face group
+ */
+export const decideFaceCandidate = async (candidateId: string,
+    faceCandidateDecisionRequest: NonReadonly<FaceCandidateDecisionRequest>,
+    headers?: DecideFaceCandidateHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<FaceCandidateDecisionResult> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<FaceCandidateDecisionResult>(getDecideFaceCandidateUrl(candidateId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(faceCandidateDecisionRequest)
+  }
+);}
+
+
+
 export const getRebuildDocumentPeopleUrl = () => {
 
 
@@ -19239,6 +19410,68 @@ return sessionJSON<ProcessingConsentRevocationReceipt>(getRevokeProcessingConsen
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(processingConsentRevocationRequest)
+  }
+);}
+
+
+
+export const getPlanFacesUrl = () => {
+
+
+
+
+  return `/api/v1/processing/faces/plans`
+}
+
+/**
+ * @summary Preview local face suggestions
+ */
+export const planFaces = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<LocalTextPlan> => {
+
+  return sessionJSON<LocalTextPlan>(getPlanFacesUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+export const getApplyFacesUrl = () => {
+
+
+
+
+  return `/api/v1/processing/faces/setup`
+}
+
+/**
+ * @summary Enable local face suggestions
+ */
+export const applyFaces = async (faceSetupApplyRequest: NonReadonly<FaceSetupApplyRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<LocalTextPlan> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<LocalTextPlan>(getApplyFacesUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(faceSetupApplyRequest)
   }
 );}
 

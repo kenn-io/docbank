@@ -24,6 +24,7 @@ import (
 
 	"github.com/spf13/cobra"
 	kitdaemon "go.kenn.io/kit/daemon"
+	"go.kenn.io/kit/embedlocal"
 	kitlogging "go.kenn.io/kit/logging"
 	"go.kenn.io/kit/packstore"
 	"go.kenn.io/kit/telemetry/posthog"
@@ -387,6 +388,11 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		return fmt.Errorf("configured processing profile %q conflicts with the built-in media profile", suppliedName)
 	}
 	processingProfiles[suppliedName] = suppliedProfile
+	faceProfile, err := localFaceProfile()
+	if err != nil {
+		return fmt.Errorf("configure local faces: %w", err)
+	}
+	processingProfiles[config.LocalFacesProfile] = faceProfile
 	captionName, captionProfile, err := processing.NewSuppliedCaptionProfile(s, blobs, "daemon:operator")
 	if err != nil {
 		return fmt.Errorf("configuring supplied caption profile: %w", err)
@@ -474,6 +480,32 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		}
 	}
 
+	faces := &processing.FaceSetup{Service: processingService,
+		Startup: func(ctx context.Context) error {
+			_, err := localEmbeddingOrigin(ctx, embedlocal.FaceModel, nil)
+			return err
+		},
+		OnEnabled: func() error {
+			err := jobSupervisor.StartWorker("process:face-suggestions", func(ctx context.Context) error { return processingService.FaceSuggestionBackfill(ctx, logger) })
+			if err != nil && !errors.Is(err, jobs.ErrDuplicate) {
+				return fmt.Errorf("starting face suggestions: %w", err)
+			}
+			return nil
+		},
+	}
+	enabled, err := faces.IsEnabled(sigCtx)
+	if err != nil {
+		return fmt.Errorf("checking face suggestions consent: %w", err)
+	}
+	heads, err := s.HasFaceVectorHeads(sigCtx)
+	if err != nil {
+		return fmt.Errorf("checking face vector heads: %w", err)
+	}
+	if enabled || heads {
+		if err := faces.OnEnabled(); err != nil {
+			return err
+		}
+	}
 	if processingService.HasPhotoFaceDetectionProfiles() {
 		if err := jobSupervisor.StartWorker("process:photo-face-detection", func(ctx context.Context) error {
 			return processingService.PhotoFaceDetectionBackfill(ctx, logger, renditionWorkers)
@@ -734,7 +766,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		BackupScheduleWake: backupScheduleWake,
 		Jobs:               jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
 		WebLoginEnabled: webLoginEnabled, APIAddress: addr,
-		Processing: processingService, LocalText: localText, PDFText: pdfText,
+		Processing: processingService, LocalText: localText, PDFText: pdfText, Faces: faces,
 		LocalTextStatus: func(ctx context.Context) (api.LocalTextStatus, error) {
 			return localTextStatus(ctx, processingProfiles, processingService, restartPending.Load(), inherited, inheritedReady.Load())
 		}, EnsureEmail: processing.EnsureEmailTarget,

@@ -126,6 +126,7 @@ func NewEmbeddingDescriptor(value EmbeddingDescriptor) (EmbeddingDescriptor, err
 
 // EmbeddingInput is one requested provider vector.
 type EmbeddingInput struct {
+	Box         *FaceBox           `json:"box,omitempty"`
 	Key         string             `json:"key"`
 	Role        EmbeddingRole      `json:"role"`
 	Kind        EmbeddingInputKind `json:"kind"`
@@ -248,6 +249,9 @@ func ValidateEmbeddingProviderResult(descriptor EmbeddingDescriptor, inputs []Em
 			}
 			return errors.New("provider result vector order does not match request")
 		}
+		if inputs[expected].Kind == EmbeddingInputFace && vector.Values == nil {
+			continue
+		}
 		if len(vector.Values) != descriptor.Dimension {
 			return errors.New("provider result vector dimension does not match descriptor")
 		}
@@ -311,7 +315,7 @@ func ExecuteEmbedding(
 			continue
 		}
 		providerMetadata := metadata[index]
-		if !authorization.DiscloseFilename || authorized[index].Kind == EmbeddingInputImage {
+		if !authorization.DiscloseFilename || (authorized[index].Kind == EmbeddingInputImage || authorized[index].Kind == EmbeddingInputFace) {
 			providerMetadata.Filename = ""
 		}
 		sealed := newSealedAuthorizedUpload(ctx, owned, providerMetadata)
@@ -524,9 +528,9 @@ func validateEmbeddingInputs(
 		if err := validateEmbeddingInputAuxiliaries(input); err != nil {
 			return err
 		}
-		if input.Kind == EmbeddingInputOriginalFile || input.Kind == EmbeddingInputImage {
+		if input.Kind == EmbeddingInputOriginalFile || (input.Kind == EmbeddingInputImage || input.Kind == EmbeddingInputFace) {
 			if nilInterface(input.Source) || input.Text != "" {
-				if input.Kind == EmbeddingInputImage {
+				if input.Kind == EmbeddingInputImage || input.Kind == EmbeddingInputFace {
 					return errors.New("image embedding input requires authorized upload")
 				}
 				return errors.New("original-file embedding input requires authorized upload")
@@ -536,11 +540,11 @@ func validateEmbeddingInputs(
 				return fmt.Errorf("embedding upload metadata: %w", err)
 			}
 			expectedKind := RenditionInputOriginalFile
-			if input.Kind == EmbeddingInputImage {
+			if input.Kind == EmbeddingInputImage || input.Kind == EmbeddingInputFace {
 				expectedKind = RenditionInputDerivedUpload
 			}
-			if metadata.InputKind != expectedKind || (input.Kind == EmbeddingInputImage && (metadata.MediaFamily != "image" || metadata.MediaType != "image/jpeg")) {
-				if input.Kind == EmbeddingInputImage {
+			if metadata.InputKind != expectedKind || ((input.Kind == EmbeddingInputImage || input.Kind == EmbeddingInputFace) && (metadata.MediaFamily != "image" || metadata.MediaType != "image/jpeg")) {
+				if input.Kind == EmbeddingInputImage || input.Kind == EmbeddingInputFace {
 					return errors.New("image embedding input must use derived JPEG upload metadata")
 				}
 				return errors.New("original-file embedding input must use original file upload metadata")
@@ -583,7 +587,14 @@ func validateEmbeddingInputs(
 }
 
 func validateEmbeddingInputAuxiliaries(input EmbeddingInput) error {
-	if input.Kind == EmbeddingInputQueryText || (input.Kind == EmbeddingInputOriginalFile || input.Kind == EmbeddingInputImage) {
+	if input.Kind == EmbeddingInputFace {
+		if input.Box == nil || (FaceObservation{Box: *input.Box}).Validate() != nil {
+			return errors.New("face embedding requires a valid box")
+		}
+	} else if input.Box != nil {
+		return errors.New("only face embeddings accept boxes")
+	}
+	if input.Kind == EmbeddingInputQueryText || input.Kind == EmbeddingInputOriginalFile || input.Kind == EmbeddingInputImage || input.Kind == EmbeddingInputFace {
 		if len(input.HeadingPath) != 0 || len(input.SourceSpans) != 0 {
 			return errors.New("embedding input auxiliary fields are document-only")
 		}
@@ -652,7 +663,7 @@ func validModelInputMode(mode ModelInputMode) bool {
 	return mode == ModelInputModeText || mode == ModelInputModeDocument || mode == ModelInputModeQuery
 }
 func validEmbeddingDocumentInputKind(kind EmbeddingInputKind) bool {
-	return kind == EmbeddingInputOriginalFile || kind == EmbeddingInputRenditionChunk || kind == EmbeddingInputImage
+	return kind == EmbeddingInputOriginalFile || kind == EmbeddingInputRenditionChunk || kind == EmbeddingInputImage || kind == EmbeddingInputFace
 }
 
 // IsValidVectorMetric reports whether metric is part of the durable vector contract vocabulary.
@@ -670,6 +681,9 @@ func cloneEmbeddingDescriptor(value EmbeddingDescriptor) EmbeddingDescriptor {
 func cloneEmbeddingInputs(inputs []EmbeddingInput) []EmbeddingInput {
 	cloned := slices.Clone(inputs)
 	for i := range cloned {
+		if inputs[i].Box != nil {
+			cloned[i].Box = new(*inputs[i].Box)
+		}
 		cloned[i].HeadingPath = slices.Clone(inputs[i].HeadingPath)
 		cloned[i].SourceSpans = slices.Clone(inputs[i].SourceSpans)
 	}

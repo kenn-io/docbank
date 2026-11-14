@@ -19,8 +19,15 @@ import {
 import * as api from "./generated/docbank.js";
 import * as photoEvents from "./photoEvents.js";
 import App from "./App.svelte";
-import { sessionResponse } from "./api-transport.js";
-import { person, personResponse, personMergeReceipt } from "./people-test-fixtures.js";
+import { APIError, sessionResponse } from "./api-transport.js";
+import {
+  ada,
+  isAda,
+  unnamed,
+  person,
+  personResponse,
+  personMergeReceipt,
+} from "./people-test-fixtures.js";
 import { Photos } from "./photos.svelte.js";
 import { People } from "./people.svelte.js";
 import { VerifiedUploadChannel } from "./upload.js";
@@ -5122,11 +5129,158 @@ it("refreshes open People cards after another client changes people", async () =
   });
   render(App);
   await screen.findByRole("button", { name: "Ada 1 Library photo" });
+  await waitFor(() => expect(screen.queryByText("Loading suggestions…")).toBeNull());
   // Another client renames Ada and removes Grace's last photo.
   rows = [{ ...ada, display_name: "Ada Lovelace", revision: 5 }];
   await act(() => photoEventPass()({}));
   await screen.findByRole("button", { name: "Ada Lovelace 1 Library photo" });
   expect(screen.queryByRole("button", { name: "Grace 2 Library photos" })).toBeNull();
+});
+
+it("finishes a slow suggestions read while photo events arrive and then catches up", async () => {
+  history.replaceState(null, "", "/photos/people#web_session=synthetic&web_upload_secret=proof");
+  livePhotoStubs();
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+  const pages: ((page: Awaited<ReturnType<typeof api.listFaceCandidates>>) => void)[] = [];
+  let slow = false;
+  const read = vi.spyOn(api, "listFaceCandidates").mockImplementation(
+    (_query, options) =>
+      new Promise((resolve, reject) => {
+        if (!slow) {
+          resolve({ items: [isAda], total: 1 });
+          return;
+        }
+        pages.push(resolve);
+        options?.signal?.addEventListener("abort", () => reject(options.signal?.reason), {
+          once: true,
+        });
+      }),
+  );
+  stubPhotoFetch(async (url) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [], total: 0 });
+  });
+  const loaded = vi.spyOn(People.prototype, "load");
+  render(App);
+  await screen.findByRole("button", { name: "Ada 3 Library photos" });
+  const people = loaded.mock.contexts.at(-1) as People;
+  await waitFor(() => expect(people.loading).toBe(false));
+  let attempt: Promise<boolean | void> | undefined;
+  let declined: boolean | void = undefined;
+  read.mockClear();
+  try {
+    slow = true;
+    let pending!: Promise<void>;
+    await act(() => {
+      pending = people.suggestions.load();
+    });
+    await waitFor(() => expect(pages).toHaveLength(1));
+    await act(() => {
+      attempt = photoEventPass()({}).then((result) => {
+        declined = result;
+        return result;
+      });
+    });
+    await waitFor(() => expect(declined).toBe(false));
+    expect(read).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      pages[0]!({ items: [unnamed], total: 1 });
+      await pending;
+    });
+    expect(people.suggestions.items).toEqual([unnamed]);
+    let catchUp!: Promise<boolean | void>;
+    await act(() => {
+      catchUp = photoEventPass()({});
+    });
+    await waitFor(() => expect(pages).toHaveLength(2));
+    await act(async () => {
+      pages[1]!({ items: [isAda], total: 1 });
+      await catchUp;
+    });
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(people.suggestions.items).toEqual([isAda]);
+  } finally {
+    read.mockResolvedValue({ items: [], total: 0 });
+    cleanup();
+    for (const resolve of pages) resolve({ items: [], total: 0 });
+    await attempt;
+  }
+});
+
+it("rejects a photo event pass when suggestions fail", async () => {
+  history.replaceState(null, "", "/photos/people#web_session=synthetic&web_upload_secret=proof");
+  livePhotoStubs();
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+  const read = vi
+    .spyOn(api, "listFaceCandidates")
+    .mockResolvedValueOnce({ items: [isAda], total: 1 })
+    .mockRejectedValueOnce(new APIError("Temporary read failure", 503, "unavailable"))
+    .mockResolvedValue({ items: [unnamed], total: 1 });
+  stubPhotoFetch(async (url) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [], total: 0 });
+  });
+  render(App);
+  await screen.findByRole("button", { name: "Ada 3 Library photos" });
+  await screen.findByRole("button", { name: /Is this Ada/ });
+  await act(async () => {
+    await expect(photoEventPass()({})).rejects.toThrow("Temporary read failure");
+  });
+  expect(read).toHaveBeenCalledTimes(2);
+});
+
+it("settles a delayed multi-page suggestion refresh without further events", async () => {
+  history.replaceState(null, "", "/photos/people#web_session=synthetic&web_upload_secret=proof");
+  livePhotoStubs();
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+  const rows = Array.from({ length: 48 }, (_, index) => ({
+    ...isAda,
+    candidate_id: `group-${index}`,
+  }));
+  let delayed = false;
+  const read = vi.spyOn(api, "listFaceCandidates").mockImplementation(async (query) => {
+    if (delayed) await new Promise((resolve) => setTimeout(resolve, 100));
+    return {
+      items: rows.slice(query!.offset!, query!.offset! + query!.limit!),
+      total: rows.length,
+    };
+  });
+  stubPhotoFetch(async (url) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [], total: 0 });
+  });
+  const loaded = vi.spyOn(People.prototype, "load");
+  render(App);
+  await screen.findByRole("button", { name: "Ada 3 Library photos" });
+  const people = loaded.mock.contexts.at(-1) as People;
+  await waitFor(() => expect(people.suggestions.items).toHaveLength(24));
+  await act(() => people.suggestions.load(true));
+  expect(people.suggestions.items).toHaveLength(48);
+  const refresh = photoEventPass();
+  read.mockClear();
+  delayed = true;
+  vi.mocked(photoEvents.watchPhotoEvents).mockRestore();
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: { request: () => new Promise(() => {}) },
+  });
+  vi.useFakeTimers();
+  const watcher = photoEvents.watchPhotoEvents("synthetic", refresh, vi.fn());
+  try {
+    await act(() => vi.advanceTimersByTimeAsync(101));
+    expect(people.suggestions.loading).toBe(true);
+    await act(() => vi.advanceTimersByTimeAsync(29_899));
+    expect(read.mock.calls.map(([query]) => query!.offset)).toEqual([0, 24]);
+    expect(people.suggestions.loading).toBe(false);
+  } finally {
+    watcher.stop();
+    people.dispose();
+    vi.useRealTimers();
+    Reflect.deleteProperty(navigator, "locks");
+  }
 });
 
 function photoEventPass() {

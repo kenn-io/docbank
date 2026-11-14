@@ -551,15 +551,15 @@ func (s *Store) rejectFaceTx(ctx context.Context, tx *sql.Tx, before *PhotoFaceD
 	if err := s.clearNamedFaceCandidatesTx(ctx, tx, before, face.FaceID, request.PersonID, request.Action); err != nil {
 		return err
 	}
-	raw, err := json.Marshal([]PersonCandidateOccurrence{{ContentVersionID: face.ContentVersionID, Role: personAssertionRoleDepicted, EvidenceKind: "face", EvidenceID: face.FaceID}})
-	if err != nil {
-		return err
-	}
 	person := request.PersonID
 	if request.Action == "dismiss" {
 		person = ""
 	}
-	c, kept, err := s.retainPersonCandidate(ctx, tx, PersonMatchCandidate{ActorKey: "face:" + face.FaceID, DisplayName: "Face", SuggestedPersonID: person, Reason: personCandidateReasonFaceMatch, Evidence: raw}, true)
+	candidate, err := NewFaceCandidate([]FaceSuggestionFace{{PhotoFace: face}}, person, "Face")
+	if err != nil {
+		return err
+	}
+	c, kept, err := s.retainPersonCandidate(ctx, tx, candidate, true)
 	if err != nil {
 		return err
 	}
@@ -1053,11 +1053,14 @@ func (s *Store) readFaceDecisionsTx(ctx context.Context, tx *sql.Tx, faces []Pho
 	if len(faces) == 0 {
 		return nil
 	}
+	return s.readFaceDecisionsQuery(ctx, tx, faces, " AND f.content_version_id=$1", faces[0].ContentVersionID)
+}
+func (s *Store) readFaceDecisionsQuery(ctx context.Context, tx *sql.Tx, faces []PhotoFace, where string, args ...any) error {
 	index := make(map[string]int, len(faces))
 	for i, f := range faces {
 		index[f.FaceID] = i
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT f.face_id,COALESCE(c.suggested_person_id,'') FROM person_match_candidates c JOIN person_candidate_faces e ON e.candidate_id=c.candidate_id JOIN photo_faces f ON f.face_id=e.face_id AND f.content_version_id=e.content_version_id WHERE `+rejectedFaceMatchPredicate+` AND f.content_version_id=$1 ORDER BY 1,2`, faces[0].ContentVersionID)
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT f.face_id,COALESCE(c.suggested_person_id,'') FROM person_match_candidates c JOIN person_candidate_faces e ON e.candidate_id=c.candidate_id JOIN photo_faces f ON f.face_id=e.face_id AND f.content_version_id=e.content_version_id WHERE `+rejectedFaceMatchPredicate+` AND c.occurrence_count=1`+where+` ORDER BY 1,2`, args...)
 	if err != nil {
 		return err
 	}
@@ -1140,6 +1143,9 @@ func (s *Store) personFaceDetailTx(ctx context.Context, tx *sql.Tx, id string, p
 
 func (s *Store) clearNamedFaceCandidatesTx(ctx context.Context, tx *sql.Tx, before *PhotoFaceDecisionState, faceID, personID, action string) error {
 	for _, c := range slices.Clone(before.Candidates) {
+		if c.State == personCandidateStateRejected && c.OccurrenceCount > 1 {
+			continue
+		}
 		if action == faceDecisionReject && c.State == personCandidateStateRejected && c.SuggestedPersonID == "" {
 			continue
 		}

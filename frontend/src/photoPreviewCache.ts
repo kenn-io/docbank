@@ -3,6 +3,7 @@ import {
   preparePhotoPreview,
   readPhotoPreview,
   type PersonFacePreview,
+  type ReadPhotoPreviewParams,
 } from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import { randomUUID } from "./crypto.js";
@@ -25,13 +26,13 @@ export function previewObjectURL(
   onload: (url: string) => void,
   onfailure: (cause: unknown) => void,
   reload = false,
-  personID?: string,
+  grant?: ReadPhotoPreviewParams,
 ) {
   const controller = new AbortController();
   let current = true;
   let url = "";
   void cache
-    .get(assetID, generationID, controller.signal, reload, personID)
+    .get(assetID, generationID, controller.signal, reload, grant)
     .then((blob) => {
       if (current) {
         url = URL.createObjectURL(blob);
@@ -48,24 +49,25 @@ export function previewObjectURL(
   };
 }
 
-// faceCrop prepares a person's grid preview when it is not ready yet, reads
-// it through the cache, and returns its object URL with a crop style around
-// the face. It returns undefined when the preview cannot be prepared. Each
-// object URL goes to track, whose release revokes it.
+// faceCrop prepares a face's grid preview when it is not ready yet, reads it
+// through the cache, and returns its object URL with a crop style around the
+// face. Named portraits use their person grant; candidates use their face grant. It returns undefined when the preview
+// cannot be prepared. Each object URL goes to track, whose release revokes it.
 export async function faceCrop(
   cache: PhotoPreviewCache,
   face: PersonFacePreview,
-  person: { id: string; hidden: boolean; size: number },
+  person: { id?: string; faceID?: string; hidden: boolean; size: number },
   signal: AbortSignal,
   track: (release: () => void) => void,
 ) {
+  const grant = person.id ? { person_id: person.id } : { face_id: person.faceID };
   let generation = face.generation_id;
   if (!generation) {
     const slot = await preparePhotoPreview(
       face.asset_id,
       {
         content_version_id: face.content_version_id,
-        person_id: person.id,
+        ...grant,
         size: "grid",
         hidden: person.hidden,
       },
@@ -90,7 +92,7 @@ export async function faceCrop(
         (url) => finish(() => resolve(url)),
         (cause) => finish(() => reject(cause)),
         false,
-        person.id,
+        grant,
       ),
     );
   });
@@ -153,16 +155,16 @@ export class PhotoPreviewCache {
     generationID: string,
     caller?: AbortSignal,
     reload = false,
-    personID?: string,
+    grant?: ReadPhotoPreviewParams,
   ): Promise<Blob> {
     const signal = AbortSignal.any([this.controller.signal, ...(caller ? [caller] : [])]);
     return this.read(
       assetID,
       generationID,
-      getReadPhotoPreviewUrl(assetID, generationID, personID ? { person_id: personID } : undefined),
+      getReadPhotoPreviewUrl(assetID, generationID, grant),
       signal,
       reload,
-      personID,
+      grant,
     ).catch((cause) => {
       if (
         !signal.aborted &&
@@ -180,7 +182,7 @@ export class PhotoPreviewCache {
     path: string,
     signal: AbortSignal,
     reload: boolean,
-    personID?: string,
+    grant?: ReadPhotoPreviewParams,
   ): Promise<Blob> {
     signal.throwIfAborted();
     let onabort: () => void;
@@ -210,17 +212,11 @@ export class PhotoPreviewCache {
       try {
         const fetchSignal = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
         // The browser HTTP cache would keep bytes of photos hidden later; this class owns retention.
-        const response = await readPhotoPreview(
-          assetID,
-          generationID,
-          personID ? { person_id: personID } : undefined,
-          undefined,
-          {
-            session: this.session,
-            signal: fetchSignal,
-            cache: "no-store",
-          },
-        );
+        const response = await readPhotoPreview(assetID, generationID, grant, undefined, {
+          session: this.session,
+          signal: fetchSignal,
+          cache: "no-store",
+        });
         noStore = /(?:^|,)\s*no-store\s*(?:,|$)/i.test(response.headers.get("Cache-Control") ?? "");
         bytes = await response.arrayBuffer();
       } finally {

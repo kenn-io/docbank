@@ -698,6 +698,7 @@ var backendSuites = []backendSuite{
 		{"PersonNameSearchFollowsAuthority", func(t *testing.T) { t.Helper(); checkPersonNameSearchFollowsAuthority(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPersonNameSearchFollowsAuthority(t, newPostgresQueryStore) }},
 	}},
 	{name: "people-curation", postgres: "native operations", scope: "People, identities, custodians, candidates, face decisions, merge/split and undo; people-browsing covers discovery; document-people covers resolver production.", scenarios: []backendScenario{
+		{"FaceCandidateCurrentScope", func(t *testing.T) { t.Helper(); checkFaceCandidateCurrentScope(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkFaceCandidateCurrentScope(t, newPostgresQueryStore) }},
 		{"Snapshots", nil, checkPeopleSnapshotsPostgres},
 		{"Rollback", nil, checkPeopleRollbackPostgres},
 		{"RetainedPackageCustody", nil, checkPeopleRetainedPackageCustodyPostgres},
@@ -1345,6 +1346,8 @@ var backendSuites = []backendSuite{
 		{"VisualEvidenceSnapshots", nil, checkVisualEvidenceSnapshotsPostgres},
 		{"VisualPreviewPublicationRollback", nil, checkVisualPreviewPublicationRollbackPostgres},
 		{"PreviewBatchRecipes", func(t *testing.T) { t.Helper(); checkPreviewBatchRecipes(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPreviewBatchRecipes(t, newPostgresQueryStore) }},
+		{"FaceCandidateCatalogReads", func(t *testing.T) { t.Helper(); checkFaceCandidateCatalogReads(t, false) }, func(t *testing.T) { t.Helper(); checkFaceCandidateCatalogReads(t, true) }},
+		{"FaceMemberGridPreviews", func(t *testing.T) { t.Helper(); checkFaceMemberGridPreviews(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkFaceMemberGridPreviews(t, newPostgresQueryStore) }},
 		{"MissingPhotoVisualPreviewTargetsAfter", func(t *testing.T) { t.Helper(); checkMissingPhotoVisualPreviewTargetsAfter(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMissingPhotoVisualPreviewTargetsAfter(t, newPostgresQueryStore) }},
 		{"VisualPreviewPublicationIsExactVersionAndIdempotent", func(t *testing.T) {
 			t.Helper()

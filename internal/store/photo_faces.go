@@ -130,6 +130,11 @@ type PersonFacePreviewPage struct {
 
 const rejectedFaceMatchPredicate = `c.reason='face_match' AND c.state='rejected'`
 
+// faceSuggestionDecided matches an owner's dismissal of a face, or rejection of it for person.
+func faceSuggestionDecided(face, version, person string) string {
+	return `EXISTS(SELECT 1 FROM person_match_candidates c JOIN person_candidate_faces rejected ON rejected.candidate_id=c.candidate_id WHERE rejected.face_id=` + face + ` AND rejected.content_version_id=` + version + ` AND ` + rejectedFaceMatchPredicate + ` AND c.occurrence_count=1 AND (c.suggested_person_id IS NULL OR c.suggested_person_id=` + person + `))`
+}
+
 // personFaceCropOrder chooses a ready crop, then its area and stable IDs.
 const personFaceCropOrder = `(g.state='ready' AND g.output_blob_hash IS NOT NULL) DESC,
  face.width*face.height DESC,cv.version_id,face.face_id`
@@ -454,4 +459,26 @@ func nullableBoolInt(value *bool) *int {
 		return nil
 	}
 	return new(boolInt(*value))
+}
+
+// FacePhotoPreviewSource authorizes the exact current source of a visible face.
+func (s *Store) FacePhotoPreviewSource(ctx context.Context, assetID, versionID, faceID string) error {
+	return s.withReadTx(ctx, func(tx *sql.Tx) error { return s.facePhotoPreviewSourceTx(ctx, tx, assetID, versionID, faceID) })
+}
+func (s *Store) facePhotoPreviewSourceTx(ctx context.Context, tx *sql.Tx, assetID, versionID, faceID string) error {
+	if validateUUIDv4(assetID) != nil || validateUUIDv4(faceID) != nil {
+		return ErrNotFound
+	}
+	if err := s.currentFacePhotoQuery(ctx, tx, versionID); err != nil {
+		return err
+	}
+	var found bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces face JOIN content_versions v ON v.version_id=face.content_version_id JOIN photo_files f ON f.node_id=v.node_id WHERE face.face_id=$1 AND face.content_version_id=$2 AND f.asset_id=$3)`, faceID, versionID, assetID).Scan(&found)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return ErrNotFound
+	}
+	return nil
 }

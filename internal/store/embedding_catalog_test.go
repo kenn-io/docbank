@@ -642,6 +642,23 @@ func TestEmbeddingCatalogMetadataRoundTripsDeterministically(t *testing.T) {
 
 	restored := newTestStoreWithDriver(t, modernc.Driver{})
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(first.Bytes())))
+	t.Run("batched loader preserves restored authority", func(t *testing.T) {
+		loaded, err := loadEmbeddingSetsTx(t.Context(), restored.db, []string{record.ID, chunk.ID})
+		require.NoError(t, err)
+		for _, want := range []EmbeddingSetRecord{record, chunk} {
+			got, ok := loaded[want.ID]
+			require.True(t, ok)
+			require.Equal(t, want.BindingID, got.BindingID)
+			require.Equal(t, want.InputKind, got.InputKind)
+			require.Equal(t, want.InputGeneration.GenerationBlobHash, got.InputGeneration.GenerationBlobHash)
+			require.Equal(t, want.InputGeneration.GenerationEncodedSize, got.InputGeneration.GenerationEncodedSize)
+			require.Equal(t, want.InputGeneration.GenerationChecksum, got.InputGeneration.GenerationChecksum)
+			require.Equal(t, want.InputGeneration.AttachmentID, got.InputGeneration.AttachmentID)
+			require.Equal(t, want.InputGeneration.Inputs, got.InputGeneration.Inputs)
+			require.Equal(t, want.VectorSet.ID, got.VectorSet.ID)
+			require.Equal(t, want.VectorSpace.ID, got.VectorSpace.ID)
+		}
+	})
 	var roundTrip bytes.Buffer
 	require.NoError(t, restored.ExportMetadata(t.Context(), &roundTrip))
 	assert.Equal(t, first.Bytes(), roundTrip.Bytes())
