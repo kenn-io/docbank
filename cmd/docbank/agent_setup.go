@@ -20,7 +20,7 @@ const codexFeature = "mcp_2026_07_28"
 const codexEnable = "codex features enable " + codexFeature
 
 // codexOffStep also covers a trusted project that disables the feature, which codexEnable cannot override.
-const codexOffStep = codexEnable + "; set true in project .codex/config.toml [features] if off"
+const codexOffStep = codexEnable + "; set true in project .codex/config.toml [features]"
 
 func newAgentSetupCommand() *cobra.Command {
 	cmd := agentsetup.NewCommand(agentsetup.Options{
