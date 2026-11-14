@@ -350,7 +350,7 @@
   // unless a filter on it is active. Documents also hide a group that can't
   // narrow anything: no values, or one value that covers every result.
   function empty(facet: Facet): boolean {
-    if (!facet.available) return unit !== "photos";
+    if (!facet.available) return unit !== "photos" && facet.dimension !== "person_role";
     if (facet.dimension === "tags" && query.filters.no_tags) return false;
     const values = shown(facet);
     if (values.some((value) => selected(facet.dimension, value))) return false;

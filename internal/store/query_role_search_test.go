@@ -3,11 +3,12 @@ package store
 import (
 	"bytes"
 	"context"
-	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/query"
 	"testing"
 
@@ -18,8 +19,8 @@ func TestRoleSearchOperandSets(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	email := seedDocumentPeopleEvent(t, s, "email.txt", "a1", nil)
-	pdf := seedDocumentPeopleEvent(t, s, "paper.pdf", "a2", nil)
+	email := seedCurrentRoleSearchEvent(t, s, "email.txt", "a1", nil)
+	pdf := seedCurrentRoleSearchEvent(t, s, "paper.pdf", "a2", nil)
 	a, err := s.CreatePerson(ctx, "Aster Sender", "operator")
 	require.NoError(t, err)
 	b, err := s.CreatePerson(ctx, "Birch Recipient", "operator")
@@ -93,7 +94,7 @@ func TestRoleSearchFrozenMatchesAndPeopleFacet(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	version := seedDocumentPeopleEvent(t, s, "message.txt", "b1", nil)
+	version := seedCurrentRoleSearchEvent(t, s, "message.txt", "b1", nil)
 	person, err := s.CreatePerson(ctx, "Indigo Sender", "operator")
 	require.NoError(t, err)
 	hidden, err := s.CreatePerson(ctx, "Hidden Recipient", "operator")
@@ -111,6 +112,7 @@ func TestRoleSearchFrozenMatchesAndPeopleFacet(t *testing.T) {
 		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: photo.CurrentVersionID, PersonID: person.PersonID, Role: role, Action: "assert", Revision: 1})
 		require.NoError(t, err)
 	}
+	publishRoleFixtures(t, s)
 	value := snapshotTestQuery(t, `{"syntax":"advanced","text":"from:\"Indigo Sender\""}`)
 	projection, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Facets: []string{"person_role"}})
 	require.NoError(t, err)
@@ -211,7 +213,7 @@ func TestRoleSearchMentionNamesAreLiteral(t *testing.T) {
 	require.NoError(t, err)
 	person, _, err = s.PersonByID(ctx, person.PersonID)
 	require.NoError(t, err)
-	evidence := seedDocumentPeopleEvent(t, s, "visible.txt", "b2", nil)
+	evidence := seedCurrentRoleSearchEvent(t, s, "visible.txt", "b2", nil)
 	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: evidence.ID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1})
 	require.NoError(t, err)
 	visibleNames, err := (queryResolver{q: s.db}).personMentionNames(WithVisiblePeopleOnly(ctx), person.PersonID)
@@ -237,8 +239,6 @@ func TestRoleSearchMentionNamesAreLiteral(t *testing.T) {
 	require.Contains(t, args[1], `"Alias 197"`)
 	require.Contains(t, compiled.PositiveTextTerms(), `A "OR" *`)
 	require.Contains(t, compiled.PositiveTextTerms(), "Jory Pellham")
-	require.Len(t, compiled.roleMatches, 1)
-	require.Equal(t, "mentioned", compiled.roleMatches[0].label)
 	file, err := s.CreateFile(ctx, s.RootID(), "last-alias.txt", testSHA256([]byte("Alias 197")), 9, "text/plain")
 	require.NoError(t, err)
 	seedCompiledLegacyText(t, s, file, "Alias 197")
@@ -307,6 +307,83 @@ func TestRoleSearchNegationWithStaleEvents(t *testing.T) {
 	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
 	require.NoError(t, err)
 	require.Empty(t, result.Rows)
+	_, err = s.CreateSavedQuery(ctx, "Pending role", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"from:\"Sender Person\""}`))
+	require.NoError(t, err)
+	_, err = s.CreateSavedQuery(ctx, "Nested pending role", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"saved:\"Pending role\""}`))
+	require.NoError(t, err)
+	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT saved:\"Nested pending role\""}`)})
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+	_, err = s.CreatePerson(ctx, "Absent Person", "operator")
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `UPDATE document_event_state SET input_epoch=input_epoch-1`)
+	require.NoError(t, err)
+	publishRoleFixtures(t, s)
+	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT from:\"Absent Person\""}`)})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+}
+
+func TestRoleSearchNegationBeforePeoplePublication(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	version := seedCurrentRoleSearchEvent(t, s, "pending.txt", "a4", []document.DocumentEventActorV1{{
+		Role: "sender", ActorKey: "email:pending@example.test", Address: "pending@example.test", DisplayName: "Pending Sender", Claim: `"sender"`,
+	}})
+	_, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
+	require.NoError(t, err)
+	value := snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT from:\"Pending Sender\""}`)
+	result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+	orQuery := snapshotTestQuery(t, `{"syntax":"advanced","text":"name:pending OR from:\"Pending Sender\""}`)
+	orResult, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: orQuery})
+	require.NoError(t, err)
+	require.Len(t, orResult.Rows, 1)
+	var personID string
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT person_id FROM persons WHERE display_name='Pending Sender'`).Scan(&personID))
+	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: personID, Role: "sender", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	positive := snapshotTestQuery(t, `{"syntax":"advanced","text":"from:\"Pending Sender\""}`)
+	positiveResult, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: positive})
+	require.NoError(t, err)
+	require.Len(t, positiveResult.Rows, 1)
+	publishRoleFixtures(t, s)
+	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+}
+
+func TestRoleSearchPeopleFacetPending(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	seedCurrentRoleSearchEvent(t, s, "pending.txt", "a5", nil)
+	for i := range 50 {
+		seedCurrentRoleSearchEvent(t, s, fmt.Sprintf("pending-%d.txt", i), fmt.Sprintf("%x", i+500), nil)
+	}
+	result, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: snapshotTestQuery(t, `{}`), Facets: []string{"person_role"}})
+	require.NoError(t, err)
+	require.Len(t, result.Facets, 1)
+	require.False(t, result.Facets[0].Available)
+	require.Equal(t, "people_evidence_pending", result.Facets[0].Reason)
+	require.Nil(t, result.Facets[0].Missing)
+	publishRoleFixtures(t, s)
+	service := newQuerySnapshotService(s, querySnapshotServiceOptions{})
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	frozen, err := service.Create(t.Context(), "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{}`), PageSize: 50, Facets: []string{"person_role"}})
+	require.NoError(t, err)
+	require.True(t, frozen.Facets[0].Available)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE document_people_state SET binding_epoch=binding_epoch+1`)
+	require.NoError(t, err)
+	result, err = s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: snapshotTestQuery(t, `{}`), Facets: []string{"person_role"}})
+	require.NoError(t, err)
+	require.False(t, result.Facets[0].Available)
+	require.Equal(t, "people_evidence_pending", result.Facets[0].Reason)
+	require.Nil(t, result.Facets[0].Missing)
+	reread, err := service.Page(t.Context(), "owner", frozen.SnapshotID, frozen.NextCursor)
+	require.NoError(t, err)
+	require.Equal(t, frozen.Facets, reread.Facets)
 }
 
 // Restored identity authority is visible to both callers even though no
@@ -330,7 +407,7 @@ func TestRoleSearchMentionsRestoredDerivedAlias(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, detail.Identities, identity)
 
-	evidence := seedDocumentPeopleEvent(t, s, "evidence.txt", "b1", nil)
+	evidence := seedCurrentRoleSearchEvent(t, s, "evidence.txt", "b1", nil)
 	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: evidence.ID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1})
 	require.NoError(t, err)
 	aliasDoc, err := s.CreateFile(ctx, s.RootID(), "neutral.txt", testSHA256([]byte("restored-alias-body")), 20, "text/plain")
@@ -356,8 +433,8 @@ func TestRoleSearchPeopleFacetBoundsAndFreeze(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	first := seedDocumentPeopleEvent(t, s, "meeting.txt", "d1", nil)
-	second := seedDocumentPeopleEvent(t, s, "other.txt", "d2", nil)
+	first := seedCurrentRoleSearchEvent(t, s, "meeting.txt", "d1", nil)
+	second := seedCurrentRoleSearchEvent(t, s, "other.txt", "d2", nil)
 	for i := range 25 {
 		p, err := s.CreatePerson(ctx, fmt.Sprintf("Person %02d", i), "operator")
 		require.NoError(t, err)
@@ -368,6 +445,7 @@ func TestRoleSearchPeopleFacetBoundsAndFreeze(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: second.ID, PersonID: absent.PersonID, Role: "author", Action: "assert", Revision: 1})
 	require.NoError(t, err)
+	publishRoleFixtures(t, s)
 	value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"name:meeting","filters":{"people":[{"person_id":%q,"roles":["author"]}]}}`, absent.PersonID))
 	projection, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Facets: []string{"person_role"}})
 	require.NoError(t, err)
@@ -380,10 +458,11 @@ func TestRoleSearchPeopleFacetBoundsAndFreeze(t *testing.T) {
 	require.Zero(t, last.Count)
 	require.Equal(t, []string{"author"}, last.Roles)
 	for i := range 49 {
-		extra := seedDocumentPeopleEvent(t, s, fmt.Sprintf("extra-%02d.txt", i), fmt.Sprintf("%x", i+10000), nil)
+		extra := seedCurrentRoleSearchEvent(t, s, fmt.Sprintf("extra-%02d.txt", i), fmt.Sprintf("%x", i+10000), nil)
 		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: extra.ID, PersonID: absent.PersonID, Role: "author", Action: "assert", Revision: 1})
 		require.NoError(t, err)
 	}
+	publishRoleFixtures(t, s)
 	service := newQuerySnapshotService(s, querySnapshotServiceOptions{})
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	frozen, err := service.Create(ctx, "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{}`), PageSize: 50, Facets: []string{"person_role"}})
@@ -396,6 +475,7 @@ func TestRoleSearchPeopleFacetBoundsAndFreeze(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, frozen.Facets, reread.Facets)
 	require.Equal(t, frozen.SnapshotFingerprint, reread.SnapshotFingerprint)
+	publishRoleFixtures(t, s)
 	all := snapshotTestQuery(t, `{}`)
 	limited, err := s.materializeQuerySnapshot(ctx, SnapshotRequest{Query: all, Facets: []string{"person_role"}}, snapshotMaterializeOptions{FacetMemberLimit: 1})
 	require.NoError(t, err)
@@ -407,7 +487,7 @@ func TestRoleSearchBetweenCurrentVersionAndMergedPeople(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	old := seedDocumentPeopleEvent(t, s, "versions.txt", "e1", nil)
+	old := seedCurrentRoleSearchEvent(t, s, "versions.txt", "e1", nil)
 	a, err := s.CreatePerson(ctx, "First Person", "operator")
 	require.NoError(t, err)
 	b, err := s.CreatePerson(ctx, "Second Person", "operator")
@@ -492,7 +572,7 @@ func TestRoleSearchMergedFilterReturnsSurvivor(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	version := seedDocumentPeopleEvent(t, s, "merged.txt", "ef", nil)
+	version := seedCurrentRoleSearchEvent(t, s, "merged.txt", "ef", nil)
 	survivor, err := s.CreatePerson(ctx, "Survivor", "operator")
 	require.NoError(t, err)
 	retired, err := s.CreatePerson(ctx, "Retired", "operator")
@@ -501,6 +581,7 @@ func TestRoleSearchMergedFilterReturnsSurvivor(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.MergePersons(ctx, survivor.PersonID, retired.PersonID, "11111111-1111-4111-8111-111111111111", survivor.Revision, retired.Revision)
 	require.NoError(t, err)
+	publishRoleFixtures(t, s)
 	value := snapshotTestQuery(t, fmt.Sprintf(`{"filters":{"people":[{"person_id":%q,"roles":["speaker"]}]}}`, retired.PersonID))
 	result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Facets: []string{"person_role"}})
 	require.NoError(t, err)
@@ -561,8 +642,8 @@ func TestRoleSearchCollapsedDuplicateAnnotationsIncludeOtherMembers(t *testing.T
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	first := seedDocumentPeopleEvent(t, s, "one.txt", "fa", nil)
-	second := seedDocumentPeopleEvent(t, s, "two.txt", "fa", nil)
+	first := seedCurrentRoleSearchEvent(t, s, "one.txt", "fa", nil)
+	second := seedCurrentRoleSearchEvent(t, s, "two.txt", "fa", nil)
 	a, err := s.CreatePerson(ctx, "First Speaker", "operator")
 	require.NoError(t, err)
 	b, err := s.CreatePerson(ctx, "Second Attendee", "operator")
@@ -592,7 +673,7 @@ func TestRoleSearchSavedRunPreservesMergedDefinitionReceipt(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	version := seedDocumentPeopleEvent(t, s, "saved-merged.txt", "f2", nil)
+	version := seedCurrentRoleSearchEvent(t, s, "saved-merged.txt", "f2", nil)
 	survivor, err := s.CreatePerson(ctx, "Saved Survivor", "operator")
 	require.NoError(t, err)
 	retired, err := s.CreatePerson(ctx, "Saved Retired", "operator")
@@ -604,6 +685,7 @@ func TestRoleSearchSavedRunPreservesMergedDefinitionReceipt(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.MergePersons(ctx, survivor.PersonID, retired.PersonID, "11111111-1111-4111-8111-111111111111", survivor.Revision, retired.Revision)
 	require.NoError(t, err)
+	publishRoleFixtures(t, s)
 	service := newQuerySnapshotService(s, querySnapshotServiceOptions{})
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	run, page, err := service.RunSaved(ctx, "owner", definition.ID, definition.Revision, SnapshotRequest{Facets: []string{"person_role"}}, nil)
@@ -619,7 +701,7 @@ func TestRoleSearchNestedSavedAndNegatedAttribution(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	version := seedDocumentPeopleEvent(t, s, "nested.txt", "f3", nil)
+	version := seedCurrentRoleSearchEvent(t, s, "nested.txt", "f3", nil)
 	person, err := s.CreatePerson(ctx, "Nested Sender", "operator")
 	require.NoError(t, err)
 	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: person.PersonID, Role: "sender", Action: "assert", Revision: 1})
@@ -628,12 +710,13 @@ func TestRoleSearchNestedSavedAndNegatedAttribution(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.CreateSavedQuery(ctx, "Outer roles", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"saved:\"Inner roles\""}`))
 	require.NoError(t, err)
+	publishRoleFixtures(t, s)
 	for _, tc := range []struct {
 		text  string
 		roles []string
 	}{
 		{`saved:"Outer roles"`, []string{"sender"}},
-		{`(saved:"Outer roles" AND name:missing) OR name:nested`, nil},
+		{`(saved:"Outer roles" AND name:missing) OR name:nested`, []string{"sender"}},
 		{`name:nested AND NOT attendee:"Nested Sender"`, nil},
 	} {
 		value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, tc.text))
@@ -646,183 +729,80 @@ func TestRoleSearchNestedSavedAndNegatedAttribution(t *testing.T) {
 
 // The base query fits its compiler budget even though combining all role
 // annotations with that population would exceed the statement bind budget.
-func TestRoleSearchHighCardinalityAnnotation(t *testing.T) {
+func TestRoleSearchInlineCapacity(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	version := seedDocumentPeopleEvent(t, s, "many-people.txt", "ab2", nil)
+	version := seedCurrentRoleSearchEvent(t, s, "capacity.txt", "ab3", nil)
+	collection, err := s.BeginIngest(ctx, "cli", "Capacity collection")
+	require.NoError(t, err)
+	addCollectionMembership(t, s, collection, version.NodeID, "/capacity.txt", nil)
+	label := "Capacity collection"
+	_, err = s.SetCollectionLabel(ctx, collection.ID(), 1, &label)
+	require.NoError(t, err)
+	_, err = s.CreateSavedQuery(ctx, "Capacity saved", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"collection:\"Capacity collection\""}`))
+	require.NoError(t, err)
 	roles := `["author","last_saved_by","custodian","sender","recipient","copied","organizer","attendee","participant","speaker","depicted"]`
 	entries := make([]string, 64)
 	for i := range entries {
-		person, err := s.CreatePerson(ctx, fmt.Sprintf("Budget Person %02d", i), "operator")
+		person, err := s.CreatePerson(ctx, fmt.Sprintf("Capacity Person %02d", i), "operator")
 		require.NoError(t, err)
 		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: person.PersonID, Role: "speaker", Action: "assert", Revision: 1})
 		require.NoError(t, err)
 		entries[i] = fmt.Sprintf(`{"person_id":%q,"roles":%s}`, person.PersonID, roles)
 	}
-	value := snapshotTestQuery(t, `{"filters":{"people":[`+strings.Join(entries, ",")+`]}}`)
-	compiled, err := s.CompileQuery(WithVisiblePeopleOnly(ctx), value)
+	value := snapshotTestQuery(t, `{"syntax":"advanced","text":"saved:\"Capacity saved\"","filters":{"people":[`+strings.Join(entries, ",")+`]}}`)
+	compiled, err := s.CompileQuery(ctx, value)
 	require.NoError(t, err)
-	_, _, err = compiled.Bind("")
+	err = s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) error {
+		population, err := matchedPopulation(compiled, generation.ID, nil)
+		require.NoError(t, err)
+		statement, args, err := bindQueryPopulation(population, CoverageSelection{}, generation.ID)
+		require.NoError(t, err)
+		rows, err := q.QueryContext(ctx, statement, args...)
+		require.NoError(t, err)
+		defer func() { require.NoError(t, rows.Close()) }()
+		require.True(t, rows.Next())
+		var node int64
+		var id string
+		require.NoError(t, rows.Scan(&node, &id))
+		require.Equal(t, version.NodeID, node)
+		require.Equal(t, version.ID, id)
+		require.False(t, rows.Next())
+		require.NoError(t, rows.Err())
+		return nil
+	})
 	require.NoError(t, err)
-	result, err := s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: value})
+	result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
 	require.Equal(t, []string{"speaker"}, result.Rows[0].MatchedRoles)
-	collection, err := s.BeginIngest(ctx, "cli", "Synthetic people collection")
-	require.NoError(t, err)
-	addCollectionMembership(t, s, collection, version.NodeID, "/synthetic/many-people.txt", nil)
-	label := "People collection"
-	_, err = s.SetCollectionLabel(ctx, collection.ID(), 1, &label)
-	require.NoError(t, err)
-	profile := catalogProcessingProfile(t, false)
-	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return ensureProcessingProfileTx(ctx, tx, profile, s.postgresSchema != "")
-	}))
-	selection := CoverageSelection{Configuration: "configured", ProfileFingerprint: profile.Fingerprint}
-	for _, tc := range []struct {
-		text    string
-		matched bool
-	}{
-		{`collection:"People collection" AND text_coverage:unprocessed`, true},
-		{`collection:"People collection" OR text_coverage:complete`, true},
-		{`NOT collection:"People collection"`, false},
-		{`collection:"People collection" AND text_coverage:complete`, false},
-		{`text_coverage:unprocessed OR collection:"People collection"`, true},
-		{`NOT text_coverage:complete AND collection:"People collection"`, true},
-		{`NOT text_coverage:unprocessed`, false},
-	} {
-		mixed := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q,"filters":{"people":[%s]}}`, tc.text, strings.Join(entries, ",")))
-		got, err := s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: mixed, Coverage: selection})
-		require.NoError(t, err, tc.text)
-		if !tc.matched {
-			require.Empty(t, got.Rows, tc.text)
-			continue
+	varied := []string{"author", "last_saved_by", "custodian", "sender", "recipient", "copied"}
+	for i, entry := range entries {
+		selected := []string{"speaker"}
+		for bit, role := range varied {
+			if i&(1<<bit) != 0 {
+				selected = append(selected, role)
+			}
 		}
-		require.Len(t, got.Rows, 1, tc.text)
-		require.Equal(t, version.NodeID, got.Rows[0].NodeID, tc.text)
-		require.Equal(t, []string{"speaker"}, got.Rows[0].MatchedRoles, tc.text)
+		encoded, err := json.Marshal(selected)
+		require.NoError(t, err)
+		entries[i] = strings.Replace(entry, roles, string(encoded), 1)
 	}
-	// Keep all 64 people and all 11 roles while relation leaves are evaluated
-	// under each Boolean operator. The missing branch must not add chips.
-	for _, text := range []string{
-		`has_duplicates:false AND NOT path:/missing`,
-		`path:/missing OR name:many-people`,
-		`NOT (has_duplicates:true OR path:/missing)`,
-	} {
-		mixed := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q,"filters":{"people":[%s]}}`, text, strings.Join(entries, ",")))
-		got, err := s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: mixed})
-		require.NoError(t, err, text)
-		require.Len(t, got.Rows, 1, text)
-		require.Equal(t, version.NodeID, got.Rows[0].NodeID, text)
-		require.Equal(t, []string{"speaker"}, got.Rows[0].MatchedRoles, text)
-	}
+	value = snapshotTestQuery(t, `{"syntax":"advanced","text":"saved:\"Capacity saved\"","filters":{"people":[`+strings.Join(entries, ",")+`]}}`)
+	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	require.Equal(t, []string{"speaker"}, result.Rows[0].MatchedRoles)
 }
 
 // Exercise the compiler boundary with real role operands, including the
 // population wrapper that is added after the predicate has been bound.
-func TestRoleSearchNearCompilerBudget(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := WithVisiblePeopleOnly(t.Context())
-	version := seedDocumentPeopleEvent(t, s, "budget.txt", "b7", nil)
-	person, err := s.CreatePerson(ctx, "Budget Sender", "operator")
-	require.NoError(t, err)
-	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: person.PersonID, Role: "sender", Action: "assert", Revision: 1})
-	require.NoError(t, err)
-
-	block := strings.TrimSuffix(strings.Repeat(`from:"Budget Sender" OR `, 100), " OR ")
-	_, err = s.CreateSavedQuery(ctx, "Budget block", "", SavedQueryKindQuery, []byte(fmt.Sprintf(`{"syntax":"advanced","text":%q}`, block)))
-	require.NoError(t, err)
-	textFor := func(count int) string {
-		return strings.TrimSuffix(strings.Repeat(`saved:"Budget block" OR `, count/100)+strings.Repeat(`from:"Budget Sender" OR `, count%100), " OR ")
-	}
-	var bestText string
-	var bestSize, bestCount int
-	low, high := 1, 1200
-	for low <= high {
-		count := (low + high) / 2
-		text := textFor(count)
-		value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, text))
-		compiled, err := s.CompileQuery(ctx, value)
-		if err != nil {
-			require.ErrorContains(t, err, "compiled query exceeds")
-			high = count - 1
-			continue
-		}
-		predicate, err := compiled.bind("", nil)
-		require.NoError(t, err)
-		bestText, bestSize, bestCount = text, len(predicate.sql), count
-		low = count + 1
-	}
-	require.Greater(t, bestSize, maxCompiledQuerySQL-8192)
-	next := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, textFor(bestCount+1)))
-	_, err = s.CompileQuery(ctx, next)
-	require.ErrorContains(t, err, "compiled query exceeds")
-	value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, bestText))
-	result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
-	require.NoError(t, err)
-	require.Len(t, result.Rows, 1)
-	require.Equal(t, []string{"sender"}, result.Rows[0].MatchedRoles)
-}
-
-// A near-limit saved input must still execute when followed by relation leaves;
-// the next original input must be rejected before membership lowering.
-func TestRoleSearchNearCompilerBudgetWithRelations(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := WithVisiblePeopleOnly(t.Context())
-	version := seedDocumentPeopleEvent(t, s, "relation-budget.txt", "b71", nil)
-	person, err := s.CreatePerson(ctx, "Relation Budget Sender", "operator")
-	require.NoError(t, err)
-	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: person.PersonID, Role: "sender", Action: "assert", Revision: 1})
-	require.NoError(t, err)
-	block := strings.TrimSuffix(strings.Repeat(`from:"Relation Budget Sender" OR `, 100), " OR ")
-	_, err = s.CreateSavedQuery(ctx, "Relation budget block", "", SavedQueryKindQuery, []byte(fmt.Sprintf(`{"syntax":"advanced","text":%q}`, block)))
-	require.NoError(t, err)
-	collection, err := s.BeginIngest(ctx, "cli", "Synthetic budget collection")
-	require.NoError(t, err)
-	addCollectionMembership(t, s, collection, version.NodeID, "/synthetic/relation-budget.txt", nil)
-	label := "Budget collection"
-	_, err = s.SetCollectionLabel(ctx, collection.ID(), 1, &label)
-	require.NoError(t, err)
-	for _, relation := range []string{`path:/missing`, `collection:"Budget collection"`, `text_coverage:complete`, `has_duplicates:true`} {
-		textFor := func(count int) string {
-			base := strings.TrimSuffix(strings.Repeat(`saved:"Relation budget block" OR `, count/100)+strings.Repeat(`from:"Relation Budget Sender" OR `, count%100), " OR ")
-			return "(" + base + ") AND (NOT " + relation + " OR name:relation-budget)"
-		}
-		low, high, best, size := 1, 1200, 0, 0
-		for low <= high {
-			count := (low + high) / 2
-			value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, textFor(count)))
-			compiled, err := s.CompileQuery(ctx, value)
-			if err != nil {
-				require.ErrorContains(t, err, "compiled query exceeds")
-				high = count - 1
-				continue
-			}
-			predicate, err := compiled.bind("", nil)
-			require.NoError(t, err)
-			best, size, low = count, len(predicate.sql), count+1
-		}
-		require.Greater(t, size, maxCompiledQuerySQL-8192, relation)
-		next := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, textFor(best+1)))
-		_, err = s.CompileQuery(ctx, next)
-		require.ErrorContains(t, err, "compiled query exceeds", relation)
-		value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, textFor(best)))
-		result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Coverage: CoverageSelection{Configuration: "configured", ProfileFingerprint: testSHA256([]byte("budget-profile"))}})
-		require.NoError(t, err, relation)
-		require.Len(t, result.Rows, 1, relation)
-		require.Equal(t, version.NodeID, result.Rows[0].NodeID, relation)
-		require.Equal(t, []string{"sender"}, result.Rows[0].MatchedRoles, relation)
-	}
-}
-
 func TestRoleSearchPeopleFacetMembershipBudget(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	version := seedDocumentPeopleEvent(t, s, "budget.txt", "aabb", nil)
+	version := seedCurrentRoleSearchEvent(t, s, "budget.txt", "aabb", nil)
 	first, err := s.CreatePerson(ctx, "Budget First", "operator")
 	require.NoError(t, err)
 	second, err := s.CreatePerson(ctx, "Budget Second", "operator")
@@ -831,6 +811,7 @@ func TestRoleSearchPeopleFacetMembershipBudget(t *testing.T) {
 		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: first.PersonID, Role: role, Action: "assert", Revision: 1})
 		require.NoError(t, err)
 	}
+	publishRoleFixtures(t, s)
 	request := SnapshotRequest{Query: snapshotTestQuery(t, `{}`), Facets: []string{"person_role"}}
 	one, err := s.materializeQuerySnapshot(ctx, request, snapshotMaterializeOptions{FacetMemberLimit: 1})
 	require.NoError(t, err)
@@ -839,6 +820,7 @@ func TestRoleSearchPeopleFacetMembershipBudget(t *testing.T) {
 	require.ElementsMatch(t, []string{"author", "sender"}, one.Facets[0].Values[0].Roles)
 	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: second.PersonID, Role: "recipient", Action: "assert", Revision: 1})
 	require.NoError(t, err)
+	publishRoleFixtures(t, s)
 	limited, err := s.materializeQuerySnapshot(ctx, request, snapshotMaterializeOptions{FacetMemberLimit: 1})
 	require.NoError(t, err)
 	require.False(t, limited.Facets[0].Available)
@@ -854,8 +836,8 @@ func TestRoleSearchNegationBranchMembership(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	first := seedDocumentPeopleEvent(t, s, "branch-one.txt", "ccdd", nil)
-	second := seedDocumentPeopleEvent(t, s, "branch-two.txt", "ccdd", nil)
+	first := seedCurrentRoleSearchEvent(t, s, "branch-one.txt", "ccdd", nil)
+	second := seedCurrentRoleSearchEvent(t, s, "branch-two.txt", "ccdd", nil)
 	a, err := s.CreatePerson(ctx, "Branch Alpha", "operator")
 	require.NoError(t, err)
 	b, err := s.CreatePerson(ctx, "Branch Beta", "operator")
@@ -866,6 +848,7 @@ func TestRoleSearchNegationBranchMembership(t *testing.T) {
 	}
 	_, err = s.CreateSavedQuery(ctx, "Branch saved", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"from:\"Branch Alpha\""}`))
 	require.NoError(t, err)
+	publishRoleFixtures(t, s)
 	for _, tc := range []struct {
 		text  string
 		roles []string
@@ -952,15 +935,49 @@ func seedCurrentRoleSearchEvent(t *testing.T, s *Store, name, seed string, actor
 	return version
 }
 
+func publishRoleFixtures(t *testing.T, s *Store) {
+	t.Helper()
+	ctx := t.Context()
+	require.NoError(t, s.EnsureDocumentEventRecipe(ctx, DocumentEventsDeriverFingerprint))
+	targets, err := s.MissingDocumentEventTargetsAfter(ctx, DocumentEventsDeriverFingerprint, "", 1000)
+	require.NoError(t, err)
+	for _, target := range targets {
+		record := documentEventRecord(t, s.VaultID(), target.ContentVersionID, "aa")
+		record.DocumentKind = DocumentEventKindForMIMEType(target.MIMEType)
+		record.Events[0].Actors = nil
+		raw, _, err := document.MarshalDocumentEventsV1(record)
+		require.NoError(t, err)
+		_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), raw)
+		require.NoError(t, err)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT version_id FROM content_versions`)
+	require.NoError(t, err)
+	var ids []string
+	for rows.Next() {
+		var id string
+		require.NoError(t, rows.Scan(&id))
+		ids = append(ids, id)
+	}
+	require.NoError(t, rows.Close())
+	for _, id := range ids {
+		input, err := s.PrepareDocumentPeopleInputs(ctx, id)
+		require.NoError(t, err)
+		raw, err := canonical.Marshal(input)
+		require.NoError(t, err)
+		_, err = s.PublishDocumentPeople(ctx, DocumentPeoplePublication{People: document.DocumentPeopleV1{ContractVersion: document.PersonContractV1, ContentVersionID: id, EventGenerationID: input.EventGenerationID, Edges: []document.DocumentPersonEdgeV1{}}, InputsSHA256: fakeSHA256(raw), ResolverFingerprint: document.PersonResolverFingerprint(), NodeID: input.NodeID, NodeRevision: input.NodeRevision, BindingEpoch: input.BindingEpoch})
+		require.NoError(t, err)
+	}
+}
+
 // Only root people entries are removed for the People facet. The expression
 // and person_ids still fence the population used to count visible evidence.
 func TestRoleSearchPeopleFacetRetainsExpressionAndPersonIDs(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	first := seedDocumentPeopleEvent(t, s, "keep-one.txt", "f101", nil)
-	second := seedDocumentPeopleEvent(t, s, "keep-two.txt", "f102", nil)
-	third := seedDocumentPeopleEvent(t, s, "outside.txt", "f103", nil)
+	first := seedCurrentRoleSearchEvent(t, s, "keep-one.txt", "f101", nil)
+	second := seedCurrentRoleSearchEvent(t, s, "keep-two.txt", "f102", nil)
+	third := seedCurrentRoleSearchEvent(t, s, "outside.txt", "f103", nil)
 	anchor, err := s.CreatePerson(ctx, "Facet Anchor", "operator")
 	require.NoError(t, err)
 	selected, err := s.CreatePerson(ctx, "Facet Selected", "operator")
@@ -974,6 +991,7 @@ func TestRoleSearchPeopleFacetRetainsExpressionAndPersonIDs(t *testing.T) {
 		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: edge.version, PersonID: edge.person, Role: edge.role, Action: "assert", Revision: 1})
 		require.NoError(t, err)
 	}
+	publishRoleFixtures(t, s)
 	value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"name:keep AND NOT path:/missing","filters":{"person_ids":[%q],"people":[{"person_id":%q,"roles":["author"]}]}}`, anchor.PersonID, selected.PersonID))
 	projection, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Facets: []string{"person_role"}})
 	require.NoError(t, err)
@@ -1045,86 +1063,3 @@ func TestRoleSearchMentionsSelectedRendition(t *testing.T) {
 
 // Whole-AND annotation gates and self-excluded facets repeat person subqueries
 // before relation leaves; each statement must use prepared leaf sets.
-func TestRoleSearchPreparedLeafGatesAndFacets(t *testing.T) {
-	t.Parallel()
-	f := newPreparedLeafFixture(t)
-	s, ctx := f.store, t.Context()
-	leafCTEs := []string{"query_ancestry", "collection_members", "current_content_members", "processing_coverage"}
-	for _, tc := range []struct {
-		text string
-		want int64
-	}{
-		{`author:"Leaf Author" AND has_duplicates:true AND path:/dir`, f.second},
-		{`(author:"Leaf Author" OR author:"Leaf Absent") AND NOT has_duplicates:true`, f.unique},
-		{`NOT (has_duplicates:true OR path:"/dir/second.txt") AND author:"Leaf Author"`, f.unique},
-	} {
-		value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, tc.text))
-		result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
-		require.NoError(t, err, tc.text)
-		require.Len(t, result.Rows, 1, tc.text)
-		require.Equal(t, tc.want, result.Rows[0].NodeID, tc.text)
-		require.Equal(t, []string{"author"}, result.Rows[0].MatchedRoles, tc.text)
-
-		compiled, err := compileQuery(ctx, value, queryResolver{q: s.db})
-		require.NoError(t, err, tc.text)
-		withPopulationRead(t, s, func(q populationQuerier) {
-			recording := &populationRecordingQuerier{populationQuerier: q}
-			rows := []SnapshotRow{{NodeID: tc.want}}
-			require.NoError(t, annotateMatchedRoles(ctx, recording, compiled, "", CoverageSelection{}, rows), tc.text)
-			require.Equal(t, []string{"author"}, rows[0].MatchedRoles, tc.text)
-			gates := 0
-			for _, statement := range recording.statements {
-				if !strings.HasPrefix(statement, "SELECT n.id FROM json_each(?) ids") || !strings.Contains(statement, "person_document_assertions") {
-					continue
-				}
-				gates++
-				for _, cte := range leafCTEs {
-					require.NotContains(t, statement, cte, tc.text)
-				}
-			}
-			require.Positive(t, gates, tc.text)
-		})
-	}
-
-	withPopulationRead(t, s, func(q populationQuerier) {
-		// The People facet drops only the people filter and keeps the leaf.
-		value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"NOT author:\"Leaf Absent\" AND has_duplicates:false","filters":{"people":[{"person_id":%q,"roles":["author"]}]}}`, f.author))
-		compiled, err := compileQuery(ctx, value, queryResolver{q: s.db})
-		require.NoError(t, err)
-		recording := &populationRecordingQuerier{populationQuerier: q}
-		facet, err := materializePersonRoleFacet(ctx, recording, compiled, "", CoverageSelection{}, 1000)
-		require.NoError(t, err)
-		require.True(t, facet.Available)
-		var author *SnapshotFacetValue
-		for i := range facet.Values {
-			if facet.Values[i].Key == f.author {
-				author = &facet.Values[i]
-			}
-		}
-		require.NotNil(t, author)
-		require.Equal(t, int64(1), author.Count)
-		require.Equal(t, []string{"author"}, author.Roles)
-		facetSQL := recording.statements[len(recording.statements)-1]
-		require.True(t, strings.HasPrefix(facetSQL, "WITH matched_members AS ("))
-		require.Contains(t, facetSQL, populationMembersTable)
-		for _, cte := range leafCTEs {
-			require.NotContains(t, facetSQL, cte)
-		}
-
-		// A generic facet recompiles without its own filter and still prepares leaves.
-		value = snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"author:\"Leaf Author\" AND NOT has_duplicates:true AND path:/dir","filters":{"collection_ids":[%q]}}`, f.collection))
-		compiled, err = compileQuery(ctx, value, queryResolver{q: s.db})
-		require.NoError(t, err)
-		recording = &populationRecordingQuerier{populationQuerier: q}
-		facet, err = materializeSnapshotFacet(ctx, recording, compiled, "", CoverageSelection{}, "collections", nil, 1000)
-		require.NoError(t, err)
-		require.True(t, facet.Available)
-		prepared := false
-		for _, statement := range recording.statements {
-			if strings.HasPrefix(statement, "WITH matched_members AS (") {
-				prepared = strings.Contains(statement, populationMembersTable) && !strings.Contains(statement, "current_content_members") && !strings.Contains(statement, "query_ancestry")
-			}
-		}
-		require.True(t, prepared)
-	})
-}

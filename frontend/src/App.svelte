@@ -4720,7 +4720,7 @@
                               <td
                                 class="name-cell"
                                 aria-label={row.matched_roles?.length
-                                  ? `${row.path}, matched as ${roleListLabel(row.matched_roles)}`
+                                  ? `${row.path}, roles: ${roleListLabel(row.matched_roles)}`
                                   : row.path}
                               >
                                 <ResultName

@@ -1,15 +1,35 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/query"
 )
 
 // currentPhotoSourcePredicate limits face evidence to a live image or RAW member.
 func currentPhotoSourcePredicate(file, node, version string) string {
 	return file + `.role IN ('image','raw') AND ` + node + `.trashed_at IS NULL AND ` + node + `.current_version_id=` + version
+}
+
+// compileRoleGroup evaluates all selected people in one predicate.
+func (c queryCompiler) compileRoleGroup(entries []query.PersonFilter) compiledQueryFragment {
+	if len(entries) == 1 {
+		return c.compileRolePredicate(entries[0].PersonID, entries[0].Roles)
+	}
+	fragment := c.compileRolePredicate(entries[0].PersonID, []string{entries[0].Roles[0]})
+	person := `COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?)`
+	fragment.sql = strings.ReplaceAll(fragment.sql, person, `json_extract(j.value,'$.person_id')`)
+	fragment.sql = strings.ReplaceAll(fragment.sql, `role IN (?)`, `role IN (SELECT value FROM json_each(j.value,'$.roles'))`)
+	args := append([]any{}, fragment.args[3:7]...)
+	args = append(args, fragment.args[10:]...)
+	raw, _ := json.Marshal(entries)
+	fragment.args = append([]any{string(raw)}, args...)
+	fragment.args = append(fragment.args, document.PersonResolverFingerprint(), c.eventState.InputEpoch, c.eventState.ContractVersion, c.eventState.DeriverFingerprint)
+	fragment.sql = `(CASE WHEN NOT EXISTS(SELECT 1 FROM json_each(?) j WHERE (` + fragment.sql + `) IS NOT TRUE) THEN TRUE WHEN EXISTS(SELECT 1 FROM ` + freshPeopleHeadSQL("cv.version_id") + `) THEN FALSE END)`
+	return fragment
 }
 
 func currentPersonAssertionFence(safe bool, hideLocked string) string {
@@ -35,27 +55,41 @@ func currentDocumentPersonEdgesSQL(version string, safe bool, hideLocked string)
  UNION SELECT COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=p.person_id),p.person_id),p.role FROM document_people p JOIN document_people_heads h ON h.content_version_id=p.content_version_id AND h.generation_id=p.generation_id JOIN document_event_heads eh ON eh.content_version_id=h.content_version_id JOIN document_event_generations eg ON eg.generation_id=eh.generation_id JOIN document_event_attempts ea ON ea.content_version_id=h.content_version_id LEFT JOIN document_event_dirty ed ON ed.content_version_id=h.content_version_id CROSS JOIN document_people_state ps WHERE p.content_version_id=` + version + ` AND ` + currentPersonPublishedFence(safe, hideLocked) + `)`
 }
 
-func (c queryCompiler) compilePersonPredicate(id string, roles []string) compiledQueryFragment {
+func (c queryCompiler) compilePersonPredicate(id string) compiledQueryFragment {
 	person := `COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?)`
+	predicate := `(EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.content_version_id=cv.version_id AND a.action='assert' AND a.person_id=` + person + `) OR EXISTS(SELECT 1 FROM document_people p JOIN document_people_heads h ON h.content_version_id=p.content_version_id AND h.generation_id=p.generation_id JOIN document_event_heads eh ON eh.content_version_id=h.content_version_id CROSS JOIN document_people_state ps WHERE p.content_version_id=cv.version_id AND p.person_id=` + person + ` AND h.state='published' AND h.event_generation_id=eh.generation_id AND h.binding_epoch=ps.binding_epoch AND h.node_revision=n.revision AND h.resolver_fingerprint=?))`
+	args := []any{id, id, id, id, document.PersonResolverFingerprint()}
 	if c.photoDisplayMetadata {
-		predicate := `EXISTS(SELECT 1 FROM photo_files member JOIN photo_files pf ON pf.asset_id=member.asset_id JOIN nodes pn ON pn.id=pf.node_id JOIN person_document_assertions a ON ` + currentPhotoSourcePredicate("pf", "pn", "a.content_version_id") + ` WHERE member.node_id=n.id AND a.action='assert' AND a.role='depicted' AND a.person_id=` + person
-		return compiledQueryFragment{sql: predicate + `)`, args: []any{id, id}}
+		predicate = `EXISTS(SELECT 1 FROM photo_files member JOIN photo_files pf ON pf.asset_id=member.asset_id JOIN nodes pn ON pn.id=pf.node_id JOIN person_document_assertions a ON ` + currentPhotoSourcePredicate("pf", "pn", "a.content_version_id") + ` WHERE member.node_id=n.id AND a.action='assert' AND a.role='depicted' AND a.person_id=` + person + `)`
+		args = []any{id, id}
 	}
-	edges := currentDocumentPersonEdgesSQL("cv.version_id", c.safePeople && len(roles) > 0, c.hideLocked)
-	predicate := `EXISTS(SELECT 1 FROM ` + edges + ` edge WHERE edge.person_id=` + person
-	args := []any{document.PersonResolverFingerprint(), c.eventState.InputEpoch, c.eventState.ContractVersion, c.eventState.DeriverFingerprint, id, id}
-	if len(roles) > 0 {
-		predicate += ` AND edge.role IN (` + strings.TrimSuffix(strings.Repeat("?,", len(roles)), ",") + `)`
-		for _, role := range roles {
-			args = append(args, role)
-		}
+	return compiledQueryFragment{sql: predicate, args: args}
+}
+
+func freshPeopleHeadSQL(version string) string {
+	return `document_people_heads h JOIN document_event_heads eh ON eh.content_version_id=h.content_version_id JOIN document_event_generations eg ON eg.generation_id=eh.generation_id JOIN document_event_attempts ea ON ea.content_version_id=h.content_version_id LEFT JOIN document_event_dirty ed ON ed.content_version_id=h.content_version_id CROSS JOIN document_people_state ps WHERE h.content_version_id=` + version + ` AND ` + currentPersonPublishedFence(false, "1")
+}
+
+func (c queryCompiler) compileRolePredicate(id string, roles []string) compiledQueryFragment {
+	person := `COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?)`
+	roleList := strings.TrimSuffix(strings.Repeat("?,", len(roles)), ",")
+	assertion := `EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.content_version_id=cv.version_id AND ` + currentPersonAssertionFence(c.safePeople, c.hideLocked) + ` AND COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=a.person_id),a.person_id)=` + person + ` AND a.role IN (` + roleList + `))`
+	head := strings.Replace(freshPeopleHeadSQL("cv.version_id"), " WHERE h.content_version_id=", " JOIN document_people p ON p.content_version_id=h.content_version_id AND p.generation_id=h.generation_id WHERE h.content_version_id=", 1)
+	edge := `EXISTS(SELECT 1 FROM ` + head + ` AND COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=p.person_id),p.person_id)=` + person + ` AND p.role IN (` + roleList + `)`
+	if c.safePeople {
+		edge += ` AND ` + personVisibleActorSQL("p", c.hideLocked)
 	}
-	predicate += `)`
-	// A retained but stale publication cannot prove absence. Preserve SQL's
-	// unknown value so NOT does not turn stale evidence into a match.
-	stale := `EXISTS(SELECT 1 FROM document_people_heads h WHERE h.content_version_id=cv.version_id) AND NOT EXISTS(SELECT 1 FROM document_people_heads h JOIN document_event_heads eh ON eh.content_version_id=h.content_version_id JOIN document_event_generations eg ON eg.generation_id=eh.generation_id JOIN document_event_attempts ea ON ea.content_version_id=h.content_version_id LEFT JOIN document_event_dirty ed ON ed.content_version_id=h.content_version_id CROSS JOIN document_people_state ps WHERE h.content_version_id=cv.version_id AND ` + currentPersonPublishedFence(false, "1") + `)`
+	edge += `)`
+	args := []any{id, id}
+	for _, role := range roles {
+		args = append(args, role)
+	}
+	args = append(args, document.PersonResolverFingerprint(), c.eventState.InputEpoch, c.eventState.ContractVersion, c.eventState.DeriverFingerprint, id, id)
+	for _, role := range roles {
+		args = append(args, role)
+	}
 	args = append(args, document.PersonResolverFingerprint(), c.eventState.InputEpoch, c.eventState.ContractVersion, c.eventState.DeriverFingerprint)
-	return compiledQueryFragment{sql: `(CASE WHEN ` + predicate + ` THEN TRUE WHEN ` + stale + ` THEN NULL ELSE FALSE END)`, args: args, personEdges: true}
+	return compiledQueryFragment{sql: `(CASE WHEN ` + assertion + ` OR ` + edge + ` THEN TRUE WHEN EXISTS(SELECT 1 FROM ` + freshPeopleHeadSQL("cv.version_id") + `) THEN FALSE END)`, args: args}
 }
 
 var betweenPersonRoles = func() []string {

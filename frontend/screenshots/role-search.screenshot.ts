@@ -263,7 +263,7 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
       "from-query-person-selected",
       async () => {
         await expect(
-          results.getByRole("cell", { name: "/board-update.eml, matched as Recipient, Sender" }),
+          results.getByRole("cell", { name: "/board-update.eml, roles: Recipient, Sender" }),
         ).toBeVisible();
         await expect(
           people.getByRole("button", { name: "Ines Albarrán, Recipient, 1 documents, selected" }),
@@ -312,7 +312,7 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
       "merged-survivor-selected",
       async () => {
         await expect(
-          results.getByRole("cell", { name: "/board-update.eml, matched as Recipient, Sender" }),
+          results.getByRole("cell", { name: "/board-update.eml, roles: Recipient, Sender" }),
         ).toBeVisible();
         await expect(survivorSelected).toHaveAttribute("aria-pressed", "true");
       },

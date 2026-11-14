@@ -139,13 +139,11 @@ func (r queryResolver) personMentionNames(ctx context.Context, id string) ([]str
 		return nil, err
 	}
 	names := []string{name}
-	seen := map[string]bool{name: true}
 	q, ok := r.q.(rowsQuerier)
 	if !ok {
 		return nil, errors.New("person aliases require a rows querier")
 	}
-	rows, err := q.QueryContext(ctx, `SELECT i.value_display FROM person_identities i WHERE i.person_id=? AND i.kind='name_alias'
-		ORDER BY i.value_normalized,i.identity_id`, id)
+	rows, err := q.QueryContext(ctx, `SELECT DISTINCT i.value_display FROM person_identities i WHERE i.person_id=? AND i.kind='name_alias' ORDER BY i.value_display`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -155,9 +153,8 @@ func (r queryResolver) personMentionNames(ctx context.Context, id string) ([]str
 		if err := rows.Scan(&alias); err != nil {
 			return nil, err
 		}
-		if alias != "" && !seen[alias] {
+		if alias != "" && alias != name {
 			names = append(names, alias)
-			seen[alias] = true
 		}
 	}
 	if err := rows.Err(); err != nil {

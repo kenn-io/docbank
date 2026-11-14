@@ -254,6 +254,8 @@ For example, `from:"Mara Okonkwo-Fell"`, `custodian:"Mara Okonkwo-Fell"`, and `b
 
 Browsers and MCP search exports refuse `bcc:` and structured `blind_copy` role filters. Their other role searches omit Bcc evidence. API-key queries use full disclosure by default. `person:` retains its any-role meaning.
 
+While people evidence is pending, a version matches neither a role search nor its `NOT` unless an operator assertion establishes the role; an independent `OR` branch can still match it. Use the document event coverage report to inspect pending and failed work.
+
 Structured queries can use `"people":[{"person_id":"00000000-0000-4000-8000-000000000001","roles":["sender","organizer"]}]` inside `filters`. Each entry is required, while its roles are alternatives. The People facet uses safe evidence for every caller and ignores only root `filters.people` entries when counting. Result roles, facet names and counts are frozen with the snapshot; later renames or republishing do not change it. PostgreSQL search is not yet qualified.
 
 In the web app, frozen results show the matched roles as chips beside each name, such as `Sender`, `Cc` or `Mentioned`. The **People** filter group lists up to 20 people with their counts and roles. Selecting a person adds a `filters.people` entry with the roles shown; selecting them again removes only that person's entries.

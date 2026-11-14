@@ -244,6 +244,16 @@ const facets: SnapshotPage["facets"] = [
   }),
 ];
 
+it("shows why People counts are unavailable", () => {
+  render(FacetSidebar, {
+    facets: [facet("person_role", { available: false, reason: "people_evidence_pending" })],
+    query: originalQuery,
+    onchange: vi.fn(),
+  });
+  expect(screen.getByRole("group", { name: "People facet" })).toBeTruthy();
+  expect(screen.getByText("Unavailable · people evidence pending")).toBeTruthy();
+});
+
 it("shows the facets that can narrow the results and leaves out the rest", () => {
   render(FacetSidebar, { facets, query: originalQuery, disabled: false, onchange: vi.fn() });
   expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(7);

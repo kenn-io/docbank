@@ -1934,9 +1934,9 @@ func (s *Store) acquireLexicalGeneration(
 func (s *Store) withLexicalGenerationRead(
 	ctx context.Context, fn func(queryer metadataQuerier, generation LexicalGeneration) error,
 ) (retErr error) {
-	conn, err := s.pinLexicalRead(ctx)
+	conn, err := s.db.Conn(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("acquiring lexical generation connection: %w", err)
 	}
 	active := false
 	var lease *LexicalGenerationLease
@@ -1949,7 +1949,7 @@ func (s *Store) withLexicalGenerationRead(
 		if lease != nil {
 			retErr = errors.Join(retErr, lease.Release())
 		}
-		retErr = errors.Join(retErr, conn.release(ctx))
+		retErr = errors.Join(retErr, conn.Close())
 	}()
 	if _, err := conn.ExecContext(ctx, "BEGIN DEFERRED"); err != nil {
 		return fmt.Errorf("starting lexical generation read: %w", err)

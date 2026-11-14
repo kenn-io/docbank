@@ -408,7 +408,7 @@ func materializeSnapshotRows(
 			}
 		}
 	} else {
-		population, err = documentSnapshotPopulation(ctx, q, compiled, generationID, coverage)
+		population, err = matchedPopulation(compiled, generationID, nil)
 	}
 	if err != nil {
 		return err

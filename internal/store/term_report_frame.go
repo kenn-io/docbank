@@ -105,7 +105,7 @@ func (s *Store) MaterializeTermReportFrame(
 					Kind: string(dependency.Kind), ID: dependency.ID, Revision: dependency.Revision,
 				})
 			}
-			population, err := preparedPopulation(ctx, q, compiled, generation.ID, &coverage.ProfileFingerprint, coverage)
+			population, err := matchedPopulation(compiled, generation.ID, &coverage.ProfileFingerprint)
 			if err != nil {
 				return err
 			}
