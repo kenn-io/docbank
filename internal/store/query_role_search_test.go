@@ -413,7 +413,7 @@ func TestPublishedBccActorQueryPrivacy(t *testing.T) {
 		}
 		safe, err := s.MaterializeQuerySnapshot(WithSafeRoleSearch(ctx), SnapshotRequest{Query: value})
 		if operand == "bcc" {
-			require.ErrorContains(t, err, "Bcc searches are unavailable here.")
+			require.ErrorContains(t, err, "bcc searches are unavailable here")
 		} else {
 			require.NoError(t, err)
 			if operand == "person" {

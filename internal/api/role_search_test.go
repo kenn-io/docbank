@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
@@ -46,7 +47,7 @@ func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
 			resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, route.path, browser, route.body)
 			require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 			require.Contains(t, body, "invalid_query")
-			require.Contains(t, body, "Bcc searches are unavailable here.")
+			require.Contains(t, body, "bcc searches are unavailable here")
 		})
 	}
 	t.Run("person retains its existing meaning", func(t *testing.T) {
@@ -80,7 +81,7 @@ func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
 		raw, err = canonical.Marshal(input)
 		require.NoError(t, err)
 		digest := sha256.Sum256(raw)
-		_, err = s.PublishDocumentPeople(ctx, store.DocumentPeoplePublication{People: document.DocumentPeopleV1{ContractVersion: document.PersonContractV1, ContentVersionID: node.CurrentVersionID, EventGenerationID: input.EventGenerationID, Edges: []document.DocumentPersonEdgeV1{}}, InputsSHA256: fmt.Sprintf("%x", digest), ResolverFingerprint: document.PersonResolverFingerprint(), NodeID: input.NodeID, NodeRevision: input.NodeRevision, BindingEpoch: input.BindingEpoch})
+		_, err = s.PublishDocumentPeople(ctx, store.DocumentPeoplePublication{People: document.DocumentPeopleV1{ContractVersion: document.PersonContractV1, ContentVersionID: node.CurrentVersionID, EventGenerationID: input.EventGenerationID, Edges: []document.DocumentPersonEdgeV1{}}, InputsSHA256: hex.EncodeToString(digest[:]), ResolverFingerprint: document.PersonResolverFingerprint(), NodeID: input.NodeID, NodeRevision: input.NodeRevision, BindingEpoch: input.BindingEpoch})
 		require.NoError(t, err)
 		request := fmt.Sprintf(`{"query":{"syntax":"advanced","text":"from:\"Matrix Sender\"","filters":{"people":[{"person_id":%q,"roles":["sender"]}]}},"facets":["collections","tags","media_family","extension","modified","size","text_coverage","duplicates","person_role"]}`, visible.PersonID)
 		resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", browser, request)
