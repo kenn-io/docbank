@@ -29,6 +29,10 @@ synthetic vaults, captures the real interfaces, stops its daemons, and removes
 the vaults. `DOCBANK_TELEMETRY_ENABLED=0` disables telemetry for every spec.
 Do not run another build while a capture is using the binary or embedded assets.
 
+With `DOCS_SCREENSHOTS_OUTPUT` set, `make docs-screenshots` runs the same
+capture inside `frontend/screenshots/Dockerfile` and copies the published set to
+`$DOCS_SCREENSHOTS_OUTPUT/assets`. The host needs only Bash and Docker.
+
 Before adding a published image, check it against
 [Does this page need a screenshot?](../../docs/README.md#does-this-page-need-a-screenshot)
 and the requirements that follow it.
