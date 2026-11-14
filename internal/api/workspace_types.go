@@ -87,11 +87,12 @@ type WorkspaceQueryRow struct {
 }
 
 type WorkspaceFacetValue struct {
-	Roles    []string `json:"roles,omitzero" maxItems:"11"`
-	Key      string   `json:"key"`
-	Label    string   `json:"label"`
-	Count    int64    `json:"count" minimum:"0"`
-	Selected bool     `json:"selected"`
+	SelectedPersonIDs []string `json:"selected_person_ids,omitzero" maxItems:"64"`
+	Roles             []string `json:"roles,omitzero" maxItems:"11"`
+	Key               string   `json:"key"`
+	Label             string   `json:"label"`
+	Count             int64    `json:"count" minimum:"0"`
+	Selected          bool     `json:"selected"`
 }
 
 // WorkspaceFacet is either available with count pointers or explicitly
@@ -241,7 +242,7 @@ func fromStoreFacets(facets []store.SnapshotFacet) []WorkspaceFacet {
 			Missing: facet.Missing, Other: facet.Other}
 		for _, value := range facet.Values {
 			wire.Values = append(wire.Values, WorkspaceFacetValue{
-				Key: value.Key, Label: value.Label, Count: value.Count, Selected: value.Selected, Roles: value.Roles,
+				Key: value.Key, Label: value.Label, Count: value.Count, Selected: value.Selected, Roles: value.Roles, SelectedPersonIDs: value.SelectedPersonIDs,
 			})
 		}
 		result = append(result, wire)

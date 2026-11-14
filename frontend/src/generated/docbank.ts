@@ -6332,6 +6332,8 @@ export interface WorkspaceFacetValue {
   /** @maxItems 11 */
   roles?: string[];
   selected: boolean;
+  /** @maxItems 64 */
+  selected_person_ids?: string[];
 }
 
 export type PhotoBrowsePageFacetsItem = {

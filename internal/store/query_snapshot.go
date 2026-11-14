@@ -99,11 +99,12 @@ type SnapshotGeneration struct {
 
 // SnapshotFacetValue is one counted and optionally selected facet value.
 type SnapshotFacetValue struct {
-	Key      string   `json:"key"`
-	Label    string   `json:"label"`
-	Count    int64    `json:"count"`
-	Selected bool     `json:"selected"`
-	Roles    []string `json:"roles,omitzero"`
+	SelectedPersonIDs []string `json:"selected_person_ids,omitzero"`
+	Key               string   `json:"key"`
+	Label             string   `json:"label"`
+	Count             int64    `json:"count"`
+	Selected          bool     `json:"selected"`
+	Roles             []string `json:"roles,omitzero"`
 }
 
 // SnapshotFacet is either a complete count projection or an explicit unavailable result.

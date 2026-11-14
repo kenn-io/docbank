@@ -156,8 +156,9 @@
   // only that person's root entries; other entries keep the roles they name.
   function personQuery(value: FacetValue): Query {
     const current = query.filters[people] ?? [];
-    const next = current.some((entry) => entry.person_id === value.key)
-      ? current.filter((entry) => entry.person_id !== value.key)
+    const ids = [value.key, ...(value.selected_person_ids ?? [])];
+    const next = current.some((entry) => ids.includes(entry.person_id))
+      ? current.filter((entry) => !ids.includes(entry.person_id))
       : [...current, { person_id: value.key, roles: value.roles ?? [] }];
     return changed({ ...query.filters, [people]: next.length ? next : undefined });
   }
@@ -208,7 +209,12 @@
       return value.key === "duplicate" && query.filters[hasDuplicates] === true;
     // The root entries decide, so the button always shows what a click undoes.
     if (dimension === "person_role")
-      return Boolean(query.filters[people]?.some((entry) => entry.person_id === value.key));
+      return Boolean(
+        query.filters[people]?.some(
+          (entry) =>
+            entry.person_id === value.key || value.selected_person_ids?.includes(entry.person_id),
+        ),
+      );
     return value.selected;
   }
 

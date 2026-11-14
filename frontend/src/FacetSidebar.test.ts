@@ -574,6 +574,56 @@ const peopleValues = [
   { key: mara, label: "Mara Okonkwo-Fell", count: 1, selected: false, roles: ["copied"] },
 ] satisfies SnapshotPage["facets"][number]["values"];
 
+it("clears every original filter for a merged person", async () => {
+  const onchange = vi.fn();
+  const query: Query = {
+    ...originalQuery,
+    filters: {
+      ...originalQuery.filters,
+      people: [
+        { person_id: jory, roles: ["sender"] },
+        { person_id: typed, roles: ["author"] },
+        { person_id: mara, roles: ["copied"] },
+      ],
+    },
+  };
+  const view = render(FacetSidebar, {
+    facets: [
+      peopleFacet([
+        {
+          key: mara,
+          label: "Merged Person",
+          count: 2,
+          selected: true,
+          roles: ["author", "sender"],
+          ...{ selected_person_ids: [jory, mara] },
+        },
+        { key: typed, label: "Other Person", count: 1, selected: true, roles: ["author"] },
+      ]),
+    ],
+    query,
+    onchange,
+  });
+  const button = screen.getByRole("button", {
+    name: "Merged Person, Author, Sender, 2 documents, selected",
+  });
+  expect(button.getAttribute("aria-pressed")).toBe("true");
+  await fireEvent.click(button);
+  expect(onchange.mock.lastCall?.[0].filters.people).toEqual([
+    { person_id: typed, roles: ["author"] },
+  ]);
+  await view.rerender({
+    query: {
+      ...query,
+      filters: { ...query.filters, people: [{ person_id: jory, roles: ["sender"] }] },
+    },
+  });
+  await fireEvent.click(
+    screen.getByRole("button", { name: "Merged Person, Author, Sender, 2 documents, selected" }),
+  );
+  expect(onchange.mock.lastCall?.[0].filters.people).toBeUndefined();
+});
+
 it("narrows by a person with the roles the People group shows and keeps typed entries", async () => {
   const onchange = vi.fn();
   const query: Query = {

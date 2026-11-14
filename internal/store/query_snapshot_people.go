@@ -282,6 +282,7 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
 		return SnapshotFacet{}, err
 	}
 	selected := map[string]bool{}
+	selectedIDs := map[string][]string{}
 	for _, entry := range compiled.Query.Filters.People {
 		var id, name string
 		err := q.QueryRowContext(ctx, `SELECT person_id,display_name FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=$1),$2) AND `+personVisibleSQL("persons.person_id", 3), entry.PersonID, entry.PersonID, 1, 1).Scan(&id, &name)
@@ -300,10 +301,12 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
 			}
 		}
 		selected[id] = true
+		selectedIDs[id] = append(selectedIDs[id], entry.PersonID)
 		observation.labels[id] = name
 	}
 	out, other := finalizeSnapshotFacetValues(observation.counts, observation.labels, selected, false, 20)
 	for i := range out {
+		out[i].SelectedPersonIDs = selectedIDs[out[i].Key]
 		for role := range roles[out[i].Key] {
 			out[i].Roles = append(out[i].Roles, role)
 		}

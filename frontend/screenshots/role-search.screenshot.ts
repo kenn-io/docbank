@@ -348,6 +348,42 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
       },
       parts,
     );
+
+    const retiredID = sent.query.filters.people[0].person_id as string;
+    const retired = JSON.parse(await run("people", "show", retiredID));
+    const survivor = JSON.parse(await run("people", "create", "Teodor Vask-Ruiz"));
+    await run(
+      "people",
+      "merge",
+      survivor.person_id,
+      retiredID,
+      "--revision",
+      String(survivor.revision),
+      "--absorbed-revision",
+      String(retired.revision),
+    );
+    const retiredQuery = advanced(query.text, { people: sent.query.filters.people });
+    await expect
+      .poll(
+        async () => summary(await freeze(retiredQuery, ["person_role"])).people["Teodor Vask-Ruiz"],
+        { timeout: 120_000, intervals: [1_000] },
+      )
+      .toEqual([2, ["copied", "recipient"]]);
+    await open(retiredQuery);
+    const mergedPerson = people.getByRole("button", {
+      name: "Teodor Vask-Ruiz, Cc, Recipient, 2 documents, selected",
+    });
+    await expect(mergedPerson).toHaveAttribute("aria-pressed", "true");
+    const cleared = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/v1/workspace/queries" &&
+        response.request().method() === "POST",
+    );
+    await mergedPerson.click();
+    const clearedResponse = await cleared;
+    expect(clearedResponse.status()).toBe(200);
+    expect(clearedResponse.request().postDataJSON().query.filters.people).toBeUndefined();
+    await expect(results.locator("tbody tr")).toHaveCount(2);
   } catch (error) {
     failure = error;
     throw error;

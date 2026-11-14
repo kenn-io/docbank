@@ -82,7 +82,8 @@ func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
 		digest := sha256.Sum256(raw)
 		_, err = s.PublishDocumentPeople(ctx, store.DocumentPeoplePublication{People: document.DocumentPeopleV1{ContractVersion: document.PersonContractV1, ContentVersionID: node.CurrentVersionID, EventGenerationID: input.EventGenerationID, Edges: []document.DocumentPersonEdgeV1{}}, InputsSHA256: fmt.Sprintf("%x", digest), ResolverFingerprint: document.PersonResolverFingerprint(), NodeID: input.NodeID, NodeRevision: input.NodeRevision, BindingEpoch: input.BindingEpoch})
 		require.NoError(t, err)
-		resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", browser, `{"query":{"syntax":"advanced","text":"from:\"Matrix Sender\""},"facets":["collections","tags","media_family","extension","modified","size","text_coverage","duplicates","person_role"]}`)
+		request := fmt.Sprintf(`{"query":{"syntax":"advanced","text":"from:\"Matrix Sender\"","filters":{"people":[{"person_id":%q,"roles":["sender"]}]}},"facets":["collections","tags","media_family","extension","modified","size","text_coverage","duplicates","person_role"]}`, visible.PersonID)
+		resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", browser, request)
 		require.Equal(t, http.StatusOK, resp.StatusCode, body)
 		var page api.WorkspaceQueryResponse
 		require.NoError(t, json.Unmarshal([]byte(body), &page))
@@ -94,5 +95,6 @@ func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
 		require.Len(t, page.Facets[8].Values, 1)
 		require.Equal(t, visible.PersonID, page.Facets[8].Values[0].Key)
 		require.Equal(t, []string{"sender"}, page.Facets[8].Values[0].Roles)
+		require.Equal(t, []string{visible.PersonID}, page.Facets[8].Values[0].SelectedPersonIDs)
 	})
 }

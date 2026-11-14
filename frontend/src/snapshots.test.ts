@@ -625,7 +625,14 @@ it("retains photo ranking status on snapshot continuation pages", async () => {
 
 it("validates frozen person roles", async () => {
   const safeRoles = personRoles.filter((role) => role !== "blind_copy");
-  const person = { key: tagID, label: "Synthetic", count: 1, selected: false, roles: safeRoles };
+  const person = {
+    key: tagID,
+    label: "Synthetic",
+    count: 1,
+    selected: true,
+    roles: safeRoles,
+    selected_person_ids: [version2],
+  };
   const good = { ...row(2, version2, blob2, 20), matched_roles: ["sender"] };
   const facet = {
     dimension: "person_role",
@@ -645,6 +652,7 @@ it("validates frozen person roles", async () => {
   );
   expect(receipt.rows[0]!.matched_roles).toEqual(["sender"]);
   expect(receipt.facets[0]!.values[0]!.roles).toEqual(safeRoles);
+  expect(receipt.facets[0]!.values[0]!.selected_person_ids).toEqual([version2]);
   fetcher.mockResolvedValueOnce(
     jsonResponse(await page({ rows: [{ ...good, matched_roles: ["bogus"] }], facets: [facet] })),
   );

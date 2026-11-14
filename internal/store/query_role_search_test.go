@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 
@@ -473,6 +474,13 @@ func TestRoleSearchSavedRunPreservesMergedDefinitionReceipt(t *testing.T) {
 	require.Equal(t, []string{"speaker"}, result.Rows[0].MatchedRoles)
 	require.Equal(t, survivor.PersonID, result.Facets[0].Values[0].Key)
 	require.True(t, result.Facets[0].Values[0].Selected)
+	raw, err := json.Marshal(result.Facets[0].Values[0])
+	require.NoError(t, err)
+	var facet struct {
+		SelectedPersonIDs []string `json:"selected_person_ids"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &facet))
+	require.Equal(t, []string{retired.PersonID}, facet.SelectedPersonIDs)
 	service := newQuerySnapshotService(s, querySnapshotServiceOptions{})
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	run, page, err := service.RunSaved(ctx, "owner", definition.ID, definition.Revision, SnapshotRequest{Facets: []string{"person_role"}}, nil)

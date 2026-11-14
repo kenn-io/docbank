@@ -111,6 +111,7 @@ export interface WorkspaceQueryResponse extends PhotoSearchStatus {
       count: number;
       selected: boolean;
       roles?: PersonRole[];
+      selected_person_ids?: string[];
     }[];
     missing?: number | null;
     other?: number | null;
@@ -466,16 +467,26 @@ function parseFacet(
     keys(
       facetValue,
       ["key", "label", "count", "selected"],
-      ["roles"],
+      ["roles", "selected_person_ids"],
       `facets[${index}].values[${valueIndex}]`,
     );
     if (typeof facetValue.selected !== "boolean")
       malformed(`facets[${index}].values[${valueIndex}].selected must be boolean`);
+    const selectedIDs = facetValue.selected_person_ids;
+    if (
+      selectedIDs !== undefined &&
+      (!Array.isArray(selectedIDs) ||
+        selectedIDs.length > 64 ||
+        !selectedIDs.every((id) => typeof id === "string" && uuidV4.test(id)) ||
+        new Set(selectedIDs).size !== selectedIDs.length)
+    )
+      malformed(`facets[${index}].values[${valueIndex}].selected_person_ids is invalid`);
     return {
       key: string(facetValue.key, `facets[${index}].values[${valueIndex}].key`),
       label: string(facetValue.label, `facets[${index}].values[${valueIndex}].label`),
       count: integer(facetValue.count, `facets[${index}].values[${valueIndex}].count`),
       selected: facetValue.selected,
+      ...(selectedIDs === undefined ? {} : { selected_person_ids: selectedIDs as string[] }),
       ...(facetValue.roles === undefined
         ? {}
         : {

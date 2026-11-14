@@ -22639,6 +22639,11 @@ components:
           type: array
         selected:
           type: boolean
+        selected_person_ids:
+          items:
+            type: string
+          maxItems: 64
+          type: array
       required:
         - key
         - label
