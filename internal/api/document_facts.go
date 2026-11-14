@@ -17,7 +17,7 @@ type WhenV1 struct {
 	SourceOffsetSeconds *int                    `json:"source_offset_seconds,omitempty"`
 	Date                string                  `json:"date,omitempty"`
 	Period              string                  `json:"period,omitempty"`
-	PlacedBy            WhenPlacedBy            `json:"placed_by"`
+	PlacedBy            *WhenPlacedBy           `json:"placed_by,omitempty"`
 }
 
 type WhenPlacedBy struct {
@@ -29,7 +29,7 @@ type WhenPlacedBy struct {
 }
 
 func whenFromClaim(event document.DocumentEventV1) WhenV1 {
-	w := WhenV1{Precision: event.Precision, PlacedBy: WhenPlacedBy{Source: event.DateKind, Rule: document.PrimaryRuleV1, Fallback: event.DateKind == "imported" || event.DateKind == "vault_recorded", EventID: event.EventID, ClaimBasis: event.ClaimBasis}}
+	w := WhenV1{Precision: event.Precision}
 	switch event.Precision {
 	case "year", "month":
 		w.State, w.Period = "coarse", event.DateValue

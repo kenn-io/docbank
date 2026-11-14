@@ -55,7 +55,12 @@ func versionDatesAPI(f store.DocumentDateFacts, disclosure string) VersionDates 
 			if disclosure != "full" && document.EventHasSensitiveEvidence(e) {
 				continue
 			}
-			out.Claims = append(out.Claims, VersionDateClaim{EventID: e.EventID, DateKind: e.DateKind, Primary: out.Primary != nil && out.Primary.EventID == e.EventID, DateValue: e.DateValue, RawValue: e.RawValue, Precision: e.Precision, TimezoneKind: e.TimezoneKind, ZoneText: e.ZoneText, OffsetSeconds: e.OffsetSeconds, AxisKey: e.AxisKey, UTCKey: e.UTCKey, ClaimBasis: e.ClaimBasis, ParseConfidence: e.ParseConfidence, EvidenceKind: e.EvidenceKind, EvidenceID: e.EvidenceID, SourceKindRaw: e.SourceKindRaw, When: whenFromClaim(e)})
+			primary := out.Primary != nil && out.Primary.EventID == e.EventID
+			when := whenFromClaim(e)
+			if primary {
+				when.PlacedBy = &WhenPlacedBy{Source: e.DateKind, Rule: out.Primary.RuleID, Fallback: document.IsFallbackDateKind(e.DateKind), EventID: e.EventID, ClaimBasis: e.ClaimBasis}
+			}
+			out.Claims = append(out.Claims, VersionDateClaim{EventID: e.EventID, DateKind: e.DateKind, Primary: primary, DateValue: e.DateValue, RawValue: e.RawValue, Precision: e.Precision, TimezoneKind: e.TimezoneKind, ZoneText: e.ZoneText, OffsetSeconds: e.OffsetSeconds, AxisKey: e.AxisKey, UTCKey: e.UTCKey, ClaimBasis: e.ClaimBasis, ParseConfidence: e.ParseConfidence, EvidenceKind: e.EvidenceKind, EvidenceID: e.EvidenceID, SourceKindRaw: e.SourceKindRaw, When: when})
 		}
 		// Diagnostics can contain source-specific values; only the public code and detail are projected.
 		for _, diag := range f.View.Events.Diagnostics {
