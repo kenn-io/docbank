@@ -195,5 +195,6 @@ The default `safe` disclosure omits a sensitive claim or one with any sensitive
 actor. API-key clients can request `disclosure=full`. Browser sessions and the
 MCP `get_document_dates` tool use safe disclosure.
 Each claim's `when` describes its precision and source zone without inventing an
-instant for a floating or date-only value. A response reports `published`,
+instant for a floating or date-only value. Only the selected primary claim has
+`when.placed_by`, which names the rule and fallback decision. A response reports `published`,
 `pending`, `failed`, or `none`; stale claims are not returned.
