@@ -8,8 +8,6 @@ export interface TagChangeRunOptions {
   onunknown?: () => void;
   /** Shown instead of the error text when no answer arrived. */
   unknownMessage?: string;
-  /** Shown instead of the error text when a selected document changed. */
-  staleMessage?: string;
 }
 
 // One tag change from request to outcome, shared by the dialogs that send it.
@@ -27,6 +25,7 @@ export class TagChangeRun {
 
   async submit(request: BatchTagRequest): Promise<void> {
     this.pending = true;
+    this.stale = false;
     this.failure = "";
     const outcome = await runBatchTagChange(this.options.session, request);
     if (!this.alive) return;
@@ -35,7 +34,6 @@ export class TagChangeRun {
       this.options.onconfirmed(outcome.receipt);
       return;
     }
-    if (outcome.kind === "unknown") this.stale = true;
     if (outcome.kind === "unknown") this.options.onunknown?.();
     if (outcome.kind === "auth") {
       this.options.onauthfailure(outcome.cause);
@@ -43,9 +41,6 @@ export class TagChangeRun {
     }
     if (outcome.kind === "rejected") this.stale = outcome.stale;
     const text = outcome.cause instanceof Error ? outcome.cause.message : String(outcome.cause);
-    this.failure =
-      (outcome.kind === "unknown" ? this.options.unknownMessage : undefined) ??
-      (outcome.kind === "rejected" && outcome.stale ? this.options.staleMessage : undefined) ??
-      text;
+    this.failure = (outcome.kind === "unknown" ? this.options.unknownMessage : undefined) ?? text;
   }
 }

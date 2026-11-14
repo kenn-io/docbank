@@ -662,6 +662,17 @@ func (worker *EmbeddingWorker) processClaim(ctx context.Context, claim Embedding
 		}
 		return ErrEmbeddingPersistence
 	}
+	if work.Binding.InputKind == document.EmbeddingInputFace && !slices.ContainsFunc(result.Vectors, func(v document.EmbeddingVector) bool { return v.Values != nil }) {
+		completer, ok := worker.catalog.(interface {
+			CompleteUnmatchedFaceWork(ctx context.Context, claim store.EmbeddingJobClaim, work store.EmbeddingJobWork, receipt store.EmbeddingAttemptReceipt, now time.Time) error
+		})
+		if !ok {
+			return ErrEmbeddingPersistence
+		}
+		return worker.gate.MutateContext(attemptCtx, func() error {
+			return completer.CompleteUnmatchedFaceWork(attemptCtx, claim, work, receipt, worker.clock().UTC())
+		})
+	}
 	materializedWork := work
 	materializedWork.InputGeneration = materializedGeneration
 	record, payload, err := buildEmbeddingSet(materializedWork, result, worker.clock().UTC())
@@ -706,6 +717,10 @@ func (worker *EmbeddingWorker) executeBatches(ctx context.Context, claim Embeddi
 	materializedGeneration *store.EmbeddingInputGenerationRecord, receipt *EmbeddingAttemptReceipt, started time.Time,
 ) (document.EmbeddingResult, store.ProviderOperationAuthorization, store.EmbeddingFailureCode, error) {
 	batchSize := min(work.Binding.MaxBatchItems, worker.maxRows)
+	if work.Binding.InputKind == document.EmbeddingInputFace {
+		// Match Kit's eight-box face requests without holding a photo's worth of uploads.
+		batchSize = min(batchSize, 8)
+	}
 	result := document.EmbeddingResult{Vectors: make([]document.EmbeddingVector, 0, len(work.InputGeneration.Inputs))}
 	var prior store.ProviderOperationAuthorization
 	var execution EmbeddingExecution
@@ -720,9 +735,14 @@ func (worker *EmbeddingWorker) executeBatches(ctx context.Context, claim Embeddi
 			if err := worker.catalog.ValidateEmbeddingWork(ctx, claim, work, worker.clock().UTC()); err != nil {
 				return document.EmbeddingResult{}, prior, "", err
 			}
+			preparedWork, inputOffset := work, offset
+			if work.Binding.InputKind == document.EmbeddingInputFace {
+				preparedWork.InputGeneration.Inputs = work.InputGeneration.Inputs[offset:end]
+				inputOffset = 0
+			}
 			var err error
-			if execution.Provider == nil || (work.Binding.InputKind == document.EmbeddingInputOriginalFile || work.Binding.InputKind == document.EmbeddingInputImage) {
-				execution, err = worker.runtime.Prepare(ctx, work)
+			if execution.Provider == nil || work.Binding.InputKind == document.EmbeddingInputOriginalFile || work.Binding.InputKind == document.EmbeddingInputImage || work.Binding.InputKind == document.EmbeddingInputFace {
+				execution, err = worker.runtime.Prepare(ctx, preparedWork)
 				if err != nil {
 					closeEmbeddingInputs(execution.Inputs)
 					switch {
@@ -742,19 +762,22 @@ func (worker *EmbeddingWorker) executeBatches(ctx context.Context, claim Embeddi
 					closeEmbeddingInputs(execution.Inputs)
 					return document.EmbeddingResult{}, prior, store.EmbeddingFailureProviderUnavailable, ErrEmbeddingRuntimeUnavailable
 				}
-				hydrated, err := validateEmbeddingExecution(work, execution)
+				hydrated, err := validateEmbeddingExecution(preparedWork, execution)
 				if err != nil {
 					closeEmbeddingInputs(execution.Inputs)
 					return document.EmbeddingResult{}, prior, store.EmbeddingFailureInvalidResponse, err
 				}
-				*materializedGeneration = hydrated
+				if work.Binding.InputKind != document.EmbeddingInputFace {
+					*materializedGeneration = hydrated
+				}
 			}
-			end, err = boundedEmbeddingBatchEnd(execution.Provider, work, execution.Inputs, offset, end)
+			inputEnd, err := boundedEmbeddingBatchEnd(execution.Provider, work, execution.Inputs, inputOffset, inputOffset+end-offset)
 			if err != nil {
 				closeEmbeddingInputs(execution.Inputs)
 				return document.EmbeddingResult{}, prior, store.EmbeddingFailureInputRejected, err
 			}
-			batch := execution.Inputs[offset:end]
+			end = offset + inputEnd - inputOffset
+			batch := execution.Inputs[inputOffset:inputEnd]
 			priorPtr := (*store.ProviderOperationAuthorization)(nil)
 			if prior.GrantID != "" {
 				priorPtr = &prior
@@ -1034,6 +1057,10 @@ func validateEmbeddingExecution(work EmbeddingWork, execution EmbeddingExecution
 			if workerHashString(work.Binding.ModelInput.EncodeDocument(input.Text)) != reference.RenderedChecksum {
 				return store.EmbeddingInputGenerationRecord{}, errors.New("embedding execution text checksum drifted")
 			}
+		} else if input.Kind == document.EmbeddingInputFace {
+			if embeddingInterfaceNil(input.Source) || input.Box == nil || store.FaceEmbeddingChecksum(input.Source.Metadata().SHA256, store.PhotoFace{FaceID: input.Key, Box: *input.Box}) != reference.RenderedChecksum {
+				return store.EmbeddingInputGenerationRecord{}, errors.New("face embedding input drifted")
+			}
 		} else if embeddingInterfaceNil(input.Source) || input.Source.Metadata().SHA256 != reference.RenderedChecksum {
 			return store.EmbeddingInputGenerationRecord{}, errors.New("embedding execution original checksum drifted")
 		}
@@ -1049,15 +1076,20 @@ func validateEmbeddingExecution(work EmbeddingWork, execution EmbeddingExecution
 }
 
 func buildEmbeddingSet(work EmbeddingWork, result document.EmbeddingResult, now time.Time) (store.EmbeddingSetRecord, []byte, error) {
-	keys := make([]string, len(work.InputGeneration.Inputs))
-	checksums := make([]string, len(keys))
-	values := make([][]float64, len(keys))
+	keys := make([]string, 0, len(result.Vectors))
+	checksums := make([]string, 0, len(result.Vectors))
+	values := make([][]float64, 0, len(result.Vectors))
 	for index, input := range work.InputGeneration.Inputs {
-		keys[index], checksums[index] = input.ID, input.RenderedChecksum
-		values[index] = make([]float64, len(result.Vectors[index].Values))
-		for column, value := range result.Vectors[index].Values {
-			values[index][column] = float64(value)
+		if work.Binding.InputKind == document.EmbeddingInputFace && result.Vectors[index].Values == nil {
+			continue
 		}
+		keys = append(keys, input.ID)
+		checksums = append(checksums, input.RenderedChecksum)
+		row := make([]float64, len(result.Vectors[index].Values))
+		for column, value := range result.Vectors[index].Values {
+			row[column] = float64(value)
+		}
+		values = append(values, row)
 	}
 	set, err := document.NewVectorSetV1(document.VectorSetV1Input{VectorSpaceFingerprint: work.VectorSpaceID,
 		Metric: work.Descriptor.Metric, Normalization: work.Descriptor.Normalization,
@@ -1157,6 +1189,16 @@ func (worker *EmbeddingWorker) reuseVectors(ctx context.Context, work EmbeddingW
 		result := document.EmbeddingResult{Vectors: make([]document.EmbeddingVector, len(decoded.InputKeys))}
 		for i, key := range decoded.InputKeys {
 			result.Vectors[i] = document.EmbeddingVector{Key: key, Values: decoded.Vectors[i]}
+		}
+		if work.Binding.InputKind == document.EmbeddingInputFace {
+			byKey := make(map[string][]float32, len(result.Vectors))
+			for _, v := range result.Vectors {
+				byKey[v.Key] = v.Values
+			}
+			result.Vectors = make([]document.EmbeddingVector, len(work.InputGeneration.Inputs))
+			for i, input := range work.InputGeneration.Inputs {
+				result.Vectors[i] = document.EmbeddingVector{Key: input.ID, Values: byKey[input.ID]}
+			}
 		}
 		return result, true, nil
 	}

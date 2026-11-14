@@ -263,25 +263,45 @@ func TestEmbeddingCatalogVersionPruneRetainsPinnedArtifactsUntilGC(t *testing.T)
 	assert.Zero(t, artifacts)
 }
 
-func TestEmbeddingCatalogSnapshotValidationChecksStoredRows(t *testing.T) {
+func TestEmbeddingCatalogRejectsCorruptStoredRows(t *testing.T) {
 	t.Parallel()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
-	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
-		document.EmbeddingInputOriginalFile, "optional", "")
-	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
-	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(t.Context(), `DELETE FROM embedding_sets WHERE embedding_set_id=?`, record.ID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(t.Context(), `DROP TRIGGER embedding_vector_rows_immutable_update`); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(t.Context(), `UPDATE embedding_vector_rows SET checksum=? WHERE vector_set_id=?`,
-			fakeHash("corrupt-stored-vector-row"), record.VectorSet.ID)
-		return err
-	}))
+	for _, damage := range []string{"manifest", "input count"} {
+		t.Run(damage, func(t *testing.T) {
+			t.Parallel()
+			s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+			record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
+				document.EmbeddingInputOriginalFile, "optional", "")
+			require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+			if damage == "input count" {
+				require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+					if _, err := tx.ExecContext(t.Context(), `DROP TRIGGER embedding_input_generations_immutable_update`); err != nil {
+						return err
+					}
+					_, err := tx.ExecContext(t.Context(), `UPDATE embedding_input_generations SET input_count=input_count+1 WHERE generation_id=$1`, record.InputGeneration.ID)
+					return err
+				}))
+				err := s.withReadTx(t.Context(), func(tx *sql.Tx) error {
+					_, err := loadInputGenerationTx(t.Context(), tx, record.InputGeneration.ID)
+					return err
+				})
+				require.EqualError(t, err, "embedding input generation count is corrupt")
+				return
+			}
+			require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+				if _, err := tx.ExecContext(t.Context(), `DELETE FROM embedding_sets WHERE embedding_set_id=?`, record.ID); err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(t.Context(), `DROP TRIGGER embedding_vector_rows_immutable_update`); err != nil {
+					return err
+				}
+				_, err := tx.ExecContext(t.Context(), `UPDATE embedding_vector_rows SET checksum=? WHERE vector_set_id=?`,
+					fakeHash("corrupt-stored-vector-row"), record.VectorSet.ID)
+				return err
+			}))
 
-	require.ErrorContains(t, s.ValidateMetadata(t.Context()), "manifest")
+			require.ErrorContains(t, s.ValidateMetadata(t.Context()), "manifest")
+		})
+	}
 }
 
 func embeddingCatalogProfileVariant(t *testing.T) ProcessingProfileRecord {

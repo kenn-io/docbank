@@ -56,7 +56,12 @@ func TestSuppliedMediaProfileAdmitsWAVAndMP3(t *testing.T) {
 // provider execution and implicit consent creation during media submission.
 func TestMediaEnqueueAuthorizedReturnsBeforeProvider(t *testing.T) {
 	t.Parallel()
-	fixture := newPublicationFixture(t)
+	checkMediaEnqueueAuthorizedReturnsBeforeProvider(t, newPublicationFixture)
+}
+
+func checkMediaEnqueueAuthorizedReturnsBeforeProvider(t *testing.T, newFixture publicationFixtureFactory) {
+	t.Helper()
+	fixture := newFixture(t)
 	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
 		ID: "synthetic.media-worker-v1", ContractVersion: document.RenditionProviderContractVersion,
 		PolicyFingerprint: processingHash("media-worker-policy"),
@@ -398,7 +403,12 @@ type mediaStateFixture struct {
 
 func newMediaStateFixture(tb testing.TB) mediaStateFixture {
 	tb.Helper()
-	f := newMediaStateFixtureWithoutConsent(tb)
+	return mediaStateFixtureWithPublication(tb, newPublicationFixture(tb))
+}
+
+func mediaStateFixtureWithPublication(tb testing.TB, fixture publicationFixture) mediaStateFixture {
+	tb.Helper()
+	f := mediaStateFixtureWithoutConsentWithPublication(tb, fixture)
 	plan, err := f.service.Plan(tb.Context(), f.selector)
 	require.NoError(tb, err)
 	_, err = f.service.GrantConsent(tb.Context(), ConsentGrantRequest{Selector: f.selector, PlanFingerprint: plan.Fingerprint})
@@ -408,7 +418,11 @@ func newMediaStateFixture(tb testing.TB) mediaStateFixture {
 
 func newMediaStateFixtureWithoutConsent(tb testing.TB) mediaStateFixture {
 	tb.Helper()
-	fixture := newPublicationFixture(tb)
+	return mediaStateFixtureWithoutConsentWithPublication(tb, newPublicationFixture(tb))
+}
+
+func mediaStateFixtureWithoutConsentWithPublication(tb testing.TB, fixture publicationFixture) mediaStateFixture {
+	tb.Helper()
 	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
 		ID: "synthetic.media-worker-v1", ContractVersion: document.RenditionProviderContractVersion,
 		PolicyFingerprint: processingHash("media-worker-policy"),
@@ -479,9 +493,14 @@ func (f mediaStateFixture) run(tb testing.TB, jobID string) error {
 
 func TestMediaBackfillPreservesCompletedRevokedInput(t *testing.T) {
 	t.Parallel()
+	checkMediaBackfillPreservesCompletedRevokedInput(t, newPublicationFixture)
+}
+
+func checkMediaBackfillPreservesCompletedRevokedInput(t *testing.T, newFixture publicationFixtureFactory) {
+	t.Helper()
 	for _, completed := range []bool{false, true} {
 		t.Run(fmt.Sprintf("completed=%t", completed), func(t *testing.T) {
-			f := newMediaStateFixture(t)
+			f := mediaStateFixtureWithPublication(t, newFixture(t))
 			name, profile, err := NewSuppliedMediaProfile(f.catalog, f.blobs, f.service.principal)
 			require.NoError(t, err)
 			f.service, err = NewService(t.Context(), ServiceConfig{
@@ -609,7 +628,12 @@ func TestMediaAdmissionInterruptedBeforeJobResumesThroughBackfill(t *testing.T) 
 // bound rendition job does not have.
 func TestMediaOperationStateFollowsJob(t *testing.T) {
 	t.Parallel()
-	f := newMediaStateFixture(t)
+	checkMediaOperationStateFollowsJob(t, newPublicationFixture)
+}
+
+func checkMediaOperationStateFollowsJob(t *testing.T, newFixture publicationFixtureFactory) {
+	t.Helper()
+	f := mediaStateFixtureWithPublication(t, newFixture(t))
 	ctx := t.Context()
 	job := f.enqueue(t, f.selector)
 	failingRaw := mediatest.WAV()

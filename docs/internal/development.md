@@ -386,8 +386,8 @@ also use shared operations for explicit asset selections. Quality scores, hidden
 sessions and photo settings have native Store contracts as well.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
-operations still open SQLite. Photo-derived processing, email PDF rendering,
-other media workers, search and PostgreSQL-target backup recovery remain unqualified.
+operations still open SQLite. Photo-derived and embedding-worker execution,
+remote-media acquisition, search and PostgreSQL-target backup recovery remain unqualified.
 Native multi-store catalog operations are qualified below; deployment adapters
 and filesystem workers remain separate from public PostgreSQL vault opening.
 
@@ -931,6 +931,31 @@ keeps the fresh target's processing incarnation, so restored consent records
 cannot authorize a provider call until the operator grants consent again.
 `VerifyAudit` independently replays the restored history and can compare
 previously recorded evidence on either backend.
+
+#### Rendition, email-PDF and supplied-media workers
+
+The processing worker uses the same native Store and blob reader on PostgreSQL
+and SQLite. Shared worker scenarios cover normalized builds and late waiters,
+ambiguous provider outcomes and durable resume handles, staged-build recovery,
+and source/consent changes before provider execution. A staged build resumes
+without sending the source to its provider again.
+
+Email-PDF scenarios run the real queue, worker and receipt/export pipeline with
+an injected renderer. They check retained PDF bytes, recipe binding and archive
+output. A malformed renderer result leaves the selected email body unchanged
+and creates no PDF receipt; that scenario checks that rendering actually ran.
+Supplied-media scenarios exercise explicit service admission and continuation,
+job-derived operation state, and revocation while backfilling retained inputs.
+The original-file lifecycle scenarios use the existing runtime/provider fixture.
+Email-PDF and supplied-media service scenarios use the production runtimes with
+injected renderers/providers. All scenarios run the real worker, Store and
+consent records against managed blob files.
+
+`make test-pg` runs `TestProcessingWorkersPostgres` after the Store and backup
+lanes on both PostgreSQL versions. The SQLite entry points call the same shared
+scenarios and keep their existing parallelism. Checks that validate inputs without querying the database
+stay in their existing unit tests. These scenarios do not qualify
+remote-media acquisition, embedding-worker execution or photo-derived workers.
 
 #### Backup capture and SQLite recovery
 

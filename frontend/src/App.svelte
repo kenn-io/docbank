@@ -141,7 +141,7 @@
   import { parseNodeVersionLink, resolveNodeVersionLink } from "./nodeVersionLink.js";
   import { APIError, isCurrentSessionError, mutationsInFlight } from "./api-transport.js";
   import { changeNodeTag, documentSearch, liveNodeTags } from "./receipts.js";
-  import { takeFragmentSession, type BrowserSession } from "./browser-session.js";
+  import { rememberSession, takeFragmentSession, type BrowserSession } from "./browser-session.js";
   import { getSignInStatus, signIn, tabSession } from "./web-login.js";
   import { startTelemetryReporting } from "./app-opened.js";
   import { startSessionReporting } from "./session-duration.js";
@@ -894,7 +894,8 @@
     ].filter((photos): photos is Photos => !!photos);
     // The People directory reloads on return, so only an open one refreshes.
     const people = photoPath === "/photos/people" ? peopleView : undefined;
-    if (lists.some((photos) => photos.loading) || people?.loading) return false;
+    if (lists.some((photos) => photos.loading) || people?.loading || people?.suggestions.loading)
+      return false;
     // Documents show the same files, so they reload when the user returns to them.
     pendingPhotoDocuments = true;
     for (const photos of lists)
@@ -908,6 +909,7 @@
         people?.refresh(),
       ]);
       listRefreshed = true;
+      if (people?.suggestions.error) throw new Error(people.suggestions.error);
     } finally {
       // A viewer's unavailable result must land after any older list rows.
       await settleReads(lists.map((photos) => photos.changed({ ...change, listRefreshed })));
@@ -1380,6 +1382,7 @@
     selectedSnapshotRows.map((row) => ({
       node_id: row.node_id,
       revision: snapshotTargetRevision(row, snapshot.overlays),
+      name: row.path,
     })),
   );
   const allVisibleSnapshotRowsSelected = $derived(
@@ -1602,6 +1605,7 @@
   });
 
   function activateBrowserSession(session: BrowserSession, keyLogin = false): void {
+    rememberSession(keyLogin ? null : session);
     disposeBrowserSession?.();
     webSession = session.token;
     hasProductions = false;
@@ -1931,10 +1935,10 @@
   }
 
   function resetLocalSessionUI(): void {
+    rememberSession(null);
     readerRequest++;
     reader = undefined;
     clearToasts();
-    taggingOutcomeUnknown = false;
     leaveSnapshotMode();
     activePanel = null;
     savedQueryDraft = null;
@@ -2944,6 +2948,7 @@
       if (!inspectorRequestCurrent(request, tagGeneration, session, nodeID, sourceKey)) return;
       selectedLiveNode = listing.node;
       selectedLiveSourceKey = sourceKey ?? "";
+      selectedTagsError = "";
       selectedTags = sortTags(listing.items);
       selectedTagsTotal = listing.total;
       const source = selectedSource;
@@ -3107,11 +3112,14 @@
     batchTagsTargets = targets.map((target) => ({ ...target }));
   }
 
-  function handleBatchTagsChanged(_receipt: BatchTagReceipt): void {
-    // A replay describes a historical success. Reload current observations
-    // instead of overwriting newer rows with the receipt's old revisions.
+  // A replay describes a historical success, so reload current observations
+  // instead of overwriting newer rows with the receipt's old revisions.
+  function refreshTaggedViews(): void {
+    const source = selectedSource;
+    const nodeID = selectedID;
     refreshCurrentView();
-    if (selectedID !== undefined) void loadSelectedTags(selectedID, selectedSource?.key);
+    if (source) void loadSelectedTags(source.nodeID, source.key);
+    else if (nodeID !== undefined) void loadSelectedTags(nodeID);
   }
 
   function leaveSnapshotMode(resumeLive = false): void {
@@ -3396,12 +3404,6 @@
     void hiddenWorkspace?.refresh();
     void loadTagCatalog();
     refreshDocumentsView();
-  }
-
-  let taggingOutcomeUnknown = $state(false);
-  function handleUnknownTagging(): void {
-    taggingOutcomeUnknown = true;
-    refreshCurrentView();
   }
 
   function failToast(cause: unknown, session: string): void {
@@ -5612,10 +5614,12 @@
         targets={batchTagsTargets}
         catalog={tagCatalog}
         disabled={loading}
-        onchanged={handleBatchTagsChanged}
-        onunknown={handleUnknownTagging}
+        onchanged={refreshTaggedViews}
         oncreated={() => void loadTagCatalog(false, true)}
-        onclose={() => (batchTagsTargets = null)}
+        onclose={(recovered) => {
+          batchTagsTargets = null;
+          if (recovered) refreshTaggedViews();
+        }}
         onauthfailure={handleFailure}
       />
     {/if}
@@ -5633,10 +5637,12 @@
         errorMessage={snapshot.actionError}
         onstart={(choice) => void startSnapshotAction(choice)}
         onchanged={handleSnapshotSelectionTagged}
-        onunknown={handleUnknownTagging}
         oncreated={() => void loadTagCatalog(false, true)}
         onimport={(bytes) => void snapshot.importAction(bytes)}
-        onclose={() => snapshot.cancelAction()}
+        onclose={(recovered) => {
+          snapshot.cancelAction();
+          if (recovered) refreshTaggedViews();
+        }}
         onauthfailure={handleFailure}
       />
     {/if}
@@ -5652,16 +5658,6 @@
         onclose={() => snapshot.dismissRecovery()}
         onauthfailure={handleFailure}
       />
-    {/if}
-    {#if taggingOutcomeUnknown}
-      <Modal title="Tag change unconfirmed" onclose={() => (taggingOutcomeUnknown = false)}>
-        <p role="alert">
-          Docbank couldn't confirm the tag change. Check the documents' tags before trying again.
-        </p>
-        {#snippet footer()}
-          <Button onclick={() => (taggingOutcomeUnknown = false)}>Dismiss</Button>
-        {/snippet}
-      </Modal>
     {/if}
   </div>
 {/if}

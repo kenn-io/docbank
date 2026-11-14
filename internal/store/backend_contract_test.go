@@ -699,6 +699,7 @@ var backendSuites = []backendSuite{
 		{"PersonNameSearchFollowsAuthority", func(t *testing.T) { t.Helper(); checkPersonNameSearchFollowsAuthority(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPersonNameSearchFollowsAuthority(t, newPostgresQueryStore) }},
 	}},
 	{name: "people-curation", postgres: "native operations", scope: "People, identities, custodians, candidates, face decisions, merge/split and undo; people-browsing covers discovery; document-people covers resolver production.", scenarios: []backendScenario{
+		{"FaceCandidateCurrentScope", func(t *testing.T) { t.Helper(); checkFaceCandidateCurrentScope(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkFaceCandidateCurrentScope(t, newPostgresQueryStore) }},
 		{"Snapshots", nil, checkPeopleSnapshotsPostgres},
 		{"Rollback", nil, checkPeopleRollbackPostgres},
 		{"RetainedPackageCustody", nil, checkPeopleRetainedPackageCustodyPostgres},
@@ -1346,6 +1347,8 @@ var backendSuites = []backendSuite{
 		{"VisualEvidenceSnapshots", nil, checkVisualEvidenceSnapshotsPostgres},
 		{"VisualPreviewPublicationRollback", nil, checkVisualPreviewPublicationRollbackPostgres},
 		{"PreviewBatchRecipes", func(t *testing.T) { t.Helper(); checkPreviewBatchRecipes(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPreviewBatchRecipes(t, newPostgresQueryStore) }},
+		{"FaceCandidateCatalogReads", func(t *testing.T) { t.Helper(); checkFaceCandidateCatalogReads(t, false) }, func(t *testing.T) { t.Helper(); checkFaceCandidateCatalogReads(t, true) }},
+		{"FaceMemberGridPreviews", func(t *testing.T) { t.Helper(); checkFaceMemberGridPreviews(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkFaceMemberGridPreviews(t, newPostgresQueryStore) }},
 		{"MissingPhotoVisualPreviewTargetsAfter", func(t *testing.T) { t.Helper(); checkMissingPhotoVisualPreviewTargetsAfter(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMissingPhotoVisualPreviewTargetsAfter(t, newPostgresQueryStore) }},
 		{"VisualPreviewPublicationIsExactVersionAndIdempotent", func(t *testing.T) {
 			t.Helper()
@@ -2229,7 +2232,7 @@ var backendSuites = []backendSuite{
 			checkOlderCompleteReceiptCanCoexistWithNewerPendingCurrentCoverage(t, newPostgresQueryStore)
 		}},
 	}},
-	{name: "processing-publication", postgres: "unqualified", scope: "Email PDF rendering and media provider execution remain unqualified; retained-state cleanup is covered above."},
+	{name: "processing-publication", postgres: "native rendition/PDF/supplied-media workers", scope: "internal/processing tests qualify shared-build publication, durable resume, consent/source fencing, email-PDF receipt/export and supplied-media continuation. Embedding-worker execution, remote acquisition and photo-derived workers remain unqualified."},
 	{name: "photo-editing", postgres: "unqualified", scope: "Query-driven photo review remains unqualified. Explicit decisions use photo-review; people edits use people-curation; query selection stays with search."},
 	{name: "search", postgres: "unqualified", scope: "Lexical/vector search and query execution remain unqualified; matching metadata columns do not establish ranking or index parity."},
 	{name: "transfer-and-recovery", postgres: "native backup capture and SQLite recovery", scope: "internal/backupapp tests qualify repository capture, loose/packed bytes, audited and photo recovery, source loss and missing-byte failure. PostgreSQL-target restore remains unqualified; metadata-export and metadata-import cover native logical transfer."},

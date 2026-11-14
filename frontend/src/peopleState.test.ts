@@ -1,11 +1,34 @@
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { HiddenAccess } from "./hiddenAccess.svelte.js";
-import { People, peoplePageSize } from "./people.svelte.js";
+import {
+  People,
+  peoplePageSize,
+  reviewFaces,
+  suggestionCounts,
+  suggestionTitle,
+} from "./people.svelte.js";
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
-import { ada, grace, person, personMergeReceipt, personResponse } from "./people-test-fixtures.js";
+import {
+  ada,
+  candidate,
+  candidateFace,
+  f1,
+  f2,
+  isAda,
+  unnamed,
+  decided,
+  grace,
+  person,
+  personMergeReceipt,
+  personResponse,
+} from "./people-test-fixtures.js";
 
 afterEach(() => vi.restoreAllMocks());
+// Cards load face suggestions too; most cases have none.
+beforeEach(() => {
+  vi.spyOn(api, "listFaceCandidates").mockResolvedValue({ items: [], total: 0 });
+});
 const merging = (people: People) => {
   people.toggle(ada);
   people.toggle(grace);
@@ -532,3 +555,440 @@ it("recovers a stale confirmed merge after refreshing the cards", async () => {
   expect(people.items).toEqual([renamed, currentGrace]);
   people.dispose();
 });
+
+it("loads suggestions once with the cards and shows more by offset", async () => {
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+  const rows = Array.from({ length: 30 }, (_, index) =>
+    candidate(`candidate-${index}`, [candidateFace(`face-${index}`)], {
+      suggested_person_id: ada.person_id,
+      display_name: "Ada",
+    }),
+  );
+  const list = vi.spyOn(api, "listFaceCandidates").mockImplementation(async (params) => ({
+    items: rows.slice(params!.offset!, params!.offset! + params!.limit!),
+    total: rows.length,
+  }));
+  const people = new People("session", vi.fn());
+  await people.load();
+  await vi.waitFor(() => expect(people.suggestions.items).toHaveLength(24));
+  // A search keeps the loaded suggestions.
+  await people.load("Ad");
+  expect(list).toHaveBeenCalledOnce();
+  await people.suggestions.load(true);
+  expect(list.mock.calls.map(([params]) => params)).toEqual([
+    { limit: peoplePageSize, offset: 0 },
+    { limit: peoplePageSize, offset: 24 },
+  ]);
+  expect(people.suggestions.items).toHaveLength(30);
+  expect(people.suggestions.total).toBe(30);
+  people.dispose();
+});
+
+it("counts faces and photos and titles both questions", () => {
+  expect(suggestionTitle(isAda)).toBe("Is this Ada?");
+  expect(suggestionTitle(unnamed)).toBe("Who is this?");
+  expect(suggestionCounts(isAda.faces)).toBe("3 faces · 2 photos");
+  expect(suggestionCounts([f1])).toBe("1 face · 1 photo");
+  const pairedMember = candidateFace("face-raw", {
+    content_version_id: "version-raw",
+    preview: { ...f1.preview, content_version_id: "version-raw" },
+  });
+  expect(suggestionCounts([f1, pairedMember])).toBe("2 faces · 1 photo");
+});
+
+it("keeps the open review's candidate and revision during refresh", async () => {
+  const list = vi.spyOn(api, "listFaceCandidates").mockResolvedValue({ items: [isAda], total: 1 });
+  const decide = vi.spyOn(api, "decideFaceCandidate").mockResolvedValue(decided(isAda, "rejected"));
+  const people = new People("session", vi.fn());
+  await people.suggestions.load();
+  people.suggestions.open(isAda);
+  list.mockResolvedValue({ items: [{ ...isAda, revision: 9, faces: [f2] }], total: 1 });
+  await people.suggestions.load();
+  expect(people.suggestions.review?.candidate).toEqual(isAda);
+  await people.suggestions.decide({ action: "reject" });
+  expect(decide).toHaveBeenCalledWith(
+    isAda.candidate_id,
+    { action: "reject" },
+    { "If-Match": `"${isAda.revision}"` },
+    expect.anything(),
+  );
+  people.dispose();
+});
+
+it.each([
+  [{ action: "link", person_id: ada.person_id }, true],
+  [{ action: "reject" }, false],
+] as const)("settles a group and refreshes linked people: %o", async (decision, cards) => {
+  vi.spyOn(api, "listFaceCandidates")
+    .mockResolvedValueOnce({ items: [isAda], total: 1 })
+    .mockResolvedValue({ items: [], total: 0 });
+  const decide = vi
+    .spyOn(api, "decideFaceCandidate")
+    .mockResolvedValue(decided(isAda, decision.action === "reject" ? "rejected" : "linked"));
+  const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+  const people = new People("session", vi.fn());
+  await people.suggestions.load();
+  people.suggestions.open(isAda);
+  expect(await people.suggestions.decide(decision)).toBe(true);
+  expect(decide).toHaveBeenCalledExactlyOnceWith(
+    "candidate-ada",
+    decision.action === "reject"
+      ? decision
+      : { ...decision, face_ids: isAda.faces.map((face) => face.face_id) },
+    expect.anything(),
+    expect.objectContaining({ session: "session" }),
+  );
+  expect(people.suggestions.review).toBeUndefined();
+  expect(people.suggestions.items).toEqual([]);
+  expect(read).toHaveBeenCalledTimes(cards ? 1 : 0);
+  people.dispose();
+});
+
+it.each([
+  [412, "stale_revision", true],
+  [409, "person_candidate_decided", true],
+  [503, "unavailable", false],
+] as const)("handles a %i failed suggestion decision", async (status, code, reread) => {
+  const fresh = { ...isAda, revision: 5 };
+  vi.spyOn(api, "listFaceCandidates")
+    .mockResolvedValueOnce({ items: [isAda], total: 1 })
+    .mockResolvedValue({ items: [fresh], total: 1 });
+  const decide = vi
+    .spyOn(api, "decideFaceCandidate")
+    .mockRejectedValueOnce(new APIError("Suggestion changed", status, code))
+    .mockResolvedValue(decided(fresh));
+  const people = new People("session", vi.fn());
+  await people.suggestions.load();
+  people.suggestions.open(isAda);
+  expect(await people.suggestions.decide({ action: "link", person_id: ada.person_id })).toBe(false);
+  expect(people.suggestions.writeError).toBe("Suggestion changed");
+  expect(people.suggestions.review?.candidate).toEqual(reread ? undefined : isAda);
+  expect(people.suggestions.items).toEqual([reread ? fresh : isAda]);
+  people.suggestions.open(reread ? fresh : isAda);
+  expect(people.suggestions.busy).toBe(false);
+  await people.suggestions.decide({ action: "link", person_id: ada.person_id });
+  expect(decide.mock.calls[1]![2]).toEqual({
+    "If-Match": `"${reread ? fresh.revision : isAda.revision}"`,
+  });
+  people.dispose();
+});
+
+it("ignores a decision that settles after the cards are concealed", async () => {
+  vi.spyOn(api, "listFaceCandidates").mockResolvedValue({ items: [isAda], total: 1 });
+  let settle!: (value: ReturnType<typeof decided>) => void;
+  vi.spyOn(api, "decideFaceCandidate").mockImplementation(
+    () => new Promise((resolve) => (settle = resolve)),
+  );
+  const people = new People("session", vi.fn());
+  await people.suggestions.load();
+  people.suggestions.open(isAda);
+  const pending = people.suggestions.decide({ action: "reject" });
+  people.conceal();
+  settle(decided(isAda));
+  expect(await pending).toBe(false);
+  expect(people.suggestions.items).toEqual([]);
+  expect(people.suggestions.review).toBeUndefined();
+  people.dispose();
+});
+
+it("ranks a group's name search by its first face", async () => {
+  const read = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+  const people = new People("session", vi.fn());
+  people.suggestions.open(unnamed);
+  await people.suggestions.searchNames(" Ad ");
+  expect(read).toHaveBeenCalledExactlyOnceWith(
+    { query: "Ad", limit: 100, recent_first: true, face_id: "face-1" },
+    expect.objectContaining({ session: "session" }),
+  );
+  expect(people.suggestions.names).toMatchObject({ status: "ready", people: [ada] });
+  people.dispose();
+});
+
+it("refreshes suggestions with the cards and reports a failure", async () => {
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+  const initial = Array.from({ length: 48 }, (_, index) => ({
+    ...isAda,
+    candidate_id: `group-${index}`,
+  }));
+  const updated = initial.map((row) => ({ ...unnamed, candidate_id: row.candidate_id }));
+  const list = vi
+    .spyOn(api, "listFaceCandidates")
+    .mockResolvedValueOnce({ items: initial.slice(0, 24), total: 48 })
+    .mockResolvedValueOnce({ items: initial.slice(24), total: 48 })
+    .mockResolvedValueOnce({ items: updated.slice(0, 24), total: 48 })
+    .mockResolvedValueOnce({ items: updated.slice(24), total: 48 })
+    .mockRejectedValue(new APIError("Unavailable", 503, "unavailable"));
+  const people = new People("session", vi.fn());
+  await people.load();
+  await vi.waitFor(() => expect(people.suggestions.items).toEqual(initial.slice(0, 24)));
+  await people.suggestions.load(true);
+  expect(people.suggestions.items).toEqual(initial);
+  await people.refresh();
+  expect(people.suggestions.items).toEqual(updated);
+  expect(list.mock.calls.map(([query]) => query!.offset)).toEqual([0, 24, 0, 24]);
+  expect(people.suggestions.loading).toBe(false);
+  await expect(people.refresh()).resolves.toBeUndefined();
+  await vi.waitFor(() => expect(people.suggestions.error).toBe("Unavailable"));
+  expect(people.suggestions.items).toEqual(updated);
+  expect(list).toHaveBeenCalledTimes(5);
+  people.dispose();
+});
+
+it("continues a split namesake group and retries the same page", async () => {
+  const other = { ...ada, person_id: "other-ada" };
+  const read = vi
+    .spyOn(api, "listPeople")
+    .mockResolvedValueOnce({ items: [ada], next_cursor: "next", same_name_continues: true })
+    .mockRejectedValueOnce(new APIError("Unavailable", 503, "unavailable"))
+    .mockResolvedValueOnce({ items: [ada, other] });
+  const people = new People("session", vi.fn());
+  people.suggestions.open(unnamed);
+  await people.suggestions.searchNames("Ada");
+  expect(people.suggestions.names.people).toEqual([ada]);
+  expect(people.suggestions.names.incompleteName).toBe("ada");
+  await people.suggestions.searchNames("Ada", true);
+  expect(people.suggestions.names.people).toEqual([ada]);
+  await people.suggestions.searchNames("Ada", true);
+  expect(people.suggestions.names.people).toEqual([ada, other]);
+  expect(people.suggestions.names.incompleteName).toBe("");
+  expect(read.mock.calls.slice(1).map((call) => call[0]?.cursor)).toEqual(["next", "next"]);
+  people.dispose();
+});
+
+it.each(["named", "unnamed subset", "unnamed all"])(
+  "removes a face from review: %s",
+  async (mode) => {
+    const named = mode === "named";
+    const row = named ? isAda : unnamed;
+    const list = vi.spyOn(api, "listFaceCandidates").mockResolvedValue({ items: [row], total: 1 });
+    vi.spyOn(api, "listPeople").mockResolvedValue({ items: [] });
+    const faceDecision = vi
+      .spyOn(api, "decidePhotoFace")
+      .mockResolvedValue({ receipt_id: "receipt" });
+    const decide = vi.spyOn(api, "decideFaceCandidate").mockResolvedValue(decided(unnamed));
+    const people = new People("session", vi.fn());
+    try {
+      await people.suggestions.load();
+      people.suggestions.open(row);
+      expect(await people.suggestions.removeFace(named ? f2 : f1)).toBe(true);
+      if (named) {
+        expect(faceDecision.mock.calls[0]![1]).toMatchObject({
+          action: "reject",
+          face_id: f2.face_id,
+          person_id: ada.person_id,
+        });
+        expect(people.suggestions.review).toBeUndefined();
+        expect(list).toHaveBeenCalledTimes(2);
+        return;
+      }
+      await people.suggestions.load();
+      expect(reviewFaces(people.suggestions.review!).map((face) => face.face_id)).toEqual([
+        f2.face_id,
+      ]);
+      if (mode === "unnamed all") {
+        await people.suggestions.removeFace(f2);
+        expect(people.suggestions.review?.candidate).toBeUndefined();
+        expect(reviewFaces(people.suggestions.review!)).toEqual([]);
+        expect(faceDecision).not.toHaveBeenCalled();
+        return;
+      }
+      expect(faceDecision).not.toHaveBeenCalled();
+      await people.suggestions.decide({ action: "new_person", display_name: "Morgan" });
+      expect(decide).toHaveBeenCalledWith(
+        unnamed.candidate_id,
+        { action: "new_person", display_name: "Morgan", face_ids: [f2.face_id] },
+        expect.anything(),
+        expect.anything(),
+      );
+    } finally {
+      people.dispose();
+    }
+  },
+);
+
+it.each(["conceal", "dispose"] as const)(
+  "keeps overlapping suggestion responses hidden after %s",
+  async (action) => {
+    const list = vi
+      .spyOn(api, "listFaceCandidates")
+      .mockResolvedValueOnce({ items: [isAda], total: 1 });
+    const people = new People("session", vi.fn());
+    await people.suggestions.load();
+    const pending: {
+      resolve: (value: { items: api.FaceCandidate[]; total: number }) => void;
+      reject: (cause: unknown) => void;
+    }[] = [];
+    list.mockImplementation(
+      () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+    );
+    people.suggestions.open(unnamed);
+    let finishNames!: (value: { items: (typeof ada)[] }) => void;
+    vi.spyOn(api, "listPeople").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishNames = resolve;
+        }),
+    );
+    const names = people.suggestions.searchNames("Ada");
+    const old = people.suggestions.load();
+    const recent = people.suggestions.load();
+    if (action === "conceal") people.conceal();
+    else people.dispose();
+    pending[0]!.resolve({ items: [isAda], total: 1 });
+    pending[1]!.reject(new APIError("Old error", 503, "unavailable"));
+    finishNames({ items: [ada] });
+    await Promise.all([old, recent, names]);
+    expect(people.suggestions.names.people).toEqual([]);
+    expect(people.suggestions.items).toEqual([]);
+    expect(people.suggestions.error).toBe("");
+    expect(people.suggestions.loading).toBe(false);
+    people.dispose();
+  },
+);
+
+it("keeps suggestion cards unique when a reopened group shifts the next offset page", async () => {
+  const first = Array.from({ length: peoplePageSize }, (_, index) => ({
+    ...isAda,
+    candidate_id: `candidate-${index}`,
+  }));
+  const following = Array.from({ length: 9 }, (_, index) => ({
+    ...isAda,
+    candidate_id: `later-${index}`,
+  }));
+  const reopened = { ...isAda, candidate_id: "reopened" };
+  const refreshed = [reopened, ...first, ...following];
+  const list = vi
+    .spyOn(api, "listFaceCandidates")
+    .mockResolvedValueOnce({ items: first, total: 34 })
+    .mockResolvedValueOnce({ items: [first.at(-1)!, ...following.slice(0, 5)], total: 34 })
+    .mockResolvedValueOnce({ items: following.slice(5), total: 34 })
+    .mockResolvedValueOnce({ items: refreshed.slice(0, 24), total: 34 })
+    .mockResolvedValueOnce({ items: refreshed.slice(24), total: 34 });
+  const people = new People("session", vi.fn());
+  try {
+    await people.suggestions.load();
+    await people.suggestions.load(true);
+    expect(people.suggestions.items).toHaveLength(33);
+    expect(new Set(people.suggestions.items.map((item) => item.candidate_id)).size).toBe(33);
+    expect(people.suggestions.offset).toBe(people.suggestions.total);
+    expect(list.mock.calls.map(([params]) => params!.offset)).toEqual([0, 24, 30]);
+    await people.suggestions.load();
+    expect(people.suggestions.items).toEqual(refreshed);
+  } finally {
+    people.dispose();
+  }
+});
+
+it.each(["initial load", "refresh"])(
+  "releases the Hidden lock queue after a stalled %s",
+  async (entry) => {
+    vi.useFakeTimers();
+    vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) => {
+      const timeout = new AbortController();
+      setTimeout(() => timeout.abort(new DOMException("Timed out", "TimeoutError")), milliseconds);
+      return timeout.signal;
+    });
+    vi.mocked(api.listFaceCandidates).mockRestore();
+    vi.spyOn(api, "listPeople").mockResolvedValue({ items: [ada] });
+    let candidateReads = 0;
+    const fetcher = vi.fn((url: string, options: RequestInit) =>
+      url.endsWith("/face-candidates?limit=24&offset=0")
+        ? candidateReads++
+          ? Promise.resolve(Response.json({ items: [unnamed], total: 1 }))
+          : new Promise<Response>((_resolve, reject) => {
+              options.signal!.addEventListener("abort", () => reject(options.signal!.reason), {
+                once: true,
+              });
+            })
+        : Promise.resolve(Response.json({ configured: true })),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    const access = new HiddenAccess("session", vi.fn());
+    const people = new People("session", vi.fn(), access);
+    people.suggestions.started = entry === "refresh";
+    if (entry === "refresh") people.suggestions.items = [isAda];
+    const refresh = entry === "refresh" ? people.refresh() : people.load();
+    await vi.advanceTimersByTimeAsync(0);
+    let locked = false;
+    const lock = access.lock().then((result) => (locked = result));
+    try {
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(locked).toBe(false);
+      expect(fetcher.mock.calls[0]![1].signal!.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(locked).toBe(true);
+      expect(fetcher.mock.calls[0]![1].signal!.aborted).toBe(true);
+      expect(people.items).toEqual([ada]);
+      expect(people.suggestions.loading).toBe(false);
+      expect(people.suggestions.error).toContain("Timed out");
+      expect(people.suggestions.items).toEqual(entry === "refresh" ? [isAda] : []);
+      expect(fetcher.mock.calls.map(([url]) => url.split("?")[0])).toEqual([
+        "/api/v1/people/face-candidates",
+        "/api/v1/photos/hidden/lock",
+      ]);
+      await people.suggestions.retry();
+      expect(people.suggestions.items).toEqual([unnamed]);
+      expect(people.suggestions.error).toBe("");
+      expect(people.suggestions.loading).toBe(false);
+      expect(candidateReads).toBe(2);
+    } finally {
+      people.dispose();
+      access.dispose();
+      await refresh;
+      await lock;
+      vi.clearAllTimers();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  },
+);
+
+it.each(["initial load", "refresh"])(
+  "updates person cards while suggestions remain pending on %s",
+  async (entry) => {
+    vi.mocked(api.listFaceCandidates).mockRestore();
+    const cards = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [grace] });
+    if (entry === "refresh") cards.mockResolvedValueOnce({ items: [ada], next_cursor: "next" });
+    let finish!: (response: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        expect(url).toBe("/api/v1/people/face-candidates?limit=24&offset=0");
+        return new Promise<Response>((resolve) => {
+          finish = resolve;
+        });
+      }),
+    );
+    const access = new HiddenAccess("session", vi.fn());
+    const people = new People("session", vi.fn(), access);
+    people.items = [ada];
+    people.suggestions.started = entry === "refresh";
+    people.suggestions.items = entry === "refresh" ? [isAda] : [];
+    let refreshed = false;
+    const pending = (entry === "refresh" ? people.refresh() : people.load()).then(() => {
+      refreshed = true;
+    });
+    try {
+      await vi.waitFor(() =>
+        expect(people.items).toEqual(entry === "refresh" ? [ada, grace] : [grace]),
+      );
+      await vi.waitFor(() => expect(finish).toBeDefined());
+      expect(refreshed).toBe(entry === "initial load");
+      expect(people.suggestions.loading).toBe(true);
+      expect(people.suggestions.items).toEqual(entry === "refresh" ? [isAda] : []);
+      finish(Response.json({ items: [unnamed], total: 1 }));
+      await pending;
+      await access.settled();
+      await vi.waitFor(() => expect(people.suggestions.loading).toBe(false));
+      expect(refreshed).toBe(true);
+      expect(people.suggestions.items).toEqual([unnamed]);
+      expect(people.suggestions.error).toBe("");
+    } finally {
+      people.dispose();
+      access.dispose();
+      finish?.(Response.json({ items: [], total: 0 }));
+      await pending;
+      vi.unstubAllGlobals();
+    }
+  },
+);

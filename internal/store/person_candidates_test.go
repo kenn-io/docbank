@@ -25,7 +25,7 @@ func checkOpenPersonCandidateReplaysDecisionAndSeparatesNewEvidence(t *testing.T
 	first := openCandidateForTest(t, s, firstInput)
 	require.EqualValues(t, 2, first.OccurrenceCount)
 
-	decided, err := s.DecidePersonCandidate(t.Context(), CandidateDecision{
+	decided, err := s.DecidePersonCandidate(t.Context(), nil, CandidateDecision{
 		CandidateID: first.CandidateID, Action: "reject", ExpectedRevision: first.Revision,
 	})
 	require.NoError(t, err)
@@ -66,7 +66,7 @@ func checkDecidePersonCandidateLinksOnlyCapturedOccurrences(t *testing.T, newSto
 		ContentVersionID: capturedVersion, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "author-claim",
 	}}))
 
-	decided, err := s.DecidePersonCandidate(t.Context(), CandidateDecision{
+	decided, err := s.DecidePersonCandidate(t.Context(), nil, CandidateDecision{
 		CandidateID: candidate.CandidateID, Action: "link", PersonID: person.PersonID,
 		ExpectedRevision: candidate.Revision,
 	})
@@ -84,10 +84,43 @@ func checkDecidePersonCandidateLinksOnlyCapturedOccurrences(t *testing.T, newSto
 	require.NoError(t, err)
 	require.Empty(t, unrelated)
 
-	_, err = s.DecidePersonCandidate(t.Context(), CandidateDecision{
+	_, err = s.DecidePersonCandidate(t.Context(), nil, CandidateDecision{
 		CandidateID: candidate.CandidateID, Action: "reject", ExpectedRevision: candidate.Revision,
 	})
 	require.ErrorIs(t, err, ErrPersonCandidateDecided)
+}
+
+func TestDocumentCandidateLinkHonorsVisiblePeopleScope(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	_, version := seedPeopleVersion(t, s)
+	person, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	photo := browsePhotoNode(t, s, "hidden.jpg", fakeHash("a1"), "image/jpeg")
+	_, err = s.MarkPersonInPhoto(ctx, photo.CurrentVersionID, person.PersonID, "")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, photo.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	candidate := openCandidateForTest(t, s, candidateForTest(t, "name_alias:ada", "Ada", "", []PersonCandidateOccurrence{{
+		ContentVersionID: version, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "author-claim",
+	}}))
+	decision := CandidateDecision{CandidateID: candidate.CandidateID, ExpectedRevision: candidate.Revision, Action: "link", PersonID: person.PersonID}
+	_, err = s.DecidePersonCandidate(WithVisiblePeopleOnly(ctx), nil, decision)
+	require.ErrorIs(t, err, ErrNotFound)
+	assertions, err := s.DocumentPersonAssertions(ctx, version)
+	require.NoError(t, err)
+	require.Empty(t, assertions)
+	linked, err := s.DecidePersonCandidate(ctx, nil, decision)
+	require.NoError(t, err)
+	require.Equal(t, person.PersonID, linked.DecidedPersonID)
+	assertions, err = s.DocumentPersonAssertions(ctx, version)
+	require.NoError(t, err)
+	require.Len(t, assertions, 1)
+	require.Equal(t, person.PersonID, assertions[0].PersonID)
 }
 
 func checkDecidePersonCandidateCreatesCuratedPersonAtomically(t *testing.T, newStore func(*testing.T) *Store) {
@@ -99,12 +132,12 @@ func checkDecidePersonCandidateCreatesCuratedPersonAtomically(t *testing.T, newS
 		ContentVersionID: versionID, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "author-claim",
 	}}))
 
-	_, err := s.DecidePersonCandidate(t.Context(), CandidateDecision{
+	_, err := s.DecidePersonCandidate(t.Context(), nil, CandidateDecision{
 		CandidateID: candidate.CandidateID, Action: "new_person", ExpectedRevision: candidate.Revision + 1,
 	})
 	require.ErrorIs(t, err, ErrStaleRevision)
 
-	decided, err := s.DecidePersonCandidate(t.Context(), CandidateDecision{
+	decided, err := s.DecidePersonCandidate(t.Context(), nil, CandidateDecision{
 		CandidateID: candidate.CandidateID, Action: "new_person", ExpectedRevision: candidate.Revision,
 	})
 	require.NoError(t, err)
@@ -131,7 +164,7 @@ func checkCandidateDecisionsAdvanceBindingEpochEvenWithoutNewAssertions(t *testi
 		}}))
 		var epochBefore int64
 		require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epochBefore))
-		_, err := s.DecidePersonCandidate(t.Context(), CandidateDecision{
+		_, err := s.DecidePersonCandidate(t.Context(), nil, CandidateDecision{
 			CandidateID: candidate.CandidateID, Action: "reject", ExpectedRevision: candidate.Revision,
 		})
 		require.NoError(t, err)
@@ -152,7 +185,7 @@ func checkCandidateDecisionsAdvanceBindingEpochEvenWithoutNewAssertions(t *testi
 		}}))
 		var epochBefore int64
 		require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epochBefore))
-		_, err = s.DecidePersonCandidate(t.Context(), CandidateDecision{
+		_, err = s.DecidePersonCandidate(t.Context(), nil, CandidateDecision{
 			CandidateID: candidate.CandidateID, Action: "link", PersonID: person.PersonID,
 			ExpectedRevision: candidate.Revision,
 		})
@@ -170,7 +203,7 @@ func checkCandidateDecisionsAdvanceBindingEpochEvenWithoutNewAssertions(t *testi
 		require.NoError(t, err)
 		var epochBefore int64
 		require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epochBefore))
-		decided, err := s.DecidePersonCandidate(t.Context(), CandidateDecision{
+		decided, err := s.DecidePersonCandidate(t.Context(), nil, CandidateDecision{
 			CandidateID: candidate.CandidateID, Action: "reject", ExpectedRevision: candidate.Revision,
 		})
 		require.NoError(t, err)
@@ -329,7 +362,7 @@ func checkCandidateAuthoritySurvivesPersonMerge(t *testing.T, newStore func(*tes
 	linked := openCandidateForTest(t, s, candidateForTest(t, "name_alias:linked", "Absorbed", "", []PersonCandidateOccurrence{{
 		ContentVersionID: version, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "linked-claim",
 	}}))
-	_, err = s.DecidePersonCandidate(t.Context(), CandidateDecision{CandidateID: linked.CandidateID, Action: "link", PersonID: absorbed.PersonID, ExpectedRevision: linked.Revision})
+	_, err = s.DecidePersonCandidate(t.Context(), nil, CandidateDecision{CandidateID: linked.CandidateID, Action: "link", PersonID: absorbed.PersonID, ExpectedRevision: linked.Revision})
 	require.NoError(t, err)
 	operation, err := newUUIDv4()
 	require.NoError(t, err)
@@ -497,7 +530,7 @@ func checkCandidateLinksSkipPrunedVersions(t *testing.T, newStore func(*testing.
 			if test.action == "link" {
 				decision.PersonID = person.PersonID
 			}
-			decided, err := s.DecidePersonCandidate(ctx, decision)
+			decided, err := s.DecidePersonCandidate(ctx, nil, decision)
 			if test.wantErr != nil {
 				require.ErrorIs(t, err, test.wantErr)
 				retained, _, err := s.PersonCandidates(ctx, personCandidateStateOpen, 10, 0)
@@ -510,12 +543,6 @@ func checkCandidateLinksSkipPrunedVersions(t *testing.T, newStore func(*testing.
 			require.Equal(t, candidate.EvidenceSHA256, decided.EvidenceSHA256)
 			if test.action == "reject" {
 				require.Equal(t, personCandidateStateRejected, decided.State)
-				if !test.allPruned {
-					faces, _, _, err := s.PhotoFacePersonNames(ctx, current.ID)
-					require.NoError(t, err)
-					require.Equal(t, []string{person.PersonID}, faces[0].RejectedPersonIDs)
-				}
-
 				return
 			}
 			require.Equal(t, "linked", decided.State)

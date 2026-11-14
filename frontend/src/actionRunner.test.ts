@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import type { BatchTagReceipt } from "./batch-tags.js";
 import { type ActionJournalAccess, type PersistedAction } from "./actionJournal.js";
 import { runAction } from "./actionRunner.js";
+import { receiptFor } from "./test/receiptFor.js";
 import {
   snapshotMemberHash,
   type SnapshotMember,
@@ -107,24 +108,8 @@ class MemoryJournal implements ActionJournalAccess {
 function audit(id = vaultID): Response {
   return new Response(JSON.stringify({ vault_id: id, unrelated: "discard" }), { status: 200 });
 }
-function receipt(action: PersistedAction, index = 0): BatchTagReceipt {
-  const batch = action.batches[index];
-  return {
-    version: 1,
-    operation_id: batch.operation_id,
-    request_digest: batch.request_digest,
-    tag_id: tagID,
-    assign: true,
-    tag_revision: batch.request.nodes.length + 1,
-    assignment_count: batch.request.nodes.length,
-    completed_at: "2026-09-11T00:00:00.000000000Z",
-    nodes: batch.request.nodes.map((node) => ({
-      node_id: node.node_id,
-      expected_revision: node.revision,
-      revision: node.revision + 1,
-      changed: true,
-    })),
-  };
+function receipt(action: PersistedAction, index = 0): Promise<BatchTagReceipt> {
+  return receiptFor(action.batches[index].request);
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -138,7 +123,7 @@ describe("recoverable action runner", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
       input === "/api/v1/audit/status"
         ? audit()
-        : new Response(JSON.stringify(receipt(action, index++))),
+        : new Response(JSON.stringify(await receipt(action, index++))),
     );
     const completed = await runAction("session", journal, new AbortController().signal, () => {});
     expect(completed.state).toBe("complete");
@@ -148,7 +133,7 @@ describe("recoverable action runner", () => {
 
   it("publishes new daemon receipts without replaying completed journal batches", async () => {
     const base = await persisted(1_001);
-    const retained = receipt(base, 0);
+    const retained = await receipt(base, 0);
     const action: PersistedAction = {
       ...base,
       batches: base.batches.map((batch) =>
@@ -156,7 +141,7 @@ describe("recoverable action runner", () => {
       ),
     };
     const journal = new MemoryJournal(action);
-    const confirmed = receipt(base, 1);
+    const confirmed = await receipt(base, 1);
     const observed: BatchTagReceipt[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
       input === "/api/v1/audit/status" ? audit() : new Response(JSON.stringify(confirmed)),
@@ -196,7 +181,9 @@ describe("recoverable action runner", () => {
     const fetch = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation(async (input) =>
-        input === "/api/v1/audit/status" ? audit() : new Response(JSON.stringify(receipt(action))),
+        input === "/api/v1/audit/status"
+          ? audit()
+          : new Response(JSON.stringify(await receipt(action))),
       );
     await expect(
       runAction("session", journal, new AbortController().signal, () => {}),
@@ -226,7 +213,7 @@ describe("recoverable action runner", () => {
       if (input === "/api/v1/audit/status") return audit();
       sent.push(String(init?.body));
       if (sent.length === 1) throw new TypeError("Synthetic response loss");
-      return new Response(JSON.stringify(receipt(journal.action)), { status: 200 });
+      return new Response(JSON.stringify(await receipt(journal.action)), { status: 200 });
     });
 
     await expect(
@@ -267,7 +254,7 @@ describe("recoverable action runner", () => {
       if (input === "/api/v1/audit/status") return audit();
       const index = networkCalls++;
       journal.action = { ...journal.action, state: "paused" };
-      return new Response(JSON.stringify(receipt(journal.action, index)), { status: 200 });
+      return new Response(JSON.stringify(await receipt(journal.action, index)), { status: 200 });
     });
     const result = await runAction(
       "fresh-session",
@@ -298,7 +285,7 @@ it("does not send a batch cancelled while its durable sending marker is being wr
     .mockImplementation(async (input) =>
       input === "/api/v1/audit/status"
         ? audit()
-        : new Response(JSON.stringify(receipt(journal.action))),
+        : new Response(JSON.stringify(await receipt(journal.action))),
     );
   const controller = new AbortController();
   const run = runAction("session", journal, controller.signal, () => {});

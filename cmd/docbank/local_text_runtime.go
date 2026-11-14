@@ -138,7 +138,7 @@ func localTextStartup(ctx context.Context, managed bool, _ string) error {
 	if !managed {
 		return nil
 	}
-	_, err := localEmbeddingOrigin(ctx, func(context.Context, int64) (bool, error) { return true, nil })
+	_, err := localEmbeddingOrigin(ctx, embedlocal.TextModel, func(context.Context, int64) (bool, error) { return true, nil })
 	return err
 }
 

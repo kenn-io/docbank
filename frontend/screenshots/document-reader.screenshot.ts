@@ -1,4 +1,4 @@
-import { expect, test as base } from "@playwright/test";
+import { expect, test as base, type Page } from "@playwright/test";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -368,11 +368,24 @@ test("PDF outline links cannot control the Docbank window", async ({
   await reference.close();
 });
 
+async function uploadAfterReload(page: Page, name: string) {
+  await page.locator(".browser-toolbar").getByRole("button", { name: "Add", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Upload files", exact: true }).click();
+  await page.getByLabel("Choose local files", { exact: true }).setInputFiles({
+    name,
+    mimeType: "text/plain",
+    buffer: Buffer.from("synthetic upload"),
+  });
+  await page.getByRole("button", { name: "Upload 1 file", exact: true }).click();
+  await expect(page.getByText("Added", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Close upload documents" }).click();
+}
+
 for (const [filename, module] of [
   ["Sample.pdf", "PDFReader"],
   ["Notes.md", "MarkdownPreview"],
 ]) {
-  test(`recovers a missing ${module} chunk after reopening Docbank`, async ({
+  test(`recovers a missing ${module} chunk after reloading Docbank`, async ({
     page,
     readerURL,
   }) => {
@@ -383,17 +396,52 @@ for (const [filename, module] of [
     const row = page
       .getByRole("row")
       .filter({ has: page.getByRole("cell", { name: filename, exact: true }) });
-    await row.dblclick();
     const reader = page.getByRole("dialog", { name: `Read ${filename}` });
+    await row.dblclick();
     await expect(reader.getByRole("alert")).toContainText("The reader could not load");
     await expect(reader.getByRole("button", { name: "Download", exact: true })).toBeEnabled();
     await page.unroute(chunk);
-    await page.goto("about:blank");
-    await page.goto(readerURL);
+
+    if (module === "PDFReader") {
+      await reader.getByRole("button", { name: "Reload Docbank" }).click();
+      await expect(reader.getByText("Reloading discards unsaved work in this tab.")).toBeVisible();
+      await reader.getByRole("button", { name: "Keep working" }).click();
+      await expect(reader.getByRole("button", { name: "Reload Docbank" })).toBeVisible();
+      await reader.getByRole("button", { name: "Reload Docbank" }).click();
+      // Stand in for an active unsaved-work guard that can cancel navigation.
+      await page.evaluate(() => {
+        window.onbeforeunload = (event) => {
+          event.preventDefault();
+          return "";
+        };
+      });
+      page.once("dialog", (dialog) => void dialog.dismiss());
+      await reader.getByRole("button", { name: "Reload anyway" }).click();
+      expect(new URL(page.url()).hash).not.toContain("web_session");
+      expect(new URL(page.url()).hash).not.toContain("web_upload_secret");
+      await page.evaluate(() => {
+        window.onbeforeunload = null;
+      });
+      await reader.getByRole("button", { name: "Keep working" }).click();
+      await reader.getByRole("button", { name: "Close" }).click();
+      await uploadAfterReload(page, "after-canceled-reload.txt");
+      await page.route(chunk, (route) => route.abort());
+      await row.dblclick();
+      await expect(reader.getByRole("alert")).toContainText("The reader could not load");
+      await page.unroute(chunk);
+    }
+
+    await reader.getByRole("button", { name: "Reload Docbank" }).click();
+    await reader.getByRole("button", { name: "Reload anyway" }).click();
+    await expect(reader).toBeHidden();
     await row.dblclick();
     if (module === "PDFReader")
       await expect(reader.locator("embedpdf-container img").first()).toBeVisible();
     else await expect(reader.getByRole("heading", { name: "Review notes" })).toBeVisible();
+    if (module === "PDFReader") {
+      await reader.getByRole("button", { name: "Close" }).click();
+      await uploadAfterReload(page, "after-reload.txt");
+    }
   });
 }
 

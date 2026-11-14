@@ -96,6 +96,7 @@ test-pg:
 	# five and a half minutes on PostgreSQL 18 in CI, so allow nearly twice that.
 	$(call gotestsum,$(PG_SUITE)-store,./internal/store) -race -parallel 4 -count=1 -timeout 10m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
 	$(call gotestsum,$(PG_SUITE)-backup,./internal/backupapp) -race -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
+	$(call gotestsum,$(PG_SUITE)-processing,./internal/processing) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
 
 test-v:
 	go test -timeout 20m -tags "$(BUILD_TAGS)" -v ./...

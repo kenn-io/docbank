@@ -130,10 +130,13 @@ operation fails without changing assignments. Documents whose assignment is
 already correct keep their node revisions. Actual changes record the normal
 audit events.
 
-If the result is uncertain, the dialog locks and the view refreshes. Check the
-documents' tags before trying again. Applying the same addition or removal
-again is safe because assignments that already match stay unchanged. After a
-conflict, close the dialog and refresh the selection.
+If the result is uncertain, choose **Check tag results** to inspect each selected
+document. Review current membership, then choose whether to retry readable
+documents that still need the change. The retry uses their current revisions.
+After a confirmed retry, check again to include documents that couldn't be read
+earlier. After an uncertain change, Docbank refreshes the view when you close
+the dialog. If the initial change is refused because a document is stale, close
+the dialog, refresh, and select the documents again.
 
 API clients use `POST /api/v1/batch/tags` with one tag ID, an operation UUID,
 an assignment choice, and node/revision pairs. Docbank keeps receipts
