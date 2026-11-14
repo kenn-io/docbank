@@ -527,7 +527,7 @@ func newPreparedLeafFixture(t *testing.T) preparedLeafFixture {
 	}
 	profile := catalogProcessingProfile(t, false)
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return ensureProcessingProfileTx(ctx, tx, profile)
+		return ensureProcessingProfileTx(ctx, tx, profile, s.postgresSchema != "")
 	}))
 	f.selection = CoverageSelection{Configuration: "configured", ProfileFingerprint: profile.Fingerprint}
 	return f

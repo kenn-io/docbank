@@ -229,10 +229,6 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 
 	var projection SnapshotProjection
 	err = s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) error {
-		ctx, err := s.scopeQueryPeople(ctx, q)
-		if err != nil {
-			return err
-		}
 		value := request.Query
 		if options.SavedQuery != nil {
 			resolved, resolveErr := (queryResolver{q: q}).Resolve(

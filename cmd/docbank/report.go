@@ -158,7 +158,7 @@ history lists recorded runs; download saves a retained report.`,
 		if err != nil {
 			return err
 		}
-		summary, err := connection.CreateTermReport(cmd.Context(), request)
+		summary, err := connection.CreateTermReport(cmd.Context(), "full", request)
 		if err != nil {
 			return err
 		}

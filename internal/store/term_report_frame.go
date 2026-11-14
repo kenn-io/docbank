@@ -53,10 +53,6 @@ func (s *Store) MaterializeTermReportFrame(
 	}
 	var frame report.Frame
 	err = s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) error {
-		ctx, err := s.scopeQueryPeople(ctx, q)
-		if err != nil {
-			return err
-		}
 		if coverage.Configuration == "configured" {
 			if err := validateSnapshotCoverageProfile(ctx, q, coverage); err != nil {
 				return err

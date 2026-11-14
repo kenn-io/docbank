@@ -55,7 +55,7 @@ func createCLIReport(t *testing.T) (report.Summary, report.Request) {
 		Terms: []report.Term{{Number: 1, Expression: "alpha", Syntax: "simple",
 			Dates: report.DateRange{Start: "2020-01-01", End: "2100-01-01"}}},
 	}
-	summary, err := connection.CreateTermReport(t.Context(), request)
+	summary, err := connection.CreateTermReport(t.Context(), "full", request)
 	require.NoError(t, err)
 	return summary, request
 }

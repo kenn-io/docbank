@@ -77,6 +77,7 @@ type CompiledQuery struct {
 	predicate         compiledQueryFragment
 	positiveTextTerms []string
 	roleMatches       []compiledRoleMatch
+	eventState        DocumentEventState
 }
 
 // compileQuery resolves references and compiles one bounded query without
@@ -97,18 +98,21 @@ type queryCompiler struct {
 	safePeople           bool
 	hideLocked           string
 	personNames          func(string) ([]string, error)
+	eventState           DocumentEventState
 }
 
 func (c queryCompiler) compile(
 	ctx context.Context, value query.Query, resolver query.Resolver,
 ) (CompiledQuery, error) {
 	c.safePeople, _ = ctx.Value(visiblePersonContextKey{}).(bool)
-	c.hideLocked = "0"
-	if c.safePeople && queryPeopleHideLocked(ctx) {
-		c.hideLocked = "1"
-	}
+	c.hideLocked = "1"
 	mentionNames := make(map[string][]string)
 	if r, ok := resolver.(queryResolver); ok {
+		state, err := effectiveDocumentEventState(ctx, r.q, DocumentEventsDeriverFingerprint)
+		if err != nil {
+			return CompiledQuery{}, err
+		}
+		c.eventState = state
 		c.personNames = func(id string) ([]string, error) {
 			if names, ok := mentionNames[id]; ok {
 				return names, nil
@@ -138,6 +142,7 @@ func (c queryCompiler) compile(
 		photoHidden:       c.photoHidden,
 		predicate:         predicate,
 		positiveTextTerms: query.PositiveTextTermsWithMentions(resolved, mentionNames),
+		eventState:        c.eventState,
 	}
 	compiled.roleMatches, err = c.collectRoleMatches(resolved)
 	if err != nil {
@@ -351,11 +356,11 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 		if err != nil {
 			return compiledQueryFragment{}, err
 		}
-		parts := make([]compiledQueryFragment, 0, len(names))
+		parts := make([]string, 0, len(names))
 		for _, name := range names {
-			parts = append(parts, compileDocumentContentPredicate(quoteFTSOperand(name, false)))
+			parts = append(parts, quoteFTSOperand(name, false))
 		}
-		return joinCompiledFragments(parts, ` OR `), nil
+		return compileDocumentContentPredicate(strings.Join(parts, ` OR `)), nil
 	case field == "tag":
 		if expression.Dependency == nil {
 			return compiledQueryFragment{}, errors.New("resolved tag operand lacks a dependency")
@@ -486,7 +491,7 @@ func (c queryCompiler) compileQueryFilters(filters query.Filters, start, end int
 			return compiledQueryFragment{}, compileExpressionError(start, end, "role operands apply to documents, not photos")
 		}
 		if c.safePeople && slices.Contains(entry.Roles, "blind_copy") {
-			return compiledQueryFragment{}, compileExpressionError(start, end, "bcc: is not available in browser sessions")
+			return compiledQueryFragment{}, compileExpressionError(start, end, "bcc: is not available with safe people disclosure")
 		}
 		people = append(people, c.compilePersonPredicate(entry.PersonID, entry.Roles))
 	}

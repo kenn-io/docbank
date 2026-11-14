@@ -68,24 +68,25 @@ func TestRoleSearchOperandSets(t *testing.T) {
 	require.Equal(t, []string{"blind_copy"}, bccResult.Rows[0].MatchedRoles)
 	forbidden := snapshotTestQuery(t, fmt.Sprintf(`{"filters":{"people":[{"person_id":%q,"roles":["blind_copy"]}]}}`, a.PersonID))
 	_, err = s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: forbidden})
-	require.ErrorContains(t, err, "bcc: is not available in browser sessions")
+	require.ErrorContains(t, err, "bcc: is not available with safe people disclosure")
 	q := snapshotTestQuery(t, `{"syntax":"advanced","text":"person:\"Dahlia Blind\""}`)
-	_, err = s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: q})
-	require.ErrorContains(t, err, "unknown person reference")
-	for _, text := range []string{`to:"Dahlia Blind"`, `bcc:"Dahlia Blind"`, `between:("Aster Sender", "Dahlia Blind")`} {
+	visible, err := s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: q})
+	require.NoError(t, err)
+	require.Len(t, visible.Rows, 1)
+	for _, text := range []string{`to:"Dahlia Blind"`, `between:("Aster Sender", "Dahlia Blind")`} {
 		value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, text))
-		_, err = s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: value})
-		require.ErrorContains(t, err, "unknown person reference")
+		result, err := s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: value})
+		require.NoError(t, err)
+		require.Empty(t, result.Rows)
 	}
 	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: pdf.ID, PersonID: d.PersonID, Role: "participant", Action: "assert", Revision: 1})
 	require.NoError(t, err)
 	projection, err := s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: q})
 	require.NoError(t, err)
-	require.Len(t, projection.Rows, 1)
-	require.Equal(t, "paper.pdf", projection.Rows[0].Name)
+	require.Len(t, projection.Rows, 2)
 	value := snapshotTestQuery(t, `{"syntax":"advanced","text":"bcc:\"Dahlia Blind\""}`)
 	_, err = s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: value})
-	require.ErrorContains(t, err, "bcc: is not available in browser sessions")
+	require.ErrorContains(t, err, "bcc: is not available with safe people disclosure")
 }
 
 func TestRoleSearchFrozenMatchesAndPeopleFacet(t *testing.T) {
@@ -137,7 +138,7 @@ func checkRoleSearchCurrentPersonRelation(t *testing.T, newStore func(*testing.T
 	t.Helper()
 	s := newStore(t)
 	ctx := t.Context()
-	version := seedDocumentPeopleEvent(t, s, "relation.txt", "c1", nil)
+	version := seedCurrentRoleSearchEvent(t, s, "relation.txt", "c1", nil)
 	direct, err := s.CreatePerson(ctx, "Direct Relation", "operator")
 	require.NoError(t, err)
 	for _, role := range []string{"blind_copy", "speaker"} {
@@ -153,12 +154,14 @@ func checkRoleSearchCurrentPersonRelation(t *testing.T, newStore func(*testing.T
 		relation := currentDocumentPersonEdgesSQL("cv.version_id", safe, "1")
 		statement := `SELECT EXISTS(SELECT 1 FROM ` + relation + ` edge WHERE edge.person_id=? AND edge.role=?) FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id WHERE n.id=?`
 		if s.postgresSchema != "" {
-			for i := 1; i <= 4; i++ {
+			for i := 1; i <= 7; i++ {
 				statement = strings.Replace(statement, "?", fmt.Sprintf("$%d", i), 1)
 			}
 		}
 		var found bool
-		err := s.db.QueryRowContext(ctx, statement, document.PersonResolverFingerprint(), person, role, version.NodeID).Scan(&found)
+		state, err := effectiveDocumentEventState(ctx, s.db, DocumentEventsDeriverFingerprint)
+		require.NoError(t, err)
+		err = s.db.QueryRowContext(ctx, statement, document.PersonResolverFingerprint(), state.InputEpoch, state.ContractVersion, state.DeriverFingerprint, person, role, version.NodeID).Scan(&found)
 		require.NoError(t, err)
 		require.Equal(t, want, found)
 	}
@@ -167,6 +170,26 @@ func checkRoleSearchCurrentPersonRelation(t *testing.T, newStore func(*testing.T
 	check(false, direct.PersonID, "blind_copy", true)
 	check(true, direct.PersonID, "blind_copy", false)
 	check(true, direct.PersonID, "speaker", true)
+	_, err = s.db.ExecContext(ctx, `UPDATE document_event_state SET input_epoch=input_epoch+1`)
+	require.NoError(t, err)
+	check(false, published.PersonID, published.Role, false)
+	check(false, direct.PersonID, "blind_copy", true)
+	_, err = s.db.ExecContext(ctx, `UPDATE document_event_state SET input_epoch=input_epoch-1`)
+	require.NoError(t, err)
+	check(false, published.PersonID, published.Role, true)
+	_, err = s.db.ExecContext(ctx, `UPDATE document_event_attempts SET state='failed' WHERE content_version_id=$1`, version.ID)
+	require.NoError(t, err)
+	check(false, published.PersonID, published.Role, false)
+	check(false, direct.PersonID, "blind_copy", true)
+	_, err = s.db.ExecContext(ctx, `UPDATE document_event_attempts SET state='indexed' WHERE content_version_id=$1`, version.ID)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `UPDATE document_event_state SET deriver_fingerprint=$1`, fakeHash("ee"))
+	require.NoError(t, err)
+	check(false, published.PersonID, published.Role, false)
+	check(false, direct.PersonID, "blind_copy", true)
+	_, err = s.db.ExecContext(ctx, `UPDATE document_event_state SET deriver_fingerprint=$1`, DocumentEventsDeriverFingerprint)
+	require.NoError(t, err)
+	check(false, published.PersonID, published.Role, true)
 	_, err = s.db.ExecContext(ctx, `UPDATE document_people_state SET binding_epoch=binding_epoch+1`)
 	require.NoError(t, err)
 	check(false, published.PersonID, published.Role, false)
@@ -174,7 +197,7 @@ func checkRoleSearchCurrentPersonRelation(t *testing.T, newStore func(*testing.T
 	check(true, direct.PersonID, "speaker", true)
 }
 
-func TestRoleSearchMentionNamesAreLiteralAndBounded(t *testing.T) {
+func TestRoleSearchMentionNamesAreLiteral(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -198,23 +221,32 @@ func TestRoleSearchMentionNamesAreLiteralAndBounded(t *testing.T) {
 	fullNames, err := (queryResolver{q: s.db}).personMentionNames(ctx, person.PersonID)
 	require.NoError(t, err)
 	require.Contains(t, fullNames, "Derived Alias")
-	for i := range 20 {
+	for i := range 198 {
 		person, _ = addTestPersonIdentity(t, s, person, "name_alias", fmt.Sprintf("Alias %02d", i), fmt.Sprintf("alias-%02d", i))
 	}
 	names, err := (queryResolver{q: s.db}).personMentionNames(ctx, person.PersonID)
 	require.NoError(t, err)
-	require.Len(t, names, 16)
+	require.Len(t, names, 201)
 	require.Equal(t, "Jory Pellham", names[0])
 	require.Contains(t, names, `A "OR" *`)
 	compiled, err := s.CompileQuery(ctx, compilerQuery(t, `mentions:"Jory Pellham"`))
 	require.NoError(t, err)
 	_, args, err := compiled.Bind("")
 	require.NoError(t, err)
-	require.Contains(t, args, `"A ""OR"" *"`)
+	require.Contains(t, args[1], `"A ""OR"" *"`)
+	require.Contains(t, args[1], `"Alias 197"`)
 	require.Contains(t, compiled.PositiveTextTerms(), `A "OR" *`)
 	require.Contains(t, compiled.PositiveTextTerms(), "Jory Pellham")
 	require.Len(t, compiled.roleMatches, 1)
 	require.Equal(t, "mentioned", compiled.roleMatches[0].label)
+	file, err := s.CreateFile(ctx, s.RootID(), "last-alias.txt", testSHA256([]byte("Alias 197")), 9, "text/plain")
+	require.NoError(t, err)
+	seedCompiledLegacyText(t, s, file, "Alias 197")
+	result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"mentions:\"Jory Pellham\""}`)})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	require.Equal(t, "last-alias.txt", result.Rows[0].Name)
+	require.Equal(t, []string{"mentioned"}, result.Rows[0].MatchedRoles)
 }
 
 // Restored identity authority is visible to both callers even though no
@@ -370,7 +402,7 @@ func TestRoleSearchBrowserHiddenLock(t *testing.T) {
 		hiddenKnown bool
 	}{
 		{"locked", WithVisiblePeopleOnly(ctx), []string{"open.txt"}, false},
-		{"unlocked", WithVisiblePeopleOnly(WithPhotoHiddenToken(ctx, token)), []string{"hidden.jpg", "open.txt"}, true},
+		{"unlocked", WithVisiblePeopleOnly(WithPhotoHiddenToken(ctx, token)), []string{"open.txt"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			projection, err := s.MaterializeQuerySnapshot(tc.ctx, SnapshotRequest{Query: visibleQuery, Facets: []string{"person_role"}})
@@ -389,12 +421,9 @@ func TestRoleSearchBrowserHiddenLock(t *testing.T) {
 			} else {
 				require.NotContains(t, facetPeople, concealed.PersonID)
 			}
-			_, err = s.MaterializeQuerySnapshot(tc.ctx, SnapshotRequest{Query: hiddenQuery})
-			if tc.hiddenKnown {
-				require.NoError(t, err)
-			} else {
-				require.ErrorContains(t, err, "unknown person reference")
-			}
+			hiddenResult, err := s.MaterializeQuerySnapshot(tc.ctx, SnapshotRequest{Query: hiddenQuery})
+			require.NoError(t, err)
+			require.Empty(t, hiddenResult.Rows)
 		})
 	}
 }
@@ -425,7 +454,7 @@ func TestPublishedBccActorQueryPrivacy(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	version := seedDocumentPeopleEvent(t, s, "bcc.txt", "f1", []document.DocumentEventActorV1{{
+	version := seedCurrentRoleSearchEvent(t, s, "bcc.txt", "f1", []document.DocumentEventActorV1{{
 		Role: "blind_copy", ActorKey: "email:bcc@example.test", Address: "bcc@example.test", DisplayName: "Bcc Person", Claim: `"recipient"`,
 	}})
 	input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
@@ -447,9 +476,25 @@ func TestPublishedBccActorQueryPrivacy(t *testing.T) {
 			require.NotEqual(t, id, facet.Key)
 			require.NotContains(t, facet.Roles, "blind_copy")
 		}
-		_, err = s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: value})
-		require.ErrorContains(t, err, "unknown person reference")
+		safe, err := s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: value})
+		if operand == "bcc" {
+			require.ErrorContains(t, err, "bcc: is not available with safe people disclosure")
+		} else {
+			require.NoError(t, err)
+			if operand == "person" {
+				require.Len(t, safe.Rows, 1)
+			} else {
+				require.Empty(t, safe.Rows)
+			}
+		}
 	}
+	_, err = s.db.ExecContext(ctx, `UPDATE document_event_state SET input_epoch=input_epoch+1`)
+	require.NoError(t, err)
+	stale := snapshotTestQuery(t, `{"syntax":"advanced","text":"bcc:\"Bcc Person\""}`)
+	result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: stale, Facets: []string{"person_role"}})
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+	require.Empty(t, result.Facets[0].Values)
 }
 
 func TestRoleSearchCollapsedDuplicateAnnotationsIncludeOtherMembers(t *testing.T) {
@@ -572,7 +617,7 @@ func TestRoleSearchHighCardinalityAnnotation(t *testing.T) {
 	require.NoError(t, err)
 	profile := catalogProcessingProfile(t, false)
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return ensureProcessingProfileTx(ctx, tx, profile)
+		return ensureProcessingProfileTx(ctx, tx, profile, s.postgresSchema != "")
 	}))
 	selection := CoverageSelection{Configuration: "configured", ProfileFingerprint: profile.Fingerprint}
 	for _, tc := range []struct {
@@ -813,22 +858,38 @@ func TestRoleSearchSavedHiddenPersonScope(t *testing.T) {
 		ctx  context.Context
 		ok   bool
 	}{
-		{"unlocked", WithVisiblePeopleOnly(WithPhotoHiddenToken(ctx, token)), true},
+		{"unlocked", WithVisiblePeopleOnly(WithPhotoHiddenToken(ctx, token)), false},
 		{"locked", WithVisiblePeopleOnly(ctx), false},
 		{"full", ctx, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, saved := range []SavedQuery{definition, structured, nested} {
 				_, page, err := service.RunSaved(tc.ctx, "owner", saved.ID, saved.Revision, SnapshotRequest{}, nil)
-				if !tc.ok {
-					require.Error(t, err)
-					continue
-				}
 				require.NoError(t, err)
-				require.Len(t, page.Rows, 1)
+				if tc.ok || saved.ID == definition.ID {
+					require.Len(t, page.Rows, 1)
+				} else {
+					require.Empty(t, page.Rows)
+				}
 			}
 		})
 	}
+}
+
+func seedCurrentRoleSearchEvent(t *testing.T, s *Store, name, seed string, actors []document.DocumentEventActorV1) ContentVersion {
+	t.Helper()
+	version, target := ingestDocumentEventTarget(t, s, name, seed)
+	_, err := s.db.ExecContext(t.Context(), `INSERT INTO document_event_state(singleton,contract_version,deriver_fingerprint,input_epoch,publication_epoch,updated_at) VALUES(1,$1,$2,1,1,$3) ON CONFLICT(singleton) DO NOTHING`, document.DocumentEventsContractV1, DocumentEventsDeriverFingerprint, nowRFC3339())
+	require.NoError(t, err)
+	record := documentEventRecord(t, s.VaultID(), version.ID, seed)
+	if actors != nil {
+		record.Events[0].Actors = actors
+	}
+	raw, _, err := document.MarshalDocumentEventsV1(record)
+	require.NoError(t, err)
+	_, err = s.PublishDocumentEvents(t.Context(), target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), raw)
+	require.NoError(t, err)
+	return version
 }
 
 // Only root people entries are removed for the People facet. The expression

@@ -23,10 +23,10 @@ func TestReportCLIRelease(t *testing.T) {
 	connection, err := daemonconn.Ensure(t.Context())
 	require.NoError(t, err)
 	for range 7 {
-		_, err := connection.CreateTermReport(t.Context(), request)
+		_, err := connection.CreateTermReport(t.Context(), "full", request)
 		require.NoError(t, err)
 	}
-	_, err = connection.CreateTermReport(t.Context(), request)
+	_, err = connection.CreateTermReport(t.Context(), "full", request)
 	code, ok := daemonconn.ProblemCode(err)
 	require.True(t, ok)
 	require.Equal(t, "report_capacity", code)
@@ -49,7 +49,7 @@ func TestReportCLIRelease(t *testing.T) {
 	retainedHistory, err := runCLI(t, "search-export", "history", "--json")
 	require.NoError(t, err)
 	require.Equal(t, history, retainedHistory)
-	_, err = connection.CreateTermReport(t.Context(), request)
+	_, err = connection.CreateTermReport(t.Context(), "full", request)
 	require.NoError(t, err, "release must free one shared owner slot")
 	after, err := os.ReadFile(packet)
 	require.NoError(t, err)

@@ -21,7 +21,7 @@ import (
 
 func TestMCPReportRelease(t *testing.T) {
 	f := newNativeExportFixture(t)
-	summary, err := f.connection.CreateTermReport(t.Context(), report.Request{
+	summary, err := f.connection.CreateTermReport(t.Context(), "full", report.Request{
 		Version: 1, AllDocuments: true, Timezone: "UTC", CoverageMode: "available_only",
 		Terms: []report.Term{{Number: 1, Expression: "alpha", Syntax: "simple",
 			Dates: report.DateRange{Start: "2024-01-01", End: "2024-12-31"}}},
@@ -127,7 +127,7 @@ func TestMCPReportReleaseFailures(t *testing.T) {
 
 func TestMCPReportReleaseResultFailure(t *testing.T) {
 	f := newNativeExportFixture(t)
-	summary, err := f.connection.CreateTermReport(t.Context(), report.Request{
+	summary, err := f.connection.CreateTermReport(t.Context(), "full", report.Request{
 		Version: 1, AllDocuments: true, Timezone: "UTC", CoverageMode: "available_only",
 		Terms: []report.Term{{Number: 1, Expression: "alpha", Syntax: "simple",
 			Dates: report.DateRange{Start: "2024-01-01", End: "2024-12-31"}}},

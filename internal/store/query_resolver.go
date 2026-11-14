@@ -58,24 +58,11 @@ func (r queryResolver) Resolve(
 	switch kind {
 	case query.ReferencePerson:
 		ref.Dependency.Kind = kind
-		safe, _ := ctx.Value(visiblePersonContextKey{}).(bool)
 		if byID {
-			sql := `SELECT person_id,revision FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=$1),$2) AND state<>'retired'`
-			args := []any{value, value}
-			if safe {
-				sql += ` AND ` + personVisibleSQL(3)
-				args = append(args, 1, boolInt(queryPeopleHideLocked(ctx)))
-			}
-			err = r.q.QueryRowContext(ctx, sql, args...).Scan(&ref.Dependency.ID, &ref.Dependency.Revision)
+			err = r.q.QueryRowContext(ctx, `SELECT person_id,revision FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?) AND state<>'retired'`, value, value).Scan(&ref.Dependency.ID, &ref.Dependency.Revision)
 		} else {
 			var count int
-			sql := `SELECT COUNT(*),COALESCE(MIN(person_id),''),COALESCE(MIN(revision),0) FROM persons WHERE display_name_folded=$1 AND state<>'retired'`
-			args := []any{value}
-			if safe {
-				sql += ` AND ` + personVisibleSQL(2)
-				args = append(args, 1, boolInt(queryPeopleHideLocked(ctx)))
-			}
-			err = r.q.QueryRowContext(ctx, sql, args...).Scan(&count, &ref.Dependency.ID, &ref.Dependency.Revision)
+			err = r.q.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(MIN(person_id),''),COALESCE(MIN(revision),0) FROM persons WHERE display_name_folded=? AND state<>'retired'`, value).Scan(&count, &ref.Dependency.ID, &ref.Dependency.Revision)
 			if err == nil && count == 0 {
 				err = query.ErrUnknownReference
 			}
@@ -145,7 +132,7 @@ func (r queryResolver) saved(ctx context.Context, value string, byID bool) (quer
 
 var _ query.Resolver = queryResolver{}
 
-// personMentionNames returns a bounded, stable list of literal search phrases.
+// personMentionNames returns a stable list of literal search phrases.
 func (r queryResolver) personMentionNames(ctx context.Context, id string) ([]string, error) {
 	var name string
 	if err := r.q.QueryRowContext(ctx, `SELECT display_name FROM persons WHERE person_id=?`, id).Scan(&name); err != nil {
@@ -163,7 +150,7 @@ func (r queryResolver) personMentionNames(ctx context.Context, id string) ([]str
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	for len(names) < 16 && rows.Next() {
+	for rows.Next() {
 		var alias string
 		if err := rows.Scan(&alias); err != nil {
 			return nil, err

@@ -87,6 +87,7 @@ func TestMCPReportRequestBoundary(t *testing.T) {
 	var calls atomic.Int32
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
+		assert.Equal(t, "safe", r.URL.Query().Get("people_disclosure"))
 		var request report.Request
 		assert.NoError(t, json.UnmarshalRead(r.Body, &request))
 		assert.Equal(t, "strict", request.CoverageMode)
@@ -291,6 +292,39 @@ func TestMCPReportDateWireBudget(t *testing.T) {
 	}
 }
 
+func TestMCPReportRefusesBcc(t *testing.T) {
+	f := newNativeExportFixture(t)
+	member := f.addFile(t, "message.txt", "synthetic message")
+	person, err := f.catalog.CreatePerson(t.Context(), "Synthetic Recipient", "operator")
+	require.NoError(t, err)
+	_, err = f.catalog.AssertDocumentPerson(t.Context(), store.PersonDocumentAssertion{ContentVersionID: member.VersionID, PersonID: person.PersonID, Role: "blind_copy", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	_, err = f.catalog.CreateSavedQuery(t.Context(), "Bcc search", "", store.SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"bcc:\"Synthetic Recipient\""}`))
+	require.NoError(t, err)
+	_, err = f.catalog.CreateSavedQuery(t.Context(), "Bcc filter", "", store.SavedQueryKindQuery, fmt.Appendf(nil, `{"filters":{"people":[{"person_id":%q,"roles":["blind_copy"]}]}}`, person.PersonID))
+	require.NoError(t, err)
+	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{AllowReportWrites: true}, f.lease)
+	for _, expression := range []string{`bcc:"Synthetic Recipient"`, `saved:"Bcc search"`, `saved:"Bcc filter"`} {
+		args := reportArguments()
+		args["selected_documents"] = report.SelectedDocuments{Documents: []report.Identity{{NodeID: member.NodeID, VersionID: member.VersionID, SHA256: member.SHA256}}}
+		args["coverage_mode"] = "available_only"
+		args["terms"] = []report.Term{{Number: 1, Expression: expression, Syntax: "advanced", Dates: report.DateRange{Start: "2020-01-01", End: "2100-01-01"}}}
+		result := exportCall(t, server, "create_report", map[string]any{"request": args})
+		require.Equal(t, "invalid_query", result["code"], "%+v", result)
+	}
+	request := report.Request{Version: 1, SelectedDocuments: &report.SelectedDocuments{Documents: []report.Identity{{NodeID: member.NodeID, VersionID: member.VersionID, SHA256: member.SHA256}}}, Timezone: "UTC", CoverageMode: "available_only", Terms: []report.Term{{Number: 1, Expression: `bcc:"Synthetic Recipient"`, Syntax: "advanced", Dates: report.DateRange{Start: "2020-01-01", End: "2100-01-01"}}}}
+	_, err = f.connection.CreateTermReport(t.Context(), "full", request)
+	require.NoError(t, err)
+	for _, expression := range []string{`to:"Synthetic Recipient"`, `"bcc:"`} {
+		args := reportArguments()
+		args["selected_documents"] = request.SelectedDocuments
+		args["coverage_mode"] = "available_only"
+		args["terms"] = []report.Term{{Number: 1, Expression: expression, Syntax: "advanced", Dates: report.DateRange{Start: "2020-01-01", End: "2100-01-01"}}}
+		result := exportCall(t, server, "create_report", map[string]any{"request": args})
+		require.Equal(t, "complete", result["state"], "%+v", result)
+	}
+}
+
 // This source retains real store evidence and supplies a large observation warning set.
 // The cache still builds and verifies its real report artifacts.
 type warningReportSource struct{ *store.Store }
@@ -374,7 +408,7 @@ func TestMCPReportResultMetadataLimit(t *testing.T) {
 		Documents: []report.Identity{{NodeID: member.NodeID, VersionID: member.VersionID, SHA256: member.SHA256}}},
 		Timezone: "UTC", CoverageMode: "available_only", Terms: []report.Term{{Number: 1, Expression: "alpha",
 			Syntax: "simple", Dates: report.DateRange{Start: "2020-01-01", End: "2100-01-01"}}}}
-	summary, err := f.connection.CreateTermReport(t.Context(), request)
+	summary, err := f.connection.CreateTermReport(t.Context(), "full", request)
 	require.NoError(t, err)
 	implementation := testImplementation()
 	implementation.Name = strings.Repeat("x", 1<<20)

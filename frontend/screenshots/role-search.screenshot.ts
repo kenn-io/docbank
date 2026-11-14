@@ -54,8 +54,6 @@ const advanced = (text: string, filters: Record<string, unknown> = {}) => ({
   sort: { field: "name", direction: "asc" } as const,
 });
 const query = advanced('from:"Mara Okonkwo-Fell"');
-// Any-role person query.
-const anyRole = advanced('person:"Mara Okonkwo-Fell"');
 
 // Attachments are named
 // role-search-branch-<state>-<wide|narrow|mobile-<part>>-<theme>.png.
@@ -229,7 +227,7 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
         ["board-update.eml", ["sender"]],
         ["budget-follow-up.eml", ["sender"]],
       ],
-      // The Bcc-only reviewer never reaches a browser session.
+      // The People facet excludes the Bcc-only reviewer.
       people: {
         "Mara Okonkwo-Fell": [2, ["sender"]],
         "Teodor Vask": [2, ["copied", "recipient"]],
@@ -243,23 +241,6 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
         intervals: [1_000],
       })
       .toEqual(expected);
-
-    // An any-role query shows the People group without role chips.
-    await open(anyRole);
-    await captureStates(
-      page,
-      testInfo,
-      "person-query",
-      async () => {
-        await expect(
-          results.getByRole("cell", { name: "/vendor-notes.eml", exact: true }),
-        ).toBeVisible();
-        await expect(
-          people.getByRole("button", { name: "Teodor Vask, Cc, Recipient, 2 documents" }),
-        ).toBeVisible();
-      },
-      parts,
-    );
 
     await open(query);
     const narrowing = page.waitForResponse(

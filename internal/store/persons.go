@@ -247,8 +247,8 @@ func (s *Store) PersonByID(ctx context.Context, id string) (Person, string, erro
 	return personByIDTx(ctx, s.db, id)
 }
 
-func personVisibleAssertionSQL(hideLocked string) string {
-	return `a.role<>'blind_copy' AND (` + hideLocked + `=0 OR ` + personVersionVisibleSQL("a.content_version_id") + `)`
+func personVisibleAssertionSQL(alias, hideLocked string) string {
+	return alias + `.role<>'blind_copy' AND (` + hideLocked + `=0 OR ` + personVersionVisibleSQL(alias+".content_version_id") + `)`
 }
 
 func personVisibleActorSQL(alias, hideLocked string) string {
@@ -263,15 +263,14 @@ func personDerivedExactIdentitySQL(alias string) string {
 // people. It binds visibleOnly, then hideLocked. Its correlated
 // subqueries use the person index. visiblePersonByIDSQL applies the same rule
 // to one person.
-func personVisibleSQL(first int) string {
-	const person = "persons.person_id"
+func personVisibleSQL(person string, first int) string {
 	visible, locked := fmt.Sprintf("$%d", first), fmt.Sprintf("$%d", first+1)
 	return `(` + visible + `=0 OR (NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=` + person + `)
 		AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=` + person + `)
 		AND NOT EXISTS(SELECT 1 FROM person_identities i WHERE i.person_id=` + person + `
 			AND ` + personDerivedExactIdentitySQL("i") + `)) OR EXISTS(
 		SELECT 1 FROM person_document_assertions a
-		WHERE a.person_id=` + person + ` AND ` + personVisibleAssertionSQL(locked) + `) OR EXISTS(
+		WHERE a.person_id=` + person + ` AND ` + personVisibleAssertionSQL("a", locked) + `) OR EXISTS(
 		SELECT 1 FROM document_people p WHERE p.person_id=` + person + `
 		AND ` + personVisibleActorSQL("p", locked) + `))`
 }
@@ -399,7 +398,7 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 		// Photo eligibility already supplies visible, non-sensitive evidence.
 		// Identity labels still use visibleOnly below.
 		if visibleOnly && !options.PhotoSummary {
-			candidates += personVisibleSQL(len(args)+1) + " AND "
+			candidates += personVisibleSQL("persons.person_id", len(args)+1) + " AND "
 			args = append(args, 1, boolInt(hideLocked))
 		}
 		if options.RecentFirst {
@@ -454,7 +453,7 @@ func (s *Store) peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates strin
 	joins, where := s.personPhotoSource(!hideLocked)
 	walkCandidates, walkArgs := s.peopleCandidatesSQL(prefix, false, !hideLocked)
 	if visibleOnly && !photosOnly {
-		walkCandidates += "(persons.person_id=person.person_id OR " + personVisibleSQL(len(walkArgs)+1) + ") AND "
+		walkCandidates += "(persons.person_id=person.person_id OR " + personVisibleSQL("persons.person_id", len(walkArgs)+1) + ") AND "
 		walkArgs = append(walkArgs, 1, boolInt(hideLocked))
 	}
 	if photosOnly {
@@ -491,7 +490,7 @@ func (s *Store) peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates strin
 		if photosOnly {
 			eligible += "own IS NOT NULL AND "
 		} else if visibleOnly {
-			eligible += personVisibleSQL(len(matchArgs)+1) + " AND "
+			eligible += personVisibleSQL("persons.person_id", len(matchArgs)+1) + " AND "
 			matchArgs = append(slices.Clone(matchArgs), 1, boolInt(hideLocked))
 		}
 		first := len(matchArgs) + 1
@@ -627,25 +626,6 @@ func WithVisiblePeopleOnly(ctx context.Context) context.Context {
 	return context.WithValue(ctx, visiblePersonContextKey{}, true)
 }
 
-// queryPeopleHiddenKey carries the Hidden lock decision from the owner read view.
-type queryPeopleHiddenKey struct{}
-
-func (s *Store) scopeQueryPeople(ctx context.Context, q metadataQuerier) (context.Context, error) {
-	if visible, _ := ctx.Value(visiblePersonContextKey{}).(bool); !visible {
-		return ctx, nil
-	}
-	_, err := s.hiddenSession(ctx, q)
-	if err != nil && !errors.Is(err, ErrHiddenLocked) {
-		return ctx, err
-	}
-	return context.WithValue(ctx, queryPeopleHiddenKey{}, errors.Is(err, ErrHiddenLocked)), nil
-}
-
-func queryPeopleHideLocked(ctx context.Context) bool {
-	locked, ok := ctx.Value(queryPeopleHiddenKey{}).(bool)
-	return !ok || locked
-}
-
 // visiblePersonByIDSQL is personVisibleSQL for the person bound as $1, with
 // hideLocked as $2. Correlated EXISTS stops at the person's first assertion
 // instead of collecting every person's assertions, so the browser write fence
@@ -656,7 +636,7 @@ var visiblePersonByIDSQL = `SELECT EXISTS(SELECT 1 FROM persons WHERE person_id=
 	AND NOT EXISTS(SELECT 1 FROM person_identities i WHERE i.person_id=$1
 		AND ` + personDerivedExactIdentitySQL("i") + `))
  OR EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=$1
-	AND ` + personVisibleAssertionSQL("$2") + `)
+	AND ` + personVisibleAssertionSQL("a", "$2") + `)
  OR EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=$1
 	AND ` + personVisibleActorSQL("p", "$2") + `)))`
 

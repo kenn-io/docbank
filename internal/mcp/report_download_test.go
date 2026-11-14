@@ -29,7 +29,7 @@ func reportArchiveFixture(t *testing.T) (report.Summary, []byte) {
 	t.Helper()
 	f := newNativeExportFixture(t)
 	member := f.addFile(t, "alpha.txt", "alpha")
-	summary, err := f.connection.CreateTermReport(t.Context(), report.Request{
+	summary, err := f.connection.CreateTermReport(t.Context(), "full", report.Request{
 		Version: 1, Timezone: "UTC", CoverageMode: "available_only",
 		SelectedDocuments: &report.SelectedDocuments{Documents: []report.Identity{
 			{NodeID: member.NodeID, VersionID: member.VersionID, SHA256: member.SHA256},

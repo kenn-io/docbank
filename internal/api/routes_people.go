@@ -148,7 +148,7 @@ func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
 	})
 }
 
-// browserPeopleScope limits browser operations to people the browser can list.
+// browserPeopleScope limits browser writes to people the browser can list.
 func browserPeopleScope(ctx context.Context) context.Context {
 	if browserSessionRequest(ctx) {
 		return store.WithVisiblePeopleOnly(ctx)

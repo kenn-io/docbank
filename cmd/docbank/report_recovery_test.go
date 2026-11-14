@@ -136,7 +136,7 @@ func reportRecoveryArgs(t *testing.T, revise bool) ([]string, string) {
 	}
 	connection, err := daemonconn.Ensure(t.Context())
 	require.NoError(t, err)
-	parent, err := connection.CreateTermReport(t.Context(), request)
+	parent, err := connection.CreateTermReport(t.Context(), "full", request)
 	require.NoError(t, err)
 	page, err := connection.TermReportDates(t.Context(), parent.ID, report.DatePageRequest{})
 	require.NoError(t, err)

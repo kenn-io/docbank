@@ -145,10 +145,6 @@ func (s *Store) ListPhotoAssets(
 	dimensions, coverage := request.Facets, request.Coverage
 	var page PhotoBrowsePage
 	err = s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) error {
-		ctx, err := s.scopeQueryPeople(ctx, q)
-		if err != nil {
-			return err
-		}
 		if request.Hidden {
 			if _, err := s.hiddenSession(ctx, q); err != nil {
 				return err

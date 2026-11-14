@@ -109,7 +109,6 @@ func registerPhotoAuthoredRoutes(api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{OperationID: "preparePhotoAuthored", Method: http.MethodPost, Path: "/api/v1/photos/authored/prepare", Summary: "Resolve a revision-bound metadata editing session"}, func(ctx context.Context, in *struct{ Body PhotoAuthoredPrepareRequest }) (*struct {
 		Body PhotoAuthoredPreparation
 	}, error) {
-		ctx = browserPeopleScope(ctx)
 		selection := store.PhotoSetSelection{AssetIDs: in.Body.AssetIDs, Hidden: in.Body.Hidden, SkipUnavailable: in.Body.SkipUnavailable, Coverage: store.CoverageSelection{Configuration: in.Body.Coverage.Configuration, ProfileFingerprint: in.Body.Coverage.ProfileFingerprint}}
 		if in.Body.Stack {
 			selection.Limit = store.MaxPhotoStackTargets

@@ -46,7 +46,6 @@ func registerPhotoSetRoutes(api huma.API, d Deps, g *gate, snapshots *store.Quer
 		}{ETag: revisionETag(set.Revision), Body: fromStorePhotoAlbumSummary(set)}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "createPhotoAlbum", Method: http.MethodPost, Path: "/api/v1/photos/albums", Summary: "Create an album, optionally from frozen photo results", DefaultStatus: http.StatusCreated}, func(ctx context.Context, in *struct{ Body CreatePhotoAlbumRequest }) (*photoAlbumOutput, error) {
-		ctx = browserPeopleScope(ctx)
 		var set store.PhotoSet
 		var err error
 		if in.Body.SnapshotID != "" || in.Body.MemberHash != "" {
@@ -168,7 +167,6 @@ func registerPhotoAlbumMembersRoute(api huma.API, d Deps, g *gate, add bool) {
 		IfMatch string `header:"If-Match"`
 		Body    PhotoAlbumMembersRequest
 	}) (*photoAlbumOutput, error) {
-		ctx = browserPeopleScope(ctx)
 		revision, err := parseIfMatch(in.IfMatch)
 		if err != nil {
 			return nil, err

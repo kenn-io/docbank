@@ -16,7 +16,6 @@ func registerPhotoTimelineRoute(api huma.API, service *store.QuerySnapshotServic
 		Summary:      "Count matching photo assets by recorded capture day",
 		MaxBodyBytes: query.MaxInputBytes + (32 << 10),
 	}, func(ctx context.Context, in *struct{ Body PhotoTimelineRequest }) (*struct{ Body PhotoTimeline }, error) {
-		ctx = browserPeopleScope(ctx)
 		owner, ok := workspaceSnapshotOwner(ctx)
 		if !ok {
 			return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated snapshot owner is missing")

@@ -13900,11 +13900,16 @@ func (c *Client) ListTermReportHistory(ctx context.Context, options *ListTermRep
 // CreateTermReport Prepare a frozen search export
 func (c *Client) CreateTermReport(ctx context.Context, options *CreateTermReportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateTermReportResponse, error) {
 	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"people_disclosure": {Style: "form", Explode: &[]bool{false}[0]},
+	}
 	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/search-exports",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/search-exports",
+		Method:        "POST",
+		Options:       options,
+		ContentType:   "application/json",
+		QueryEncoding: queryEncoding,
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
@@ -25537,7 +25542,8 @@ func (o *ListTermReportHistoryRequestOptions) GetHeader() (map[string]string, er
 
 // CreateTermReportRequestOptions is the options needed to make a request to CreateTermReport.
 type CreateTermReportRequestOptions struct {
-	Body *CreateTermReportBody
+	Query *CreateTermReportQuery
+	Body  *CreateTermReportBody
 }
 
 // GetPathParams returns the path params as a map.
@@ -25547,7 +25553,13 @@ func (o *CreateTermReportRequestOptions) GetPathParams() (map[string]any, error)
 
 // GetQuery returns the query params as a map.
 func (o *CreateTermReportRequestOptions) GetQuery() (map[string]any, error) {
-	return nil, nil
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
 }
 
 // GetBody returns the payload in any type that can be marshalled to JSON by the client.
@@ -27378,6 +27390,14 @@ const (
 	ListSavedQueriesQueryKindQuery ListSavedQueriesQueryKind = "query"
 )
 
+// CreateTermReportQueryPeopleDisclosure People evidence allowed in report searches
+type CreateTermReportQueryPeopleDisclosure string
+
+const (
+	Full CreateTermReportQueryPeopleDisclosure = "full"
+	Safe CreateTermReportQueryPeopleDisclosure = "safe"
+)
+
 type GetEmailPartPathRole string
 
 const (
@@ -28990,6 +29010,11 @@ type SearchQuery struct {
 type ListTermReportHistoryQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 	Limit  *int64 `json:"limit,omitempty"`
+}
+
+type CreateTermReportQuery struct {
+	// PeopleDisclosure People evidence allowed in report searches
+	PeopleDisclosure *CreateTermReportQueryPeopleDisclosure `json:"people_disclosure,omitempty"`
 }
 
 type SearchTextCoverageQuery struct {

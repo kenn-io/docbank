@@ -245,14 +245,14 @@ Advanced QueryV1 expressions can select what a person did on a current document 
 | `from:` | Sender or organizer |
 | `to:` | Recipient, copied or attendee; full access also includes blind copy |
 | `cc:` | Copied |
-| `bcc:` | Blind copy; API-key access only |
+| `bcc:` | Blind copy; full-disclosure API-key access only |
 | `custodian:`, `participant:`, `organizer:`, `attendee:` | The named role |
 | `between:(A, B)` | Both people have a non-custodian role on the same version |
 | `mentions:` | Text contains the person's display name or a name alias |
 
-For example, `from:"Mara Okonkwo-Fell"`, `custodian:"Mara Okonkwo-Fell"`, and `between:("Mara Okonkwo-Fell", "Ines Albarrán")` are ordinary queries that can be saved and exported. `between:` accepts exactly two distinct people, separated by a comma or whitespace; invalid pairs report `between: needs two different people`. `mentions:` searches at most 16 distinct names as literal phrases and labels a matched result `Mentioned`.
+For example, `from:"Mara Okonkwo-Fell"`, `custodian:"Mara Okonkwo-Fell"`, and `between:("Mara Okonkwo-Fell", "Ines Albarrán")` are ordinary queries that can be saved and exported. `between:` accepts exactly two distinct people, separated by a comma or whitespace; invalid pairs report `between: needs two different people`. `mentions:` searches all distinct names as literal phrases and labels a matched result `Mentioned`.
 
-Browser sessions see only authorized people evidence. A person known solely through concealed evidence resolves as unknown; a visible person's hidden Bcc edge does not match. Browsers refuse `bcc:` and structured `blind_copy` role filters. API-key queries retain full disclosure. `person:` still means any role within the caller's visibility.
+Browsers and MCP search exports refuse `bcc:` and structured `blind_copy` role filters. Their other role searches omit Bcc evidence. API-key queries use full disclosure by default. `person:` retains its any-role meaning.
 
 Structured queries can use `"people":[{"person_id":"00000000-0000-4000-8000-000000000001","roles":["sender","organizer"]}]` inside `filters`. Each entry is required, while its roles are alternatives. The People facet uses safe evidence for every caller and ignores only root `filters.people` entries when counting. Result roles, facet names and counts are frozen with the snapshot; later renames or republishing do not change it. PostgreSQL search is not yet qualified.
 

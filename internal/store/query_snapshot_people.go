@@ -152,57 +152,63 @@ func annotateMatchedRoles(ctx context.Context, q metadataQuerier, compiled Compi
 	if len(rows) == 0 {
 		return nil
 	}
-	ids := make([]int64, len(rows))
-	for i, row := range rows {
-		ids[i] = row.NodeID
-	}
-	allMembers := compiled
-	allMembers.Query.Filters.CollapseDuplicates = false
-	members, err := documentSnapshotPopulation(ctx, q, allMembers, generation, coverage)
-	if err != nil {
-		return err
-	}
 	roots := make(map[int64][]int)
-	rowIndex := make(map[int64]int, len(rows))
-	for i, row := range rows {
-		rowIndex[row.NodeID] = i
-	}
-	encoded, err := json.Marshal(ids)
-	if err != nil {
-		return err
-	}
-	population := compiledQueryFragment{sql: `SELECT root.id,n.id
+	if !compiled.Query.Filters.CollapseDuplicates {
+		for i, row := range rows {
+			roots[row.NodeID] = []int{i}
+		}
+	} else {
+		ids := make([]int64, len(rows))
+		for i, row := range rows {
+			ids[i] = row.NodeID
+		}
+		allMembers := compiled
+		allMembers.Query.Filters.CollapseDuplicates = false
+		members, err := documentSnapshotPopulation(ctx, q, allMembers, generation, coverage)
+		if err != nil {
+			return err
+		}
+		rowIndex := make(map[int64]int, len(rows))
+		for i, row := range rows {
+			rowIndex[row.NodeID] = i
+		}
+		encoded, err := json.Marshal(ids)
+		if err != nil {
+			return err
+		}
+		population := compiledQueryFragment{sql: `SELECT root.id,n.id
  FROM json_each(?) ids JOIN nodes root ON root.id=ids.value
  JOIN content_versions rootcv ON rootcv.version_id=root.current_version_id
  JOIN content_versions cv ON cv.blob_hash=rootcv.blob_hash
  JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
  JOIN (` + members.sql + `) matched ON matched.node_id=n.id AND matched.content_version_id=cv.version_id
  WHERE n.id=root.id OR ` + strconv.Itoa(boolInt(compiled.Query.Filters.CollapseDuplicates)) + `=1`, args: append([]any{string(encoded)}, members.args...), relations: members.relations}
-	statement, args, err := bindQueryPopulation(population, coverage, generation)
-	if err != nil {
-		return err
-	}
-	err = func() (err error) {
-		found, err := q.QueryContext(ctx, statement, args...)
+		statement, args, err := bindQueryPopulation(population, coverage, generation)
 		if err != nil {
-			return fmt.Errorf("loading matched role members: %w", err)
+			return err
 		}
-		defer func() {
-			if closeErr := found.Close(); err == nil {
-				err = closeErr
+		err = func() (err error) {
+			found, err := q.QueryContext(ctx, statement, args...)
+			if err != nil {
+				return fmt.Errorf("loading matched role members: %w", err)
 			}
+			defer func() {
+				if closeErr := found.Close(); err == nil {
+					err = closeErr
+				}
+			}()
+			for found.Next() {
+				var root, member int64
+				if err := found.Scan(&root, &member); err != nil {
+					return err
+				}
+				roots[member] = append(roots[member], rowIndex[root])
+			}
+			return found.Err()
 		}()
-		for found.Next() {
-			var root, member int64
-			if err := found.Scan(&root, &member); err != nil {
-				return err
-			}
-			roots[member] = append(roots[member], rowIndex[root])
+		if err != nil {
+			return err
 		}
-		return found.Err()
-	}()
-	if err != nil {
-		return err
 	}
 
 	// Each gate and role predicate is the existing compiler's SQL. Intersecting
@@ -293,10 +299,7 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
 		return SnapshotFacet{}, err
 	}
 	hide := "1"
-	if visible, _ := ctx.Value(visiblePersonContextKey{}).(bool); visible && !queryPeopleHideLocked(ctx) {
-		hide = "0"
-	}
-	args = append(args, document.PersonResolverFingerprint())
+	args = append(args, document.PersonResolverFingerprint(), scoped.eventState.InputEpoch, scoped.eventState.ContractVersion, scoped.eventState.DeriverFingerprint)
 	statementSQL := `WITH matched_members AS (` + statement + `)
  SELECT m.node_id,COALESCE(p.person_id,''),COALESCE(p.display_name,''),COALESCE(json_extract(e.value,'$.role'),'')
  FROM matched_members m JOIN nodes n ON n.id=m.node_id
@@ -336,7 +339,7 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
 	selected := map[string]bool{}
 	for _, entry := range compiled.Query.Filters.People {
 		var id, name string
-		err := q.QueryRowContext(ctx, `SELECT person_id,display_name FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=$1),$2) AND `+personVisibleSQL(3), entry.PersonID, entry.PersonID, 1, boolInt(hide == "1")).Scan(&id, &name)
+		err := q.QueryRowContext(ctx, `SELECT person_id,display_name FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=$1),$2) AND `+personVisibleSQL("persons.person_id", 3), entry.PersonID, entry.PersonID, 1, boolInt(hide == "1")).Scan(&id, &name)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}

@@ -70,7 +70,6 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		Summary:      "Browse matching photo assets",
 		MaxBodyBytes: query.MaxInputBytes + (64 << 10),
 	}, func(ctx context.Context, in *struct{ Body PhotoBrowseRequest }) (*struct{ Body PhotoBrowsePage }, error) {
-		ctx = browserPeopleScope(ctx)
 		if in.Body.Projection != "map" && in.Body.PageSize > store.MaxDocumentCatalogPageSize {
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_photo_query", fmt.Sprintf("page_size must be at most %d without projection map", store.MaxDocumentCatalogPageSize))
 		}

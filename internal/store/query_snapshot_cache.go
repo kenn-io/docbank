@@ -291,16 +291,12 @@ func (s *QuerySnapshotService) RunSaved(
 	var run SavedQueryRun
 	write := func() error {
 		return s.store.withLogicalTx(prepared.ctx, func(tx *sql.Tx) error {
-			scopedCtx, err := s.store.scopeQueryPeople(prepared.ctx, tx)
-			if err != nil {
-				return err
-			}
-			if err := validatePhotoSnapshotMembersTx(scopedCtx, tx, frozen); err != nil {
+			if err := validatePhotoSnapshotMembersTx(prepared.ctx, tx, frozen); err != nil {
 				return err
 			}
 			var insertErr error
 			run, insertErr = insertSavedQueryRunTx(
-				scopedCtx, tx, id, expectedRevision, prepared.projection, prepared.page,
+				prepared.ctx, tx, id, expectedRevision, prepared.projection, prepared.page,
 			)
 			return insertErr
 		})
