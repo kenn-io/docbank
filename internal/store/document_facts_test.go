@@ -7,6 +7,72 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
+func checkDocumentPeopleFactsMergeResolvesCandidate(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	s := newStore(t)
+	ctx := t.Context()
+	first, err := s.CreatePerson(ctx, "First", "operator")
+	require.NoError(t, err)
+	second, err := s.CreatePerson(ctx, "Second", "operator")
+	require.NoError(t, err)
+	for _, p := range []Person{first, second} {
+		_, err = s.AddPersonIdentity(ctx, p.PersonID, p.Revision, PersonIdentity{Kind: "email", ValueDisplay: "shared@example.test", Origin: "operator", EvidenceKind: "operator_assertion", EvidenceID: p.PersonID, Confidence: "operator_asserted"})
+		require.NoError(t, err)
+	}
+	version, target := ingestDocumentEventTarget(t, s, "candidates.txt", "d2")
+	record := documentEventRecord(t, s.VaultID(), version.ID, "d2")
+	record.Events[0].Actors = []document.DocumentEventActorV1{
+		{Role: "sender", ActorKey: "email:shared@example.test", Address: "shared@example.test", Claim: "shared@example.test"},
+		{Role: "sender", Ordinal: 1, ActorKey: "name_alias:unknown", DisplayName: "Unknown", Claim: "Unknown"},
+	}
+	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+	require.NoError(t, err)
+	input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
+	require.NoError(t, err)
+	_, err = s.PublishDocumentPeople(ctx, DocumentPeoplePublication{
+		People:     document.DocumentPeopleV1{ContractVersion: document.PersonContractV1, ContentVersionID: version.ID, EventGenerationID: input.EventGenerationID, Edges: []document.DocumentPersonEdgeV1{}},
+		Resolution: DocumentPeopleResolution{UnresolvedActors: 2}, InputsSHA256: fakeHash("a2"), ResolverFingerprint: document.PersonResolverFingerprint(), NodeID: input.NodeID, BindingEpoch: input.BindingEpoch, NodeRevision: input.NodeRevision,
+	})
+	require.NoError(t, err)
+	facts, err := s.DocumentPeopleFacts(ctx, version.ID, false)
+	require.NoError(t, err)
+	require.Len(t, facts.Candidates, 3)
+	first, _, err = s.PersonByID(ctx, first.PersonID)
+	require.NoError(t, err)
+	second, _, err = s.PersonByID(ctx, second.PersonID)
+	require.NoError(t, err)
+	_, err = s.MergePersons(ctx, first.PersonID, second.PersonID, "00000000-0000-4000-8000-000000000011", first.Revision, second.Revision)
+	require.NoError(t, err)
+	input, err = s.PrepareDocumentPeopleInputs(ctx, version.ID)
+	require.NoError(t, err)
+	for _, actor := range input.Actors {
+		if actor.ActorKey == "email:shared@example.test" {
+			input.Actors = []DocumentPeopleActor{actor}
+			break
+		}
+	}
+	_, err = s.PublishDocumentPeople(ctx, documentPeoplePublicationForInput(t, input))
+	require.NoError(t, err)
+	for _, safe := range []bool{false, true} {
+		facts, err = s.DocumentPeopleFacts(ctx, version.ID, safe)
+		require.NoError(t, err)
+		require.Len(t, facts.Edges, 1)
+		require.Equal(t, first.PersonID, facts.Edges[0].PersonID)
+		found := false
+		for _, c := range facts.Candidates {
+			switch c.ActorKey {
+			case "email:shared@example.test":
+				require.Empty(t, c.Occurrences)
+			case "name_alias:unknown":
+				require.Len(t, c.Occurrences, 1)
+				require.Equal(t, "Unknown", c.Occurrences[0].Label)
+				found = true
+			}
+		}
+		require.True(t, found)
+	}
+}
+
 func checkDocumentPeopleFactsAssertionsAndRetiredPerson(t *testing.T, newStore func(*testing.T) *Store) {
 	t.Helper()
 	s := newStore(t)
