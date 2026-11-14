@@ -139,7 +139,10 @@ func (r queryResolver) personMentionNames(ctx context.Context, id string) ([]str
 	if err := r.q.QueryRowContext(ctx, `SELECT display_name FROM persons WHERE person_id=?`, id).Scan(&name); err != nil {
 		return nil, err
 	}
-	names := []string{strings.ReplaceAll(name, "\x00", " ")}
+	var names []string
+	if !strings.ContainsRune(name, '\x00') {
+		names = append(names, name)
+	}
 	q, ok := r.q.(rowsQuerier)
 	if !ok {
 		return nil, errors.New("person aliases require a rows querier")
@@ -154,8 +157,8 @@ func (r queryResolver) personMentionNames(ctx context.Context, id string) ([]str
 		if err := rows.Scan(&alias); err != nil {
 			return nil, err
 		}
-		if alias != "" && alias != name {
-			names = append(names, strings.ReplaceAll(alias, "\x00", " "))
+		if alias != "" && alias != name && !strings.ContainsRune(alias, '\x00') {
+			names = append(names, alias)
 		}
 	}
 	if err := rows.Err(); err != nil {

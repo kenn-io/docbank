@@ -762,12 +762,20 @@ func TestRoleSearchMentionsRequireDocumentContent(t *testing.T) {
 	file, err = s.CreateFile(ctx, s.RootID(), "alias.txt", fakeHash("ce06"), 12, "text/plain")
 	require.NoError(t, err)
 	seedCompiledLegacyText(t, s, file, "Searchable Alias")
+	file, err = s.CreateFile(ctx, s.RootID(), "fabricated.txt", fakeHash("ce07"), 12, "text/plain")
+	require.NoError(t, err)
+	seedCompiledLegacyText(t, s, file, "Null Name")
 	value = snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"mentions:%s"}`, person.PersonID))
 	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
 	require.Equal(t, "alias.txt", result.Rows[0].Name)
-
+	person, err = s.CreatePerson(ctx, "Only\x00Null", "operator")
+	require.NoError(t, err)
+	value = snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"mentions:%s"}`, person.PersonID))
+	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
 }
 
 func TestRoleSearchMentionsSelectedRendition(t *testing.T) {

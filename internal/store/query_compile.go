@@ -339,6 +339,9 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 		if err != nil {
 			return compiledQueryFragment{}, err
 		}
+		if len(names) == 0 {
+			return compiledQueryFragment{sql: `FALSE`}, nil
+		}
 		parts := make([]string, 0, len(names))
 		for _, name := range names {
 			parts = append(parts, quoteFTSOperand(name, false))
