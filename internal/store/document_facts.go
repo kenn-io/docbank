@@ -161,12 +161,15 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 		var actorKeys []string
 		for _, event := range view.Events.Events {
 			for _, actor := range event.Actors {
-				actorKeys = append(actorKeys, actor.ActorKey)
 				kind, id := actor.EvidenceKind, actor.EvidenceID
 				if kind == "" {
 					kind, id = event.EvidenceKind, event.EvidenceID
 				}
 				key := actorOccurrence{actor.ActorKey, PersonCandidateOccurrence{ContentVersionID: versionID, Role: string(actor.Role), EvidenceKind: string(kind), EvidenceID: id}}
+				if resolved[key] {
+					continue
+				}
+				actorKeys = append(actorKeys, actor.ActorKey)
 				prior, exists := evidence[key]
 				if !exists {
 					occurrences = append(occurrences, key)
@@ -185,7 +188,7 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 			for _, o := range c.Occurrences {
 				key := actorOccurrence{c.ActorKey, o.PersonCandidateOccurrence}
 				match, found := evidence[key]
-				if !found || resolved[key] || safe && (o.Role == "blind_copy" || match.sensitive) {
+				if !found || safe && (o.Role == "blind_copy" || match.sensitive) {
 					continue
 				}
 				matched[key] = true
@@ -196,7 +199,7 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 		}
 		for _, key := range occurrences {
 			match := evidence[key]
-			if matched[key] || resolved[key] || safe && (key.occurrence.Role == "blind_copy" || match.sensitive) {
+			if matched[key] || safe && (key.occurrence.Role == "blind_copy" || match.sensitive) {
 				continue
 			}
 			facts.Candidates = append(facts.Candidates, VersionCandidate{ActorKey: key.actorKey, Occurrences: []VersionCandidateOccurrence{{PersonCandidateOccurrence: key.occurrence, Label: match.label}}})
