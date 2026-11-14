@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-31
+last_edited: 2026-11-13
 title: Model Context Protocol
 description: Connect a local MCP client to Docbank's read-mostly document tools through the daemon.
 ---
@@ -16,6 +16,19 @@ starts that daemon the same way the CLI does and never opens `docbank.db`, a
 blob, pack, or rendition directly. There is no MCP-only embedded-vault path and
 no remote-daemon option.
 
+## Server identity
+
+Stdio and HTTP clients receive Docbank's website and icon in `server/discover`
+metadata. The MCP icon depicts a document with a vault dial and is separate
+from the website favicon. It is an embedded 256×256 PNG data URI, so clients
+can load it without an external request. Whether it appears depends on the client.
+`tools/call` and `resources/read` results repeat a compact server identity
+without embedding the image again.
+
+Standalone and daemon-hosted MCP HTTP listeners also serve that PNG at
+`/icon.png` and `/favicon.ico`. These public image routes accept GET and HEAD
+without a bearer token. `/mcp` keeps its required bearer authentication.
+
 ## Start the server
 
 Stdio is the default transport:
@@ -25,7 +38,16 @@ docbank mcp
 # equivalent to: docbank mcp --transport stdio
 ```
 
-Print configuration for your client:
+Register Docbank with installed Claude Code and Codex clients:
+
+```bash
+docbank agent setup
+docbank agent setup --check
+```
+
+Setup enables Codex's `mcp_2026_07_28` feature. Codex then shows an under-development feature notice each session. Re-running setup registers the read-only tools and replaces extra arguments, including `--allow-*`; use `docbank mcp config` for write tools.
+
+For manual setup, print configuration for your client:
 
 ```bash
 docbank mcp config --client claude-code
@@ -50,7 +72,7 @@ client files untouched. Your client must support MCP `2026-07-28` and
 `server/discover`; configuration alone cannot add protocol support.
 
 Tested clients are Claude Code 2.1.301 and Codex 0.164.0.
-For Codex, run this once to persist the client's MCP protocol support in
+The Codex snippet includes this command to persist the client's MCP protocol support in
 `config.toml` for either transport:
 
 ```bash
@@ -238,6 +260,13 @@ fields are rejected. Every successful tool result contains both structured
 content and its JSON text representation. The complete result, including
 resource links, is capped at 1 MiB.
 
+Tests enforce a 150,000-byte default catalog budget and a 235,000-byte budget
+with all six write flags enabled, set from baseline measurements of 135,667 and
+213,288 bytes, respectively.
+They measure compact JSON of the complete client-decoded `tools/list` result
+with HTML escaping disabled to match the SDK, including output schemas,
+metadata, and cache fields; a larger catalog requires a reviewed budget edit.
+
 | Tool | Contract and important bounds |
 | --- | --- |
 | `get_report_summary` | Reads an owned frozen report by its 48-character lowercase hexadecimal ID. If the full summary exceeds the result cap, returns `report_limit`; the handle remains usable. |
@@ -249,10 +278,11 @@ resource links, is capped at 1 MiB.
 | `list_changes` | Returns up to 500 retained events with `cursor`, `kind`, `node_id`, and `revision`. Pass the saved `next_cursor` to resume; call again while `has_more` is true. |
 | `list_documents` | Lists current, live files. `path_prefix` defaults to `/` and is capped at 16,384 Unicode characters and 16 KiB of UTF-8. Sorts are `path`, `name`, `modified_at`, `size`, and `media_type`, in `asc` or `desc` order. Page size defaults to 50 and is capped at 250. |
 | `answer_question` | Searches for evidence with a question and returns passages, leads, coverage, and a receipt. Optional filters narrow the scope; profile, binding, reranking, and output limits can be selected explicitly. |
-| `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters selecting every matching live file without a 4,096-file cap. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. Optional `rerank` is a boolean that requests the profile's configured reranker. |
-| `find_conflicts` | Uses the query, profile, limit, and source selectors from `search_documents`. Retrieval is lexical only, with at most 20 hits. Compares money, percentages, and durations in whole source sentences and returns source dates and evidence IDs. |
+| `search_documents` | Requires a 1–8,192-character query and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters selecting every matching live file without a 4,096-file cap. The optional profile name is 1–128 characters. Omitting it uses the same profile and binding retries as `answer_question`. Results include the profile used. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters and require an explicit profile. Optional `rerank` is a boolean that requests the profile's configured reranker. |
+| `find_conflicts` | Requires a processing profile and uses the query, limit, and source selectors from `search_documents`. Retrieval is lexical only, with at most 20 hits. Compares money, percentages, and durations in whole source sentences and returns source dates and evidence IDs. |
 | `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity is rejected. |
-| `read_document_content` | Reads original bytes from a selected immutable version as base64. Requires the exact vault, node, version, SHA-256 and size from `list_document_versions`. Originals are limited to 32 MiB; byte windows default to 64 KiB and are capped at 256 KiB. Returns offset, next offset and EOF. Verify the assembled size and SHA-256 before using the bytes. No export job or local file is created. |
+| `get_original_download_url` | Returns a single-use URL for an exact original selection, without the 32 MiB read limit. The URL expires after two minutes. [Download originals](#download-originals). |
+| `read_document_content` | Reads original bytes from a selected immutable version as base64. Requires the vault ID from `get_vault_info` and the node, version, SHA-256 and size from `list_document_versions`. Originals are limited to 32 MiB; byte windows default to 64 KiB and are capped at 256 KiB. Returns offset, next offset and EOF. Verify the assembled size and SHA-256 before using the bytes. No export job or local file is created. |
 | `list_document_versions` | Lists immutable versions, including each original's `blob_hash` and size, for one live file. Limit defaults to 100 and is capped at 250; offset is capped at 1,000,000. |
 | `resolve_text_citation` | Reopens a [saved quotation](#saved-text-citations) from exact retained rendition text. |
 | `check_answer` | Checks [answer figures](#check-figures-in-an-answer) against saved citations. |
@@ -336,8 +366,11 @@ searches return it only with hits. Every search returns requested and actual
 mode, coverage, skipped reasons, and truncation state. It returns at most 100
 hits. Each excerpt is capped at 512 characters. Each hit has at most 64 evidence
 identities of at most 1,024 characters each. A result contains at most 64
-skipped-reason codes of at most 64 characters each.
+skipped reasons of at most 2,048 characters each. The `skipped_reasons` array may contain both failure codes and setup guidance.
 
+With no profile, `auto` tries hybrid search through the same query bindings as `answer_question`, including retries after provider failures; the result preserves `requested_mode: auto`. It may send query text to a query-capable provider under existing query-text consent and falls back to lexical results when search by meaning is unavailable. With an explicit profile, `auto`, including an omitted mode, uses lexical search without semantic setup guidance. Explicit `lexical` mode searches the first selected profile without querying an embedding provider.
+
+An unknown profile returns `processing_profile_unavailable` with the available names. When no query binding was attempted, `hybrid` and profile-free `auto` return lexical results with `actual_mode: lexical` and setup guidance in `skipped_reasons`. The guidance names another query-capable profile or recommends `docbank processing local` when none exists. An unknown binding returns `not_found`. Selecting an image binding with `hybrid` returns keyword results and names a usable text-query binding when the profile has one. With `semantic`, the same selection returns `semantic_unavailable` and names that text-query binding. When all query candidates fail, lexical fallback reports the first failure code and adds guidance for consent or index setup. `semantic` preserves `consent_required` when consent is missing, expired, or revoked. Other `semantic` failures return `semantic_unavailable` with the failure cause or setup guidance.
 
 Set `rerank: true` to request the profile's configured reranker. The query and
 bounded candidate excerpts are sent to the provider only under the existing
@@ -398,10 +431,10 @@ secrets, daemon keys, or unrequested document text.
 
 ### Find differing figures
 
-Call `find_conflicts` with search terms and a source selector. For example:
+Call `find_conflicts` with search terms, an explicit profile, and a source selector. Profile discovery is available only in `search_documents`. For example:
 
 ```json
-{"name":"find_conflicts","arguments":{"query":"cooling period","profile":"default","filters":{}}}
+{"name":"find_conflicts","arguments":{"query":"cooling period","profile":"supplied-captions","filters":{}}}
 ```
 
 If matching sentences say "The cooling period is 7 days." and "The cooling
@@ -449,7 +482,9 @@ winner.
 
 ### Answer questions
 
-`answer_question` returns evidence without writing an answer. Content passages require every word of `question` to appear in one segment; key terms match better than a sentence. `ANSWERED` means
+`answer_question` reports bounded `pages_without_text` as inclusive ranges for PDFs in the resolved scope, including documents absent from search results. Gaps, partial page coverage, and unreadable evidence (`page_coverage_unavailable`) make coverage incomplete; the answer can still contain passages. Narrow the scope or call `get_processing_coverage` with specific content version IDs to inspect more pages. See [OCR](document-processing.md#ocr) for options.
+
+`answer_question` returns evidence without writing an answer. Content passages require every prepared word and exact quoted phrase in one segment. Common words may be dropped and regular word forms match. Use key terms. `ANSWERED` means
 that a content excerpt matched; it does not verify that the excerpt answers the
 question. Open the source to verify any quotation: excerpts can include omission
 markers and are not necessarily contiguous spans. Results without content text
@@ -491,6 +526,44 @@ Its search failures are returned without automatic retries or lexical fallback.
 The [PDF evidence reference](../architecture/source-metadata.md#pdf-evidence)
 defines its seven fields and omission rules. Missing observations mean unknown;
 PDF evidence that hasn't been extracted omits `pdf_facts` entirely.
+
+## Download originals
+
+Call `get_original_download_url` with `vault_id` from `get_vault_info` and
+`node_id`, `content_version_id`, `blob_hash`, and `size` from
+`list_document_versions`. The response includes the selection, `name`, `url`,
+and `expires_in_seconds: 120`.
+The daemon checks the exact live node and retained version before issuing
+the ticket and again when downloading. The original streams without staging
+another copy. This works with the web app disabled.
+
+For HTTP MCP, the URL uses the MCP listener's validated origin at
+`/mcp/original?ticket=…`. The same Host and Origin checks protect both
+the tool call and the download. The response also includes `path`, such as
+`/mcp/original?ticket=…`. Behind an HTTPS proxy, set `[mcp.http] public_origin`
+to the client-facing origin, for example `https://archive.example.test`, and
+preserve the Host header at the proxy. Matching HTTPS Origin headers are accepted.
+Forwarded headers do not choose the URL.
+For stdio, the URL uses the local daemon address.
+
+Download with `curl --fail -o original.bin "$url"`. The ticket is the
+credential; no API key or MCP bearer is needed. Treat the URL as private.
+Verify the downloaded size and SHA-256 against `size` and `blob_hash`.
+Failed verification or an interrupted stream ends the transfer with an error.
+A download returns 200 with the whole original. If it is interrupted, request
+a fresh URL before retrying.
+Download the whole original to a local file before using a player that seeks;
+the single-use URL does not support seeking or reopening.
+Each transfer uses its own daemon connection. Downloads have a separate limit
+of 32 concurrent requests, so tool calls can continue while they stream.
+A daemon acquisition has 45 seconds to complete. A transfer stops after five
+minutes without upstream bytes or when a client blocks a write for five minutes.
+Active transfers have no total time limit.
+A second use or an expired ticket returns 404 `download_not_found`.
+A mismatched vault, hash or size, or a trashed document, returns the tool
+error `download_selection_stale`; refresh the document and select its version
+again. A missing node or a version owned by another node returns `not_found`.
+Renaming a document does not invalidate its selected original.
 
 ## Resources and rendition windows
 
@@ -707,8 +780,48 @@ recheck masks, approved text or rendered numbers. It works after restart and
 backup/restore without the original review files or a configured page runtime.
 
 Numbered reservation and rendering use the CLI or authenticated HTTP routes.
-Full download verification requires the three review files through
-`bates export download`; the MCP export tool does not accept them. See
+For full checking, give `export_bates_file` all three private review files:
+
+```json
+{
+  "allocation_id": "11111111-1111-4111-8111-111111111111",
+  "destination_path": "/exports/checked.pdf",
+  "overwrite": false,
+  "preparation_path": "/reviews/PRIVATE-preparation.json",
+  "masks_path": "/reviews/PRIVATE-masks.json",
+  "review_path": "/reviews/PRIVATE-review.json"
+}
+```
+
+Paths are absolute, clean paths on the MCP host. Preparation and review files
+are limited to 16 MiB each; masks to 1 MiB. All three must be readable regular
+files. Partial, empty or null inputs are rejected. These files can contain
+unredacted evidence; keep them private and outside the delivery.
+
+Full checking applies only to numbered redactions and returns
+`masks_text_and_numbers`. It checks the recorded PDF identity, reviewed masks,
+approved text and visible numbers before publishing the destination. A failed
+check never falls back to recorded-byte recovery. It does not prove the origin
+of the PDF or compare unmasked pixels with the original.
+
+Only one full export runs per MCP process. Another returns `redaction_busy`
+before reading private files or contacting the daemon. Other tools and exports
+without review files remain available. Full work has a ten-minute limit;
+standalone HTTP MCP retains its shorter two-minute request deadline. The
+daemon-hosted MCP endpoint remains read-only.
+
+The first full check allocates PDFium's 512 MiB backing and compiled-code cache,
+which stay resident until the MCP process exits. The verifier's 1 GiB RSS ceiling
+counts the whole process, including unrelated calls. `redaction_memory` means
+retry after other work finishes; the ceiling is never raised for an export.
+`redaction_verifier_version` means the files or delivery need another verifier,
+while `redaction_review_changed` means the review does not match. Integrity
+failures return `redaction_integrity`; cancellation, request deadlines and page
+deadlines return `redaction_canceled`, `redaction_timeout` and
+`redaction_worker_timeout`. Local staging or publication failures return
+`bates_local_io`. Check the saved path before retrying a lost publication reply.
+
+The same full check is available through `bates export download`. See
 [Numbered delivery](document-processing.md#deliver-one-reviewed-pdf-with-bates-numbers)
 for retention consent and verification scope.
 
@@ -949,8 +1062,9 @@ no processing or provider work.
    for terms, inclusive date cutoffs, timezone, and optional processing profile.
 3. Call `create_report`. Omitted `coverage_mode` means `strict`. Choose
    `available_only` if incomplete evidence is acceptable. A changed selection
-   returns `report_selection_changed`. Refresh and reselect rather than
-   substituting newer versions automatically.
+   returns `report_selection_changed`. Recheck the documents and their current
+   versions with `list_documents` and `list_document_versions`. Review any
+   replacements with the operator before submitting a new selection.
 4. For `needs_review`, page through `get_report_dates`. Keep each member's
    earlier candidates when `candidates_complete` is false. Continue with the
    returned cursor until `next_cursor` is absent. Review the evidence with the

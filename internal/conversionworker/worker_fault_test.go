@@ -2,6 +2,7 @@ package conversionworker
 
 import (
 	"context"
+	"encoding/binary"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,9 +12,144 @@ import (
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestWorkerRetriesExhaustedSubmission(t *testing.T) {
+	o := workerOptions(t)
+	normal := o.Client.Transport
+	var posts int
+	o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodPost {
+			posts++
+			if posts <= 3 {
+				return backendResponse(r, http.StatusServiceUnavailable, `{}`), nil
+			}
+		}
+		return normal.RoundTrip(r)
+	})}
+	w := openWorker(t, o)
+	key := strings.Repeat("a", 64)
+	id := taskID(t, submitRequest(t, w, key, []byte("source")))
+	for range 4 {
+		_, err := w.RunOnce(t.Context())
+		require.NoError(t, err)
+	}
+	require.Contains(t, getRequest(t.Context(), w, "/v1/status/poll/"+id).Body.String(), "failure")
+	require.Equal(t, id, taskID(t, submitRequest(t, w, key, []byte("source"))))
+	_, err := w.RunOnce(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, getRequest(t.Context(), w, "/v1/result/"+id).Code)
+}
+
+func TestWorkerStalledTaskLetsPendingJobStart(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		o := workerOptions(t)
+		o.StallAfter = time.Hour
+		var posts int
+		o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
+			if r.Method == http.MethodPost {
+				posts++
+				return backendResponse(r, 202, `{"task_id":"backend-1","task_status":"pending","task_type":"convert"}`), nil
+			}
+			if strings.HasPrefix(r.URL.Path, "/v1/status/poll/") {
+				return backendResponse(r, 200, `{"task_id":"backend-1","task_status":"started","task_type":"convert"}`), nil
+			}
+			return backendResponse(r, 200, `{}`), nil
+		})}
+		w := openWorker(t, o)
+		taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("first")))
+		_, err := w.RunOnce(t.Context())
+		require.NoError(t, err)
+		taskID(t, submitRequest(t, w, strings.Repeat("b", 64), []byte("second")))
+		time.Sleep(time.Hour)
+		_, err = w.RunOnce(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, 2, posts)
+	})
+}
+
+func TestWorkerKeepsJobsAfterLimitsLowered(t *testing.T) {
+	o := workerOptions(t)
+	w := openWorker(t, o)
+	key := strings.Repeat("a", 64)
+	id := taskID(t, submitRequest(t, w, key, []byte("source")))
+	_, err := w.RunOnce(t.Context())
+	require.NoError(t, err)
+	taskID(t, submitRequest(t, w, strings.Repeat("b", 64), []byte("other")))
+	require.NoError(t, w.Close(t.Context()))
+	o.MaxSourceBytes = 1
+	o.MaxResultBytes = 1
+	o.MaxJobs = 1
+	o.MaxSpoolBytes = overhead
+	w = openWorker(t, o)
+	require.Equal(t, id, taskID(t, submitRequest(t, w, key, []byte("source"))))
+	require.Equal(t, 200, getRequest(t.Context(), w, "/v1/result/"+id).Code)
+	require.Equal(t, 429, submitRequest(t, w, strings.Repeat("c", 64), []byte("x")).Code)
+}
+
+func TestWorkerRejectsUnknownManifestVersion(t *testing.T) {
+	o := workerOptions(t)
+	w := openWorker(t, o)
+	id := taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("source")))
+	item := w.jobs[id]
+	item.Version = 2
+	require.NoError(t, w.save(t.Context(), item))
+	require.NoError(t, w.Close(t.Context()))
+	_, err := Open(t.Context(), o)
+	require.Error(t, err)
+}
+
+func TestWorkerRejectsWrongBackendTaskType(t *testing.T) {
+	o := workerOptions(t)
+	normal := o.Client.Transport
+	var results int
+	o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
+		if strings.HasPrefix(r.URL.Path, "/v1/status/poll/") {
+			return backendResponse(r, 200, `{"task_id":"backend-1","task_status":"success","task_type":"chunk"}`), nil
+		}
+		if strings.HasPrefix(r.URL.Path, "/v1/result/") {
+			results++
+		}
+		return normal.RoundTrip(r)
+	})}
+	w := openWorker(t, o)
+	id := taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("source")))
+	_, err := w.RunOnce(t.Context())
+	require.NoError(t, err)
+	require.Contains(t, getRequest(t.Context(), w, "/v1/status/poll/"+id).Body.String(), "failure")
+	require.Zero(t, results)
+}
+
+func TestWorkerAudioDurationLimit(t *testing.T) {
+	o := workerOptions(t)
+	o.MaxSourceBytes = 32 << 20
+	o.MaxSpoolBytes = 128 << 20
+	w := openWorker(t, o)
+	fields := [][2]string{{"from_formats", "audio"}, {"to_formats", "json"}, {"target_type", "inbody"}}
+	for i, test := range []struct {
+		seconds int
+		status  int
+	}{{3600, 202}, {3601, 400}} {
+		data := make([]byte, 44+8000*test.seconds)
+		copy(data, "RIFF")
+		binary.LittleEndian.PutUint32(data[4:8], uint32(len(data)-8))
+		copy(data[8:], "WAVEfmt ")
+		binary.LittleEndian.PutUint32(data[16:20], 16)
+		binary.LittleEndian.PutUint16(data[20:22], 1)
+		binary.LittleEndian.PutUint16(data[22:24], 1)
+		binary.LittleEndian.PutUint32(data[24:28], 8000)
+		binary.LittleEndian.PutUint32(data[28:32], 8000)
+		binary.LittleEndian.PutUint16(data[32:34], 1)
+		binary.LittleEndian.PutUint16(data[34:36], 8)
+		copy(data[36:], "data")
+		binary.LittleEndian.PutUint32(data[40:44], uint32(len(data)-44))
+		response := submitNamed(t, w, strings.Repeat(string(rune('a'+i)), 64), "audio.wav", "audio/wav", data, fields)
+		require.Equal(t, test.status, response.Code, response.Body.String())
+	}
+}
 
 func TestWorkerCloseCancelsUploadBeforeUnlock(t *testing.T) {
 	o := workerOptions(t)
@@ -178,14 +314,14 @@ func TestWorkerFinishesKnownBackendTaskBeforeLowerIDPendingJob(t *testing.T) {
 			posts.Add(1)
 			retainedAtSubmit = getRequest(t.Context(), w, "/v1/result/"+active).Code == 200
 			_, _ = io.Copy(io.Discard, r.Body)
-			return backendResponse(r, 202, `{"task_id":"new-task","task_status":"pending"}`), nil
+			return backendResponse(r, 202, `{"task_id":"new-task","task_status":"pending","task_type":"convert"}`), nil
 		}
 		if id, ok := strings.CutPrefix(r.URL.Path, "/v1/status/poll/"); ok {
 			state := "started"
 			if id == "accepted-task" && complete.Load() {
 				state = "success"
 			}
-			return backendResponse(r, 200, `{"task_id":"`+id+`","task_status":"`+state+`"}`), nil
+			return backendResponse(r, 200, `{"task_id":"`+id+`","task_status":"`+state+`","task_type":"convert"}`), nil
 		}
 		return backendResponse(r, 200, `{"status":"success"}`), nil
 	})}
@@ -199,6 +335,7 @@ func TestWorkerFinishesKnownBackendTaskBeforeLowerIDPendingJob(t *testing.T) {
 	item.State = "started"
 	item.BackendID = "accepted-task"
 	item.Submissions = 1
+	item.StartedAt = time.Now()
 	require.NoError(t, w.save(t.Context(), item))
 	require.NoError(t, w.Close(t.Context()))
 	w = openWorker(t, o)

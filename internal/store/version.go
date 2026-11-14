@@ -436,7 +436,7 @@ func (s *Store) SyncWatchedContent(
 		changed bool
 	)
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		cursor, n, err := watchTargetTx(ctx, tx, watchName, sourceRef)
+		cursor, n, err := watchTargetTx(ctx, tx, watchName, sourceRef, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
@@ -457,7 +457,7 @@ func (s *Store) SyncWatchedContent(
 				return fmt.Errorf("checking unchanged watched content: %w", err)
 			}
 			updated = n
-			return updateWatchSourceTx(ctx, tx, watchName, sourceRef, blobHash, size)
+			return updateWatchSourceTx(ctx, tx, watchName, sourceRef, blobHash, size, s.postgresSchema != "")
 		}
 		updated, version, err = s.replaceContentTx(
 			ctx, tx, n, UnconditionalRev, blobHash, size, mimeType, physical...,
@@ -465,7 +465,7 @@ func (s *Store) SyncWatchedContent(
 		if err != nil {
 			return err
 		}
-		if err := updateWatchSourceTx(ctx, tx, watchName, sourceRef, blobHash, size); err != nil {
+		if err := updateWatchSourceTx(ctx, tx, watchName, sourceRef, blobHash, size, s.postgresSchema != ""); err != nil {
 			return err
 		}
 		changed = true
@@ -485,7 +485,7 @@ type watchSourceState struct {
 
 // HasWatchSource reports whether a watch has recorded sourceRef to a live file.
 func (s *Store) HasWatchSource(ctx context.Context, watchName, sourceRef string) (bool, error) {
-	_, _, err := watchTargetTx(ctx, s.db, watchName, sourceRef)
+	_, _, err := watchTargetTx(ctx, s.db, watchName, sourceRef, s.postgresSchema != "")
 	if errors.Is(err, ErrNotFound) {
 		return false, nil
 	}
@@ -493,8 +493,8 @@ func (s *Store) HasWatchSource(ctx context.Context, watchName, sourceRef string)
 }
 
 // watchTargetTx resolves a recorded watched source to the live file its edits replace.
-func watchTargetTx(ctx context.Context, q rowQuerier, watchName, sourceRef string) (watchSourceState, Node, error) {
-	cursor, err := watchSourceTx(ctx, q, watchName, sourceRef)
+func watchTargetTx(ctx context.Context, q rowQuerier, watchName, sourceRef string, postgres bool) (watchSourceState, Node, error) {
+	cursor, err := watchSourceTx(ctx, q, watchName, sourceRef, postgres)
 	if err != nil {
 		return watchSourceState{}, Node{}, err
 	}
@@ -509,14 +509,14 @@ func watchTargetTx(ctx context.Context, q rowQuerier, watchName, sourceRef strin
 }
 
 func watchSourceTx(
-	ctx context.Context, tx rowQuerier, watchName, sourceRef string,
+	ctx context.Context, tx rowQuerier, watchName, sourceRef string, postgres bool,
 ) (watchSourceState, error) {
 	var state watchSourceState
 	err := tx.QueryRowContext(ctx, `
 		SELECT node_id, blob_hash, size
 		FROM watch_sources
 		WHERE watch_name = $1 AND source_ref = $2`,
-		watchName, sourceRef,
+		storedString(postgres, watchName), storedString(postgres, sourceRef),
 	).Scan(&state.nodeID, &state.blobHash, &state.size)
 	if errors.Is(err, sql.ErrNoRows) {
 		return watchSourceState{}, ErrNotFound
@@ -530,12 +530,12 @@ func watchSourceTx(
 }
 
 func updateWatchSourceTx(
-	ctx context.Context, tx *sql.Tx, watchName, sourceRef, blobHash string, size int64,
+	ctx context.Context, tx *sql.Tx, watchName, sourceRef, blobHash string, size int64, postgres bool,
 ) error {
 	result, err := tx.ExecContext(ctx, `
 		UPDATE watch_sources SET blob_hash = $1, size = $2
 		WHERE watch_name = $3 AND source_ref = $4`,
-		blobHash, size, watchName, sourceRef,
+		blobHash, size, storedString(postgres, watchName), storedString(postgres, sourceRef),
 	)
 	if err != nil {
 		return fmt.Errorf("updating watched source %q/%q: %w", watchName, sourceRef, err)
@@ -684,7 +684,7 @@ func (s *Store) installContentVersionWithOperationTx(
 	newRevision := n.Revision + 1
 	var storedMime any
 	if mimeType != "" {
-		storedMime = mimeType
+		storedMime = storedString(s.postgresSchema != "", mimeType)
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO content_versions (

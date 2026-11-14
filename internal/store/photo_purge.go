@@ -94,7 +94,7 @@ func (s *Store) adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, no
 		}
 	}
 	for _, old := range before {
-		if _, err := commitPhotoAssetTx(ctx, tx, old, old, "purge"); err != nil {
+		if _, err := s.commitPhotoAssetTx(ctx, tx, old, old, "purge"); err != nil {
 			return fmt.Errorf("repairing photo asset %s after purge: %w", old.ID, err)
 		}
 		if err := s.refreshPhotoAssetWorkTx(ctx, tx, old.ID); err != nil {
@@ -137,15 +137,15 @@ func (s *Store) purgedPhotoReceiptsSQL() string {
 	if !d.postgres {
 		receiptTable += " INDEXED BY photo_change_receipts_xmp_file"
 	}
-	xmpReceipts := `SELECT receipt_id FROM ` + receiptTable + ` WHERE operation='xmp_sync' AND ` + d.indexedText("r.after_json", "file_id") + ` IN (SELECT file_id FROM photo_files WHERE node_id IN (SELECT id FROM nodes_to_purge))`
+	xmpReceipts := `SELECT receipt_id FROM ` + receiptTable + ` WHERE operation='xmp_sync' AND ` + d.indexedText(d.receiptColumn("r"), "file_id") + ` IN (SELECT file_id FROM photo_files WHERE node_id IN (SELECT id FROM nodes_to_purge))`
 	return `WITH RECURSIVE nodes_to_purge(id) AS (SELECT CAST(value AS BIGINT) FROM ` + d.arrayValues("$1") + `), doomed(receipt_id) AS (` + xmpReceipts + `
  UNION
  SELECT r.receipt_id FROM photo_change_receipts r
  WHERE r.operation IN ('authored','authored_undo','authored_sidecar') AND
  (EXISTS (SELECT 1 FROM ` + d.receiptArray("after") + ` entry WHERE ` + d.number("entry.value", "node_id") + ` IN (SELECT id FROM nodes_to_purge))
- OR ` + d.number("r.after_json", "sidecar.node_id") + ` IN (SELECT id FROM nodes_to_purge))
+ OR ` + d.number(d.receiptColumn("r"), "sidecar.node_id") + ` IN (SELECT id FROM nodes_to_purge))
  UNION
- SELECT r.receipt_id FROM photo_change_receipts r JOIN doomed d ON ` + d.text("r.after_json", "undo_of") + `=d.receipt_id
+ SELECT r.receipt_id FROM photo_change_receipts r JOIN doomed d ON ` + d.text(d.receiptColumn("r"), "undo_of") + `=d.receipt_id
  WHERE r.operation='authored_undo'
  ) DELETE FROM photo_change_receipts WHERE receipt_id IN (SELECT receipt_id FROM doomed)`
 }

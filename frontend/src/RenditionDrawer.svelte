@@ -80,7 +80,7 @@
     {:else if error && !rendition}
       <div class="load-error">
         <p role="alert">{error}</p>
-        <p>The active rendition has no readable verified mirror right now.</p>
+        <p>Docbank couldn't load this document's saved Markdown text.</p>
         <Button size="sm" onclick={() => void load()}>Try again</Button>
       </div>
     {:else if rendition}
@@ -97,7 +97,7 @@
               tone={rendition?.completeness === "complete" ? "success" : "warning"}
               >{titleCase(rendition?.completeness ?? "")}</Chip
             >{/snippet}
-          <p>The YAML identity envelope was verified and is hidden from document prose.</p>
+          <p>Docbank checked the document metadata and left it out of the text below.</p>
         </Card>
         <Card
           level="default"
@@ -116,7 +116,7 @@
           title={`${rendition.source.format} · ${rendition.source.mediaType}`}
         >
           <code>{rendition.profileFingerprint}</code>
-          <small>Source SHA-256 {rendition.source.sha256}</small>
+          <small>Source SHA-256 <code>{rendition.source.sha256}</code></small>
         </Card>
       </div>
       {#if rendition.warnings.length > 0}
@@ -142,7 +142,10 @@
         </section>
       {/if}
       <article class="rendition-document" aria-label="Sanitized Markdown document">
-        <pre class="rendition-body">{rendition.markdown}</pre>
+        {#if rendition.markdown}<pre class="rendition-body">{rendition.markdown}</pre>
+        {:else}<p class="rendition-empty">
+            Processing verified that this document has no readable text.
+          </p>{/if}
       </article>
     {/if}
   </div>
@@ -157,6 +160,10 @@
   .identity-grid small {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
+  }
+  .identity-grid small code {
+    color: inherit;
+    font-size: inherit;
   }
   .rendition-shell {
     display: grid;
@@ -237,6 +244,16 @@
     font-family: var(--font-sans);
     font-size: var(--font-size-md);
     line-height: 1.65;
+  }
+  /* With no text, the document area matches the cards' inset above it. */
+  .rendition-document:has(> .rendition-empty) {
+    min-height: 0;
+    padding: var(--space-4) var(--space-5);
+    border-radius: var(--radius-md);
+  }
+  .rendition-empty {
+    margin: 0;
+    color: var(--text-muted);
   }
   @media (max-width: 640px) {
     .identity-grid {

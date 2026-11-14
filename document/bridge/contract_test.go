@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/santhosh-tekuri/jsonschema/v5"
+	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -23,9 +23,11 @@ var sourceEvidenceSchema []byte
 
 func TestBridgeContractNormativeDocumentsTimedTranscript(t *testing.T) {
 	compiler := jsonschema.NewCompiler()
-	compiler.Draft = jsonschema.Draft2020
+	compiler.DefaultDraft(jsonschema.Draft2020)
 	const location = "https://docbank.dev/schemas/source-evidence-v1.schema.json"
-	require.NoError(t, compiler.AddResource(location, bytes.NewReader(sourceEvidenceSchema)))
+	schemaDocument, err := jsonschema.UnmarshalJSON(bytes.NewReader(sourceEvidenceSchema))
+	require.NoError(t, err)
+	require.NoError(t, compiler.AddResource(location, schemaDocument))
 	schema, err := compiler.Compile(location)
 	require.NoError(t, err)
 

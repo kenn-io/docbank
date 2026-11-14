@@ -218,7 +218,7 @@ func (r *Runtime) Render(ctx context.Context, input HTML) (_ []byte, pages int64
 		return nil, 0, err
 	}
 	normalizeMetadata(b)
-	pages, err = VerifyPDF(b)
+	pages, err = VerifyPDF(ctx, b)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -355,11 +355,11 @@ func normalizeMetadata(b []byte) {
 	}
 }
 
-func VerifyPDF(b []byte) (int64, error) {
+func VerifyPDF(ctx context.Context, b []byte) (int64, error) {
 	if len(b) == 0 || len(b) > MaxPDFBytes || !bytes.HasPrefix(b, []byte("%PDF-")) || !bytes.HasSuffix(bytes.TrimSpace(b), []byte("%%EOF")) {
 		return 0, errors.New("email PDF output is empty, truncated or oversized")
 	}
-	pages, err := formatdetect.CountPDFPages(b)
+	pages, err := formatdetect.CountPDFPages(ctx, b)
 	if err != nil {
 		return 0, fmt.Errorf("email PDF independent structural verification: %w", err)
 	}

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -43,7 +44,7 @@ func (s *Store) MediaSources(
 	}
 	var total int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT source_id) FROM media_occurrences
-		WHERE caller_principal=$1 AND visible=1`, principal).Scan(&total); err != nil {
+		WHERE caller_principal=$1 AND visible=1`, storedString(s.postgresSchema != "", principal)).Scan(&total); err != nil {
 		return nil, 0, false, err
 	}
 	rows, err := tx.QueryContext(ctx, `WITH page AS MATERIALIZED (
@@ -58,7 +59,7 @@ func (s *Store) MediaSources(
 			ORDER BY x.first_seen_at DESC,x.occurrence_id DESC LIMIT 1)
 		JOIN media_sources s ON s.source_id=o.source_id
 		LEFT JOIN media_source_versions v ON v.source_version_id=o.source_version_id
-		ORDER BY o.source_id`, principal, after, limit+1)
+		ORDER BY o.source_id`, storedString(s.postgresSchema != "", principal), storedString(s.postgresSchema != "", after), limit+1)
 	if err != nil {
 		return nil, 0, false, err
 	}
@@ -137,7 +138,7 @@ func (s *Store) MediaSourceVersions(
 			return nil, err
 		}
 	}
-	encoded, err := json.Marshal(keys)
+	encoded, err := s.mediaVersionKeys(keys)
 	if err != nil {
 		return nil, err
 	}
@@ -155,9 +156,9 @@ func (s *Store) MediaSourceVersions(
 		FROM media_occurrences o JOIN media_sources s ON s.source_id=o.source_id
 		LEFT JOIN media_source_versions v ON v.source_version_id=o.source_version_id
 		WHERE o.caller_principal=$1 AND o.visible=1 AND (o.source_id,o.source_version_id) IN
-		(SELECT `+d.text("value", "source_id")+`,`+d.text("value", "source_version_id")+`
+		(SELECT `+d.byteText("source_id")+`,`+d.byteText("source_version_id")+`
 			FROM `+d.arrayValues("$2")+`))
-		SELECT * FROM visible WHERE position=1`, principal, string(encoded))
+		SELECT * FROM visible WHERE position=1`, storedString(s.postgresSchema != "", principal), string(encoded))
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +194,7 @@ func (s *Store) mediaSourceReceipts(
 	for key := range result {
 		keys = append(keys, key)
 	}
-	encoded, err := json.Marshal(keys)
+	encoded, err := s.mediaVersionKeys(keys)
 	if err != nil {
 		return err
 	}
@@ -203,19 +204,23 @@ func (s *Store) mediaSourceReceipts(
 	if d.postgres {
 		join = "JOIN"
 	}
+	receiptVersion := d.text("o.receipt_json", "source_version_id")
+	if d.postgres {
+		receiptVersion = "o.receipt_source_version_id"
+	}
 	rows, err := query.QueryContext(ctx, `WITH requested AS MATERIALIZED (
-  SELECT `+d.text("value", "source_id")+` source_id,
-   `+d.text("value", "source_version_id")+` source_version_id FROM `+d.arrayValues("$1")+`
+  SELECT `+d.byteText("source_id")+` source_id,
+   `+d.byteText("source_version_id")+` source_version_id FROM `+d.arrayValues("$1")+`
  ), retention AS (
   SELECT r.source_id,r.source_version_id,o.receipt_json,
    ROW_NUMBER() OVER (PARTITION BY r.source_id,r.source_version_id ORDER BY
-    CASE WHEN $2 AND `+d.text("o.receipt_json", "source_version_id")+`=r.source_version_id
+    CASE WHEN $2 AND `+receiptVersion+`=r.source_version_id
      THEN 0 ELSE 1 END,
     o.updated_at DESC,o.operation_id DESC) selection_rank
   FROM requested r `+join+` media_operations o ON o.source_id=r.source_id
   WHERE o.principal=$3 AND o.verb IN ('submit_supplied_media','submit_remote_recording')
-   AND (NOT $2 OR `+d.text("o.receipt_json", "source_version_id")+`=r.source_version_id
-    OR COALESCE(`+d.text("o.receipt_json", "source_version_id")+`,'')='')
+   AND (NOT $2 OR `+receiptVersion+`=r.source_version_id
+    OR COALESCE(`+receiptVersion+`,'')='')
  ), receipts AS (
   SELECT source_id,source_version_id,receipt_json,0 processing,'' created_at,'' operation_id
   FROM retention WHERE selection_rank=1
@@ -225,10 +230,10 @@ func (s *Store) mediaSourceReceipts(
   WHERE o.principal=$3 AND r.source_version_id<>''
    AND o.verb IN ('submit_supplied_media','retry_media')
    AND o.receipt_json LIKE '%"processing_profile"%'
-   AND `+d.text("o.receipt_json", "source_version_id")+`=r.source_version_id
+   AND `+receiptVersion+`=r.source_version_id
  ) SELECT source_id,source_version_id,receipt_json,processing FROM receipts
  ORDER BY processing,created_at DESC,operation_id DESC`,
-		string(encoded), exactVersion, principal)
+		string(encoded), exactVersion, storedString(s.postgresSchema != "", principal))
 	if err != nil {
 		return err
 	}
@@ -280,7 +285,7 @@ func (s *Store) mediaSourceProjection(
 		JOIN media_sources s ON s.source_id=o.source_id
 		LEFT JOIN media_source_versions v ON v.source_version_id=o.source_version_id
 		WHERE o.caller_principal=$1 AND o.visible=1 AND o.source_id=$2`
-	args := []any{principal, sourceID}
+	args := []any{storedString(s.postgresSchema != "", principal), storedString(s.postgresSchema != "", sourceID)}
 	query += ` ORDER BY o.first_seen_at DESC,o.occurrence_id DESC LIMIT 1`
 	err = tx.QueryRowContext(ctx, query, args...).Scan(
 		&item.SourceID, &item.Kind, &item.SourceVersionID, &item.ContentVersionID, &item.OccurrenceID,
@@ -311,7 +316,7 @@ func (s *Store) MediaOccurrence(
 		o.caller_occurrence_ref,o.caller_revision,o.caller_filename,o.caller_person_ref,o.speaker_label,o.message_json
 		FROM media_occurrences o JOIN media_sources s ON s.source_id=o.source_id
 		WHERE o.caller_principal=$1 AND o.visible=1 AND o.occurrence_id=$2`,
-		principal, occurrenceID).Scan(&item.OccurrenceID, &item.SourceID, &item.Kind,
+		storedString(s.postgresSchema != "", principal), storedString(s.postgresSchema != "", occurrenceID)).Scan(&item.OccurrenceID, &item.SourceID, &item.Kind,
 		&item.SourceVersionID, &item.Ref, &item.Revision, &item.Filename, &item.PersonRef,
 		&item.SpeakerLabel, &item.MessageJSON)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -337,7 +342,7 @@ func (s *Store) MediaSourceBindingForContentVersion(
 		FROM media_occurrences o
 		JOIN media_source_versions v ON v.source_version_id=o.source_version_id
 		WHERE o.caller_principal=$1 AND v.content_version_id=$2
-		ORDER BY o.visible DESC,o.first_seen_at DESC,o.occurrence_id DESC LIMIT 1`, principal, contentVersionID).Scan(
+		ORDER BY o.visible DESC,o.first_seen_at DESC,o.occurrence_id DESC LIMIT 1`, storedString(s.postgresSchema != "", principal), contentVersionID).Scan(
 		&sourceID, &sourceVersionID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", "", ErrNotFound
@@ -359,17 +364,17 @@ func (s *Store) MediaOccurrences(
 	}
 	defer func() { _ = tx.Rollback() }()
 	where := `caller_principal=$1 AND visible=1`
-	args := []any{principal}
+	args := []any{storedString(s.postgresSchema != "", principal)}
 	if sourceID != "" {
 		where += ` AND source_id=$2`
-		args = append(args, sourceID)
+		args = append(args, storedString(s.postgresSchema != "", sourceID))
 	}
 	var total int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM media_occurrences WHERE `+where, args...).Scan(&total); err != nil {
 		return nil, 0, false, err
 	}
 	page := fmt.Sprintf(" AND occurrence_id>$%d ORDER BY occurrence_id LIMIT $%d", len(args)+1, len(args)+2)
-	args = append(args, after, limit+1)
+	args = append(args, storedString(s.postgresSchema != "", after), limit+1)
 	rows, err := tx.QueryContext(ctx, `SELECT occurrence_id,source_id,COALESCE(source_version_id,''),
 		caller_occurrence_ref,caller_revision,caller_filename,caller_person_ref,speaker_label,message_json
 		FROM media_occurrences WHERE `+where+page, args...)
@@ -391,4 +396,17 @@ func (s *Store) MediaOccurrences(
 		return nil, 0, false, err
 	}
 	return result[:min(len(result), limit)], total, len(result) > limit, tx.Commit()
+}
+
+// Hex is a query-parameter representation only: PostgreSQL JSON cannot decode
+// arbitrary identifiers containing NUL. Stored identifiers remain raw bytes.
+func (s *Store) mediaVersionKeys(keys []MediaSourceVersionKey) ([]byte, error) {
+	if s.postgresSchema != "" {
+		encoded := make([]MediaSourceVersionKey, len(keys))
+		for i, key := range keys {
+			encoded[i] = MediaSourceVersionKey{hex.EncodeToString([]byte(key.SourceID)), hex.EncodeToString([]byte(key.SourceVersionID))}
+		}
+		return json.Marshal(encoded)
+	}
+	return json.Marshal(keys)
 }

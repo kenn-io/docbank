@@ -38,16 +38,16 @@ var errDocumentPeopleBuildConflict = fmt.Errorf("document people rebuild operati
 var documentPeopleBuilds = rebuildReceiptTable{
 	table: "document_people_builds", label: "document people rebuild",
 	conflict: errDocumentPeopleBuildConflict, invalid: ErrDocumentPeopleCorrupt,
-	selectSQL: `SELECT operation_id,request_sha256,resolver_fingerprint,state,target_epoch,scanned,published,failed,0,started_at,updated_at,NULLIF(finished_at,'') FROM document_people_builds WHERE operation_id=?`,
-	insertSQL: `INSERT INTO document_people_builds(operation_id,request_sha256,resolver_fingerprint,state,target_epoch,started_at,updated_at,scanned,published,failed,finished_at) VALUES(?,?,?,?,?,?,?,0,0,0,'')`,
+	selectSQL: `SELECT operation_id,request_sha256,resolver_fingerprint,state,target_epoch,scanned,published,failed,0,started_at,updated_at,NULLIF(finished_at,'') FROM document_people_builds WHERE operation_id=$1`,
+	insertSQL: `INSERT INTO document_people_builds(operation_id,request_sha256,resolver_fingerprint,state,target_epoch,started_at,updated_at,scanned,published,failed,finished_at) VALUES($1,$2,$3,$4,$5,$6,$7,0,0,0,'')`,
 	// People count unavailable heads inside failed, so the added unavailable bind is always 0.
-	updateSQL: `UPDATE document_people_builds SET state=?,scanned=?,published=?,failed=?+?,updated_at=?,finished_at=COALESCE(?,'') WHERE operation_id=? AND state='running'`,
+	updateSQL: `UPDATE document_people_builds SET state=$1,scanned=$2,published=$3,failed=CAST($4 AS BIGINT)+$5,updated_at=$6,finished_at=COALESCE($7,'') WHERE operation_id=$8 AND state='running'`,
 	count: func(ctx context.Context, q metadataQuerier, b rebuildReceipt) (rebuildCounts, error) {
 		var c rebuildCounts
 		err := q.QueryRowContext(ctx, `SELECT count(*),
-			COALESCE(sum(CASE WHEN ph.node_revision=n.revision AND ph.event_generation_id=eh.generation_id AND ph.binding_epoch>=? AND ph.resolver_fingerprint=? AND ph.state='published' THEN 1 ELSE 0 END),0),
-			COALESCE(sum(CASE WHEN ph.node_revision=n.revision AND ph.event_generation_id=eh.generation_id AND ph.binding_epoch>=? AND ph.resolver_fingerprint=? AND ph.state IN ('failed','unavailable') THEN 1 ELSE 0 END),0),
-			COALESCE(sum(CASE WHEN ph.node_revision=n.revision AND ph.event_generation_id=eh.generation_id AND ph.binding_epoch>=? AND ph.resolver_fingerprint=? AND ph.state='failed' THEN 1 ELSE 0 END),0)
+			COALESCE(sum(CASE WHEN ph.node_revision=n.revision AND ph.event_generation_id=eh.generation_id AND ph.binding_epoch>=$1 AND ph.resolver_fingerprint=$2 AND ph.state='published' THEN 1 ELSE 0 END),0),
+			COALESCE(sum(CASE WHEN ph.node_revision=n.revision AND ph.event_generation_id=eh.generation_id AND ph.binding_epoch>=$3 AND ph.resolver_fingerprint=$4 AND ph.state IN ('failed','unavailable') THEN 1 ELSE 0 END),0),
+			COALESCE(sum(CASE WHEN ph.node_revision=n.revision AND ph.event_generation_id=eh.generation_id AND ph.binding_epoch>=$5 AND ph.resolver_fingerprint=$6 AND ph.state='failed' THEN 1 ELSE 0 END),0)
 			FROM content_versions cv JOIN nodes n ON n.id=cv.node_id LEFT JOIN document_event_heads eh ON eh.content_version_id=cv.version_id
 			LEFT JOIN document_people_heads ph ON ph.content_version_id=cv.version_id`,
 			b.TargetEpoch, b.DeriverFingerprint, b.TargetEpoch, b.DeriverFingerprint,
@@ -68,7 +68,7 @@ func (s *Store) RebuildDocumentPeople(ctx context.Context, operationID string) (
 	fingerprint := document.PersonResolverFingerprint()
 	b, err := documentPeopleBuilds.start(ctx, s, operationID, documentPeopleRebuildDigest(fingerprint), fingerprint,
 		func(tx *sql.Tx) (epoch int64, err error) {
-			if _, err := tx.ExecContext(ctx, `UPDATE document_people_state SET binding_epoch=binding_epoch+1,resolver_fingerprint=?,updated_at=? WHERE singleton=1`, fingerprint, nowRFC3339()); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE document_people_state SET binding_epoch=binding_epoch+1,resolver_fingerprint=$1,updated_at=$2 WHERE singleton=1`, fingerprint, nowRFC3339()); err != nil {
 				return 0, fmt.Errorf("advancing document people rebuild epoch: %w", err)
 			}
 			if err := tx.QueryRowContext(ctx, `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epoch); err != nil {
@@ -107,7 +107,7 @@ func (s *Store) DocumentPeopleCoverage(ctx context.Context) (DocumentPeopleCover
 	coverage := DocumentPeopleCoverage{
 		ContractVersion: document.PersonContractV1, ResolverFingerprint: document.PersonResolverFingerprint(),
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return coverage, fmt.Errorf("starting document people coverage: %w", err)
 	}
@@ -119,11 +119,11 @@ func (s *Store) DocumentPeopleCoverage(ctx context.Context) (DocumentPeopleCover
 	}
 	var selected int64
 	err = tx.QueryRowContext(ctx, `SELECT count(*),
-		COALESCE(sum(CASE WHEN ph.node_revision=n.revision AND ph.event_generation_id=eh.generation_id AND ph.binding_epoch=? AND ph.resolver_fingerprint=? AND ph.state='published' THEN 1 ELSE 0 END),0),
-		COALESCE(sum(CASE WHEN ph.node_revision=n.revision AND ph.event_generation_id=eh.generation_id AND ph.binding_epoch=? AND ph.resolver_fingerprint=? AND ph.state='failed' THEN 1 ELSE 0 END),0),
-		COALESCE(sum(CASE WHEN ph.node_revision=n.revision AND ph.event_generation_id=eh.generation_id AND ph.binding_epoch=? AND ph.resolver_fingerprint=? AND ph.state='unavailable' THEN 1 ELSE 0 END),0),
-		COALESCE(sum(CASE WHEN ph.node_revision=n.revision AND ph.event_generation_id=eh.generation_id AND ph.binding_epoch=? AND ph.resolver_fingerprint=? THEN ph.unresolved_actors ELSE 0 END),0),
-		COALESCE(sum(CASE WHEN ph.node_revision=n.revision AND ph.event_generation_id=eh.generation_id AND ph.binding_epoch=? AND ph.resolver_fingerprint=? THEN ph.suppressed_actors ELSE 0 END),0)
+		COALESCE(sum(CASE WHEN ph.node_revision=n.revision AND ph.event_generation_id=eh.generation_id AND ph.binding_epoch=$1 AND ph.resolver_fingerprint=$2 AND ph.state='published' THEN 1 ELSE 0 END),0),
+		COALESCE(sum(CASE WHEN ph.node_revision=n.revision AND ph.event_generation_id=eh.generation_id AND ph.binding_epoch=$3 AND ph.resolver_fingerprint=$4 AND ph.state='failed' THEN 1 ELSE 0 END),0),
+		COALESCE(sum(CASE WHEN ph.node_revision=n.revision AND ph.event_generation_id=eh.generation_id AND ph.binding_epoch=$5 AND ph.resolver_fingerprint=$6 AND ph.state='unavailable' THEN 1 ELSE 0 END),0),
+		COALESCE(sum(CASE WHEN ph.node_revision=n.revision AND ph.event_generation_id=eh.generation_id AND ph.binding_epoch=$7 AND ph.resolver_fingerprint=$8 THEN ph.unresolved_actors ELSE 0 END),0),
+		COALESCE(sum(CASE WHEN ph.node_revision=n.revision AND ph.event_generation_id=eh.generation_id AND ph.binding_epoch=$9 AND ph.resolver_fingerprint=$10 THEN ph.suppressed_actors ELSE 0 END),0)
 		FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id LEFT JOIN document_event_heads eh ON eh.content_version_id=cv.version_id
 		LEFT JOIN document_people_heads ph ON ph.content_version_id=cv.version_id WHERE n.kind='file'`,
 		coverage.BindingEpoch, coverage.ResolverFingerprint, coverage.BindingEpoch, coverage.ResolverFingerprint,

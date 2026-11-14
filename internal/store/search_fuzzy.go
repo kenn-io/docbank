@@ -35,7 +35,8 @@ func parseFuzzyQuery(raw string) (fuzzyQuery, error) {
 	if raw == "" {
 		return fuzzyQuery{}, ErrFuzzyQuery
 	}
-	if len(raw) > 256 || !fuzzyASCII(raw) {
+	_, _, phrase := prepareSearch(raw)
+	if phrase || len(raw) > 256 || !fuzzyASCII(raw) {
 		return fuzzyQuery{}, nil
 	}
 	q := fuzzyQuery{rooted: strings.HasPrefix(raw, "/")}

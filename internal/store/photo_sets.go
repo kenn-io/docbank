@@ -86,7 +86,7 @@ func (s *Store) photoSetSummary(ctx context.Context, q metadataQuerier, set Phot
  LEFT JOIN photo_files f ON f.file_id=a.display_file_id
  AND a.excluded_at IS NULL AND `+photoVisibilityPredicate(false)+`
  LEFT JOIN nodes n ON n.id=f.node_id AND `+photoBrowseLiveDisplay+`
- WHERE m.set_id=? AND (a.display_file_id IS NOT NULL OR
+ WHERE m.set_id=$1 AND (a.display_file_id IS NOT NULL OR
  EXISTS (SELECT 1 FROM photo_files member WHERE member.asset_id=m.asset_id))`,
 		set.ID).Scan(&out.MemberCount, &out.IncludedCount); err != nil {
 		return out, err
@@ -95,15 +95,9 @@ func (s *Store) photoSetSummary(ctx context.Context, q metadataQuerier, set Phot
 		return out, nil
 	}
 	var id, generation string
-	coverSQL := `SELECT a.asset_id,g.generation_id,f.rotation FROM photo_set_members m
- CROSS JOIN photo_assets a ON a.asset_id=m.asset_id
- CROSS JOIN photo_files f ON f.file_id=a.display_file_id
- CROSS JOIN nodes n ON n.id=f.node_id
- CROSS JOIN content_versions v ON v.version_id=n.current_version_id
- CROSS JOIN visual_preview_generations g ON g.content_version_id=v.version_id AND g.source_sha256=v.blob_hash
- WHERE m.set_id=? AND ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(false) + ` AND g.recipe_fingerprint=? AND g.state='ready' AND g.output_blob_hash IS NOT NULL`
+	coverSQL := s.photoSetCoverSQL()
 	if set.CoverAssetID != nil {
-		err := q.QueryRowContext(ctx, coverSQL+` AND m.asset_id=?`, set.ID, recipe, *set.CoverAssetID).Scan(&id, &generation, &out.CoverRotation)
+		err := q.QueryRowContext(ctx, coverSQL+` AND m.asset_id=$3`, set.ID, recipe, *set.CoverAssetID).Scan(&id, &generation, &out.CoverRotation)
 		if err == nil {
 			out.EffectiveCoverAssetID, out.CoverGenerationID = &id, &generation
 			return out, nil
@@ -121,6 +115,20 @@ func (s *Store) photoSetSummary(ctx context.Context, q metadataQuerier, set Phot
 		out.CoverGenerationID = &generation
 	}
 	return out, err
+}
+
+func (s *Store) photoSetCoverSQL() string {
+	join := " CROSS JOIN "
+	if s.postgresSchema != "" {
+		join = " JOIN "
+	}
+	return `SELECT a.asset_id,g.generation_id,f.rotation FROM photo_set_members m` + join +
+		`photo_assets a ON a.asset_id=m.asset_id` + join +
+		`photo_files f ON f.file_id=a.display_file_id` + join +
+		`nodes n ON n.id=f.node_id` + join +
+		`content_versions v ON v.version_id=n.current_version_id` + join +
+		`visual_preview_generations g ON g.content_version_id=v.version_id AND g.source_sha256=v.blob_hash
+ WHERE m.set_id=$1 AND ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(false) + ` AND g.recipe_fingerprint=$2 AND g.state='ready' AND g.output_blob_hash IS NOT NULL`
 }
 
 // PhotoSet returns one live album summary using the given grid preview recipe.
@@ -184,11 +192,11 @@ func insertPhotoSet(ctx context.Context, tx *sql.Tx, name string) (PhotoSet, err
 	}
 	now := nowRFC3339()
 	set := PhotoSet{ID: id, Name: name, Revision: 1, CreatedAt: now, UpdatedAt: now}
-	_, err = tx.ExecContext(ctx, `INSERT INTO photo_sets(set_id,name,revision,created_at,updated_at) VALUES(?,?,1,?,?)`, id, name, now, now)
+	_, err = tx.ExecContext(ctx, `INSERT INTO photo_sets(set_id,name,revision,created_at,updated_at) VALUES($1,$2,1,$3,$4)`, id, name, now, now)
 	return set, err
 }
 
-func writePhotoSetReceipts(ctx context.Context, tx *sql.Tx, operation string, before, after PhotoSet, ids []string) error {
+func (s *Store) writePhotoSetReceipts(ctx context.Context, tx *sql.Tx, operation string, before, after PhotoSet, ids []string) error {
 	for offset := 0; ; offset += 256 {
 		end := min(offset+256, len(ids))
 		state := func(set PhotoSet) any {
@@ -197,7 +205,7 @@ func writePhotoSetReceipts(ctx context.Context, tx *sql.Tx, operation string, be
 				AssetIDs []string `json:"asset_ids"`
 			}{set, ids[offset:end]}
 		}
-		if err := writePhotoReceiptTx(ctx, tx, photoReceipt{Operation: operation, SetID: after.ID, BeforeRevision: before.Revision, AfterRevision: after.Revision, Before: state(before), After: state(after)}); err != nil {
+		if err := s.writePhotoReceiptTx(ctx, tx, photoReceipt{Operation: operation, SetID: after.ID, BeforeRevision: before.Revision, AfterRevision: after.Revision, Before: state(before), After: state(after)}); err != nil {
 			return err
 		}
 		if end == len(ids) {
@@ -215,7 +223,7 @@ func (s *Store) CreatePhotoSet(ctx context.Context, name string) (PhotoSet, erro
 		if err != nil {
 			return err
 		}
-		return writePhotoSetReceipts(ctx, tx, "set_create", PhotoSet{}, out, nil)
+		return s.writePhotoSetReceipts(ctx, tx, "set_create", PhotoSet{}, out, nil)
 	})
 	return out, err
 }
@@ -231,13 +239,13 @@ func photoSetForMutation(ctx context.Context, tx *sql.Tx, id string, revision in
 	return set, nil
 }
 
-func commitPhotoSet(ctx context.Context, tx *sql.Tx, before, after PhotoSet, operation string, ids []string) (PhotoSet, error) {
+func (s *Store) commitPhotoSet(ctx context.Context, tx *sql.Tx, before, after PhotoSet, operation string, ids []string) (PhotoSet, error) {
 	after.Revision++
 	after.UpdatedAt = nowRFC3339()
-	if _, err := tx.ExecContext(ctx, `UPDATE photo_sets SET name=?,starred=?,revision=?,cover_asset_id=?,updated_at=?,deleted_at=? WHERE set_id=?`, after.Name, after.Starred, after.Revision, nullablePhotoString(after.CoverAssetID), after.UpdatedAt, nullablePhotoString(after.DeletedAt), after.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE photo_sets SET name=$1,starred=$2,revision=$3,cover_asset_id=$4,updated_at=$5,deleted_at=$6 WHERE set_id=$7`, after.Name, boolInt(after.Starred), after.Revision, nullablePhotoString(after.CoverAssetID), after.UpdatedAt, nullablePhotoString(after.DeletedAt), after.ID); err != nil {
 		return PhotoSet{}, err
 	}
-	return after, writePhotoSetReceipts(ctx, tx, operation, before, after, ids)
+	return after, s.writePhotoSetReceipts(ctx, tx, operation, before, after, ids)
 }
 
 // UpdatePhotoSet applies one album property decision at the expected revision.
@@ -261,7 +269,7 @@ func (s *Store) UpdatePhotoSet(ctx context.Context, id string, revision int64, n
 		if cover != nil {
 			if *cover != nil {
 				var hidden, member bool
-				if err := tx.QueryRowContext(ctx, `SELECT hidden_at IS NOT NULL, EXISTS(SELECT 1 FROM photo_set_members WHERE set_id=? AND asset_id=?) FROM photo_assets WHERE asset_id=?`, id, **cover, **cover).Scan(&hidden, &member); err != nil {
+				if err := tx.QueryRowContext(ctx, `SELECT hidden_at IS NOT NULL, EXISTS(SELECT 1 FROM photo_set_members WHERE set_id=$1 AND asset_id=$2) FROM photo_assets WHERE asset_id=$2`, id, **cover).Scan(&hidden, &member); err != nil {
 					if errors.Is(err, sql.ErrNoRows) {
 						return ErrInvalidPhotoAlbum
 					}
@@ -279,7 +287,7 @@ func (s *Store) UpdatePhotoSet(ctx context.Context, id string, revision int64, n
 			out.CoverAssetID = *cover
 		}
 		if out.Name != before.Name || out.Starred != before.Starred || !equalPhotoOptional(out.CoverAssetID, before.CoverAssetID) {
-			out, err = commitPhotoSet(ctx, tx, before, out, "set_update", nil)
+			out, err = s.commitPhotoSet(ctx, tx, before, out, "set_update", nil)
 			if err != nil {
 				return err
 			}
@@ -302,20 +310,20 @@ func (s *Store) DeletePhotoSet(ctx context.Context, id string, revision int64) (
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_set_members WHERE set_id=?`, id); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_set_members WHERE set_id=$1`, id); err != nil {
 			return err
 		}
 		out = before
 		out.CoverAssetID = nil
 		out.DeletedAt = new(nowRFC3339())
-		out, err = commitPhotoSet(ctx, tx, before, out, "set_delete", ids)
+		out, err = s.commitPhotoSet(ctx, tx, before, out, "set_delete", ids)
 		return err
 	})
 	return out, err
 }
 
 func photoSetMemberIDs(ctx context.Context, q metadataQuerier, id string) ([]string, error) {
-	rows, err := q.QueryContext(ctx, `SELECT asset_id FROM photo_set_members WHERE set_id=? ORDER BY added_at,asset_id`, id)
+	rows, err := q.QueryContext(ctx, `SELECT asset_id FROM photo_set_members WHERE set_id=$1 ORDER BY added_at,asset_id`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -345,17 +353,17 @@ func (s *Store) DuplicatePhotoSet(ctx context.Context, id string, revision int64
 		}
 		out.Starred = before.Starred
 		out.CoverAssetID = before.CoverAssetID
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_sets SET starred=?,cover_asset_id=? WHERE set_id=?`, out.Starred, nullablePhotoString(out.CoverAssetID), out.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_sets SET starred=$1,cover_asset_id=$2 WHERE set_id=$3`, boolInt(out.Starred), nullablePhotoString(out.CoverAssetID), out.ID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_set_members(set_id,asset_id,added_at) SELECT ?,asset_id,added_at FROM photo_set_members WHERE set_id=?`, out.ID, id); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_set_members(set_id,asset_id,added_at) SELECT $1,asset_id,added_at FROM photo_set_members WHERE set_id=$2`, out.ID, id); err != nil {
 			return err
 		}
 		ids, err := photoSetMemberIDs(ctx, tx, out.ID)
 		if err != nil {
 			return err
 		}
-		if err := writePhotoSetReceipts(ctx, tx, "set_duplicate", PhotoSet{}, out, ids); err != nil {
+		if err := s.writePhotoSetReceipts(ctx, tx, "set_duplicate", PhotoSet{}, out, ids); err != nil {
 			return err
 		}
 		out, err = s.photoSetResponse(ctx, tx, out)
@@ -523,7 +531,7 @@ func (s *Store) ChangePhotoSetMembers(ctx context.Context, id string, revision i
 		if err != nil {
 			return err
 		}
-		out, err = changePhotoSetMembersTx(ctx, tx, before, add, ids, nil)
+		out, err = s.changePhotoSetMembersTx(ctx, tx, before, add, ids, nil)
 		if err != nil {
 			return err
 		}
@@ -538,17 +546,17 @@ type photoSetMemberStamp struct {
 	AddedAt string `json:"added_at"`
 }
 
-func changePhotoSetMembersTx(ctx context.Context, tx *sql.Tx, before PhotoSet, add bool, ids []string, stamps []photoSetMemberStamp) (PhotoSet, error) {
+func (s *Store) changePhotoSetMembersTx(ctx context.Context, tx *sql.Tx, before PhotoSet, add bool, ids []string, stamps []photoSetMemberStamp) (PhotoSet, error) {
 	out := before
 	encoded, err := json.Marshal(ids)
 	if err != nil {
 		return PhotoSet{}, err
 	}
-	condition := `EXISTS(SELECT 1 FROM photo_set_members m WHERE m.set_id=? AND m.asset_id=j.value)`
+	condition := `EXISTS(SELECT 1 FROM photo_set_members m WHERE m.set_id=$2 AND m.asset_id=j.value)`
 	if add {
 		condition = `NOT ` + condition
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT j.value FROM json_each(?) j WHERE `+condition+` GROUP BY j.value ORDER BY MIN(j.key)`, string(encoded), before.ID)
+	rows, err := tx.QueryContext(ctx, `SELECT j.value FROM (`+s.jsonArrayRowsSQL()+`) j WHERE `+condition+` GROUP BY j.value ORDER BY MIN(j.position)`, string(encoded), before.ID)
 	if err != nil {
 		return PhotoSet{}, err
 	}
@@ -573,13 +581,18 @@ func changePhotoSetMembersTx(ctx context.Context, tx *sql.Tx, before PhotoSet, a
 			if marshalErr != nil {
 				return PhotoSet{}, marshalErr
 			}
-			_, err = tx.ExecContext(ctx, `INSERT INTO photo_set_members(set_id,asset_id,added_at) SELECT ?,json_extract(member.value,'$.id'),json_extract(member.value,'$.added_at') FROM json_each(?) member WHERE 1 ON CONFLICT(set_id,asset_id) DO NOTHING`, before.ID, string(ordered))
+			d := metadataJSONDialect{postgres: s.postgresSchema != ""}
+			_, err = tx.ExecContext(ctx, `WITH members AS (`+s.jsonArrayRowsSQL()+`)
+ INSERT INTO photo_set_members(set_id,asset_id,added_at) SELECT $2,`+d.text("member.value", "id")+`,`+d.text("member.value", "added_at")+`
+ FROM members member WHERE true ON CONFLICT(set_id,asset_id) DO NOTHING`, string(ordered), before.ID)
 		} else {
 			// SQLite needs a WHERE before ON CONFLICT on INSERT ... SELECT.
-			_, err = tx.ExecContext(ctx, `INSERT INTO photo_set_members(set_id,asset_id,added_at) SELECT ?,value,? FROM json_each(?) WHERE 1 ON CONFLICT(set_id,asset_id) DO NOTHING`, before.ID, nowRFC3339(), string(encoded))
+			_, err = tx.ExecContext(ctx, `WITH members AS (`+s.jsonArrayRowsSQL()+`)
+ INSERT INTO photo_set_members(set_id,asset_id,added_at) SELECT $2,value,$3 FROM members WHERE true ON CONFLICT(set_id,asset_id) DO NOTHING`, string(encoded), before.ID, nowRFC3339())
 		}
 	} else {
-		_, err = tx.ExecContext(ctx, `DELETE FROM photo_set_members WHERE set_id=? AND asset_id IN (SELECT value FROM json_each(?))`, before.ID, string(encoded))
+		_, err = tx.ExecContext(ctx, `WITH members AS (`+s.jsonArrayRowsSQL()+`)
+ DELETE FROM photo_set_members WHERE set_id=$2 AND asset_id IN (SELECT value FROM members)`, string(encoded), before.ID)
 		if out.CoverAssetID != nil && slices.Contains(changed, *out.CoverAssetID) {
 			out.CoverAssetID = nil
 		}
@@ -594,7 +607,7 @@ func changePhotoSetMembersTx(ctx context.Context, tx *sql.Tx, before PhotoSet, a
 	if add {
 		operation = "set_add"
 	}
-	return commitPhotoSet(ctx, tx, before, out, operation, changed)
+	return s.commitPhotoSet(ctx, tx, before, out, operation, changed)
 }
 
 func (s *Store) photoSetResponse(ctx context.Context, q metadataQuerier, set PhotoSet) (PhotoSet, error) {
@@ -617,7 +630,7 @@ func (s *Store) photoSetResponse(ctx context.Context, q metadataQuerier, set Pho
 
 func photoAssetHiddenQuery(ctx context.Context, q metadataQuerier, id string) (bool, error) {
 	var hidden bool
-	err := q.QueryRowContext(ctx, `SELECT hidden_at IS NOT NULL FROM photo_assets WHERE asset_id=?`, id).Scan(&hidden)
+	err := q.QueryRowContext(ctx, `SELECT hidden_at IS NOT NULL FROM photo_assets WHERE asset_id=$1`, id).Scan(&hidden)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, ErrNotFound
 	}

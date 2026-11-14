@@ -20,7 +20,7 @@ startup rules.
 
 ```bash
 docbank daemon status
-docbank daemon start       # optional: data commands do this automatically
+docbank daemon start       # reuse a compatible daemon or start until stopped
 docbank daemon stop        # graceful; does not start a stopped daemon
 ```
 
@@ -103,7 +103,7 @@ docbank update
 ```
 
 An install stops a running daemon, replaces the binary, and starts the new
-daemon. If installation fails, Docbank attempts to restart the old daemon.
+daemon with the same lifetime. If installation fails, Docbank attempts to restart the old daemon.
 `daemon start`, `daemon restart`, and command auto-start also replace a daemon
 whose binary or API protocol is incompatible with the invoking CLI.
 

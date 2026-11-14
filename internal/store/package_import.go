@@ -136,7 +136,7 @@ func validatePackageImportReceipt(receipt PackageImportReceipt) error {
 func loadPackageRecordTx(ctx context.Context, tx metadataQuerier, packageID, rowID string) (PackageRecordRow, error) {
 	var record PackageRecordRow
 	err := tx.QueryRowContext(ctx, `SELECT package_id,row_id,load_file,row_ordinal,occurrence_id,
-		raw_json,raw_sha256,sensitive FROM package_records WHERE package_id=? AND row_id=?`, packageID, rowID).Scan(
+		raw_json,raw_sha256,sensitive FROM package_records WHERE package_id=$1 AND row_id=$2`, packageID, rowID).Scan(
 		&record.PackageID, &record.RowID, &record.LoadFile, &record.RowOrdinal,
 		&record.OccurrenceID, &record.RawJSON, &record.RawSHA256, &record.Sensitive)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -145,11 +145,11 @@ func loadPackageRecordTx(ctx context.Context, tx metadataQuerier, packageID, row
 	return record, err
 }
 
-func loadPackageLabelsTx(ctx context.Context, tx metadataQuerier, packageID, occurrenceID string) ([]PackageLabelRow, error) {
+func loadPackageLabelsTx(ctx context.Context, tx metadataQuerier, packageID, occurrenceID string, postgres bool) ([]PackageLabelRow, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT package_id,provenance,label_set,label,
 		occurrence_id,content_version_id,COALESCE(artifact_id,''),COALESCE(page_number,0),page_state,endpoint
-		FROM package_labels WHERE package_id=? AND occurrence_id=? AND provenance='received'
-		ORDER BY provenance,label_set,label,endpoint,occurrence_id,page_number`, packageID, occurrenceID)
+		FROM package_labels WHERE package_id=$1 AND occurrence_id=$2 AND provenance='received'
+		ORDER BY provenance,label_set,label,endpoint,occurrence_id,page_number`, packageID, storedString(postgres, occurrenceID))
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +171,7 @@ func loadPackageImportHeadTx(ctx context.Context, tx metadataQuerier, packageID,
 	var receipt PackageImportReceipt
 	err := tx.QueryRowContext(ctx, `SELECT r.receipt_id,r.package_id,r.record_key,r.occurrence_id,
 		COALESCE(r.content_version_id,''),r.state,r.receipt_json,r.recorded_at
-		FROM package_import_receipts r WHERE r.package_id=? AND r.record_key=?`, packageID, key).Scan(
+		FROM package_import_receipts r WHERE r.package_id=$1 AND r.record_key=$2`, packageID, key).Scan(
 		&receipt.ReceiptID, &receipt.PackageID, &receipt.RecordKey, &receipt.OccurrenceID,
 		&receipt.ContentVersionID, &receipt.State, &receipt.ReceiptJSON, &receipt.RecordedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -251,7 +251,7 @@ func (s *Store) commitPackageRecord(ctx context.Context, record PackageRecordRow
 			if err != nil {
 				return err
 			}
-			storedLabels, err := loadPackageLabelsTx(ctx, tx, record.PackageID, record.OccurrenceID)
+			storedLabels, err := loadPackageLabelsTx(ctx, tx, record.PackageID, record.OccurrenceID, s.postgresSchema != "")
 			if err != nil {
 				return err
 			}
@@ -278,7 +278,7 @@ func (s *Store) commitPackageRecord(ctx context.Context, record PackageRecordRow
 			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 				SELECT 1 FROM provenance_version_bindings b
 				JOIN provenance p ON p.identity=b.provenance_identity
-				WHERE b.content_version_id=? AND p.ingest_id=?)`, receipt.ContentVersionID, pkg.IngestID).Scan(&bound); err != nil {
+				WHERE b.content_version_id=$1 AND p.ingest_id=$2)`, receipt.ContentVersionID, pkg.IngestID).Scan(&bound); err != nil {
 				return err
 			}
 			if !bound {
@@ -286,17 +286,17 @@ func (s *Store) commitPackageRecord(ctx context.Context, record PackageRecordRow
 			}
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO package_records(package_id,row_id,load_file,row_ordinal,
-			occurrence_id,raw_json,raw_sha256,sensitive) VALUES(?,?,?,?,?,?,?,?)`, record.PackageID,
-			record.RowID, record.LoadFile, record.RowOrdinal, record.OccurrenceID, record.RawJSON,
-			record.RawSHA256, record.Sensitive)
+			occurrence_id,raw_json,raw_sha256,sensitive) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, record.PackageID,
+			record.RowID, storedString(s.postgresSchema != "", record.LoadFile), record.RowOrdinal, storedString(s.postgresSchema != "", record.OccurrenceID), record.RawJSON,
+			record.RawSHA256, boolInt(record.Sensitive))
 		if err != nil {
 			return err
 		}
 		for _, label := range labels {
 			_, err := tx.ExecContext(ctx, `INSERT INTO package_labels(package_id,provenance,label_set,label,
 				occurrence_id,content_version_id,artifact_id,page_number,page_state,endpoint)
-				VALUES(?,?,?,?,?,?,?,?,?,?)`, label.PackageID, label.Provenance, label.LabelSet, label.Label,
-				label.OccurrenceID, label.ContentVersionID, nullableString(label.ArtifactID),
+				VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, label.PackageID, label.Provenance, storedString(s.postgresSchema != "", label.LabelSet), storedString(s.postgresSchema != "", label.Label),
+				storedString(s.postgresSchema != "", label.OccurrenceID), label.ContentVersionID, storedNullableString(s.postgresSchema != "", label.ArtifactID),
 				label.PageNumber, label.PageState, label.Endpoint)
 			if err != nil {
 				return err
@@ -305,10 +305,7 @@ func (s *Store) commitPackageRecord(ctx context.Context, record PackageRecordRow
 		if receipt.RecordedAt == "" {
 			receipt.RecordedAt = nowRFC3339()
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO package_import_receipts(receipt_id,package_id,record_key,
-			occurrence_id,content_version_id,state,receipt_json,recorded_at) VALUES(?,?,?,?,?,?,?,?)`,
-			receipt.ReceiptID, receipt.PackageID, receipt.RecordKey, receipt.OccurrenceID,
-			nullableString(receipt.ContentVersionID), receipt.State, receipt.ReceiptJSON, receipt.RecordedAt)
+		err = insertPackageImportReceiptTx(ctx, tx, receipt, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
@@ -352,13 +349,13 @@ func (s *Store) AssignPackageLabels(ctx context.Context, packageID, occurrenceID
 	}
 	return s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		var boundVersion string
-		if err := tx.QueryRowContext(ctx, `SELECT content_version_id FROM package_import_receipts WHERE package_id=? AND occurrence_id=?`, packageID, occurrenceID).Scan(&boundVersion); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT content_version_id FROM package_import_receipts WHERE package_id=$1 AND occurrence_id=$2`, packageID, storedString(s.postgresSchema != "", occurrenceID)).Scan(&boundVersion); err != nil {
 			return err
 		}
 		if boundVersion != contentVersionID {
 			return ErrPackageConflict
 		}
-		existing, err := loadAssignedPackageLabels(ctx, tx, packageID, occurrenceID)
+		existing, err := loadAssignedPackageLabels(ctx, tx, packageID, occurrenceID, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
@@ -371,8 +368,8 @@ func (s *Store) AssignPackageLabels(ctx context.Context, packageID, occurrenceID
 		for _, label := range labels {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO package_labels(package_id,provenance,label_set,label,
 				occurrence_id,content_version_id,artifact_id,page_number,page_state,endpoint)
-				VALUES(?,?,?,?,?,?,?,?,?,?)`, label.PackageID, label.Provenance, label.LabelSet, label.Label,
-				label.OccurrenceID, label.ContentVersionID, nullableString(label.ArtifactID),
+				VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, label.PackageID, label.Provenance, storedString(s.postgresSchema != "", label.LabelSet), storedString(s.postgresSchema != "", label.Label),
+				storedString(s.postgresSchema != "", label.OccurrenceID), label.ContentVersionID, storedNullableString(s.postgresSchema != "", label.ArtifactID),
 				label.PageNumber, label.PageState, label.Endpoint); err != nil {
 				return err
 			}
@@ -381,11 +378,11 @@ func (s *Store) AssignPackageLabels(ctx context.Context, packageID, occurrenceID
 	})
 }
 
-func loadAssignedPackageLabels(ctx context.Context, q metadataQuerier, packageID, occurrenceID string) ([]PackageLabelRow, error) {
+func loadAssignedPackageLabels(ctx context.Context, q metadataQuerier, packageID, occurrenceID string, postgres bool) ([]PackageLabelRow, error) {
 	rows, err := q.QueryContext(ctx, `SELECT package_id,provenance,label_set,label,
 		occurrence_id,content_version_id,COALESCE(artifact_id,''),COALESCE(page_number,0),page_state,endpoint
-		FROM package_labels WHERE package_id=? AND occurrence_id=? AND provenance='assigned'
-		ORDER BY provenance,label_set,label,endpoint,occurrence_id,page_number`, packageID, occurrenceID)
+		FROM package_labels WHERE package_id=$1 AND occurrence_id=$2 AND provenance='assigned'
+		ORDER BY provenance,label_set,label,endpoint,occurrence_id,page_number`, packageID, storedString(postgres, occurrenceID))
 	if err != nil {
 		return nil, err
 	}
@@ -426,9 +423,9 @@ func (s *Store) LookupPackageLabel(ctx context.Context, label, packageID, labelS
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT package_id,provenance,label_set,label,
 		occurrence_id,content_version_id,COALESCE(artifact_id,''),COALESCE(page_number,0),page_state,endpoint
-		FROM package_labels WHERE label=? AND (?='' OR package_id=?) AND (?='' OR label_set=?)
-		AND (?='' OR provenance=?) ORDER BY package_id,occurrence_id,artifact_id,page_number,endpoint LIMIT 251`,
-		label, packageID, packageID, labelSet, labelSet, provenance, provenance)
+		FROM package_labels WHERE label=$1 AND ($2='' OR package_id=$3) AND ($4 OR label_set=$5)
+		AND ($6='' OR provenance=$7) ORDER BY package_id,occurrence_id,COALESCE(artifact_id,''),page_number,endpoint LIMIT 251`,
+		storedString(s.postgresSchema != "", label), packageID, packageID, labelSet == "", storedString(s.postgresSchema != "", labelSet), provenance, provenance)
 	if err != nil {
 		return nil, err
 	}
@@ -463,4 +460,19 @@ func (s *Store) LookupPackageLabel(ctx context.Context, label, packageID, labelS
 		return nil, fmt.Errorf("%w: packages %s", ErrAmbiguousLabel, strings.Join(packages, ","))
 	}
 	return labels, nil
+}
+
+func insertPackageImportReceiptTx(ctx context.Context, tx *sql.Tx, receipt PackageImportReceipt, postgres bool) error {
+	columns, values := "", ""
+	args := []any{receipt.ReceiptID, receipt.PackageID, receipt.RecordKey, storedString(postgres, receipt.OccurrenceID), nullableString(receipt.ContentVersionID), receipt.State, receipt.ReceiptJSON, receipt.RecordedAt}
+	if postgres {
+		lookup, err := packageImportQueryJSON(receipt.ReceiptJSON)
+		if err != nil {
+			return err
+		}
+		columns, values = ",query_json", ",$9"
+		args = append(args, lookup)
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO package_import_receipts(receipt_id,package_id,record_key,occurrence_id,content_version_id,state,receipt_json,recorded_at`+columns+`) VALUES($1,$2,$3,$4,$5,$6,$7,$8`+values+`)`, args...)
+	return err
 }

@@ -906,8 +906,7 @@ func TestBridgeContractInterruptsBlockedUploadAfterRequestTimeout(t *testing.T) 
 			assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerError.Code())
 		default:
 			_ = sourceReader.CloseWithError(errors.New("release blocked test upload"))
-			<-done
-			t.Fatal("bridge request timeout did not interrupt the blocked upload")
+			t.Fatalf("bridge request timeout did not interrupt the blocked upload; Render returned %v after its release", <-done)
 		}
 		select {
 		case <-drainDone:

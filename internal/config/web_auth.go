@@ -107,6 +107,9 @@ func browserParsesAsIPv4(host string) bool {
 
 func validateWebConfig(c Config) error {
 	w := c.Web
+	if err := ValidateWebBasePath(w.BasePath); err != nil {
+		return err
+	}
 	for _, host := range w.AllowedHosts {
 		if _, err := WebHostAuthority(host); err != nil {
 			return err
@@ -135,6 +138,33 @@ func validateWebConfig(c Config) error {
 	u, _ := url.Parse(origin)
 	if u.Scheme == "http" && !isLoopbackHost(u.Hostname()) && !w.TrustPrivateNetwork {
 		return errors.New("[web] non-loopback HTTP public_origin requires trust_private_network = true or HTTPS")
+	}
+	return nil
+}
+
+// ValidateWebBasePath keeps the mount unambiguous before HTTP routing or URL decoding.
+func ValidateWebBasePath(value string) error {
+	if value == "" {
+		return nil
+	}
+	invalid := errors.New("[web] base_path must be an absolute path of URL-safe segments without a trailing slash or reserved API prefix")
+	if !strings.HasPrefix(value, "/") {
+		return invalid
+	}
+	segments := strings.Split(value[1:], "/")
+	for _, segment := range segments {
+		if segment == "" || segment == "." || segment == ".." {
+			return invalid
+		}
+		for _, ch := range segment {
+			if (ch < 'a' || ch > 'z') && (ch < 'A' || ch > 'Z') && (ch < '0' || ch > '9') && !strings.ContainsRune("-._~", ch) {
+				return invalid
+			}
+		}
+	}
+	switch segments[0] {
+	case "api", "health", "docs", "openapi.json", "openapi.yaml", "schemas", "mcp", ".well-known":
+		return invalid
 	}
 	return nil
 }

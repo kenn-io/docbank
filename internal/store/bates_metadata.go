@@ -54,7 +54,7 @@ type metadataBatesPageLabelRecord struct {
 	Ordinal      int    `json:"ordinal" db:"ordinal"`
 	NamespaceID  string `json:"namespace_id" db:"namespace_id"`
 	Sequence     int64  `json:"sequence" db:"sequence"`
-	OccurrenceID string `json:"occurrence_id" db:"occurrence_id"`
+	OccurrenceID string `json:"occurrence_id" db:"occurrence_id,bytes"`
 	SourcePage   int    `json:"source_page" db:"source_page"`
 	OutputPage   int    `json:"output_page" db:"output_page"`
 	Label        string `json:"label" db:"label"`
@@ -76,7 +76,7 @@ type metadataBatesArtifactPageRecord struct {
 	Type             string `json:"type"`
 	ArtifactID       string `json:"artifact_id" db:"artifact_id"`
 	Ordinal          int    `json:"ordinal" db:"ordinal"`
-	OccurrenceID     string `json:"occurrence_id" db:"occurrence_id"`
+	OccurrenceID     string `json:"occurrence_id" db:"occurrence_id,bytes"`
 	SourceBlobSHA256 string `json:"source_blob_sha256" db:"source_blob_sha256"`
 	SourcePage       int    `json:"source_page" db:"source_page"`
 	OutputPage       int    `json:"output_page" db:"output_page"`

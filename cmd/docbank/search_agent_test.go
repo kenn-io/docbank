@@ -101,8 +101,8 @@ func TestSearchAgentSimilarUnavailable(t *testing.T) {
 	cmd, out := processingTestCommand()
 	report := api.DocumentSimilarReport{State: "unavailable", Source: api.DocumentSimilarSource{NodeID: 42, ContentVersionID: processingTestVersionID}, BindingID: "semantic",
 		MissingCoverage: &api.DocumentMissingCoverage{Kind: "embedding", BindingID: "semantic", ProfileFingerprint: strings.Repeat("a", 64), ContentVersionID: processingTestVersionID}, Coverage: api.DocumentSearchCoverage{State: "unknown"}}
-	require.NoError(t, writeSimilarSearchAgent(cmd, report))
-	assert.Equal(t, "OK search count=0 query=id:42 mode=semantic degraded=embedding_unavailable truncated=false coverage=unknown complete=0 scoped=0\n", out.String())
+	require.NoError(t, writeSimilarSearchAgent(cmd, report, "docbank processing plan id:42 --profile private"))
+	assert.Equal(t, "OK search count=0 query=id:42 mode=semantic degraded=embedding_unavailable truncated=false coverage=unknown complete=0 scoped=0 next=\"docbank processing plan id:42 --profile private\"\n", out.String())
 }
 
 func FuzzSearchAgentReportLines(f *testing.F) {

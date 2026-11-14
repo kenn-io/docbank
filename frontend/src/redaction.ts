@@ -1,5 +1,6 @@
 import { APIError, sessionJSON, sessionResponse } from "./api-transport.js";
 import { decodePageFrame, pageDigest, type PageBinding } from "./pages.js";
+import { checkMaskBudget } from "./pdfTextSelection.js";
 import type {
   PDFRedactionBox,
   PDFRedactionPage,
@@ -268,8 +269,31 @@ export function decodeExpansion(
   );
   const ids = array(o.decision_ids, 1);
   requireRedaction(ids.length === 1 && masks.some((m) => m.id === ids[0]));
+  const original = masks.find((m) => m.id === ids[0])!;
+  let textBytes: Uint8Array | undefined;
+  const textSpan = (value: unknown) => {
+    const bytes = (textBytes ??= new TextEncoder().encode(prep.map.text));
+    span(value, bytes.length);
+    const s = value as { start: number; end: number };
+    const p = prep.map.pages.find((p) => s.start >= p.span.start && s.end <= p.span.end);
+    requireRedaction(s.start < s.end && p);
+    new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(s.start, s.end));
+    if (original.selector.kind === "text") {
+      const source = original.selector.span!;
+      requireRedaction(source.start >= p.span.start && source.end <= p.span.end);
+    }
+    return s;
+  };
+  let expanded = o.expanded;
+  if (expanded === null) {
+    requireRedaction(original.selector.kind === "text");
+    const spans = array(o.expanded_spans, 1024).map(textSpan);
+    const source = original.selector.span!;
+    requireRedaction(spans.some((s) => s.start <= source.start && s.end >= source.end));
+    expanded = { kind: "rectangle", map_sha256: prep.map.sha256, boxes: o.expanded_boxes };
+  }
   const selector = redactionObject(
-    o.expanded,
+    expanded,
     ["kind", "map_sha256"],
     ["boxes", "pages", "span", "unit_id"],
   );
@@ -281,6 +305,17 @@ export function decodeExpansion(
     requireRedaction(
       selector.pages === undefined && selector.span === undefined && selector.unit_id === undefined,
     );
+  } else if (selector.kind === "text") {
+    const s = textSpan(selector.span);
+    if (original.selector.kind === "text")
+      requireRedaction(
+        s.start <= original.selector.span!.start && s.end >= original.selector.span!.end,
+      );
+    requireRedaction(
+      selector.boxes === undefined &&
+        selector.pages === undefined &&
+        selector.unit_id === undefined,
+    );
   } else if (selector.kind === "page") {
     const pages = array(selector.pages, 16);
     requireRedaction(pages.length > 0);
@@ -289,7 +324,9 @@ export function decodeExpansion(
       selector.boxes === undefined && selector.span === undefined && selector.unit_id === undefined,
     );
   } else requireRedaction(false);
-  return { id: ids[0] as string, selector: selector as unknown as PDFRedactionSelector };
+  const result = { id: ids[0] as string, selector: selector as unknown as PDFRedactionSelector };
+  checkMaskBudget(masks.map((m) => (m.id === result.id ? result : m)));
+  return result;
 }
 
 export async function prepareRedaction(

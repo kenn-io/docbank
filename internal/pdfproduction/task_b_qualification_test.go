@@ -198,7 +198,7 @@ func taskBRotatedCroppedSource(t *testing.T) []byte {
 	configuration := model.NewDefaultConfiguration()
 	configuration.Offline = true
 	var rotated bytes.Buffer
-	require.NoError(t, api.Rotate(bytes.NewReader(unrotated.Bytes()), &rotated, 90, nil, configuration))
+	require.NoError(t, api.Rotate(t.Context(), bytes.NewReader(unrotated.Bytes()), &rotated, 90, nil, configuration))
 	require.Contains(t, rotated.String(), canary)
 	return rotated.Bytes()
 }

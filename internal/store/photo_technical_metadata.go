@@ -69,11 +69,21 @@ var (
 )
 
 // columnValues returns the fields in column order for SQL arguments.
-func (f *PhotoTechnicalFields) columnValues() []any {
+func (f *PhotoTechnicalFields) columnValues(postgres bool) []any {
 	value := reflect.ValueOf(f).Elem()
 	values := make([]any, value.NumField())
 	for i := range values {
-		values[i] = value.Field(i).Interface()
+		field := value.Field(i)
+		values[i] = field.Interface()
+		if postgres && field.Type() == reflect.TypeFor[*string]() {
+			switch photoTechnicalColumns[i] {
+			case "camera_make", "camera_model", "body_serial_number", "lens_make", "lens_model", "capture_time_raw", "location_label":
+				values[i] = nil
+				if !field.IsNil() {
+					values[i] = []byte(field.Elem().String())
+				}
+			}
+		}
 	}
 	return values
 }
@@ -288,7 +298,7 @@ func photoTechnicalFieldsForMetadata(metadata document.SourceMetadataV1) (PhotoT
 
 // insertPhotoTechnicalMetadataTx records a projection that has at least one
 // fact. Generations without photo facts, such as PDFs and email, get no row.
-func insertPhotoTechnicalMetadataTx(
+func (s *Store) insertPhotoTechnicalMetadataTx(
 	ctx context.Context, tx *sql.Tx, generationID string, fields PhotoTechnicalFields,
 ) (bool, error) {
 	if fields.empty() {
@@ -310,9 +320,9 @@ func insertPhotoTechnicalMetadataTx(
 		if label != nil {
 			folded = fold.String(*label)
 		}
-		args = append(args, folded)
+		args = append(args, storedString(s.postgresSchema != "", folded))
 	}
-	result, err := tx.ExecContext(ctx, photoTechnicalInsert, append(args, fields.columnValues()...)...)
+	result, err := tx.ExecContext(ctx, photoTechnicalInsert, append(args, fields.columnValues(s.postgresSchema != "")...)...)
 	if err != nil {
 		return false, err
 	}
@@ -439,7 +449,7 @@ func (s *Store) refreshPhotoTechnicalMetadataTx(ctx context.Context, tx *sql.Tx)
 			if err != nil {
 				return err
 			}
-			if _, err := insertPhotoTechnicalMetadataTx(ctx, tx, generationID, fields); err != nil {
+			if _, err := s.insertPhotoTechnicalMetadataTx(ctx, tx, generationID, fields); err != nil {
 				return err
 			}
 		}

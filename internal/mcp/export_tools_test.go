@@ -170,6 +170,7 @@ type nativeExportFixture struct {
 	blobs        *blob.Store
 	worker       *exporter.Worker
 	connection   *daemonconn.Connection
+	address      string
 	lease        *daemonLease
 	handler      http.Handler
 	contentBytes chan int
@@ -208,6 +209,7 @@ func newNativeExportFixture(t *testing.T) *nativeExportFixture {
 	connection := daemonconn.New(httpServer.URL, cfg.Server.APIKey)
 	t.Cleanup(func() { require.NoError(t, connection.Close()) })
 	fixture.connection = connection
+	fixture.address = httpServer.URL
 	fixture.lease = exportTestLease(t, httpServer.URL)
 	return fixture
 }

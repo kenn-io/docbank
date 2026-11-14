@@ -6,6 +6,18 @@ import "strings"
 // Expressions and paths are fixed SQL from those checks, never caller input.
 type metadataJSONDialect struct{ postgres bool }
 
+// Receipt lookups explicitly select their backend's derived query document.
+func (d metadataJSONDialect) receiptColumn(alias string) string {
+	column := "after_json"
+	if d.postgres {
+		column = "query_json"
+	}
+	if alias != "" {
+		return alias + "." + column
+	}
+	return column
+}
+
 func (d metadataJSONDialect) text(expression, path string) string {
 	if d.postgres {
 		return "(" + expression + "::jsonb #>> '{" + strings.ReplaceAll(path, ".", ",") + "}')"
@@ -29,7 +41,7 @@ func (d metadataJSONDialect) number(expression, path string) string {
 }
 
 func (d metadataJSONDialect) receiptArray(path string) string {
-	const expression = "r.after_json"
+	expression := d.receiptColumn("r")
 	if d.postgres {
 		return "jsonb_array_elements(" + expression + "::jsonb #> '{" + strings.ReplaceAll(path, ".", ",") + "}')"
 	}
@@ -60,5 +72,17 @@ func (d metadataJSONDialect) arrayValues(parameter string) string {
 
 // originalFileWaiter excludes jobs that disclose a derived photo artifact.
 func (d metadataJSONDialect) originalFileWaiter() string {
+	if d.postgres {
+		return `NOT EXISTS(SELECT 1 FROM json_array_elements(w.input_classes_json::json) AS items(value) WHERE value::text='"derived_upload"')`
+	}
 	return "NOT EXISTS(SELECT 1 FROM " + d.arrayValues("w.input_classes_json") + " WHERE value='derived_upload')"
+}
+
+// byteText reads hex-encoded request identifiers; persisted JSON stays unchanged.
+func (d metadataJSONDialect) byteText(path string) string {
+	text := d.text("value", path)
+	if d.postgres {
+		return "decode(" + text + ",'hex')"
+	}
+	return text
 }

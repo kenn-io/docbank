@@ -65,10 +65,10 @@ func TestMetadataTableCodec(t *testing.T) {
 		`{"type":"scratch_record","name":"b","note":null,"count":null,"kind":"k","enabled":false,"tags":[ "z", "a" ],"raw":{"b":1, "a":2},"blob":"x","state":"template"}`,
 		`{"type":"scratch_record","name":"a","note":"n","count":7,"kind":"k","enabled":true,"tags":[],"raw":[1],"blob":{"k":1},"state":"template"}`,
 	} {
-		require.NoError(t, table.importRecord(ctx, tx, jsontext.Value(line)))
+		require.NoError(t, table.importRecord(ctx, tx, jsontext.Value(line), false))
 	}
 	require.EqualError(t, table.importRecord(ctx, tx, jsontext.Value(
-		`{"type":"scratch_record","name":"rejected","note":null,"count":null,"kind":"k","enabled":false,"tags":[],"raw":1,"blob":1,"state":"template"}`)),
+		`{"type":"scratch_record","name":"rejected","note":null,"count":null,"kind":"k","enabled":false,"tags":[],"raw":1,"blob":1,"state":"template"}`), false),
 		"rejected scratch")
 	require.NoError(t, tx.Commit())
 

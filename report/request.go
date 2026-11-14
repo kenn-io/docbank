@@ -47,7 +47,7 @@ func NormalizeRequest(r Request) (Request, error) {
 		return Request{}, errors.New("select all documents, collections, or exact documents")
 	}
 	if r.SelectedDocuments != nil {
-		selected, err := normalizeSelectedDocuments(r.SelectedDocuments.Documents)
+		selected, err := NormalizeSelectedDocuments(r.SelectedDocuments.Documents)
 		if err != nil {
 			return Request{}, err
 		}
@@ -124,7 +124,8 @@ func NormalizeRequest(r Request) (Request, error) {
 	return r, nil
 }
 
-func normalizeSelectedDocuments(documents []Identity) (*SelectedDocuments, error) {
+// NormalizeSelectedDocuments validates and orders exact document identities.
+func NormalizeSelectedDocuments(documents []Identity) (*SelectedDocuments, error) {
 	if len(documents) > 50000 {
 		return nil, fmt.Errorf("%w: too many selected documents", ErrReportLimit)
 	}

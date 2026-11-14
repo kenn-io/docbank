@@ -16,13 +16,14 @@ var renditionCmd = &cobra.Command{
 profile (see docbank processing). window reads a bounded slice and prints the
 next-page command; get prints a whole verified rendition by attachment ID
 (from window --json).
-Requires: PDF/Office text needs a configured processing profile first; the
-default daemon's supplied-captions and supplied-transcript do not convert
-documents. List available profiles with "docbank processing profiles".`,
-	GroupID: groupSearch,
-	Use:     "rendition",
-	Short:   "Read retained document renditions",
-	Args:    cobra.NoArgs,
+PDF text is indexed locally by the built-in docbank-pdf-text profile.
+Office text and OCR need a configured processing profile.
+List available profiles with "docbank processing profiles".`,
+	GroupID:     groupSearch,
+	Use:         "rendition",
+	Short:       "Read retained document renditions",
+	Args:        cobra.NoArgs,
+	Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker},
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		return cmd.Help()
 	},

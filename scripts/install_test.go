@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"golang.org/x/mod/modfile"
 )
 
 type installerFixture struct {
@@ -148,11 +151,43 @@ func TestReleaseNoticesIdentifyDistributedDependencies(t *testing.T) {
 	}
 	// Git may check this text file out with CRLF on Windows.
 	notice = bytes.ReplaceAll(notice, []byte("\r\n"), []byte("\n"))
+	// Versions come from the build and the qualified-asset record, so a
+	// dependency update fails here until NOTICE names what ships.
+	goMod, err := os.ReadFile("../go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	module, err := modfile.ParseLax("go.mod", goMod, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	required := make(map[string]string, len(module.Require))
+	for _, requirement := range module.Require {
+		required[requirement.Mod.Path] = requirement.Mod.Version
+	}
+	record, err := os.ReadFile("../internal/pdfproduction/dependencies.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var assets struct {
+		WASM struct {
+			PDFiumVersion string `json:"pdfium_version"`
+		} `json:"wasm"`
+	}
+	if err := json.Unmarshal(record, &assets); err != nil {
+		t.Fatal(err)
+	}
+	goPDFium := required["github.com/klippa-app/go-pdfium"]
+	wazero := required["github.com/tetratelabs/wazero"]
+	if goPDFium == "" || wazero == "" || assets.WASM.PDFiumVersion == "" {
+		t.Fatalf("go.mod or dependencies.json lacks a distributed dependency: go-pdfium=%q wazero=%q pdfium=%q",
+			goPDFium, wazero, assets.WASM.PDFiumVersion)
+	}
 	ordered := [][]byte{
-		[]byte("go-pdfium v1.20.0\n\nMIT License\n\nCopyright (c) 2022 Klippa App BV"),
-		[]byte("wazero v1.12.0\n\nwazero\nCopyright 2020-2023 wazero authors"),
+		[]byte("go-pdfium " + goPDFium + "\n\nMIT License\n\nCopyright (c) 2022 Klippa App BV"),
+		[]byte("wazero " + wazero + "\n\nwazero\nCopyright 2020-2023 wazero authors"),
 		[]byte("The complete Apache License 2.0 terms for wazero are provided in the bundled root LICENSE."),
-		[]byte("PDFium Chromium 8044 and third-party notices"),
+		[]byte("PDFium " + assets.WASM.PDFiumVersion + " and third-party notices"),
 	}
 	position := 0
 	for _, fragment := range ordered {

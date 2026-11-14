@@ -635,8 +635,8 @@ func TestDaemonStartsConfiguredRenditionWorker(t *testing.T) {
 	require.NoError(t, err)
 	var coverage api.FormatCoverageResponse
 	require.NoError(t, json.Unmarshal([]byte(out), &coverage))
-	// The daemon also registers its two built-in supplied media providers.
-	assert.Len(t, coverage.GeneratedBy.BoundProviders, 3)
+	// The daemon also registers PDF text and two supplied media providers.
+	assert.Len(t, coverage.GeneratedBy.BoundProviders, 4)
 	assert.Contains(t, coverage.GeneratedBy.BoundProviders, provider.Descriptor().Fingerprint)
 
 	jobs, err := c.API().ListJobs(t.Context())

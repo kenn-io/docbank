@@ -96,3 +96,20 @@ func TestCollectionQualityHTTPRejectsUnknownInputsAndMissingAuth(t *testing.T) {
 	resp, body := get(t, ts, base+"/quality", map[string]string{"X-Api-Key": ""})
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, body)
 }
+
+func TestCollectionQualityKeepsAutomaticPDFProfileUnconfigured(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, func(d *api.Deps) { configureAutomaticPDFText(t, d) })
+	imported := importCollection(t, ts.URL, ts.Client(), "manual.txt", "synthetic manual", nil)
+	resp, body := get(t, ts, "/api/v1/collections/"+imported.IngestID+"/quality", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var quality struct {
+		Collection struct {
+			Coverage api.ProcessingCoverage `json:"coverage"`
+		} `json:"collection"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &quality))
+	require.Equal(t, "unconfigured", quality.Collection.Coverage.Configuration)
+	require.Empty(t, quality.Collection.Coverage.Profile)
+	require.Nil(t, quality.Collection.Coverage.Counts)
+}

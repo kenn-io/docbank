@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-31
+last_edited: 2026-11-10
 title: Cite documents in Kata
 description: Quote verified document passages into Kata issues and reopen their evidence with current source status.
 ---
@@ -13,11 +13,13 @@ Files imported through any Docbank ingestion path can supply evidence.
 
 ## Connect Kata
 
-Kata API schemas 0.21.0 through 0.31.x are supported. Other versions are rejected before any write.
+Kata API schemas at or above 0.21.0 within major version 0 are supported.
+Older schemas and newer major versions are rejected before any write.
 `GET /api/v1/health` reports it as `api_schema_version`, separate from the Kata release number.
-Kata v0.18.0 reports schema 0.21.0, v0.19.0 reports 0.28.0, and v0.20.0
-reports 0.31.0. All three meet the requirement. Docbank checks it only when you
-use this integration.
+Kata v0.18.0 reports schema 0.21.0, v0.19.0 reports 0.28.0, v0.20.0 reports
+0.31.0, v0.21.0 reports 0.40.0, v0.22.0 reports 0.41.0, and v0.23.0 reports
+0.43.0. All meet the requirement. Docbank checks it only when you use this
+integration.
 
 Add this optional section to `$DOCBANK_HOME/config.toml`:
 
@@ -37,8 +39,17 @@ Kata rejects requests carrying this token. Alternatively, replace `api_key_env` 
 configuration are rejected. Key files must be regular, private files owned by the daemon user and at most
 4,096 bytes; credentials are read when an operation runs.
 
-The endpoint accepts HTTPS or loopback HTTP. Remote plain HTTP, credentials
-in the URL, query strings, fragments and endpoint path prefixes are rejected.
+The endpoint accepts HTTPS or loopback HTTP by default. To connect over a
+private container network, set `endpoint = "http://kata:7777"` and
+`trust_private_network = true` in this section. This opt-in also permits private,
+link-local, unspecified and carrier-grade NAT IP addresses. Public IP literals
+remain rejected over plain HTTP. DNS names are accepted on your statement that
+their network is trusted. HTTP sends the token and document evidence in plaintext,
+so enable this only on a network you trust. The setting defaults to `false` and
+is independent of `[web]` trust.
+
+Credentials in the URL, query strings, fragments and endpoint path prefixes
+are rejected, and redirects are refused even with the opt-in.
 The integration is off by default. Only Kata operations validate this section;
 an invalid field or missing credential does not prevent ordinary vault work.
 Restart an existing daemon after changing its connection configuration.

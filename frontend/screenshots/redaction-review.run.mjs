@@ -88,11 +88,16 @@ try {
           "frontend/node_modules/@playwright/test/cli.js",
           "test",
           "redaction-review.screenshot.ts",
+          "redaction-text.screenshot.ts",
+          "redaction-numbered.screenshot.ts",
           "document-reader.screenshot.ts",
           "--config",
           "frontend/screenshots/playwright.config.ts",
           "--project",
           "chromium",
+          // The run requires flaky: 0, so a retry could only hide the first failure.
+          "--retries",
+          "0",
           "--reporter",
           "line,json",
         ],
@@ -101,13 +106,21 @@ try {
       );
       const result = JSON.parse(await readFile(report, "utf8"));
       assert.equal(result.errors.length, 0, `${mode} runner errors`);
+      const specs = (suites) =>
+        suites.flatMap((suite) => [...(suite.specs ?? []), ...specs(suite.suites ?? [])]);
+      const recipient = specs(result.suites).filter(
+        (spec) =>
+          spec.title === "downloads recipient ZIPs for completed reviews and imports their numbers",
+      );
+      assert.equal(recipient.length, 1, `${mode} must include recipient handoff`);
+      assert.equal(recipient[0].ok, true, `${mode} recipient handoff must pass`);
       const { expected, unexpected, flaky, skipped } = result.stats;
       assert.deepEqual(
         { expected, unexpected, flaky, skipped },
-        { expected: 8, unexpected: 0, flaky: 0, skipped: 0 },
-        `${mode} must execute eight passing cases`,
+        { expected: 10, unexpected: 0, flaky: 0, skipped: 0 },
+        `${mode} must execute ten passing cases`,
       );
-      console.log(`${mode}: executed=8 passed=8 skipped=0 failed=0`);
+      console.log(`${mode}: executed=10 passed=10 skipped=0 failed=0`);
     } catch (error) {
       failures.push(mode);
       keepScratch = true;

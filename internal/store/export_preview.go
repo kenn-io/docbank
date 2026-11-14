@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 
 	"go.kenn.io/docbank/document/bundle"
 )
@@ -15,7 +16,17 @@ func (s *Store) ExportPlanPreview(ctx context.Context, owner, id string) (bundle
 	if owner == "" || validateUUIDv4(id) != nil {
 		return out, bundle.ErrConflict
 	}
-	p, err := s.ExportPlan(ctx, owner, id)
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		out, err = exportPlanPreview(ctx, tx, owner, id)
+		return err
+	})
+	return out, err
+}
+
+func exportPlanPreview(ctx context.Context, q metadataQuerier, owner, id string) (bundle.PlanPreview, error) {
+	var out bundle.PlanPreview
+	p, err := loadExportPlanForOwner(ctx, q, owner, id)
 	if err != nil {
 		return out, err
 	}
@@ -45,7 +56,7 @@ func (s *Store) ExportPlanPreview(ctx context.Context, owner, id string) (bundle
 			}
 		}
 	}
-	err = s.WalkExportDocuments(ctx, id, func(d bundle.Document) error {
+	err = walkExportDocuments(ctx, q, id, func(d bundle.Document) error {
 		if err := validator.Add(d); err != nil {
 			return err
 		}

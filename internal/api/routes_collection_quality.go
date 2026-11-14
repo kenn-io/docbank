@@ -10,6 +10,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -19,7 +20,8 @@ type collectionProfileSelection struct {
 	Coverage store.CoverageSelection
 }
 
-func selectCollectionProfile(cfg config.Config, name string) (collectionProfileSelection, error) {
+func selectCollectionProfile(d Deps, name string, builtin bool) (collectionProfileSelection, error) {
+	cfg := d.Cfg
 	selected := collectionProfileSelection{Names: []string{}, Coverage: store.CoverageSelection{Configuration: "unconfigured"}}
 	if len(cfg.ProcessingProfiles) > 64 {
 		return selected, NewError(http.StatusServiceUnavailable, "processing_unavailable", "Too many processing profiles to inspect.")
@@ -28,6 +30,18 @@ func selectCollectionProfile(cfg config.Config, name string) (collectionProfileS
 		selected.Names = append(selected.Names, key)
 	}
 	sort.Strings(selected.Names)
+	if d.Processing != nil && (name != "" || builtin && len(selected.Names) == 0) {
+		for _, profile := range d.Processing.Profiles() {
+			if profile.Name == processing.PDFTextProfileName && (profile.Name == name || name == "") {
+				selected.Name = profile.Name
+				selected.Coverage = store.CoverageSelection{Configuration: "configured", ProfileFingerprint: profile.Fingerprint}
+				if len(selected.Names) == 0 {
+					selected.Names = []string{profile.Name}
+				}
+				return selected, nil
+			}
+		}
+	}
 	if name == "" {
 		switch len(selected.Names) {
 		case 0:
@@ -42,17 +56,25 @@ func selectCollectionProfile(cfg config.Config, name string) (collectionProfileS
 	if _, ok := cfg.ProcessingProfiles[name]; !ok {
 		return selected, NewError(http.StatusUnprocessableEntity, "invalid_profile", "Unknown processing profile.")
 	}
+	fingerprint, err := configuredProfileFingerprint(cfg, name)
+	if err != nil {
+		return selected, err
+	}
+	selected.Name = name
+	selected.Coverage = store.CoverageSelection{Configuration: "configured", ProfileFingerprint: fingerprint}
+	return selected, nil
+}
+
+func configuredProfileFingerprint(cfg config.Config, name string) (string, error) {
 	resolved, err := cfg.ProcessingProfile(name)
 	if err != nil {
-		return selected, NewError(http.StatusInternalServerError, "processing_configuration", "The selected processing profile is invalid.")
+		return "", NewError(http.StatusInternalServerError, "processing_configuration", "The selected processing profile is invalid.")
 	}
 	_, fingerprints, err := document.CanonicalProfile(resolved.Document)
 	if err != nil {
-		return selected, NewError(http.StatusInternalServerError, "processing_configuration", "Cannot identify the selected processing profile.")
+		return "", NewError(http.StatusInternalServerError, "processing_configuration", "Cannot identify the selected processing profile.")
 	}
-	selected.Name = name
-	selected.Coverage = store.CoverageSelection{Configuration: "configured", ProfileFingerprint: fingerprints.Profile}
-	return selected, nil
+	return fingerprints.Profile, nil
 }
 
 func collectionQualityError(err error) error {
@@ -74,7 +96,7 @@ func registerCollectionQualityRoutes(api huma.API, d Deps) {
 		Profile string `query:"profile" maxLength:"128"`
 		Fields  string `query:"fields" maxLength:"256"`
 	}) (*struct{ Body CollectionQuality }, error) {
-		selection, err := selectCollectionProfile(d.Cfg, in.Profile)
+		selection, err := selectCollectionProfile(d, in.Profile, false)
 		if err != nil {
 			return nil, err
 		}

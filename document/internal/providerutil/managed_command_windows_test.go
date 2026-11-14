@@ -102,7 +102,7 @@ func TestManagedCommandStartsWindowsProcessSuspended(t *testing.T) {
 	t.Cleanup(func() {
 		_ = tree.kill()
 		_ = command.Process.Kill()
-		<-exited
+		t.Logf("helper exited with %v", <-exited)
 		_ = tree.close()
 	})
 

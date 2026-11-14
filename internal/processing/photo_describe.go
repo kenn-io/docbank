@@ -35,10 +35,11 @@ func profileRenditionInput(profile configuredProfile) document.RenditionInputKin
 	return document.RenditionInputOriginalFile
 }
 
-// photoDiscoveryScope discloses that consent for a photo description or image
-// embedding profile queues every eligible photo in the vault, not just the
-// planned one.
+// photoDiscoveryScope discloses vault-wide photo processing and Hidden face inputs.
 func photoDiscoveryScope(profile configuredProfile) string {
+	if profile.hasFaces() {
+		return "Granting consent automatically queues eligible photos throughout this vault. Faces in Hidden photos are included."
+	}
 	images := slices.ContainsFunc(profile.portable.Embeddings, func(binding document.EmbeddingBindingV1) bool {
 		return binding.InputKind == document.EmbeddingInputImage
 	})
@@ -110,7 +111,7 @@ func photoDescriptionInput(ctx context.Context, catalog *store.Store, blobs *blo
 	if int64(len(stripped)) > policy.MaxSourceBytes {
 		return nil, media.CapabilityRecord{Reason: media.CapabilityReasonSourceBytes}, fmt.Errorf("%w: %s", ErrSourceIneligible, media.CapabilityReasonSourceBytes)
 	}
-	capability, err := media.InspectCapability(bytes.NewReader(stripped), policy)
+	capability, err := media.InspectCapability(ctx, bytes.NewReader(stripped), policy)
 	return stripped, capability, err
 }
 
@@ -382,15 +383,8 @@ func strippedPhotoPreview(ctx context.Context, catalog *store.Store, blobs *blob
 		return nil, "", reason, fmt.Errorf("%w: %s", ErrSourceIneligible, reason)
 	}
 	output := view.Generation.Preview.Output
-	source, size, err := blobs.OpenStreamContext(ctx, output.BlobSHA256)
+	raw, err := verifiedPhotoPreview(ctx, blobs, output)
 	if err != nil {
-		return nil, view.Generation.Checksum, "", fmt.Errorf("%w: %w", errPhotoDescriptionInput, err)
-	}
-	if size != output.Size {
-		return nil, view.Generation.Checksum, "", errors.Join(store.ErrPackageConflict, source.Close())
-	}
-	raw, err := io.ReadAll(io.LimitReader(source, output.Size+1))
-	if err = errors.Join(err, source.Verify(), source.Close()); err != nil {
 		return nil, view.Generation.Checksum, "", fmt.Errorf("%w: %w", errPhotoDescriptionInput, err)
 	}
 	stripped, err := stripPhotoPreview(ctx, raw)
@@ -398,4 +392,17 @@ func strippedPhotoPreview(ctx context.Context, catalog *store.Store, blobs *blob
 		return nil, view.Generation.Checksum, "preview_unavailable", err
 	}
 	return stripped, view.Generation.Checksum, "", nil
+}
+
+func verifiedPhotoPreview(ctx context.Context, blobs *blob.Store, output *document.VisualPreviewOutputV1) ([]byte, error) {
+	source, size, err := blobs.OpenStreamContext(ctx, output.BlobSHA256)
+	if err != nil {
+		return nil, err
+	}
+	if size != output.Size {
+		return nil, errors.Join(store.ErrPackageConflict, source.Close())
+	}
+	raw, err := io.ReadAll(io.LimitReader(source, output.Size+1))
+	err = errors.Join(err, source.Verify(), source.Close())
+	return raw, err
 }

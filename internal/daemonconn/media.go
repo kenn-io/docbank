@@ -295,7 +295,10 @@ func readMediaMultipartReceipt(
 	})
 	if err != nil {
 		_ = reader.CloseWithError(err)
-		<-writeResult
+		// Closing the pipe makes the writer fail with err; report any other writer failure too.
+		if writeErr := <-writeResult; writeErr != nil && !errors.Is(writeErr, err) {
+			return errors.Join(err, writeErr)
+		}
 		return err
 	}
 	_ = reader.Close()

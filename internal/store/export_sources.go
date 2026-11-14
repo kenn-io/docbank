@@ -113,7 +113,7 @@ func validateExportSource(r bundle.SourceRequest) error {
 
 func loadExportSource(ctx context.Context, q metadataQuerier, owner, id string) (bundle.Source, error) {
 	var raw []byte
-	err := q.QueryRowContext(ctx, `SELECT canonical_json FROM export_sources WHERE id=? AND owner=?`, id, owner).Scan(&raw)
+	err := q.QueryRowContext(ctx, `SELECT canonical_json FROM export_sources WHERE id=$1 AND owner=$2`, id, owner).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return bundle.Source{}, ErrNotFound
 	}
@@ -188,7 +188,7 @@ func (s *Store) createExportSource(ctx context.Context, owner string, r bundle.S
 			return nil
 		}
 		var exists bool
-		if e = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM export_sources WHERE id=?)`, r.OperationID).Scan(&exists); e != nil {
+		if e = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM export_sources WHERE id=$1)`, r.OperationID).Scan(&exists); e != nil {
 			return e
 		}
 		if exists {
@@ -209,7 +209,7 @@ func (s *Store) createExportSource(ctx context.Context, owner string, r bundle.S
 		if e != nil {
 			return e
 		}
-		_, e = tx.ExecContext(ctx, `INSERT INTO export_sources(id,owner,request_sha256,request_json,canonical_json,state,expires_at) VALUES(?,?,?,?,?,?,?)`, source.ID, owner, digest, request, raw, state, source.ExpiresAt)
+		_, e = tx.ExecContext(ctx, `INSERT INTO export_sources(id,owner,request_sha256,request_json,canonical_json,state,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7)`, source.ID, owner, digest, request, raw, state, source.ExpiresAt)
 		created = e == nil
 		return e
 	})
@@ -259,7 +259,10 @@ func (s *Store) createExportSource(ctx context.Context, owner string, r bundle.S
 		defer cancel()
 		source.State = exportFailedState
 		raw, _ := canonical.Marshal(source)
-		_, markErr := s.db.ExecContext(cleanup, `UPDATE export_sources SET state='failed',canonical_json=? WHERE id=? AND state='resolving'`, raw, source.ID)
+		markErr := s.withStorageTx(cleanup, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(cleanup, `UPDATE export_sources SET state='failed',canonical_json=$1 WHERE id=$2 AND state='resolving'`, raw, source.ID)
+			return err
+		})
 		return source, errors.Join(err, markErr)
 	}
 	return source, nil
@@ -316,7 +319,7 @@ func sealExportMembers(ctx context.Context, tx *sql.Tx, owner string, source *bu
 	if source.Kind == "upload" && (source.Total != len(members) || source.MemberHash != hash) {
 		return bundle.ErrConflict
 	}
-	stmt, err := tx.PrepareContext(ctx, `INSERT INTO export_members(source_id,node_id,version_id,blob_hash,canonical_json) VALUES(?,?,?,?,?)`)
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO export_members(source_id,node_id,version_id,blob_hash,canonical_json) VALUES($1,$2,$3,$4,$5)`)
 	if err != nil {
 		return err
 	}
@@ -326,7 +329,7 @@ func sealExportMembers(ctx context.Context, tx *sql.Tx, owner string, source *bu
 		var nodeID, revision, size int64
 		var hash string
 		var trash sql.NullString
-		err = tx.QueryRowContext(ctx, `SELECT v.node_id,v.blob_hash,v.size,n.revision,n.trashed_at FROM content_versions v JOIN nodes n ON n.id=v.node_id WHERE v.version_id=?`, m.VersionID).Scan(&nodeID, &hash, &size, &revision, &trash)
+		err = tx.QueryRowContext(ctx, `SELECT v.node_id,v.blob_hash,v.size,n.revision,n.trashed_at FROM content_versions v JOIN nodes n ON n.id=v.node_id WHERE v.version_id=$1`, m.VersionID).Scan(&nodeID, &hash, &size, &revision, &trash)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -357,7 +360,7 @@ func sealExportMembers(ctx context.Context, tx *sql.Tx, owner string, source *bu
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE export_sources SET canonical_json=?,state='sealed',expires_at=? WHERE id=?`, raw, source.ExpiresAt, source.ID)
+	_, err = tx.ExecContext(ctx, `UPDATE export_sources SET canonical_json=$1,state='sealed',expires_at=$2 WHERE id=$3`, raw, source.ExpiresAt, source.ID)
 	return err
 }
 
@@ -384,7 +387,7 @@ func (s *Store) PutExportChunk(ctx context.Context, owner, id string, index int,
 			return bundle.ErrConflict
 		}
 		var prior []byte
-		err = tx.QueryRowContext(ctx, `SELECT canonical_json FROM export_chunks WHERE source_id=? AND chunk_index=?`, id, index).Scan(&prior)
+		err = tx.QueryRowContext(ctx, `SELECT canonical_json FROM export_chunks WHERE source_id=$1 AND chunk_index=$2`, id, index).Scan(&prior)
 		if err == nil {
 			if bytes.Equal(prior, raw) {
 				return nil
@@ -397,7 +400,7 @@ func (s *Store) PutExportChunk(ctx context.Context, owner, id string, index int,
 		if source.State != "uploading" {
 			return bundle.ErrConflict
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO export_chunks(source_id,chunk_index,canonical_json) VALUES(?,?,?)`, id, index, raw)
+		_, err = tx.ExecContext(ctx, `INSERT INTO export_chunks(source_id,chunk_index,canonical_json) VALUES($1,$2,$3)`, id, index, raw)
 		return err
 	})
 }
@@ -422,7 +425,7 @@ func (s *Store) SealExportSource(ctx context.Context, owner, id string) (bundle.
 		members := make([]bundle.Member, 0, source.Total)
 		for i := range (source.Total + bundle.ChunkMembers - 1) / bundle.ChunkMembers {
 			var raw []byte
-			err = tx.QueryRowContext(ctx, `SELECT canonical_json FROM export_chunks WHERE source_id=? AND chunk_index=?`, id, i).Scan(&raw)
+			err = tx.QueryRowContext(ctx, `SELECT canonical_json FROM export_chunks WHERE source_id=$1 AND chunk_index=$2`, id, i).Scan(&raw)
 			if errors.Is(err, sql.ErrNoRows) {
 				return bundle.ErrConflict
 			}

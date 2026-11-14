@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Docbank document vault">
+  <rect width="64" height="64" rx="14" fill="#122b39"/>
+  <path d="M18 9h19l12 12v30a4 4 0 0 1-4 4H18a4 4 0 0 1-4-4V13a4 4 0 0 1 4-4Z" fill="#fff2d8"/>
+  <path d="M37 9v9a3 3 0 0 0 3 3h9Z" fill="#e8ac64"/>
+  <path d="M22 21h7m-7 6h12" fill="none" stroke="#122b39" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="33" cy="41" r="11" fill="#122b39"/>
+  <circle cx="33" cy="41" r="7" fill="none" stroke="#53dcc4" stroke-width="2"/>
+  <path d="M33 36v5l4 3m-4-3-4 3" fill="none" stroke="#53dcc4" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="33" cy="41" r="2.5" fill="#fff2d8"/>
+</svg>

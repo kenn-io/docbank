@@ -826,6 +826,8 @@ export class Photos {
   async loadMore(
     preserve?: () => (() => Promise<void>) | undefined,
   ): Promise<{ accepted: true; empty: boolean } | { accepted: false; cause: unknown } | void> {
+    while (!this.disposed && this.loading && this.backgroundRefresh)
+      await new Promise<void>((resolve) => this.idle.push(resolve));
     if (this.disposed || this.hiding || this.loading || this.trashing || this.error) return;
     if (this.projection && this.replacement) {
       await this.retry(preserve);
@@ -1455,7 +1457,7 @@ export class Photos {
       this.fallbackReason = staged.fallbackReason;
       this.truncated = staged.truncated;
       this.coverageIncomplete = staged.coverageIncomplete;
-      this.facets = [];
+      if (!live || this.countsHidden) this.facets = [];
       if (staged.snapshotID) this.timeline = undefined;
       this.facetsError = "";
       this.cursor = cursor;

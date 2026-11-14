@@ -42,6 +42,7 @@ type EmbeddingInputKind string
 const (
 	EmbeddingInputOriginalFile   EmbeddingInputKind = "original_file"
 	EmbeddingInputImage          EmbeddingInputKind = "image"
+	EmbeddingInputFace           EmbeddingInputKind = "face"
 	EmbeddingInputRenditionChunk EmbeddingInputKind = "rendition_chunk"
 )
 
@@ -599,7 +600,7 @@ func validateEmbeddingBinding(binding EmbeddingBindingV1, hasRendition bool) err
 		}
 	}
 	switch binding.InputKind {
-	case EmbeddingInputOriginalFile, EmbeddingInputImage:
+	case EmbeddingInputOriginalFile, EmbeddingInputImage, EmbeddingInputFace:
 		if binding.Chunk != nil {
 			return errors.New("file input must not define chunk policy")
 		}

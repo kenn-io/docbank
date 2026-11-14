@@ -37,9 +37,9 @@ func workerOptions(t *testing.T) Options {
 			return backendResponse(r, 200, `{"status":"ok"}`), nil
 		case r.Method == http.MethodPost:
 			_, _ = io.Copy(io.Discard, r.Body)
-			return backendResponse(r, 202, `{"task_id":"backend-1","task_status":"pending"}`), nil
+			return backendResponse(r, 202, `{"task_id":"backend-1","task_status":"pending","task_type":"convert"}`), nil
 		case strings.HasPrefix(r.URL.Path, "/v1/status/poll/"):
-			return backendResponse(r, 200, `{"task_id":"backend-1","task_status":"success"}`), nil
+			return backendResponse(r, 200, `{"task_id":"backend-1","task_status":"success","task_type":"convert"}`), nil
 		case strings.HasPrefix(r.URL.Path, "/v1/result/"):
 			return backendResponse(r, 200, `{"document":{"filename":"synthetic.pdf"},"status":"success"}`), nil
 		}
@@ -152,7 +152,7 @@ func TestWorkerRetainsBackendPartialSuccessAfterReopen(t *testing.T) {
 	o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/v1/status/poll/"):
-			return backendResponse(r, http.StatusOK, `{"task_id":"backend-1","task_status":"partial_success"}`), nil
+			return backendResponse(r, http.StatusOK, `{"task_id":"backend-1","task_status":"partial_success","task_type":"convert"}`), nil
 		case strings.HasPrefix(r.URL.Path, "/v1/result/"):
 			return backendResponse(r, http.StatusOK, result), nil
 		default:

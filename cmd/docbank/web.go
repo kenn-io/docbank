@@ -28,8 +28,8 @@ var webCmd = &cobra.Command{
 The browser receives daemon-lifetime scoped credentials in a URL fragment,
 which is not sent in the initial HTTP request. The vault's master API key
 never enters the browser. File bytes are sent only after a persistent upload
-channel proves that it belongs to this daemon; a broken channel is not
-reconnected.
+channel proves that it belongs to this daemon. A broken channel reconnects
+automatically, with a manual Reconnect option if retries fail.
 
 With --no-browser, the authenticated URL is printed instead. It contains the
 browser credentials: do not paste it into logs, issue trackers, or chat.`,
@@ -82,7 +82,7 @@ func runWeb(
 		return err
 	}
 	if err := open(ctx, launchURL); err != nil {
-		return fmt.Errorf("opening Docbank web application: %w", err)
+		return withHint(fmt.Errorf("opening Docbank web application: %w", err), `run "docbank web --no-browser" to print a sign-in URL; it contains browser credentials, so keep it out of logs and chat`)
 	}
 	base, _, _ := strings.Cut(rawURL, "#")
 	_, err = fmt.Fprintf(out, "opened Docbank web application at %s\n", base)

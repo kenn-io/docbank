@@ -87,7 +87,7 @@ func (service *Service) searchPhotoBinding(ctx context.Context, request store.Ph
 		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
 			return result, err
 		}
-		if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrVectorIndexSourceStale) {
+		if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrVectorIndexUnavailable) || errors.Is(err, store.ErrVectorIndexSourceStale) {
 			return fallback("index_unavailable")
 		}
 		if _, ok := errors.AsType[*query.ExpressionError](err); ok {

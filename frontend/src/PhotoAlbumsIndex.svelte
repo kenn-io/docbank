@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { webURL } from "./web-path.js";
   import { APIError } from "./api-transport.js";
   import { onMount, onDestroy } from "svelte";
   import { Button, EmptyState, Modal, Spinner, TextInput } from "@kenn-io/kit-ui";
@@ -143,7 +144,7 @@
         <li class="album-card">
           <PhotoAlbumCover {album} {cache} unavailable={!!albums.loadError} />
           <a
-            href={`/photos/albums/${album.id}`}
+            href={webURL(`/photos/albums/${album.id}`)}
             onclick={(event) => {
               if (!event.ctrlKey && !event.metaKey && !event.shiftKey && event.button === 0) {
                 event.preventDefault();

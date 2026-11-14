@@ -907,6 +907,47 @@ func TestWatchExcludePatternsRejectInvalidConfiguration(t *testing.T) {
 	}
 }
 
+func TestWatcherDefaultExcludes(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		t.Run(fmt.Sprintf("enabled=%t", enabled), func(t *testing.T) {
+			ing := newTestIngester(t)
+			files := map[string]string{
+				"clip.mp4":                "complete",
+				".syncthing.clip.mp4.tmp": "partial",
+				"~syncthing~b.tmp":        "partial",
+				"n.sync-conflict-20260101-120000-ABCDEFG.md": "conflict",
+				"d/r.pdf.crdownload":                         "partial",
+			}
+			source := writeTree(t, files)
+			cfg := config.WatchConfig{Name: "defaults", Source: source, Destination: "/archive", SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second)}
+			if !enabled {
+				cfg.DefaultExcludes = new(false)
+			}
+			watcher, err := NewWatcher(ing, t.TempDir(), cfg, runTestMutation, slog.New(slog.DiscardHandler))
+			require.NoError(t, err)
+			var excluded []string
+			watcher.excluded = func(_ context.Context, ref string) error {
+				excluded = append(excluded, filepath.ToSlash(ref))
+				return nil
+			}
+			root := openWatcherRoot(t, watcher)
+			at := time.Unix(1_700_000_000, 0)
+			require.NoError(t, scanWatcherAt(t.Context(), watcher, root, at))
+			require.NoError(t, scanWatcherAt(t.Context(), watcher, root, at.Add(time.Second)))
+			for ref := range files {
+				_, err := ing.Store.NodeByPath(t.Context(), "/archive/"+ref)
+				if enabled && ref != "clip.mp4" {
+					require.Error(t, err)
+					assert.Contains(t, excluded, ref)
+				} else {
+					require.NoError(t, err)
+					assert.NotContains(t, excluded, ref)
+				}
+			}
+		})
+	}
+}
+
 func TestWatcherExcludePatternsSkipFilesAndPruneDirectories(t *testing.T) {
 	ing := newTestIngester(t)
 	source := writeTree(t, map[string]string{"note.md": "note", ".syncthing.note.md.tmp": "partial", "a/b/x.swp": "swap", "cache-1/data.bin": "cached", "keep/real.md": "real"})

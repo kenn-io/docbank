@@ -5,12 +5,24 @@
 <script lang="ts">
   import PlusIcon from "@lucide/svelte/icons/plus";
   import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
-  import { Menu, MenuTrigger, MenuContent, MenuItem, MenuSeparator } from "@kenn-io/kit-ui";
+  import {
+    Menu,
+    MenuTrigger,
+    MenuContent,
+    MenuItem,
+    MenuSeparator,
+    type MenuAlign,
+  } from "@kenn-io/kit-ui";
 
   let {
+    align,
     disabledReason = "",
     onselect,
-  }: { disabledReason?: string; onselect: (choice: AddChoice) => void } = $props();
+  }: {
+    align: MenuAlign;
+    disabledReason?: string;
+    onselect: (choice: AddChoice) => void;
+  } = $props();
 
   const choices = [
     { id: "files", label: "Upload files" },
@@ -20,7 +32,7 @@
   ] as const;
 </script>
 
-<Menu align="end">
+<Menu {align}>
   <MenuTrigger class="document-add-trigger"
     ><PlusIcon size="14" />Add<ChevronDownIcon size="12" /></MenuTrigger
   >

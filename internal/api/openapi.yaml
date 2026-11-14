@@ -2052,6 +2052,31 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    BatesNamespaceDetail:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/BatesNamespaceDetail.json
+          format: uri
+          readOnly: true
+          type: string
+        namespace:
+          $ref: "#/components/schemas/BatesNamespace"
+        next_sequence:
+          format: int64
+          maximum: 10000000000
+          minimum: 1
+          type: integer
+      required:
+        - namespace
+        - next_sequence
+      type: object
+      x-go-type: api.BatesNamespaceDetail
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     BatesNamespacePage:
       additionalProperties: false
       properties:
@@ -3361,6 +3386,16 @@ components:
         embeddings:
           items:
             $ref: "#/components/schemas/CoverageClass"
+          type: array
+        page_coverage:
+          enum:
+            - partial
+          type: string
+        page_coverage_unavailable:
+          type: boolean
+        pages_without_text:
+          items:
+            $ref: "#/components/schemas/PageTextGap"
           type: array
         profile_fingerprint:
           pattern: ^[0-9a-f]{64}$
@@ -7194,6 +7229,208 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    FaceCandidate:
+      additionalProperties: false
+      properties:
+        candidate_id:
+          type: string
+        display_name:
+          type: string
+        faces:
+          items:
+            $ref: "#/components/schemas/FaceSuggestionFace"
+          type: array
+        revision:
+          format: int64
+          type: integer
+        suggested_person_id:
+          type: string
+      required:
+        - candidate_id
+        - display_name
+        - revision
+        - faces
+      type: object
+      x-go-type: store.FaceCandidate
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    FaceCandidateDecisionRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/FaceCandidateDecisionRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        action:
+          enum:
+            - link
+            - reject
+            - new_person
+          type: string
+        display_name:
+          maxLength: 200
+          type: string
+        face_ids:
+          items:
+            type: string
+          maxItems: 48
+          type: array
+        person_id:
+          format: uuid
+          type: string
+      required:
+        - action
+      type: object
+      x-go-type: api.FaceCandidateDecisionRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    FaceCandidateDecisionResult:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/FaceCandidateDecisionResult.json
+          format: uri
+          readOnly: true
+          type: string
+        candidate_id:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        state:
+          type: string
+      required:
+        - candidate_id
+        - revision
+        - state
+      type: object
+      x-go-type: api.FaceCandidateDecisionResult
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    FaceCandidatePage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/FaceCandidatePage.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/FaceCandidate"
+          type: array
+        total:
+          format: int64
+          type: integer
+      required:
+        - items
+        - total
+      type: object
+      x-go-type: api.FaceCandidatePage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    FaceSetupApplyRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/FaceSetupApplyRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        consent:
+          type: boolean
+        plan_fingerprint:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+      required:
+        - plan_fingerprint
+        - consent
+      type: object
+      x-go-type: api.FaceSetupApplyRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    FaceSuggestionFace:
+      additionalProperties: false
+      properties:
+        assertion_id:
+          type: string
+        box:
+          $ref: "#/components/schemas/FaceBox"
+        content_version_id:
+          type: string
+        created_at:
+          type: string
+        detector_fingerprint:
+          type: string
+        dismissed:
+          type: boolean
+        eyes_open:
+          type:
+            - boolean
+            - "null"
+        face_id:
+          type: string
+        facing:
+          format: double
+          type:
+            - number
+            - "null"
+        hidden:
+          type: boolean
+        person_id:
+          type: string
+        person_name:
+          type: string
+        photo_recorded_at:
+          type: string
+        preview:
+          $ref: "#/components/schemas/PersonFacePreview"
+        rejected_person_ids:
+          items:
+            type: string
+          maxItems: 1000
+          type: array
+        revision:
+          format: int64
+          type: integer
+        roll:
+          format: double
+          type:
+            - number
+            - "null"
+        smile:
+          type:
+            - boolean
+            - "null"
+      required:
+        - photo_recorded_at
+        - preview
+        - hidden
+        - face_id
+        - content_version_id
+        - box
+        - revision
+        - created_at
+        - dismissed
+      type: object
+      x-go-type: store.FaceSuggestionFace
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     Filters:
       additionalProperties: false
       properties:
@@ -8428,6 +8665,40 @@ components:
         - server
       type: object
       x-go-type: api.LocalTextPlanRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    LocalTextStatus:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/LocalTextStatus.json
+          format: uri
+          readOnly: true
+          type: string
+        active:
+          type: boolean
+        download_bytes:
+          format: int64
+          type: integer
+        provider:
+          enum:
+            - ""
+            - local
+            - ollama
+            - configured
+          type: string
+        restart_required:
+          type: boolean
+      required:
+        - active
+        - provider
+        - download_bytes
+        - restart_required
+      type: object
+      x-go-type: api.LocalTextStatus
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -10305,6 +10576,66 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/processing
         name: processing
+    OriginalDownloadSelection:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/OriginalDownloadSelection.json
+          format: uri
+          readOnly: true
+          type: string
+        blob_hash:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        node_id:
+          format: int64
+          minimum: 1
+          type: integer
+        size:
+          format: int64
+          minimum: 0
+          type: integer
+        vault_id:
+          format: uuid
+          type: string
+      required:
+        - vault_id
+        - node_id
+        - blob_hash
+        - size
+      type: object
+      x-go-type: api.OriginalDownloadSelection
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    OriginalDownloadTicket:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/OriginalDownloadTicket.json
+          format: uri
+          readOnly: true
+          type: string
+        expires_in_seconds:
+          format: int64
+          type: integer
+        name:
+          type: string
+        url:
+          type: string
+      required:
+        - url
+        - name
+        - expires_in_seconds
+      type: object
+      x-go-type: api.OriginalDownloadTicket
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     OutputCounts:
       additionalProperties: false
       properties:
@@ -12284,6 +12615,25 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    PageTextGap:
+      additionalProperties: false
+      properties:
+        content_version_id:
+          format: uuid
+          type: string
+        pages:
+          items:
+            format: int64
+            type: integer
+          type: array
+      required:
+        - content_version_id
+        - pages
+      type: object
+      x-go-type: api.PageTextGap
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     Pending:
       additionalProperties: false
       properties:
@@ -16043,6 +16393,9 @@ components:
         content_version_id:
           format: uuid
           type: string
+        face_id:
+          format: uuid
+          type: string
         hidden:
           default: false
           type: boolean
@@ -16875,6 +17228,47 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    Profile:
+      additionalProperties: false
+      properties:
+        columns:
+          items:
+            type: string
+          type: array
+        date_format:
+          type: string
+        declared_timezone:
+          type: string
+        encoding:
+          type: string
+        field:
+          format: int32
+          type: integer
+        header_row:
+          type: boolean
+        id:
+          type: string
+        newline_in_field:
+          format: int32
+          type: integer
+        qualifier:
+          format: int32
+          type: integer
+      required:
+        - id
+        - field
+        - qualifier
+        - newline_in_field
+        - header_row
+        - columns
+        - encoding
+        - date_format
+        - declared_timezone
+      type: object
+      x-go-type: loadfile.Profile
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/loadfile
+        name: loadfile
     PromotePhotoNodeRequest:
       additionalProperties: false
       properties:
@@ -17453,6 +17847,156 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/pdfstamp
         name: pdfstamp
+    RecipientPackageDocument:
+      additionalProperties: false
+      properties:
+        allocation_id:
+          type: string
+        artifact_manifest_sha256:
+          type: string
+        document_id:
+          type: string
+        labels:
+          items:
+            type: string
+          type: array
+        namespace_id:
+          type: string
+        ordinal:
+          format: int64
+          type: integer
+        page_count:
+          format: int64
+          type: integer
+        pdf:
+          $ref: "#/components/schemas/RecipientPackageFile"
+        recipe_sha256:
+          type: string
+        review_sha256:
+          type: string
+        text:
+          $ref: "#/components/schemas/RecipientPackageFile"
+      required:
+        - ordinal
+        - document_id
+        - allocation_id
+        - namespace_id
+        - artifact_manifest_sha256
+        - recipe_sha256
+        - review_sha256
+        - page_count
+        - labels
+        - pdf
+        - text
+      type: object
+      x-go-type: processing.RecipientPackageDocument
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    RecipientPackageDownload:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RecipientPackageDownload.json
+          format: uri
+          readOnly: true
+          type: string
+        allocation_id:
+          format: uuid
+          type: string
+        contract:
+          type: string
+        expires_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+        receipt:
+          $ref: "#/components/schemas/RecipientPackageReceipt"
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+        url:
+          type: string
+        verification:
+          type: string
+      required:
+        - contract
+        - url
+        - name
+        - verification
+        - id
+        - allocation_id
+        - receipt
+        - size
+        - sha256
+        - expires_at
+      type: object
+    RecipientPackageFile:
+      additionalProperties: false
+      properties:
+        path:
+          type: string
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+      required:
+        - path
+        - size
+        - sha256
+      type: object
+      x-go-type: processing.RecipientPackageFile
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
+    RecipientPackageReceipt:
+      additionalProperties: false
+      properties:
+        contract:
+          type: string
+        dat_profile:
+          $ref: "#/components/schemas/Profile"
+        document_count:
+          format: int64
+          type: integer
+        documents:
+          items:
+            $ref: "#/components/schemas/RecipientPackageDocument"
+          type: array
+        load_file:
+          $ref: "#/components/schemas/RecipientPackageFile"
+        mapping:
+          $ref: "#/components/schemas/RecipientPackageFile"
+        opt_profile:
+          $ref: "#/components/schemas/Profile"
+        page_count:
+          format: int64
+          type: integer
+        page_map:
+          $ref: "#/components/schemas/RecipientPackageFile"
+      required:
+        - contract
+        - document_count
+        - page_count
+        - dat_profile
+        - opt_profile
+        - load_file
+        - page_map
+        - mapping
+        - documents
+      type: object
+      x-go-type: processing.RecipientPackageReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/processing
+        name: processing
     RedactionArchive:
       additionalProperties: false
       properties:
@@ -18200,6 +18744,15 @@ components:
           type: string
         generation_id:
           type: string
+        page_coverage:
+          enum:
+            - unavailable
+          type: string
+        pages_without_text:
+          items:
+            format: int64
+            type: integer
+          type: array
         profile:
           $ref: "#/components/schemas/RenditionTextProfile"
         source:
@@ -18235,6 +18788,9 @@ components:
         blob_hash:
           pattern: ^[0-9a-f]{64}$
           type: string
+        exact_rendition:
+          description: Resolve the exact observed active rendition independently of the current default profile
+          type: boolean
         node_id:
           format: int64
           minimum: 1
@@ -19461,9 +20017,69 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    SearchTextCoverage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SearchTextCoverage.json
+          format: uri
+          readOnly: true
+          type: string
+        families:
+          items:
+            enum:
+              - pdf
+              - office
+              - other
+            type: string
+          type: array
+        no_text:
+          format: int64
+          minimum: 0
+          type: integer
+        pages_without_text:
+          format: int64
+          minimum: 0
+          type: integer
+        pdf_page_coverage_partial:
+          type: boolean
+        pdf_page_coverage_unavailable:
+          format: int64
+          minimum: 0
+          type: integer
+        pdfs_without_text:
+          format: int64
+          minimum: 0
+          type: integer
+        pending:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+        - no_text
+        - families
+        - pending
+        - pdfs_without_text
+        - pages_without_text
+        - pdf_page_coverage_unavailable
+        - pdf_page_coverage_partial
+      type: object
+      x-go-type: api.SearchTextCoverage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     SelectedDocuments:
       additionalProperties: false
       properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SelectedDocuments.json
+          format: uri
+          readOnly: true
+          type: string
         documents:
           items:
             $ref: "#/components/schemas/Identity"
@@ -20919,6 +21535,31 @@ components:
         - total
       type: object
       x-go-type: store.TermReportHistoryPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    TermReportSelectionItem:
+      additionalProperties: false
+      properties:
+        current:
+          $ref: "#/components/schemas/Identity"
+        modified:
+          type: string
+        name:
+          type: string
+        path:
+          type: string
+        selected:
+          $ref: "#/components/schemas/Identity"
+        selected_recorded:
+          type: string
+        status:
+          type: string
+      required:
+        - selected
+        - status
+      type: object
+      x-go-type: store.TermReportSelectionItem
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
@@ -23556,6 +24197,34 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Create or find a Bates namespace
+  /api/v1/bates/namespaces/{id}:
+    get:
+      operationId: readBatesNamespace
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatesNamespaceDetail"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read a Bates namespace and its next sequence
   /api/v1/bates/preview:
     post:
       operationId: planBatesStamp
@@ -28097,6 +28766,12 @@ paths:
           name: photo_summary
           schema:
             type: boolean
+        - description: Rank people by similarity to this face
+          in: query
+          name: face_id
+          schema:
+            format: uuid
+            type: string
         - description: Rank name groups by their newest visible depicted evidence, then by name. Namesakes stay together.
           in: query
           name: recent_first
@@ -28369,6 +29044,79 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read current-file person attribution coverage
+  /api/v1/people/face-candidates:
+    get:
+      operationId: listFaceCandidates
+      parameters:
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 24
+            format: int64
+            maximum: 250
+            minimum: 1
+            type: integer
+        - explode: false
+          in: query
+          name: offset
+          schema:
+            format: int64
+            maximum: 10000
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FaceCandidatePage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Review suggested face groups
+  /api/v1/people/face-candidates/{candidate_id}/decision:
+    post:
+      operationId: decideFaceCandidate
+      parameters:
+        - in: path
+          name: candidate_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: header
+          name: If-Match
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FaceCandidateDecisionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FaceCandidateDecisionResult"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Confirm or dismiss a suggested face group
   /api/v1/people/rebuilds:
     post:
       operationId: rebuildDocumentPeople
@@ -29072,6 +29820,12 @@ paths:
         - explode: false
           in: query
           name: person_id
+          schema:
+            format: uuid
+            type: string
+        - explode: false
+          in: query
+          name: face_id
           schema:
             format: uuid
             type: string
@@ -30157,6 +30911,46 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Request failed
       summary: Revoke a principal and scope before further provider access
+  /api/v1/processing/faces/plans:
+    post:
+      operationId: planFaces
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LocalTextPlan"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Preview local face suggestions
+  /api/v1/processing/faces/setup:
+    post:
+      operationId: applyFaces
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FaceSetupApplyRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LocalTextPlan"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Enable local face suggestions
   /api/v1/processing/jobs:
     post:
       description: Returns exactly one job event followed by one terminal status or status-read error event as newline-delimited JSON.
@@ -30251,6 +31045,23 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Approve vault-wide and ongoing text indexing
+  /api/v1/processing/local/status:
+    get:
+      operationId: getLocalTextStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LocalTextStatus"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read search by meaning setup status
   /api/v1/processing/plans:
     post:
       operationId: planDocumentProcessing
@@ -30277,6 +31088,14 @@ paths:
   /api/v1/processing/profiles:
     get:
       operationId: listDocumentProcessingProfiles
+      parameters:
+        - description: Include configured profiles without an executable runtime
+          explode: false
+          in: query
+          name: include_configured
+          schema:
+            description: Include configured profiles without an executable runtime
+            type: boolean
       responses:
         "200":
           content:
@@ -30292,7 +31111,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: List locally executable document-processing profiles
+      summary: List document-processing profiles
   /api/v1/processing/source-fences/resolve:
     post:
       operationId: resolveDocumentSourceFence
@@ -30782,6 +31601,128 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Preview request failed
       summary: Read verified temporary redaction output
+  /api/v1/redaction/publications:
+    post:
+      operationId: publishNumberedPDF
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RedactionRenderRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatesExport"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "408":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Timeout
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+        "504":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Gateway Timeout
+      summary: Publish one reviewed numbered PDF into retained storage
+  /api/v1/redaction/recipient-packages:
+    delete:
+      operationId: discardRecipientPackages
+      responses:
+        "204":
+          description: Package retired
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Package cleanup failed
+      summary: Cancel this owner's recipient package and transfer
+    post:
+      operationId: buildRecipientPackage
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RedactionRenderRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecipientPackageDownload"
+          description: Verified recipient ZIP and one-use download ticket
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Package preparation failed
+      summary: Prepare a recipient ZIP from one completed numbered review
   /api/v1/redaction/render:
     post:
       operationId: renderNativePDF
@@ -31664,6 +32605,31 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Prepare a frozen search export
+  /api/v1/search-exports/selection:
+    post:
+      operationId: refreshTermReportSelection
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SelectedDocuments"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/TermReportSelectionItem"
+                type: array
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Compare selected document versions
   /api/v1/search-exports/{id}:
     delete:
       operationId: releaseTermReport
@@ -31866,6 +32832,67 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Find similar documents using stored embeddings
+  /api/v1/search/text-coverage:
+    get:
+      description: Counts current live files in the search scope that need processing or await native text extraction. Call after an empty text search.
+      operationId: search-text-coverage
+      parameters:
+        - explode: false
+          in: query
+          name: pdf_filter
+          schema:
+            maxLength: 16384
+            type: string
+        - explode: false
+          in: query
+          name: source_present
+          schema:
+            type: boolean
+        - explode: false
+          in: query
+          name: tag_id
+          schema:
+            pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
+            type: string
+        - explode: false
+          in: query
+          name: mime_type
+          schema:
+            maxLength: 255
+            type: string
+        - explode: false
+          in: query
+          name: under_node_id
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - explode: false
+          in: query
+          name: modified_since
+          schema:
+            maxLength: 64
+            type: string
+        - explode: false
+          in: query
+          name: modified_before
+          schema:
+            maxLength: 64
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchTextCoverage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Count files waiting for searchable text
   /api/v1/search/validate:
     post:
       operationId: validateDocumentSearch
@@ -33067,6 +34094,36 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Stream one immutable content version by stable ID
+  /api/v1/versions/{version_id}/download-ticket:
+    post:
+      operationId: prepareOriginalDownload
+      parameters:
+        - in: path
+          name: version_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OriginalDownloadSelection"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OriginalDownloadTicket"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Issue a single-use original download URL valid for two minutes
   /api/v1/versions/{version_id}/email:
     get:
       operationId: getEmailMetadata

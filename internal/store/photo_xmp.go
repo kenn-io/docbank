@@ -479,7 +479,7 @@ func (s *Store) loadPhotoXMPWorkTx(ctx context.Context, tx metadataQuerier, id s
 	w.settled = !pending
 	sc := new(PhotoXMPSidecar)
 	sc.Node, err = scanNode(tx.QueryRowContext(ctx, `SELECT `+nodeCols+`,sf.file_id,EXISTS(SELECT 1 FROM audit_memberships WHERE node_id=n.id), (SELECT count(*) FROM photo_files cf JOIN nodes cn ON cn.id=cf.node_id WHERE cf.sidecar_of_file_id=sf.sidecar_of_file_id AND cf.asset_id=sf.asset_id AND cn.trashed_at IS NULL) FROM `+nodeFrom+` JOIN photo_files sf ON sf.node_id=n.id WHERE sf.sidecar_of_file_id=$1 AND sf.asset_id=$2
- ORDER BY n.trashed_at IS NOT NULL,sf.file_id=COALESCE((SELECT `+d.text("after_json", "sync.sidecar.file_id")+` FROM `+receiptTable+` WHERE operation='xmp_sync' AND `+receiptFile+`=$3), '') DESC,n.id LIMIT 1`, f.ID, f.AssetID, f.ID), &sc.FileID, &sc.audited, &w.sidecars)
+ ORDER BY n.trashed_at IS NOT NULL,sf.file_id=COALESCE((SELECT `+d.text(d.receiptColumn(""), "sync.sidecar.file_id")+` FROM `+receiptTable+` WHERE operation='xmp_sync' AND `+receiptFile+`=$3), '') DESC,n.id LIMIT 1`, f.ID, f.AssetID, f.ID), &sc.FileID, &sc.audited, &w.sidecars)
 	if err == nil {
 		if sc.Node.TrashedAt == nil {
 			w.Sidecar = sc
@@ -568,7 +568,7 @@ func (w PhotoXMPWork) conflictRows() []PhotoXMPRow {
 // does not need them.
 func (s *Store) loadPhotoXMPSyncWorkTx(ctx context.Context, tx *sql.Tx, id string) (w PhotoXMPWork, err error) {
 	if w, err = s.loadPhotoXMPWorkTx(ctx, tx, id); err == nil && w.Sidecar != nil {
-		w.Heads, err = photoXMPHeadsTx(ctx, tx, w)
+		w.Heads, err = s.photoXMPHeadsTx(ctx, tx, w)
 	}
 	return
 }
@@ -653,7 +653,7 @@ func (s *Store) resumeDetachedPhotoXMPTx(ctx context.Context, tx *sql.Tx, id str
  WHERE f.file_id=$1 AND n.id=$2 AND f.asset_id IS NULL AND n.trashed_at IS NULL
  AND n.parent_id=$3 AND n.name=$4 AND EXISTS(SELECT 1 FROM provenance p JOIN ingests i ON i.id=p.ingest_id
  WHERE p.node_id=n.id AND i.source_kind=$5 AND p.original_path=$6))`,
-		sidecar.FileID, sidecar.NodeID, w.Node.ParentID, w.Node.Name+".xmp", callerSuppliedSourceKindPrefix+"photo-xmp", "docbank:xmp:"+w.Original.ID).Scan(&detached)
+		sidecar.FileID, sidecar.NodeID, w.Node.ParentID, w.Node.Name+".xmp", storedString(s.postgresSchema != "", callerSuppliedSourceKindPrefix+"photo-xmp"), storedString(s.postgresSchema != "", "docbank:xmp:"+w.Original.ID)).Scan(&detached)
 	if err != nil || !detached {
 		return w, err
 	}
@@ -664,7 +664,7 @@ func (s *Store) resumeDetachedPhotoXMPTx(ctx context.Context, tx *sql.Tx, id str
 	if err := s.insertPhotoFileTx(ctx, tx, PhotoFile{AssetID: before.ID, NodeID: sidecar.NodeID, Role: PhotoRoleSidecar, SidecarOfID: &w.Original.ID}); err != nil {
 		return w, err
 	}
-	if _, err := commitPhotoAssetTx(ctx, tx, before, before, "attach"); err != nil {
+	if _, err := s.commitPhotoAssetTx(ctx, tx, before, before, "attach"); err != nil {
 		return w, err
 	}
 	if err := validatePhotoAssetGraph(ctx, tx, before.ID); err != nil {
@@ -703,7 +703,7 @@ func (s *Store) settlePhotoXMPTx(ctx context.Context, tx *sql.Tx, w PhotoXMPWork
 	if err := s.deletePhotoXMPReceiptTx(ctx, tx, w.Original.ID); err != nil {
 		return err
 	}
-	if err := writePhotoReceiptTx(ctx, tx, photoReceipt{AssetID: w.Original.AssetID, Operation: "xmp_sync", AfterRevision: 1, After: outcome}); err != nil {
+	if err := s.writePhotoReceiptTx(ctx, tx, photoReceipt{AssetID: w.Original.AssetID, Operation: "xmp_sync", AfterRevision: 1, After: outcome}); err != nil {
 		return err
 	}
 	return s.refreshPhotoAssetWorkTx(ctx, tx, w.Original.AssetID)
@@ -824,10 +824,10 @@ func PhotoXMPConflictRows(catalog PhotoAuthored, keywords []string, sidecar Phot
 }
 
 // photoXMPReceiptLookupSQL preserves SQLite's required partial-index hint and
-// uses PostgreSQL's existing expression index for the same file lookup.
+// uses PostgreSQL's projected expression index for the same file lookup.
 func (s *Store) photoXMPReceiptLookupSQL() (table, file string) {
 	if s.postgresSchema != "" {
-		return "photo_change_receipts", "(after_json::jsonb ->> 'file_id')"
+		return "photo_change_receipts", "(query_json::jsonb ->> 'file_id')"
 	}
 	return "photo_change_receipts INDEXED BY photo_change_receipts_xmp_file", "CAST(json_extract(after_json,'$.file_id') AS TEXT)"
 }

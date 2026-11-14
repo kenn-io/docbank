@@ -104,7 +104,7 @@ func TestBatesRecordedRecipeAfterUpgrade(t *testing.T) {
 		Prefix: "Q", Padding: 6, StartAt: 1, Position: "bottom-right", MarginPoints: 24,
 		FontName: "Helvetica", FontSizePoints: 9, Color: "#000000", Opacity: 1,
 		Units: "point", RotationPolicy: "follow_page", EngineIdentity: pdfstamp.EngineIdentity{
-			Name: "pdfcpu", Version: "v0.14.0", API: "AddWatermarksMap", Options: []string{"onTop=true", "update=restamp"}}}
+			Name: "pdfcpu", Version: "v0.15.0", API: "AddWatermarksMap", Options: []string{"onTop=true", "update=restamp"}}}
 	for _, test := range []struct {
 		name   string
 		recipe any

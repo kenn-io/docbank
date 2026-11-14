@@ -59,7 +59,8 @@ docbank watch list --json
 
 Each item reports the local source, virtual destination, settle window,
 minimum source age, scan interval, the literal `exclude` and glob
-`exclude_patterns` lists, and current job record. A configured profile adds optional
+`exclude_patterns` lists, and current job record. The glob list is effective: it
+includes the default patterns unless `default_excludes = false`. A configured profile adds optional
 `processing` status; see the [watch API](../architecture/http-api.md#background-job-status) for its fields.
 Human output appends a `PROCESSING` column. See [watch processing](../configuration.md#watched-inboxes) for consent behavior.
 The settle window is the time a file must remain unchanged. A nonzero minimum
@@ -272,10 +273,10 @@ Each result's `match` is `name`, `content`, or `filter`. Name matches keep their
 ranking and appear before content-only matches.
 
 Content search covers current versions of verified UTF-8 plain text, Markdown,
-JSON, and JSONL documents up to 16 MiB. Extraction runs in the background.
+JSON, and JSONL documents up to 16 MiB, and text layers in PDFs. Extraction runs in the background.
 After a write, inspect `docbank jobs` or retry briefly before treating a
-missing content match as permanent. The daemon does not automatically run
-PDF, Office, image, or OCR extraction. See [Searching](../usage/searching.md)
+missing content match as permanent. The daemon indexes PDF text layers automatically.
+It does not automatically run Office, image, or OCR extraction. See [Searching](../usage/searching.md)
 for the processing boundary and the supported media types.
 
 `GET /api/v1/search` uses lexical matching: words in names and indexed text.

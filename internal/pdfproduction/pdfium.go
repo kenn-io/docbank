@@ -189,17 +189,21 @@ func (m *fixedLinearMemory) Free() {
 // Close a rendering engine before starting another engine or VerifyFresh;
 // concurrent sessions wait with their page context and deadline.
 func NewPDFium(recipe redaction.Recipe) (Engine, error) {
-	return newPDFium(recipe, readProcessRSS)
+	engine, err := newPDFium(recipe, readProcessRSS)
+	if err != nil {
+		return nil, err
+	}
+	return engine, nil
 }
 
-func newPDFium(recipe redaction.Recipe, read func(context.Context) (uint64, error)) (Engine, error) {
+func newPDFium(recipe redaction.Recipe, read func(context.Context) (uint64, error)) (*pdfiumEngine, error) {
 	if err := validateRecipe(recipe); err != nil {
 		return nil, err
 	}
 	if hashBytes(wasmBytes) != wasmSHA256 || recipe.RendererSHA256 != "" && recipe.RendererSHA256 != wasmSHA256 {
 		return nil, errors.New("qualified PDFium WASM asset unavailable or hash mismatch")
 	}
-	if err := checkRSS(context.Background(), recipe.QualifiedPeakRSSBytes, read); err != nil {
+	if err := admitRSS(context.Background(), recipe.QualifiedPeakRSSBytes, read); err != nil {
 		return nil, err
 	}
 	return &pdfiumEngine{gate: make(chan struct{}, 1), recipe: recipe, cache: wasmCode, scavenge: debug.FreeOSMemory, rssRead: read}, nil

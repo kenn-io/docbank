@@ -16,7 +16,7 @@ func (s *Store) ExportAttachmentPublications(ctx context.Context, owner, id stri
 	if owner == "" || validateUUIDv4(id) != nil || after < 0 || after > bundle.MaxRoles {
 		return out, bundle.ErrConflict
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return out, err
 	}
@@ -34,7 +34,7 @@ func (s *Store) ExportAttachmentPublications(ctx context.Context, owner, id stri
 	out = bundle.AttachmentPublications{SourceID: id, MemberHash: source.MemberHash, After: after, Items: []bundle.AttachmentPublicationChoice{}}
 	err = walkExportMembers(ctx, tx, id, func(m bundle.Member) error {
 		var count int
-		if e := tx.QueryRowContext(ctx, `SELECT count(*) FROM email_document_publications WHERE parent_version_id=?`, m.VersionID).Scan(&count); e != nil {
+		if e := tx.QueryRowContext(ctx, `SELECT count(*) FROM email_document_publications WHERE parent_version_id=$1`, m.VersionID).Scan(&count); e != nil {
 			return e
 		}
 		if count < 2 {
@@ -48,7 +48,7 @@ func (s *Store) ExportAttachmentPublications(ctx context.Context, owner, id stri
 		if offset >= count || len(out.Items) == bundle.InspectionPageSize {
 			return nil
 		}
-		rows, e := tx.QueryContext(ctx, `SELECT operation_id FROM email_document_publications WHERE parent_version_id=? ORDER BY operation_id LIMIT ? OFFSET ?`, m.VersionID, bundle.InspectionPageSize-len(out.Items), offset)
+		rows, e := tx.QueryContext(ctx, `SELECT operation_id FROM email_document_publications WHERE parent_version_id=$1 ORDER BY operation_id LIMIT $2 OFFSET $3`, m.VersionID, bundle.InspectionPageSize-len(out.Items), offset)
 		if e != nil {
 			return e
 		}
@@ -65,7 +65,7 @@ func (s *Store) ExportAttachmentPublications(ctx context.Context, owner, id stri
 			return e
 		}
 		var name string
-		if e = tx.QueryRowContext(ctx, `SELECT name FROM nodes WHERE id=?`, m.NodeID).Scan(&name); e != nil {
+		if e = tx.QueryRowContext(ctx, `SELECT name FROM nodes WHERE id=$1`, m.NodeID).Scan(&name); e != nil {
 			return e
 		}
 		for _, operation := range ids {

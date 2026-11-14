@@ -1,21 +1,17 @@
 package plaintext
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
-	"io"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/media/mediatest"
 )
 
 func TestProviderRendersExactUTF8AsOneGenericUnit(t *testing.T) {
@@ -23,7 +19,7 @@ func TestProviderRendersExactUTF8AsOneGenericUnit(t *testing.T) {
 	require.NoError(t, err)
 	source := []byte("alpha\nβeta\n")
 	upload := newTestUpload(source)
-	authorization := testAuthorization(provider.Descriptor(), upload.Metadata())
+	authorization := mediatest.Authorization(provider.Descriptor(), upload.Metadata())
 
 	result, err := document.RenderRendition(t.Context(), provider, upload, authorization)
 	require.NoError(t, err)
@@ -59,7 +55,7 @@ func TestProviderRejectsInvalidUTF8AndNUL(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			upload := newTestUpload(testCase.data)
 			_, err := provider.Render(t.Context(), upload,
-				testAuthorization(provider.Descriptor(), upload.Metadata()))
+				mediatest.Authorization(provider.Descriptor(), upload.Metadata()))
 			require.Error(t, err)
 			providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
 			require.True(t, ok)
@@ -72,11 +68,11 @@ func TestProviderRejectsEmptyInputBeforeReading(t *testing.T) {
 	provider, err := New(Profile{MaxDocumentBytes: 1024})
 	require.NoError(t, err)
 	upload := newTestUpload(nil)
-	authorization := testAuthorization(provider.Descriptor(), upload.Metadata())
+	authorization := mediatest.Authorization(provider.Descriptor(), upload.Metadata())
 
 	_, err = document.RenderRendition(t.Context(), provider, upload, authorization)
 	require.ErrorContains(t, err, "byte length")
-	assert.Zero(t, upload.reads)
+	assert.Zero(t, upload.Reads)
 }
 
 func TestProviderEnforcesProfileSizeBeforeReading(t *testing.T) {
@@ -85,12 +81,12 @@ func TestProviderEnforcesProfileSizeBeforeReading(t *testing.T) {
 	upload := newTestUpload([]byte("alpha"))
 
 	_, err = provider.Render(t.Context(), upload,
-		testAuthorization(provider.Descriptor(), upload.Metadata()))
+		mediatest.Authorization(provider.Descriptor(), upload.Metadata()))
 	require.Error(t, err)
 	providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
 	require.True(t, ok)
 	assert.Equal(t, document.RenditionErrorPolicyRejected, providerErr.Code())
-	assert.Zero(t, upload.reads)
+	assert.Zero(t, upload.Reads)
 }
 
 func TestProviderHonorsCancellationBeforeReading(t *testing.T) {
@@ -101,12 +97,12 @@ func TestProviderHonorsCancellationBeforeReading(t *testing.T) {
 	cancel()
 
 	_, err = provider.Render(ctx, upload,
-		testAuthorization(provider.Descriptor(), upload.Metadata()))
+		mediatest.Authorization(provider.Descriptor(), upload.Metadata()))
 	require.ErrorIs(t, err, context.Canceled)
 	providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
 	require.True(t, ok)
 	assert.Equal(t, document.RenditionErrorCanceled, providerErr.Code())
-	assert.Zero(t, upload.reads)
+	assert.Zero(t, upload.Reads)
 }
 
 func TestProviderRejectsUploadByteSubstitution(t *testing.T) {
@@ -116,10 +112,10 @@ func TestProviderRejectsUploadByteSubstitution(t *testing.T) {
 	metadata := upload.Metadata()
 	want := sha256.Sum256([]byte("alpha"))
 	metadata.SHA256 = hex.EncodeToString(want[:])
-	upload.metadata = metadata
+	upload.MetadataValue = metadata
 
 	_, err = provider.Render(t.Context(), upload,
-		testAuthorization(provider.Descriptor(), upload.Metadata()))
+		mediatest.Authorization(provider.Descriptor(), upload.Metadata()))
 	require.Error(t, err)
 	providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
 	require.True(t, ok)
@@ -143,56 +139,6 @@ func TestNewRejectsInvalidBoundsAndDescriptorIsImmutable(t *testing.T) {
 	assert.NotEqual(t, descriptor.SupportedFormats, provider.Descriptor().SupportedFormats)
 }
 
-type testUpload struct {
-	reader   *bytes.Reader
-	metadata document.AuthorizedUploadMetadata
-	reads    int
-}
-
-func newTestUpload(data []byte) *testUpload {
-	digest := sha256.Sum256(data)
-	return &testUpload{
-		reader: bytes.NewReader(data),
-		metadata: document.AuthorizedUploadMetadata{
-			Filename: "notes.txt", MediaFamily: "text", MediaType: "text/plain",
-			ByteLength: int64(len(data)), SHA256: hex.EncodeToString(digest[:]),
-			CapabilityRecordChecksum: strings.Repeat("2", 64),
-			ProviderMetadataChecksum: strings.Repeat("3", 64),
-			InputKind:                document.RenditionInputOriginalFile,
-		},
-	}
-}
-
-func (upload *testUpload) Read(buffer []byte) (int, error) {
-	upload.reads++
-	read, err := upload.reader.Read(buffer)
-	if err != nil {
-		return read, fmt.Errorf("read test upload: %w", err)
-	}
-	return read, nil
-}
-
-func (*testUpload) Close() error { return nil }
-
-func (upload *testUpload) Metadata() document.AuthorizedUploadMetadata { return upload.metadata }
-
-var _ document.AuthorizedUpload = (*testUpload)(nil)
-var _ io.ReadCloser = (*testUpload)(nil)
-
-func testAuthorization(
-	descriptor document.RenditionDescriptor, metadata document.AuthorizedUploadMetadata,
-) document.RenditionAuthorization {
-	started := time.Now().UTC().Add(-time.Minute)
-	return document.RenditionAuthorization{
-		ProviderID: descriptor.ID, DescriptorFingerprint: descriptor.Fingerprint,
-		PolicyFingerprint:           descriptor.PolicyFingerprint,
-		RenditionRequestFingerprint: strings.Repeat("4", 64),
-		SourceSHA256:                metadata.SHA256, SourceBytes: metadata.ByteLength,
-		CapabilityRecordChecksum: metadata.CapabilityRecordChecksum,
-		ProviderMetadataChecksum: metadata.ProviderMetadataChecksum,
-		MediaFamily:              metadata.MediaFamily, MediaType: metadata.MediaType,
-		InputKind: metadata.InputKind, MaxTotalResultBytes: 1 << 20,
-		AuthorizedAt: started.Format("2006-01-02T15:04:05.000000000Z"),
-		ExpiresAt:    started.Add(10 * time.Minute).Format("2006-01-02T15:04:05.000000000Z"),
-	}
+func newTestUpload(data []byte) *mediatest.Upload {
+	return mediatest.NewUpload(data, document.AuthorizedUploadMetadata{Filename: "notes.txt", MediaFamily: "text", MediaType: "text/plain"})
 }

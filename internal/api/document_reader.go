@@ -41,3 +41,21 @@ func (r *DocumentReader) ValidateDocumentSearch(ctx context.Context, input Docum
 func (r *DocumentReader) SearchDocuments(ctx context.Context, input DocumentSearchRequest) (DocumentSearchReport, error) {
 	return searchDocuments(ctx, r.processing, input)
 }
+
+func processingProfileSummaries(service *processing.Service) []ProcessingProfileSummary {
+	profiles := service.Profiles()
+	result := make([]ProcessingProfileSummary, len(profiles))
+	for index, profile := range profiles {
+		result[index] = ProcessingProfileSummary{Name: profile.Name, Fingerprint: profile.Fingerprint,
+			Rendition: profile.Rendition, EmbeddingBindings: profile.EmbeddingBindings,
+			QueryEmbeddingBindings: profile.QueryEmbeddingBindings, RerankingAvailable: profile.RerankingAvailable}
+	}
+	return result
+}
+
+func (r *DocumentReader) ListDocumentProcessingProfiles(ctx context.Context) ([]ProcessingProfileSummary, error) {
+	if r.processing == nil {
+		return nil, processingUnavailable()
+	}
+	return processingProfileSummaries(r.processing), nil
+}

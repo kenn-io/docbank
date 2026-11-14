@@ -25,7 +25,7 @@ func (s *Store) deleteRenditionAuthorityForVersionsTx(
 	if err := deleteEmailAuthorityForVersionsTx(ctx, tx, versionIDs); err != nil {
 		return err
 	}
-	if err := deleteEmbeddingAuthorityForVersionsTx(ctx, tx, versionIDs); err != nil {
+	if err := deleteEmbeddingAuthorityForVersionsTx(ctx, tx, versionIDs, s.postgresSchema != ""); err != nil {
 		return err
 	}
 	deleteHeads, err := tx.PrepareContext(ctx,
@@ -64,10 +64,10 @@ func (s *Store) deleteRenditionAuthorityForVersionsTx(
 // authority before the owning version and its rendition attachment. Immutable
 // vector/generation authority remains for the shared derivative GC path, which
 // applies its roots independently after the version-owned sets are gone.
-func deleteEmbeddingAuthorityForVersionsTx(ctx context.Context, tx *sql.Tx, versionIDs []string) error {
+func deleteEmbeddingAuthorityForVersionsTx(ctx context.Context, tx *sql.Tx, versionIDs []string, postgres bool) error {
 	for _, versionID := range versionIDs {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM current_rendition_roots WHERE root_kind=$1 AND root_id IN (
-            SELECT job_id FROM embedding_jobs WHERE content_version_id=$2)`, RenditionRootWorkerLease, versionID); err != nil {
+            SELECT `+storedStringSQL(postgres, "job_id")+` FROM embedding_jobs WHERE content_version_id=$2)`, RenditionRootWorkerLease, versionID); err != nil {
 			return fmt.Errorf("releasing embedding job roots: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_jobs WHERE content_version_id=$1`, versionID); err != nil {
@@ -227,7 +227,7 @@ func (s *Store) reconcileRenditionJobsAfterWaiterDeletionTx(
 		if affectedJob.state == RenditionJobRunning &&
 			affectedJob.phase == RenditionPhaseProvider && affectedJob.providerStarted {
 			waiterID, authorization, selectErr := selectRenditionJobWaiterTx(
-				ctx, tx, affectedJob.vaultID, job, atTime)
+				ctx, tx, affectedJob.vaultID, job, atTime, s.postgresSchema != "")
 			if selectErr == nil {
 				if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET
 					selected_waiter_id=$1,authorization_grant_id=$2,
@@ -268,7 +268,7 @@ func (s *Store) reconcileRenditionJobsAfterWaiterDeletionTx(
 			return fmt.Errorf("reading requeued rendition generation: %w", err)
 		}
 		if err := refreshRenditionJobRootsTx(
-			ctx, tx, job.ID, affectedJob.phase, generationID, job.ClaimEpoch+1, at); err != nil {
+			ctx, tx, job.ID, affectedJob.phase, generationID, job.ClaimEpoch+1, at, s.postgresSchema != ""); err != nil {
 			return err
 		}
 	}
@@ -277,8 +277,8 @@ func (s *Store) reconcileRenditionJobsAfterWaiterDeletionTx(
 		WHERE active=1 AND EXISTS (
 			SELECT 1 FROM rendition_jobs j
 			WHERE ($2 OR j.job_id IN (SELECT value FROM `+d.arrayValues("$3")+`))
-			  AND (current_rendition_roots.root_id='rendition_job_build_' || j.job_id
-			       OR current_rendition_roots.root_id='rendition_job_generation_' || j.job_id)
+			  AND (current_rendition_roots.root_id=`+storedStringSQL(d.postgres, "'rendition_job_build_' || j.job_id")+`
+			       OR current_rendition_roots.root_id=`+storedStringSQL(d.postgres, "'rendition_job_generation_' || j.job_id")+`)
 			  AND NOT EXISTS (
 				SELECT 1 FROM rendition_job_waiters w
 				WHERE w.job_id=j.job_id AND w.state='waiting'
@@ -290,8 +290,8 @@ func (s *Store) reconcileRenditionJobsAfterWaiterDeletionTx(
 		WHERE EXISTS (
 			SELECT 1 FROM rendition_jobs j
 			WHERE ($1 OR j.job_id IN (SELECT value FROM `+d.arrayValues("$2")+`))
-			  AND (current_rendition_roots.root_id='rendition_job_build_' || j.job_id
-			       OR current_rendition_roots.root_id='rendition_job_generation_' || j.job_id)
+			  AND (current_rendition_roots.root_id=`+storedStringSQL(d.postgres, "'rendition_job_build_' || j.job_id")+`
+			       OR current_rendition_roots.root_id=`+storedStringSQL(d.postgres, "'rendition_job_generation_' || j.job_id")+`)
 			  AND j.state<>'operator_required'
 			  AND NOT EXISTS (
 				SELECT 1 FROM rendition_job_waiters w

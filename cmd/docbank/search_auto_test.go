@@ -76,6 +76,7 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 		{name: "malformed success", profiles: profiles, limit: 50, malformed: true, wantSearch: 1, wantReason: "semantic_search_failed", wantDetail: true},
 		{name: "human malformed success", profiles: profiles, limit: 50, humanCLI: true, malformed: true, wantSearch: 1, wantReason: "semantic_search_failed", wantDetail: true},
 		{name: "auth discovery", profileError: "unauthorized", limit: 50, wantError: true},
+		{name: "missing selection stops retries", profiles: profiles, limit: 50, searchError: "not_found", wantSearch: 1, wantReason: "not_found"},
 		{name: "auth search", profiles: profiles, limit: 50, searchError: "unauthorized", wantSearch: 1, wantError: true},
 	}
 	for _, tc := range cases {
@@ -129,6 +130,8 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			status = http.StatusPreconditionRequired
 		case "not_found":
 			status = http.StatusNotFound
+		case "index_unavailable":
+			status = http.StatusConflict
 		}
 		w.WriteHeader(status)
 		assert.NoError(t, json.MarshalWrite(w, api.Error{Status: status, Code: code, Detail: "provider details must stay private"}))
@@ -142,6 +145,8 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
 			assert.NoError(t, err)
 			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof("synthetic-token", nonce)}))
+		case "GET /api/v1/search/text-coverage":
+			assert.NoError(t, json.MarshalWrite(w, api.SearchTextCoverage{Families: []string{}}))
 		case "GET /api/v1/search":
 			assert.Equal(t, tc.query, r.URL.Query().Get("q"))
 			assert.Equal(t, tc.wantSearch, *searchCalls, "lexical search must run after every hybrid attempt")
@@ -195,7 +200,7 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 				problem(w, "processing_consent_required")
 			case tc.cold && *searchCalls == 1:
 				// A binding without a built vector index has no index head.
-				problem(w, "not_found")
+				problem(w, "index_unavailable")
 			case tc.searchError != "":
 				problem(w, tc.searchError)
 			case tc.malformed:

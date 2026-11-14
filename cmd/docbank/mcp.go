@@ -106,6 +106,7 @@ func runMCP(cmd *cobra.Command) (retErr error) {
 		}
 		return docmcp.ServeHTTP(ctx, server, mcpListen, docmcp.HTTPOptions{
 			BearerToken: token, Logger: logger,
+			PublicOrigin: cfg.MCP.HTTP.PublicOrigin,
 			AllowedHosts: append(append([]string(nil), cfg.MCP.HTTP.AllowedHosts...), mcpAllowedHosts...),
 		})
 	default:

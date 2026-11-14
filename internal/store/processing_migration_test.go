@@ -46,7 +46,7 @@ func TestLegacyLexicalGenerationIdentityIncludesZeroSegmentBuildMembership(t *te
 	var firstGeneration LexicalGeneration
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		firstGeneration, err = stageLegacyLexicalGenerationTx(ctx, tx)
+		firstGeneration, err = stageLegacyLexicalGenerationTx(ctx, tx, false)
 		return err
 	}))
 	secondSource := fakeHash("7b")
@@ -61,7 +61,7 @@ func TestLegacyLexicalGenerationIdentityIncludesZeroSegmentBuildMembership(t *te
 	var secondGeneration LexicalGeneration
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		secondGeneration, err = stageLegacyLexicalGenerationTx(ctx, tx)
+		secondGeneration, err = stageLegacyLexicalGenerationTx(ctx, tx, false)
 		return err
 	}))
 	assert.NotEqual(t, firstGeneration.ID, secondGeneration.ID)

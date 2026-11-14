@@ -35,7 +35,7 @@ func newRedactionPackageCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "package <selection.json> <recipient.zip>", Short: "Package reviewed numbered PDFs for recipient import", Args: cobra.ExactArgs(2),
 		Example: "  docbank redaction package selection.json recipient.zip --json",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			selection, err := readRecipientSelection(args[0])
+			selection, err := readRecipientSelection(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
@@ -142,7 +142,7 @@ func publishRecipientPackage(ctx context.Context, cmd *cobra.Command, destinatio
 func writeRecipientPackage(ctx context.Context, c *daemonconn.Connection, checked recipientPreflight, directory string, out io.Writer) (processing.RecipientPackageReceipt, error) {
 	return processing.WriteRecipientPackage(ctx, out, checked.Documents, func(ctx context.Context, i int) (io.ReadCloser, []byte, error) {
 		input := checked.Inputs[i]
-		review, err := readRecipientReview(input)
+		review, err := readRecipientReview(ctx, input)
 		if err != nil {
 			return nil, nil, err
 		}

@@ -378,7 +378,9 @@ func TestVectorIndexChangedMembershipSupersedesLiveBuildClaim(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, claimed)
 	secondProfile := embeddingCatalogProfileVariant(t)
-	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error { return ensureProcessingProfileTx(t.Context(), tx, secondProfile) }))
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		return ensureProcessingProfileTx(t.Context(), tx, secondProfile, s.postgresSchema != "")
+	}))
 	second := embeddingSetFixture(t.Context(), s, versionID, secondProfile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	second.ID = testSHA256([]byte("second-profile-index-set"))
 	second.InputGeneration.ID = testSHA256([]byte("second-profile-index-input"))

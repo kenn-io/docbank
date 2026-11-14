@@ -642,6 +642,23 @@ func TestEmbeddingCatalogMetadataRoundTripsDeterministically(t *testing.T) {
 
 	restored := newTestStoreWithDriver(t, modernc.Driver{})
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(first.Bytes())))
+	t.Run("batched loader preserves restored authority", func(t *testing.T) {
+		loaded, err := loadEmbeddingSetsTx(t.Context(), restored.db, []string{record.ID, chunk.ID})
+		require.NoError(t, err)
+		for _, want := range []EmbeddingSetRecord{record, chunk} {
+			got, ok := loaded[want.ID]
+			require.True(t, ok)
+			require.Equal(t, want.BindingID, got.BindingID)
+			require.Equal(t, want.InputKind, got.InputKind)
+			require.Equal(t, want.InputGeneration.GenerationBlobHash, got.InputGeneration.GenerationBlobHash)
+			require.Equal(t, want.InputGeneration.GenerationEncodedSize, got.InputGeneration.GenerationEncodedSize)
+			require.Equal(t, want.InputGeneration.GenerationChecksum, got.InputGeneration.GenerationChecksum)
+			require.Equal(t, want.InputGeneration.AttachmentID, got.InputGeneration.AttachmentID)
+			require.Equal(t, want.InputGeneration.Inputs, got.InputGeneration.Inputs)
+			require.Equal(t, want.VectorSet.ID, got.VectorSet.ID)
+			require.Equal(t, want.VectorSpace.ID, got.VectorSpace.ID)
+		}
+	})
 	var roundTrip bytes.Buffer
 	require.NoError(t, restored.ExportMetadata(t.Context(), &roundTrip))
 	assert.Equal(t, first.Bytes(), roundTrip.Bytes())
@@ -1530,12 +1547,12 @@ func TestEmbeddingValidationPreservesReadErrors(t *testing.T) {
 	err = s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		readErr := requireEmbeddingWorkerLeaseTx(ctx, tx, claim.AttemptID, claim.Epoch, work.InputGeneration.ID, at)
+		readErr := requireEmbeddingWorkerLeaseTx(ctx, tx, claim.AttemptID, claim.Epoch, work.InputGeneration.ID, at, s.postgresSchema != "")
 		require.ErrorIs(t, readErr, context.Canceled)
-		classified := validateEmbeddingWorkTx(ctx, tx, s.vaultID, claim, work, at)
+		classified := validateEmbeddingWorkTx(ctx, tx, s.vaultID, claim, work, at, s.postgresSchema != "")
 		require.NotErrorIs(t, classified, ErrEmbeddingJobFenced)
 		require.ErrorIs(t, classified, context.Canceled)
-		require.NoError(t, validateEmbeddingWorkTx(t.Context(), tx, s.vaultID, claim, work, at))
+		require.NoError(t, validateEmbeddingWorkTx(t.Context(), tx, s.vaultID, claim, work, at, s.postgresSchema != ""))
 		return nil
 	})
 	require.NoError(t, err)
@@ -2229,7 +2246,7 @@ func checkEmbeddingReconciliationRestoresPendingImageGenerationInMixedProfile(t 
 	t.Parallel()
 	f := seedImageEmbeddingCatalog(t, open(t))
 	require.NoError(t, f.s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return ensureProcessingProfileTx(t.Context(), tx, f.request.Profile)
+		return ensureProcessingProfileTx(t.Context(), tx, f.request.Profile, f.s.postgresSchema != "")
 	}))
 	var secondVersion string
 	require.NoError(t, f.s.db.QueryRowContext(t.Context(), `SELECT version_id FROM content_versions WHERE blob_hash=$1 ORDER BY version_id LIMIT 1`, catalogSourceHash).Scan(&secondVersion))

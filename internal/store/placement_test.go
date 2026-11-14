@@ -9,9 +9,10 @@ import (
 	"go.kenn.io/kit/packstore"
 )
 
-func TestPlacementPlanUsesRetainedSubtreeAndCompleteReferenceClosure(t *testing.T) {
+func checkPlacementPlanUsesRetainedSubtreeAndCompleteReferenceClosure(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	archive, err := s.Mkdir(ctx, s.RootID(), "archive")
 	require.NoError(t, err)
@@ -58,9 +59,10 @@ func TestPlacementPlanUsesRetainedSubtreeAndCompleteReferenceClosure(t *testing.
 	assert.True(t, byHash[fakeHash("c3")].RetireSource)
 }
 
-func TestPlacementCommitCannotExpandRetirementBeyondPreview(t *testing.T) {
+func checkPlacementCommitCannotExpandRetirementBeyondPreview(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	archive, err := s.Mkdir(ctx, s.RootID(), "archive")
 	require.NoError(t, err)
@@ -111,9 +113,10 @@ func TestPlacementCommitCannotExpandRetirementBeyondPreview(t *testing.T) {
 	require.Len(t, resolution.Candidates, 2)
 }
 
-func TestPlacementCommitRejectsPlannedDestinationDrift(t *testing.T) {
+func checkPlacementCommitRejectsPlannedDestinationDrift(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	hash := fakeHash("a3")
 	file, err := s.CreateFile(ctx, s.RootID(), "document.txt", hash, 7, "text/plain")
@@ -125,7 +128,7 @@ func TestPlacementCommitRejectsPlannedDestinationDrift(t *testing.T) {
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO blob_locations(
 			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
-		) VALUES(?,?,?,'loose','raw',7,1)`,
+		) VALUES($1,$2,$3,'loose','raw',7,1)`,
 		hash, destination.ID, firstGeneration,
 	)
 	require.NoError(t, err)
@@ -137,8 +140,8 @@ func TestPlacementCommitRejectsPlannedDestinationDrift(t *testing.T) {
 	require.NotNil(t, plan.Hashes[0].Destination)
 	const secondGeneration = "40000000-0000-4000-8000-000000000013"
 	_, err = s.db.ExecContext(ctx, `
-		UPDATE blob_locations SET generation=?
-		WHERE blob_hash=? AND store_id=?`,
+		UPDATE blob_locations SET generation=$1
+		WHERE blob_hash=$2 AND store_id=$3`,
 		secondGeneration, hash, destination.ID,
 	)
 	require.NoError(t, err)
@@ -159,9 +162,10 @@ func TestPlacementCommitRejectsPlannedDestinationDrift(t *testing.T) {
 	require.ErrorIs(t, err, ErrStaleRevision)
 }
 
-func TestPlacementPlanPinsAuditedContentToPrimaryByDefault(t *testing.T) {
+func checkPlacementPlanPinsAuditedContentToPrimaryByDefault(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	archive, err := s.Mkdir(ctx, s.RootID(), "archive")
 	require.NoError(t, err)
@@ -195,9 +199,10 @@ func TestPlacementPlanPinsAuditedContentToPrimaryByDefault(t *testing.T) {
 	assert.True(t, remoteOnly.Hashes[0].RetireSource)
 }
 
-func TestPlacementPlanRejectsContentMissingFromBothRequestedStores(t *testing.T) {
+func checkPlacementPlanRejectsContentMissingFromBothRequestedStores(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	file, err := s.CreateFile(
 		ctx, s.RootID(), "elsewhere.txt", fakeHash("ac"), 9, "text/plain",
@@ -217,9 +222,10 @@ func TestPlacementPlanRejectsContentMissingFromBothRequestedStores(t *testing.T)
 	require.ErrorIs(t, err, packstore.ErrPhysicalAuthorityMissing)
 }
 
-func TestEvacuationPlansOnlyAuthorityHeldBySource(t *testing.T) {
+func checkEvacuationPlansOnlyAuthorityHeldBySource(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	firstHash := fakeHash("d4")
 	secondHash := fakeHash("e5")
@@ -239,7 +245,7 @@ func TestEvacuationPlansOnlyAuthorityHeldBySource(t *testing.T) {
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO blob_locations(
 			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
-		) VALUES(?,?,?,'loose','raw',4,1)`,
+		) VALUES($1,$2,$3,'loose','raw',4,1)`,
 		firstHash, secondary.ID, "40000000-0000-4000-8000-000000000004",
 	)
 	require.NoError(t, err)
@@ -254,9 +260,10 @@ func TestEvacuationPlansOnlyAuthorityHeldBySource(t *testing.T) {
 	assert.Equal(t, firstHash, plan.Hashes[0].Hash)
 }
 
-func TestEvacuationPlansRetainedBlobsWithoutVersionReferences(t *testing.T) {
+func checkEvacuationPlansRetainedBlobsWithoutVersionReferences(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	hash := fakeHash("ab")
 	secondary, err := s.PrepareSecondaryBlobStore(
@@ -265,14 +272,14 @@ func TestEvacuationPlansRetainedBlobsWithoutVersionReferences(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO blobs(hash,size,created_at) VALUES(?,12,?)`,
+		`INSERT INTO blobs(hash,size,created_at) VALUES($1,12,$2)`,
 		hash, nowRFC3339(),
 	)
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO blob_locations(
 			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
-		) VALUES(?,?,?,'loose','raw',12,1)`,
+		) VALUES($1,$2,$3,'loose','raw',12,1)`,
 		hash, secondary.ID,
 		"40000000-0000-4000-8000-000000000012",
 	)
@@ -291,9 +298,10 @@ func TestEvacuationPlansRetainedBlobsWithoutVersionReferences(t *testing.T) {
 	assert.True(t, plan.Hashes[0].RetireSource)
 }
 
-func TestS3PackedPlacementReportsContainerScratchAndEgress(t *testing.T) {
+func checkS3PackedPlacementReportsContainerScratchAndEgress(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	hash := fakeHash("f6")
 	_, err := s.CreateFile(
@@ -306,26 +314,26 @@ func TestS3PackedPlacementReportsContainerScratchAndEgress(t *testing.T) {
 	packID := pack.NewPackID()
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO blob_packs(store_id,pack_id,entry_count,stored_bytes,created_at)
-		VALUES(?,?,1,4096,?)`,
+		VALUES($1,$2,1,4096,$3)`,
 		secondary.ID, packID, nowRFC3339(),
 	)
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO blob_pack_entries(
 			blob_hash,store_id,pack_id,pack_offset,stored_len,raw_len,flags,crc32c
-		) VALUES(?,?,?,?,7,7,0,0)`,
+		) VALUES($1,$2,$3,$4,7,7,0,0)`,
 		hash, secondary.ID, packID, pack.MinEntryOffset,
 	)
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO blob_locations(
 			blob_hash,store_id,generation,kind,stored_size,pack_eligible
-		) VALUES(?,?,?,'packed',7,1)`,
+		) VALUES($1,$2,$3,'packed',7,1)`,
 		hash, secondary.ID, "40000000-0000-4000-8000-000000000005",
 	)
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx,
-		`DELETE FROM blob_locations WHERE blob_hash=? AND store_id=?`,
+		`DELETE FROM blob_locations WHERE blob_hash=$1 AND store_id=$2`,
 		hash, s.primaryStoreID,
 	)
 	require.NoError(t, err)
@@ -341,9 +349,10 @@ func TestS3PackedPlacementReportsContainerScratchAndEgress(t *testing.T) {
 	assert.Equal(t, int64(4096), plan.ScratchBytes)
 }
 
-func TestPlacementExistingLocalDestinationReportsVerificationRead(t *testing.T) {
+func checkPlacementExistingLocalDestinationReportsVerificationRead(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	hash := fakeHash("f7")
 	_, err := s.CreateFile(ctx, s.RootID(), "present.txt", hash, 11, "text/plain")
@@ -356,7 +365,7 @@ func TestPlacementExistingLocalDestinationReportsVerificationRead(t *testing.T) 
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO blob_locations(
 			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
-		) VALUES(?,?,?,'loose','raw',11,1)`,
+		) VALUES($1,$2,$3,'loose','raw',11,1)`,
 		hash, secondary.ID, "40000000-0000-4000-8000-000000000006",
 	)
 	require.NoError(t, err)
@@ -372,9 +381,10 @@ func TestPlacementExistingLocalDestinationReportsVerificationRead(t *testing.T) 
 	assert.Zero(t, plan.RemoteEgressBytes)
 }
 
-func TestPlacementExistingS3PackReportsVerificationEgressAndScratch(t *testing.T) {
+func checkPlacementExistingS3PackReportsVerificationEgressAndScratch(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	hash := fakeHash("f8")
 	_, err := s.CreateFile(ctx, s.RootID(), "remote.txt", hash, 13, "text/plain")
@@ -385,21 +395,21 @@ func TestPlacementExistingS3PackReportsVerificationEgressAndScratch(t *testing.T
 	packID := pack.NewPackID()
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO blob_packs(store_id,pack_id,entry_count,stored_bytes,created_at)
-		VALUES(?,?,1,8192,?)`,
+		VALUES($1,$2,1,8192,$3)`,
 		secondary.ID, packID, nowRFC3339(),
 	)
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO blob_pack_entries(
 			blob_hash,store_id,pack_id,pack_offset,stored_len,raw_len,flags,crc32c
-		) VALUES(?,?,?,?,13,13,0,0)`,
+		) VALUES($1,$2,$3,$4,13,13,0,0)`,
 		hash, secondary.ID, packID, pack.MinEntryOffset,
 	)
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO blob_locations(
 			blob_hash,store_id,generation,kind,stored_size,pack_eligible
-		) VALUES(?,?,?,'packed',13,1)`,
+		) VALUES($1,$2,$3,'packed',13,1)`,
 		hash, secondary.ID, "40000000-0000-4000-8000-000000000007",
 	)
 	require.NoError(t, err)
@@ -416,9 +426,10 @@ func TestPlacementExistingS3PackReportsVerificationEgressAndScratch(t *testing.T
 	assert.Equal(t, int64(8192), plan.ScratchBytes)
 }
 
-func TestPlacementExistingS3LooseReportsPhysicalVerificationEgress(t *testing.T) {
+func checkPlacementExistingS3LooseReportsPhysicalVerificationEgress(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	hash := fakeHash("f9")
 	_, err := s.CreateFile(ctx, s.RootID(), "compressed.txt", hash, 100, "text/plain")
@@ -429,7 +440,7 @@ func TestPlacementExistingS3LooseReportsPhysicalVerificationEgress(t *testing.T)
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO blob_locations(
 			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
-		) VALUES(?,?,?,'loose','zstd',25,1)`,
+		) VALUES($1,$2,$3,'loose','zstd',25,1)`,
 		hash, secondary.ID, "40000000-0000-4000-8000-000000000008",
 	)
 	require.NoError(t, err)

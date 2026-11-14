@@ -61,7 +61,9 @@ func testLegacyProfileReuse(t *testing.T, s *Store, modelInput *document.ModelIn
 	require.NoError(t, err)
 	profile.CanonicalProfile, profile.Fingerprint = canonical, fingerprints.Profile
 	profile.RetentionDisclosureFingerprint = fingerprints.RetentionDisclosure
-	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error { return ensureProcessingProfileTx(t.Context(), tx, profile) }))
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		return ensureProcessingProfileTx(t.Context(), tx, profile, s.postgresSchema != "")
+	}))
 	build := catalogRenditionBuild(s, profile)
 	attachment := RenditionAttachmentRecord{ID: testSHA256([]byte("openai-compatible-attachment")), VaultID: s.VaultID(), ContentVersionID: version, BuildID: build.ID, Profile: profile, AttachedAt: embeddingCatalogTime}
 	require.NoError(t, publishRenditionForTest(t, s, attachment, embeddingCatalogTime, testSHA256([]byte("openai-compatible-lexical"))))

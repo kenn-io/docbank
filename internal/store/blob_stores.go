@@ -51,7 +51,7 @@ func ensurePrimaryBlobStoreTx(ctx context.Context, tx *sql.Tx) (BlobStore, error
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO blob_stores(
 			store_id, name, kind, role, lifecycle, binding, ownership_epoch, created_at
-		) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES($1, $2, $3, $4, $5, $6, $7, $8)`,
 		id, primaryBlobStoreName, blobStoreKindFilesystem, blobStoreRolePrimary,
 		blobStoreLifecycleActive, primaryBlobStoreBinding, epoch, createdAt,
 	); err != nil {

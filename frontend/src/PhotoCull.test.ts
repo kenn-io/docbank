@@ -617,7 +617,7 @@ it("toggles actual size with Z in Cull", async () => {
   await fireEvent.load(image);
   const pan = container.querySelector<HTMLElement>(".photo-stage .pan")!;
   await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "z" });
-  await waitFor(() => expect(pan.style.transform).toBe("translate(0px, 0px) scale(2)"));
+  await waitFor(() => expect(pan.style.transform).toBe("translate(0px) scale(2)"));
 });
 
 it("reloads stale content after a 412 without reapplying the decision", async () => {

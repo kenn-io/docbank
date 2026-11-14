@@ -37,6 +37,9 @@ import (
 //go:embed testdata/docling-pages.json
 var recordedPagesResponse []byte
 
+//go:embed testdata/docling-tables-pictures.json
+var recordedTablesPicturesResponse []byte
+
 //go:embed testdata/docling-task.json
 var recordedTaskResponse []byte
 
@@ -259,11 +262,281 @@ func TestMapEvidenceUsesContiguousPageRegistryAndNeverDropsText(t *testing.T) {
 	}
 }
 
+func TestClientKeepsTableCellLiteralsThroughRendition(t *testing.T) {
+	content := rangeContent([]int64{1})
+	content["tables"] = []any{map[string]any{
+		"prov": []any{map[string]any{"page_no": 1}},
+		"data": map[string]any{"grid": []any{[]any{
+			map[string]any{"text": "Order <invoice-1729>"},
+			map[string]any{"text": `C:\path\file`},
+		}}},
+	}}
+	raw, err := json.Marshal(content)
+	require.NoError(t, err)
+	evidence, _, usable := mapEvidence(raw, "pdf", 1, false)
+	require.True(t, usable)
+	policy, err := document.NewEvidencePolicy(10000)
+	require.NoError(t, err)
+	normalized, err := document.NormalizeEvidenceV1(evidence, policy)
+	require.NoError(t, err)
+	renditionPolicy, err := document.NewRenditionPolicy(document.RenditionLimits{MaxDocumentChars: 10000, MaxUnitRunes: 10000, MaxSegmentRunes: 1000})
+	require.NoError(t, err)
+	rendition, err := document.BuildRenditionV1(normalized, renditionPolicy)
+	require.NoError(t, err)
+	assert.Equal(t, document.EvidenceComplete, rendition.Completeness)
+	require.Len(t, rendition.Units, 1)
+	assert.Contains(t, rendition.Units[0].Text, `Order \<invoice\-1729\>`)
+	assert.Contains(t, rendition.Units[0].Text, `C\:\\path\\file`)
+}
+
+func TestClientMapsDoclingTablesAndPicturesToPages(t *testing.T) {
+	fixture := newFixture(t, "pdf", "application/pdf", "agreement.pdf", []byte("synthetic PDF bytes"))
+	fixture.authorization.MaxArtifactBytes = 1 << 20
+	fixture.authorization.MaxTotalResultBytes = 1 << 20
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v1/convert/file/async":
+			writeJSON(t, response, doclingTask("tables", "success"))
+		case "/v1/result/tables":
+			writeRecordedJSON(t, response, recordedTablesPicturesResponse)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
+	result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+	require.NoError(t, err)
+	assert.Equal(t, document.EvidenceComplete, result.Evidence.Completeness)
+	assert.Empty(t, result.Evidence.Omissions)
+	require.Len(t, result.Evidence.Units, 4)
+	assert.Contains(t, result.Evidence.Units[0].Text, "Example Trading Co.")
+	assert.Equal(t, int64(2), result.Evidence.Units[1].Locator.Start)
+	assert.Equal(t, int64(2), result.Evidence.Units[1].Locator.End)
+}
+
+func TestMapEvidenceMapsDoclingTablesOnlyToOneRegisteredPage(t *testing.T) {
+	located := func(pages ...int) []any {
+		provenance := make([]any, 0, len(pages))
+		for _, page := range pages {
+			provenance = append(provenance, map[string]any{"page_no": page})
+		}
+		return provenance
+	}
+	grid := func(rows ...[]string) map[string]any {
+		cells := make([]any, 0, len(rows))
+		for _, row := range rows {
+			values := make([]any, 0, len(row))
+			for _, value := range row {
+				values = append(values, map[string]any{"text": value})
+			}
+			cells = append(cells, values)
+		}
+		return map[string]any{"grid": cells}
+	}
+	table := func(provenance []any, data map[string]any) map[string]any {
+		return map[string]any{"prov": provenance, "data": data, "annotations": []any{}, "meta": nil}
+	}
+	priceTable := grid([]string{"Item", "Price"}, []string{"Paper", "4.10"})
+	const priceMarkdown = "| Item | Price |\n| --- | --- |\n| Paper | 4\\.10 |"
+	for _, testCase := range []struct {
+		name   string
+		tables []any
+		want   []string
+		omits  bool
+	}{
+		{name: "one page", tables: []any{table(located(2), priceTable)}, want: []string{"one", "two\n\n" + priceMarkdown}},
+		{name: "repeated provenance on one page", tables: []any{table(located(2, 2), priceTable)}, want: []string{"one", "two\n\n" + priceMarkdown}},
+		{name: "spans pages", tables: []any{table(located(1, 2), priceTable)}, want: []string{"one", "two"}, omits: true},
+		{name: "unlocated", tables: []any{table(nil, priceTable)}, want: []string{"one", "two"}, omits: true},
+		{name: "unregistered page", tables: []any{table(located(3), priceTable)}, want: []string{"one", "two"}, omits: true},
+		{name: "cells without grid", tables: []any{table(located(1), map[string]any{"table_cells": []any{map[string]any{"text": "cell"}}})}, want: []string{"one", "two"}, omits: true},
+		{name: "rich grid cell", tables: []any{table(located(1), map[string]any{"grid": []any{[]any{map[string]any{"text": "cell", "ref": map[string]any{"$ref": "#/texts/0"}}}}})}, want: []string{"one", "two"}, omits: true},
+		// A rich reference must stay unmapped even when its cell has no text.
+		{name: "blank rich grid cell", tables: []any{table(located(1), map[string]any{"grid": []any{[]any{map[string]any{"ref": map[string]any{"$ref": "#/texts/0"}}}}})}, want: []string{"one", "two"}, omits: true},
+		{name: "rich cell without grid", tables: []any{table(located(1), map[string]any{"table_cells": []any{map[string]any{"ref": map[string]any{"$ref": "#/texts/0"}}}})}, want: []string{"one", "two"}, omits: true},
+		{name: "ragged grid", tables: []any{table(located(1), grid([]string{"a", "b"}, []string{"c"}))}, want: []string{"one", "two"}, omits: true},
+		{name: "described", tables: []any{map[string]any{"prov": located(1), "data": priceTable, "meta": map[string]any{"summary": map[string]any{"text": "prices"}}}}, want: []string{"one\n\n" + priceMarkdown, "two"}, omits: true},
+		{name: "blank and unlocated", tables: []any{table(nil, grid([]string{" ", ""})), table(nil, map[string]any{"table_cells": []any{}})}, want: []string{"one", "two"}},
+		{name: "cell text normalized", tables: []any{table(located(1), grid([]string{"a|b", " c\n d "}))}, want: []string{"one\n\n| a\\|b | c d |\n| --- | --- |", "two"}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			raw, err := json.Marshal(map[string]any{
+				"schema_name": "DoclingDocument", "version": "1.10.0",
+				"pages": map[string]any{"1": map[string]any{}, "2": map[string]any{}},
+				"texts": []any{
+					pageText("one", 1),
+					pageText("two", 2),
+				},
+				"tables": testCase.tables,
+			})
+			require.NoError(t, err)
+			evidence, _, usable := mapEvidence(raw, "pdf", 1, false)
+			require.True(t, usable)
+			require.NoError(t, document.ValidateSourceEvidenceV1(evidence))
+			require.Len(t, evidence.Units, len(testCase.want))
+			for index, want := range testCase.want {
+				assert.Equal(t, want, evidence.Units[index].Text)
+			}
+			if !testCase.omits {
+				assert.Equal(t, document.EvidenceComplete, evidence.Completeness)
+				assert.Empty(t, evidence.Omissions)
+				return
+			}
+			assert.Equal(t, document.EvidencePartial, evidence.Completeness)
+			assert.Equal(t, []document.SourceEvidenceOmissionV1{{
+				Kind: document.EvidenceOmissionField, Field: "tables", Reason: "Docling structured content is not mapped",
+			}}, evidence.Omissions)
+		})
+	}
+}
+
+func TestMapEvidenceOrdersDoclingTablesByReadingOrder(t *testing.T) {
+	ref := func(path string) map[string]any { return map[string]any{"$ref": path} }
+	table := func(value string) map[string]any {
+		return map[string]any{
+			"prov": []any{map[string]any{"page_no": 1}},
+			"data": map[string]any{"grid": []any{[]any{map[string]any{"text": value}}}},
+		}
+	}
+	for _, testCase := range []struct {
+		name    string
+		content map[string]any
+		want    []string
+	}{
+		{
+			name: "tables and groups",
+			content: map[string]any{
+				"schema_name": "DoclingDocument", "version": "1.10.0",
+				"pages": map[string]any{"1": map[string]any{}},
+				"body": map[string]any{"children": []any{
+					ref("#/tables/1"), ref("#/tables/0"), ref("#/texts/0"), ref("#/groups/0"), ref("#/texts/1"),
+				}},
+				"groups": []any{map[string]any{"children": []any{ref("#/tables/2")}}},
+				"texts":  []any{pageText("first", 1), pageText("second", 1)},
+				"tables": []any{table("leading"), table("before leading"), table("grouped"), table("unreached")},
+			},
+			want: []string{"| before leading |\n| --- |\n\n| leading |\n| --- |\n\nfirst\n\n| grouped |\n| --- |\n\nsecond\n\n| unreached |\n| --- |"},
+		},
+		{
+			name: "inserted texts and table-free page",
+			content: map[string]any{
+				"schema_name": "DoclingDocument", "version": "1.7.0",
+				"origin": map[string]any{"filename": "range.pdf"},
+				"pages":  map[string]any{"1": map[string]any{}, "2": map[string]any{}},
+				"body": map[string]any{"children": []any{
+					ref("#/texts/1"), ref("#/texts/2"), ref("#/tables/0"), ref("#/texts/0"), ref("#/texts/4"), ref("#/texts/3"),
+				}},
+				"texts": []any{
+					pageText("after table", 1), pageText("first", 1), pageText("inserted before table", 1),
+					pageText("array first", 2), pageText("tree first", 2),
+				},
+				"tables": []any{table("cell")},
+			},
+			want: []string{
+				"first\n\ninserted before table\n\n| cell |\n| --- |\n\nafter table",
+				"array first\n\ntree first",
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			raw, err := json.Marshal(testCase.content)
+			require.NoError(t, err)
+			evidence, _, usable := mapEvidence(raw, "pdf", 1, false)
+			require.True(t, usable)
+			require.Len(t, evidence.Units, len(testCase.want))
+			for index, want := range testCase.want {
+				assert.Equal(t, want, evidence.Units[index].Text)
+			}
+			assert.Equal(t, document.EvidenceComplete, evidence.Completeness)
+		})
+	}
+}
+
+func TestMapEvidenceKeepsTableOnlyPages(t *testing.T) {
+	raw, err := json.Marshal(map[string]any{
+		"schema_name": "DoclingDocument", "version": "1.10.0",
+		"pages": map[string]any{"1": map[string]any{}},
+		"texts": []any{},
+		"tables": []any{map[string]any{
+			"prov": []any{map[string]any{"page_no": 1}},
+			"data": map[string]any{"grid": []any{[]any{map[string]any{"text": "only cell"}}}},
+		}},
+	})
+	require.NoError(t, err)
+	evidence, _, usable := mapEvidence(raw, "pdf", 1, false)
+	require.True(t, usable)
+	require.Len(t, evidence.Units, 1)
+	assert.Equal(t, "| only cell |\n| --- |", evidence.Units[0].Text)
+}
+
+func TestMapEvidenceKeepsDescribedTableGrid(t *testing.T) {
+	content := rangeContent([]int64{1})
+	content["tables"] = []any{map[string]any{
+		"prov": []any{map[string]any{"page_no": 1}},
+		"data": map[string]any{"grid": []any{[]any{map[string]any{"text": "only cell"}}}},
+		"meta": map[string]any{"description": map[string]any{"text": "a described table"}},
+	}}
+	raw, err := json.Marshal(content)
+	require.NoError(t, err)
+	evidence, _, usable := mapEvidence(raw, "pdf", 1, false)
+	require.True(t, usable)
+	require.Len(t, evidence.Units, 1)
+	assert.Equal(t, "| only cell |\n| --- |", evidence.Units[0].Text)
+	assert.Equal(t, int64(1), evidence.Units[0].Locator.Start)
+	assert.Equal(t, document.EvidencePartial, evidence.Completeness)
+	assert.Equal(t, []document.SourceEvidenceOmissionV1{{
+		Kind: document.EvidenceOmissionField, Field: "tables", Reason: "Docling structured content is not mapped",
+	}}, evidence.Omissions)
+}
+
+func TestMapEvidenceNamesOnlyDescribedDoclingPictures(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		picture map[string]any
+		omits   bool
+	}{
+		{name: "plain", picture: map[string]any{"annotations": []any{}, "meta": nil}},
+		{name: "empty metadata", picture: map[string]any{"meta": map[string]any{"description": nil, "classification": nil}}},
+		{name: "annotated", omits: true, picture: map[string]any{"annotations": []any{map[string]any{"kind": "description", "text": "a chart"}}}},
+		{name: "described", omits: true, picture: map[string]any{"meta": map[string]any{"description": map[string]any{"text": "a chart"}}}},
+		{name: "classified", omits: true, picture: map[string]any{"meta": map[string]any{"classification": map[string]any{"predictions": []any{}}}}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			testCase.picture["prov"] = []any{map[string]any{"page_no": 1}}
+			testCase.picture["children"] = []any{map[string]any{"$ref": "#/texts/0"}}
+			raw, err := json.Marshal(map[string]any{
+				"schema_name": "DoclingDocument", "version": "1.10.0",
+				"pages":    map[string]any{"1": map[string]any{}},
+				"body":     map[string]any{"children": []any{map[string]any{"$ref": "#/pictures/0"}}},
+				"texts":    []any{map[string]any{"text": "text inside the picture", "prov": []any{map[string]any{"page_no": 1}}}},
+				"pictures": []any{testCase.picture},
+			})
+			require.NoError(t, err)
+			evidence, _, usable := mapEvidence(raw, "pdf", 1, false)
+			require.True(t, usable)
+			require.Len(t, evidence.Units, 1)
+			assert.Equal(t, "text inside the picture", evidence.Units[0].Text)
+			if !testCase.omits {
+				assert.Equal(t, document.EvidenceComplete, evidence.Completeness)
+				assert.Empty(t, evidence.Omissions)
+				return
+			}
+			assert.Equal(t, document.EvidencePartial, evidence.Completeness)
+			assert.Equal(t, []document.SourceEvidenceOmissionV1{{
+				Kind: document.EvidenceOmissionField, Field: "pictures", Reason: "Docling structured content is not mapped",
+			}}, evidence.Omissions)
+		})
+	}
+}
+
 func TestMapEvidenceNamesUnmappedDoclingContent(t *testing.T) {
+	// Missing provenance and a missing grid must still report a table omission.
 	raw, err := json.Marshal(map[string]any{
 		"schema_name": "DoclingDocument", "version": "1.7.0",
 		"pages":  map[string]any{"1": map[string]any{}},
-		"texts":  []any{map[string]any{"text": "page text", "prov": []any{map[string]any{"page_no": 1}}}},
+		"texts":  []any{pageText("page text", 1)},
 		"tables": []any{map[string]any{"data": map[string]any{"table_cells": []any{map[string]any{"text": "cell text"}}}}},
 	})
 	require.NoError(t, err)
@@ -355,8 +628,7 @@ func TestClientTotalTimeoutInterruptsBlockedUpload(t *testing.T) {
 			assert.Equal(t, document.RenditionErrorCapacity, providerErr.Code())
 		default:
 			require.NoError(t, upload.Close())
-			<-done
-			t.Fatal("Client.Render did not interrupt the blocked upload")
+			t.Fatalf("Client.Render did not interrupt the blocked upload; it returned %v after the upload closed", <-done)
 		}
 	})
 }
@@ -1443,7 +1715,7 @@ func writeRecordedJSON(t *testing.T, response http.ResponseWriter, value []byte)
 }
 
 func TestDoclingUnlocksPDF(t *testing.T) {
-	source, err := mediatest.EncryptedPDF("open", "owner", 128)
+	source, err := mediatest.EncryptedPDF(t.Context(), "open", "owner", 128)
 	require.NoError(t, err)
 	fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", source)
 
@@ -1472,7 +1744,7 @@ func TestDoclingUnlocksPDF(t *testing.T) {
 					}
 				}
 			}
-			pdf, err := api.ReadAndValidate(bytes.NewReader(sent), &model.Configuration{
+			pdf, err := api.ReadAndValidate(r.Context(), bytes.NewReader(sent), &model.Configuration{
 				Reader15: true, ValidationMode: model.ValidationRelaxed, Offline: true,
 				Limits: model.DefaultResourceLimits(),
 			})

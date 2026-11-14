@@ -58,7 +58,9 @@ type PublishEmailDocumentsFunc func(context.Context, *store.Store, *blob.Store, 
 
 // Deps assembles everything a Server needs to build its routes.
 type Deps struct {
+	LocalTextStatus       func(context.Context) (LocalTextStatus, error)
 	LocalText             *processing.LocalTextSetup
+	Faces                 *processing.FaceSetup
 	Store                 *store.Store
 	Blobs                 *blob.Store
 	VaultRoot             string // live vault root; backup restore must remain disjoint
@@ -79,6 +81,7 @@ type Deps struct {
 	WebURL                string           // fresh per-daemon loopback origin; empty disables browser sessions
 	BlobRegistry          *blob.Registry   // nil keeps storage-registry routes read-only to the primary
 	Processing            *processing.Service
+	PDFText               *processing.PDFTextRunner
 	RequestEmailPDF       func(context.Context, document.EmailPDFRequest) (document.EmailPDFJob, error)
 	PublishEmailDocuments PublishEmailDocumentsFunc
 
@@ -190,6 +193,7 @@ func NewServer(d Deps) *Server {
 		}
 		s.webDownloads.revokeOwner(owner)
 		d.Processing.RevokeRedactionPreviews(owner)
+		d.Processing.RevokeRecipientPackages(owner)
 		if d.Store != nil {
 			// Hidden unlocks are vault-wide, so ending any browser session locks Hidden.
 			if err := d.Store.LockPhotoHidden(context.Background()); err != nil {
@@ -231,6 +235,7 @@ func NewServer(d Deps) *Server {
 	registerContentWriteRoute(mux, humaAPI, d, g)
 	registerRedactionRoutes(mux, humaAPI, d)
 	s.registerRedactionPreviews(mux)
+	s.registerRecipientPackages(mux)
 	registerContentRevertRoute(humaAPI, d, g)
 	registerContentPruneRoute(humaAPI, d, g)
 	registerProvenanceRoutes(humaAPI, d, g)
@@ -282,21 +287,23 @@ func NewServer(d Deps) *Server {
 	if s.webSessions.login != nil {
 		webLoginOrigin = s.webSessions.login.origin
 	}
-	registerWeb(mux, d.Cfg.Web.Enabled, d.WebURL, webLoginOrigin, d.Cfg.Web.MapTiles, d.Logger)
-	registerWebSession(mux, d.Cfg.Web.Enabled, d.WebURL, s.webSessions, d.TelemetryCapture, d.Logger)
+	registerWeb(mux, d.Cfg.Web.Enabled, d.WebURL, webLoginOrigin, d.Cfg.Web.BasePath, d.Cfg.Web.MapTiles, d.Logger)
+	registerWebSession(mux, d.Cfg.Web.Enabled, webLaunchURL(d.WebURL, d.Cfg.Web.BasePath), s.webSessions, d.TelemetryCapture, d.Logger)
 	registerWebSignIn(mux, s.webSessions)
 	registerWebSignInOpenAPI(humaAPI)
 	registerPhotoImportCheckpoint(mux, humaAPI, d)
 	registerTelemetryEvents(mux, d.TelemetryCapture)
 	registerWebUpload(mux, d.Cfg.Web.Enabled, d.WebURL, d, g, s.webSessions)
+	registerOriginalDownload(humaAPI, d, s.webDownloads)
 	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads, s.webSessions, s.termReports)
 
 	h := photoHiddenMiddleware(http.Handler(mux))
 	h = authMiddleware(h, d.Cfg.Server.APIKey, s.webSessions, s.masterOwner)
 	h = webHostMiddleware(h, s.webSessions.login)
 	h = loopbackMiddleware(h)
-	h = hostMiddleware(h, d.Cfg.Server, d.WebURL, s.webSessions.login.signInHosts())
 	h = timeoutMiddleware(h)
+	h = webBasePathMiddleware(h, d.Cfg.Web.BasePath)
+	h = hostMiddleware(h, d.Cfg.Server, d.WebURL, s.webSessions.login.signInHosts())
 	h = recoverMiddleware(h, d.Logger)
 	h = logMiddleware(h, d.Logger)
 	h = trackMiddleware(h, d.Tracker)

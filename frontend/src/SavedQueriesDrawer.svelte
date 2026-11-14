@@ -1,13 +1,13 @@
 <script lang="ts">
   import DrawerShell from "./DrawerShell.svelte";
   import { onMount, untrack } from "svelte";
-  import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
+
   import PencilIcon from "@lucide/svelte/icons/pencil";
   import PlusIcon from "@lucide/svelte/icons/plus";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
   import XIcon from "@lucide/svelte/icons/x";
-  import { Button, IconButton, Spinner, TextInput } from "@kenn-io/kit-ui";
+  import { Disclosure, Button, IconButton, Spinner, TextInput } from "@kenn-io/kit-ui";
   import "./toolForm.css";
   import { APIError } from "./api-transport.js";
   import { showToast } from "./toast.svelte.js";
@@ -288,12 +288,8 @@
                 maxlength="4096"></textarea>
             </div>
             {#if kind === "query"}
-              <details class="tool-disclosure tool-span-all">
-                <summary
-                  ><ChevronRightIcon size="14" aria-hidden="true" /><span class="tool-label"
-                    >Edit as JSON</span
-                  ></summary
-                >
+              <Disclosure variant="plain" class="tool-disclosure tool-span-all">
+                {#snippet summary()}<span class="tool-label">Edit as JSON</span>{/snippet}
                 <div class="tool-section">
                   <textarea
                     id="query-json"
@@ -309,7 +305,7 @@
                     >
                   </div>
                 </div>
-              </details>
+              </Disclosure>
             {:else}
               <div class="tool-field tool-span-all">
                 <span class="tool-label">Terms</span>

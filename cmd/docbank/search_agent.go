@@ -165,11 +165,12 @@ func writeDocumentSearchAgent(cmd *cobra.Command, query string, report api.Docum
 	return writeLexicalSearchHits(cmd, folders)
 }
 
-func writeSimilarSearchAgent(cmd *cobra.Command, report api.DocumentSimilarReport) error {
+func writeSimilarSearchAgent(cmd *cobra.Command, report api.DocumentSimilarReport, planCommand string) error {
 	header := searchAgentHeader{query: formatNodeSelector(report.Source.NodeID), mode: "semantic",
 		count: len(report.Results), truncated: report.Truncated, coverage: &report.Coverage}
 	if report.State == "unavailable" {
 		header.degraded = "embedding_unavailable"
+		header.details = append(header.details, "next="+searchAgentValue(planCommand))
 	}
 	if err := writeSearchAgentHeader(cmd, header); err != nil {
 		return err

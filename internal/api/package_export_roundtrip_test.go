@@ -165,7 +165,7 @@ func TestPackageExportSelectedPDFThroughPublicImport(t *testing.T) { //nolint:pa
 			output, err := os.ReadFile(filepath.Join(extracted, "VOL001", "PDF", "DOC000001.pdf"))
 			require.NoError(t, err)
 			var contents []string
-			require.NoError(t, pdfapi.ExtractContent(bytes.NewReader(output), nil, func(r io.Reader, _ int) error {
+			require.NoError(t, pdfapi.ExtractContent(t.Context(), bytes.NewReader(output), nil, func(r io.Reader, _ int) error {
 				data, err := io.ReadAll(r)
 				contents = append(contents, string(data))
 				return err

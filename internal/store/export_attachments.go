@@ -102,7 +102,7 @@ func resolveExportDocumentRows(ctx context.Context, q metadataQuerier, member bu
 
 func exportAttachmentPublication(ctx context.Context, q metadataQuerier, version, selected string) (emailDocumentPublicationRecord, error) {
 	if selected == "" {
-		rows, err := q.QueryContext(ctx, `SELECT operation_id FROM email_document_publications WHERE parent_version_id=? ORDER BY operation_id LIMIT 2`, version)
+		rows, err := q.QueryContext(ctx, `SELECT operation_id FROM email_document_publications WHERE parent_version_id=$1 ORDER BY operation_id LIMIT 2`, version)
 		if err != nil {
 			return emailDocumentPublicationRecord{}, err
 		}

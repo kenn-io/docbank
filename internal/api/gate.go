@@ -23,10 +23,14 @@ type OperationGate struct {
 	preservation *semaphore.Weighted
 	admission    sync.RWMutex
 	maintenance  int
+	verification chan struct{}
 
 	// afterRouteMutation is a test hook for move and restore responses. It
 	// runs after the store commits and before the handler builds its response.
 	afterRouteMutation func()
+	// afterUploadVerification pauses a retry before it reports the result in tests.
+	afterUploadVerification  func()
+	beforeUploadVerification func()
 }
 
 // NewOperationGate creates one daemon-wide operation coordinator. Every
@@ -35,6 +39,7 @@ func NewOperationGate() *OperationGate {
 	return &OperationGate{
 		mu:           semaphore.NewWeighted(operationGateExclusiveWeight),
 		preservation: semaphore.NewWeighted(operationGateExclusiveWeight),
+		verification: make(chan struct{}, 8),
 	}
 }
 

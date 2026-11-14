@@ -31,9 +31,10 @@ func addTestPersonIdentity(t *testing.T, s *Store, person Person, kind, value, e
 	return person, identity
 }
 
-func TestMergePersonsDeduplicatesAliasesAndReplaysReceipt(t *testing.T) {
+func checkMergePersonsDeduplicatesAliasesAndReplaysReceipt(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	survivor, err := s.CreatePerson(t.Context(), "Ada", "operator")
 	require.NoError(t, err)
 	absorbed, err := s.CreatePerson(t.Context(), "A. Lovelace", "operator")
@@ -81,7 +82,7 @@ func TestMergePersonsPreservesDuplicateAssertionTimeAndRevision(t *testing.T) {
 				keptAssertion.AssertionID:     "2026-01-01T00:00:00.000000000Z",
 				absorbedAssertion.AssertionID: "2026-03-01T00:00:00.000000000Z",
 			} {
-				_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=? WHERE assertion_id=?`, recordedAt, assertionID)
+				_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=$1 WHERE assertion_id=$2`, recordedAt, assertionID)
 				require.NoError(t, err)
 			}
 			var face PhotoFace
@@ -111,20 +112,21 @@ func TestMergePersonsPreservesDuplicateAssertionTimeAndRevision(t *testing.T) {
 	}
 }
 
-func TestMergePersonsRejectsMovedRecordsBeyondReceiptLimit(t *testing.T) {
+func checkMergePersonsRejectsMovedRecordsBeyondReceiptLimit(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
-	version := seedDocumentPeopleEvent(t, s, "custodian.txt", "d7", nil)
+	s := newStore(t)
+	nodeID, versionID := seedPeopleVersion(t, s)
 	survivor, err := s.CreatePerson(t.Context(), "Ada", "operator")
 	require.NoError(t, err)
 	absorbed, err := s.CreatePerson(t.Context(), "A. Lovelace", "operator")
 	require.NoError(t, err)
 	// Each UUID-length assignment ID takes 38 receipt bytes with its quotes.
 	_, err = s.db.ExecContext(t.Context(), `WITH RECURSIVE seq(value) AS (
-		VALUES(1) UNION ALL SELECT value+1 FROM seq WHERE value<?
+		VALUES(1) UNION ALL SELECT value+1 FROM seq WHERE value<$1
 	) INSERT INTO custodian_assignments(assignment_id,scope_kind,node_id,content_version_id,person_id,raw_label,raw_label_folded,rank,basis,source_ref,recorded_at)
-	SELECT printf('00000000-0000-4000-8000-%012d',value),'document',?,?,?,'Synthetic','synthetic','additional','operator_assigned','test',? FROM seq`,
-		document.MaxPersonMergeMovedBytes/38+1, version.NodeID, version.ID, absorbed.PersonID, nowRFC3339())
+	SELECT '00000000-0000-4000-8000-' || substr('000000000000' || CAST(value AS TEXT),length(CAST(value AS TEXT))+1,12),'document',$2,$3,$4,'Synthetic','synthetic','additional','operator_assigned','test',$5 FROM seq`,
+		document.MaxPersonMergeMovedBytes/38+1, nodeID, versionID, absorbed.PersonID, nowRFC3339())
 	require.NoError(t, err)
 	operationID, err := newUUIDv4()
 	require.NoError(t, err)
@@ -136,9 +138,10 @@ func TestMergePersonsRejectsMovedRecordsBeyondReceiptLimit(t *testing.T) {
 	require.Empty(t, through, "a rejected merge leaves the absorbed person in place")
 }
 
-func TestMergeReceiptKeepsExternalTupleComponentsDistinct(t *testing.T) {
+func checkMergeReceiptKeepsExternalTupleComponentsDistinct(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	survivor, err := s.CreatePerson(t.Context(), "Survivor", "operator")
 	require.NoError(t, err)
 	absorbed, err := s.CreatePerson(t.Context(), "Absorbed", "operator")
@@ -163,9 +166,10 @@ func survivorAliasID(t *testing.T, s *Store, personID string) string {
 	return identities[0].IdentityID
 }
 
-func TestMergePersonsRejectsConflictingCurrentExternalUIDs(t *testing.T) {
+func checkMergePersonsRejectsConflictingCurrentExternalUIDs(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	left, err := s.CreatePerson(t.Context(), "Left", "operator")
 	require.NoError(t, err)
 	right, err := s.CreatePerson(t.Context(), "Right", "operator")
@@ -185,7 +189,8 @@ func TestMergePersonsRejectsConflictingCurrentExternalUIDs(t *testing.T) {
 	require.ErrorIs(t, err, ErrPersonMergeConflict)
 }
 
-func TestMergePersonsPreservesExternalUIDTransitions(t *testing.T) {
+func checkMergePersonsPreservesExternalUIDTransitions(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, test := range []struct {
 		name, survivorUID, absorbedUID string
@@ -196,7 +201,7 @@ func TestMergePersonsPreservesExternalUIDTransitions(t *testing.T) {
 		{"multihop to absorbed", "retired", "current", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			survivor, err := s.CreatePerson(t.Context(), "Ada", "operator")
 			require.NoError(t, err)
 			absorbed, err := s.CreatePerson(t.Context(), "Ada Old", "operator")
@@ -233,9 +238,10 @@ func TestMergePersonsPreservesExternalUIDTransitions(t *testing.T) {
 	}
 }
 
-func TestMergePersonsRewritesAliasChainsToOneHop(t *testing.T) {
+func checkMergePersonsRewritesAliasChainsToOneHop(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	first, err := s.CreatePerson(t.Context(), "First", "operator")
 	require.NoError(t, err)
 	second, err := s.CreatePerson(t.Context(), "Second", "operator")
@@ -258,9 +264,10 @@ func TestMergePersonsRewritesAliasChainsToOneHop(t *testing.T) {
 	require.Equal(t, first.PersonID, through)
 }
 
-func TestSplitPersonMovesOnlyExplicitIdentitiesAndReplays(t *testing.T) {
+func checkSplitPersonMovesOnlyExplicitIdentitiesAndReplays(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	source, err := s.CreatePerson(t.Context(), "Ada", "operator")
 	require.NoError(t, err)
 	source, first := addTestPersonIdentity(t, s, source, "email", "Ada@example.test", "first")
@@ -289,9 +296,10 @@ func TestSplitPersonMovesOnlyExplicitIdentitiesAndReplays(t *testing.T) {
 	require.Equal(t, receipt, replayed)
 }
 
-func TestSplitPersonMovesCustodianAndExternalUID(t *testing.T) {
+func checkSplitPersonMovesCustodianAndExternalUID(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	source, err := s.CreatePerson(ctx, "Source", "operator")
 	require.NoError(t, err)
@@ -341,18 +349,20 @@ func TestSplitPersonMovesCustodianAndExternalUID(t *testing.T) {
 	require.ErrorIs(t, s.RetireCustodian(ctx, assignment.AssignmentID, assignments[0].Revision), ErrStaleRevision)
 }
 
-func TestPersonSplitMissingAssertion(t *testing.T) {
+func checkPersonSplitMissingAssertion(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	p, err := s.CreatePerson(t.Context(), "Ada", "operator")
 	require.NoError(t, err)
 	_, err = s.SplitPerson(t.Context(), PersonSplitRequest{PersonID: p.PersonID, OperationID: uuid.NewString(), DisplayName: "Grace", Revision: p.Revision, AssertionIDs: []string{uuid.NewString()}})
 	require.ErrorIs(t, err, ErrPersonMergeConflict)
 }
 
-func TestMergePersonsPreservesKeyFace(t *testing.T) {
+func checkMergePersonsPreservesKeyFace(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	survivor, err := s.CreatePerson(ctx, "Survivor", "operator")
 	require.NoError(t, err)

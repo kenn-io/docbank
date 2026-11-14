@@ -427,7 +427,7 @@ func newASRFixture(t *testing.T, mediaType, filename string, source []byte) asrF
 		ProviderMetadataChecksum: "3333333333333333333333333333333333333333333333333333333333333333",
 		InputKind:                document.RenditionInputOriginalFile,
 	}
-	record, err := media.InspectCapability(bytes.NewReader(source), media.InspectionPolicy{
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(source), media.InspectionPolicy{
 		Filename: filename, DeclaredMediaType: mediaType,
 		ExpectedBytes: metadata.ByteLength, ExpectedSHA256: metadata.SHA256,
 		DescriptorFingerprint: descriptor.Fingerprint,

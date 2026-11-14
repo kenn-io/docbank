@@ -13,6 +13,9 @@ func TestBatesBrowserRuleAllowsOnlyReviewedWorkflow(t *testing.T) {
 	for _, request := range []struct{ method, path string }{
 		{http.MethodGet, "/api/v1/bates/namespaces?limit=250"},
 		{http.MethodPost, "/api/v1/bates/namespaces"},
+		{http.MethodGet, "/api/v1/bates/namespaces/11111111-1111-4111-8111-111111111111"},
+		{http.MethodPost, "/api/v1/redaction/reservations"},
+		{http.MethodPost, "/api/v1/redaction/publications"},
 		{http.MethodPost, "/api/v1/bates/preview"},
 		{http.MethodPost, "/api/v1/bates/allocations"},
 		{http.MethodGet, "/api/v1/bates/allocations/11111111-1111-4111-8111-111111111111"},
@@ -29,6 +32,9 @@ func TestBatesBrowserRuleAllowsOnlyReviewedWorkflow(t *testing.T) {
 		{http.MethodPost, "/api/v1/bates/preview?unsafe=1"},
 		{http.MethodPost, "/api/v1/bates/exports/11111111-1111-4111-8111-111111111111"},
 		{http.MethodGet, "/api/v1/bates/exports/a/b/c"},
+		{http.MethodGet, "/api/v1/bates/namespaces/11111111-1111-4111-8111-111111111111?cursor=1"},
+		{http.MethodPost, "/api/v1/redaction/publications?x=1"},
+		{http.MethodGet, "/api/v1/redaction/publications"},
 	} {
 		require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), request.method, request.path, nil)), request.method+" "+request.path)
 	}

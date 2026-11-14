@@ -51,10 +51,11 @@ func init() {
 		Long: `create returns an album ID; add attaches asset IDs from photos assets inspect.
 members browses the album; remove detaches members; delete keeps the photos.
 Output: JSON.`,
-		Use:   "albums",
-		Short: "Organize photos into albums",
-		Args:  cobra.NoArgs,
-		RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
+		Use:         "albums",
+		Short:       "Organize photos into albums",
+		Args:        cobra.NoArgs,
+		Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker},
+		RunE:        func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 	list := &cobra.Command{
 		Example: `  docbank photos albums list`,
 		Use:     "list",

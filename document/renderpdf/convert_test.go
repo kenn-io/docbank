@@ -372,3 +372,32 @@ func (runner *mismatchedRunner) Run(_ context.Context, request Request) (StageRe
 	result.Attestation.OutputSHA256 = strings.Repeat("0", sha256.Size*2)
 	return result, nil
 }
+
+// cancelAfterPDFRunner returns a valid PDF, then cancels the caller as the
+// converter starts verifying it.
+type cancelAfterPDFRunner struct {
+	recordingRunner
+
+	cancel context.CancelFunc
+}
+
+func (runner *cancelAfterPDFRunner) Run(ctx context.Context, request Request) (StageResult, error) {
+	result, err := runner.recordingRunner.Run(ctx, request)
+	if request.Stage == "pdf" {
+		runner.cancel()
+	}
+	return result, err
+}
+
+func TestConvertReportsCancellationDuringPDFVerification(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	normalized := flatODF(FlatTextKind, "<text:p xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\">Hello</text:p>")
+	runner := &cancelAfterPDFRunner{identity: testRunnerIdentity, output: normalized, cancel: cancel}
+	source := testSource(t, zipDocument(t, "docx"), docxMediaType)
+
+	_, err := Convert(ctx, source, "docx", testPolicy(t, runner))
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.NotContains(t, err.Error(), "not a valid PDF")
+}

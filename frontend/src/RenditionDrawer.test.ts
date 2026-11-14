@@ -3,6 +3,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { cleanup, render, screen } from "@testing-library/svelte";
 import RenditionDrawer from "./RenditionDrawer.svelte";
+import emptyPDF from "./testdata/omission-only-pdf.md?raw";
 
 afterEach(() => {
   cleanup();
@@ -51,6 +52,40 @@ describe("sanitized Markdown drawer", () => {
     expect(prose?.textContent).not.toContain("body_sha256");
   });
 
+  it("reads the omission-only PDF envelope emitted by the Go processing pipeline", async () => {
+    // Generated through pdftext.Render, NormalizeEvidenceV1, BuildRenditionV1,
+    // and EnvelopeRenditionV1 with one synthetic image-only page.
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(emptyPDF, {
+        headers: {
+          "Content-Type": "text/markdown; charset=utf-8",
+          "X-Docbank-Rendition-Attachment": "a".repeat(64),
+          "X-Docbank-Rendition-Build": "b".repeat(64),
+          "X-Docbank-Rendition-Artifact": "c".repeat(64),
+          "X-Docbank-Content-Version": "11111111-1111-4111-8111-111111111111",
+          "X-Docbank-Rendition-Profile": "e".repeat(64),
+          "X-Docbank-Rendition-Completeness": "partial",
+          "X-Docbank-Blob-Hash": bytesToHex(sha256(utf8ToBytes(emptyPDF))),
+          "X-Docbank-Blob-Size": String(utf8ToBytes(emptyPDF).length),
+        },
+      }),
+    );
+    const { container } = render(RenditionDrawer, {
+      session: "short-lived",
+      attachmentID: "a".repeat(64),
+      path: "/Reports/image-only.pdf",
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+    expect(await screen.findAllByText("Partial")).toHaveLength(2);
+    expect(screen.queryByRole("alert")).toBeNull();
+    const article = screen.getByRole("article", { name: "Sanitized Markdown document" });
+    expect(article.textContent?.trim()).toBe(
+      "Processing verified that this document has no readable text.",
+    );
+    expect(container.querySelector(".rendition-body")).toBeNull();
+  });
+
   it("shows the no-readable-mirror state without rendering unverified prose", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
@@ -71,7 +106,7 @@ describe("sanitized Markdown drawer", () => {
     });
 
     expect(await screen.findByText(/no verified rendition mirror is readable/i)).toBeTruthy();
-    expect(screen.getByText(/no readable verified mirror/i)).toBeTruthy();
+    expect(screen.getByText(/couldn.t load this document.s saved Markdown text/i)).toBeTruthy();
     expect(container.querySelector(".rendition-body")).toBeNull();
   });
 });

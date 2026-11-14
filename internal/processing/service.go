@@ -24,11 +24,12 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/yuin/goldmark/parser"
+	"github.com/yuin/goldmark/v2/parser"
 	"golang.org/x/sync/semaphore"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/document/pdftext"
 	"go.kenn.io/docbank/document/upload"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/formatcoverage"
@@ -52,6 +53,7 @@ const (
 var (
 	ErrForeignVault              = errors.New("processing source fence belongs to another vault")
 	ErrProfileNotConfigured      = errors.New("processing profile is not configured")
+	ErrSemanticUnavailable       = errors.New("semantic retrieval is not configured")
 	ErrPlanChanged               = errors.New("processing plan changed after preview")
 	ErrConsentRequired           = errors.New("processing consent is required")
 	ErrConsentSaved              = errors.New("processing consent was saved")
@@ -120,6 +122,12 @@ type configuredProfile struct {
 	embedDisclosures          map[string]RuntimeDisclosure
 }
 
+func (profile configuredProfile) hasFaces() bool {
+	return slices.ContainsFunc(profile.portable.Embeddings, func(binding document.EmbeddingBindingV1) bool {
+		return binding.InputKind == document.EmbeddingInputFace
+	})
+}
+
 type Service struct {
 	navigationSlots     *semaphore.Weighted
 	textParser          func() parser.Parser
@@ -139,6 +147,7 @@ type Service struct {
 	runs                int
 	nativePDFOperation  string
 	redactionPreviews   redactionPreviewStore
+	recipientPackages   recipientPackageStore
 	stopping            bool
 	stop                context.CancelFunc
 	drained             chan struct{}
@@ -155,6 +164,9 @@ type Service struct {
 	visionNotReady      sync.Map
 	visionProbeTimeout  time.Duration
 	mediaTokenKey       [32]byte
+
+	faceSuggestionsSignature string
+	faceSuggestionsPending   *faceSuggestionPass
 }
 
 type mediaOriginObservation struct {
@@ -367,10 +379,18 @@ type CoverageClass struct {
 	Total                                   int
 }
 
+type PageTextGap struct {
+	ContentVersionID string
+	Pages            []int
+}
+
 type Coverage struct {
 	VaultUID, ProfileFingerprint, State string
 	Renditions                          CoverageClass
 	Embeddings                          []CoverageClass
+	PagesWithoutText                    []PageTextGap
+	PageCoverage                        string
+	PageCoverageUnavailable             bool
 }
 
 type SearchRequest struct {
@@ -650,6 +670,7 @@ func NewService(ctx context.Context, config ServiceConfig) (*Service, error) {
 // outlived its initiating request. Workers retain their durable recovery state.
 func (service *Service) Stop() {
 	defer service.RevokeRedactionPreviews("")
+	defer service.RevokeRecipientPackages("")
 	service.runsMu.Lock()
 	defer service.runsMu.Unlock()
 	if service.stopping {
@@ -677,6 +698,9 @@ func (service *Service) Shutdown(ctx context.Context) error {
 func (service *Service) Profiles() []ProfileSummary {
 	result := make([]ProfileSummary, 0, len(service.profiles))
 	for name, profile := range service.profiles {
+		if profile.hasFaces() {
+			continue
+		}
 		bindings := make([]string, 0, len(profile.portable.Embeddings))
 		queryBindings := make([]string, 0, len(profile.portable.Embeddings))
 		for _, binding := range profile.portable.Embeddings {
@@ -1190,17 +1214,26 @@ func (service *Service) profileConsentRequests(profile configuredProfile) []stor
 
 func (service *Service) grantProfileConsent(ctx context.Context, profile configuredProfile, expiresAt *time.Time) error {
 	return service.gate.MutateContext(ctx, func() error {
-		requests := service.profileConsentRequests(profile)
-		grants := make([]store.ProcessingConsentGrantRequest, len(requests))
-		for index, request := range requests {
-			grants[index] = store.ProcessingConsentGrantRequest{
-				Principal: request.Principal, Scope: request.Scope, ProfileFingerprint: request.ProfileFingerprint,
-				DisclosureFingerprint: request.DisclosureFingerprint, InputClasses: request.InputClasses,
-				RetainedArtifactClasses: request.RetainedArtifactClasses, ExpiresAt: expiresAt}
-		}
-		_, err := service.catalog.GrantConsentSet(ctx, grants)
-		return err
+		return service.grantProfileConsentUngated(ctx, profile, expiresAt)
 	})
+}
+
+func (service *Service) grantProfileConsentUngated(ctx context.Context, profile configuredProfile, expiresAt *time.Time) error {
+	grants := service.profileConsentGrants(profile, expiresAt)
+	_, err := service.catalog.GrantConsentSet(ctx, grants)
+	return err
+}
+
+func (service *Service) profileConsentGrants(profile configuredProfile, expiresAt *time.Time) []store.ProcessingConsentGrantRequest {
+	requests := service.profileConsentRequests(profile)
+	grants := make([]store.ProcessingConsentGrantRequest, len(requests))
+	for index, request := range requests {
+		grants[index] = store.ProcessingConsentGrantRequest{
+			Principal: request.Principal, Scope: request.Scope, ProfileFingerprint: request.ProfileFingerprint,
+			DisclosureFingerprint: request.DisclosureFingerprint, InputClasses: request.InputClasses,
+			RetainedArtifactClasses: request.RetainedArtifactClasses, ExpiresAt: expiresAt}
+	}
+	return grants
 }
 
 type renditionRun struct{ jobID, waiterID, attachmentID, authorizationGrantID string }
@@ -1372,6 +1405,9 @@ func (service *Service) profileStatus(ctx context.Context, jobID, profileFingerp
 	if err := json.Unmarshal(record.CanonicalProfile, &profile, json.RejectUnknownMembers(true)); err != nil {
 		return Status{}, err
 	}
+	if (configuredProfile{portable: profile}).hasFaces() {
+		return Status{}, ErrProfileNotConfigured
+	}
 	status := aggregateStatus(jobID, rendition, embeddings)
 	for _, binding := range profile.Embeddings {
 		if status.State == "completed" && binding.Activation == document.EmbeddingRequired &&
@@ -1532,6 +1568,14 @@ func (service *Service) Coverage(ctx context.Context, profileName string, fence 
 	}
 	report := Coverage{VaultUID: service.catalog.VaultID(), ProfileFingerprint: profile.record.Fingerprint,
 		State: "complete", Renditions: CoverageClass{Name: "rendition", State: "not_required", Total: len(ids)}}
+	if profileName == PDFTextProfileName {
+		pages, state, unavailable, err := service.PDFPageGaps(ctx, fence)
+		if err != nil {
+			return Coverage{}, err
+		}
+		report.PagesWithoutText, report.PageCoverage, report.PageCoverageUnavailable = pages, state, unavailable
+	}
+
 	// A description profile attaches no rendition, so there is none to cover.
 	if profile.portable.Rendition != nil && profileRenditionInput(profile) == document.RenditionInputOriginalFile {
 		report.Renditions = toClass(snapshot.Renditions)
@@ -1588,7 +1632,7 @@ func (service *Service) ResolveSourceFence(
 func (service *Service) Search(ctx context.Context, request SearchRequest) (retrieval.Report, error) {
 	explicit := request.Fence.VaultUID != "" || len(request.Fence.ContentVersionIDs) != 0
 	if explicit == (request.AllLive != nil) {
-		return retrieval.Report{}, fmt.Errorf("%w: select exactly one request mode", store.ErrInvalidProcessingSourceFence)
+		return retrieval.Report{}, fmt.Errorf("%w: send exactly one of fence or scope", store.ErrInvalidProcessingSourceFence)
 	}
 	if request.AllLive != nil && request.MediaSources != nil {
 		return retrieval.Report{}, ErrMediaSearchInvalid
@@ -1600,7 +1644,7 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	if request.AllLive != nil {
 		var ok bool
 		profile, ok = service.profiles[request.Profile]
-		if !ok {
+		if !ok || profile.hasFaces() {
 			return retrieval.Report{}, ErrProfileNotConfigured
 		}
 		searchScope, err = service.catalog.NormalizeProcessingSearchFilters(ctx, *request.AllLive)
@@ -1633,7 +1677,7 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 		return service.searchMediaSources(ctx, request, ids, prepared)
 	}
 	if prepared.authorization.ProviderID != "" && (prepared.mode == retrieval.ModeSemantic || prepared.mode == retrieval.ModeHybrid) {
-		binding, err := selectDocumentSearchBinding(profile.portable, prepared.bindingID)
+		binding, err := selectDocumentSearchBinding(profile.portable, prepared.bindingID, prepared.mode)
 		if err != nil {
 			return retrieval.Report{}, err
 		}
@@ -1721,13 +1765,16 @@ func (service *Service) prepareSearch(
 		MediaEvidence: service.mediaEvidence}
 	var authorization document.EmbeddingAuthorization
 	if len(profile.portable.Embeddings) != 0 {
-		binding, bindingErr := selectDocumentSearchBinding(profile.portable, request.BindingID)
+		binding, bindingErr := selectDocumentSearchBinding(profile.portable, request.BindingID, mode)
 		if errors.Is(bindingErr, store.ErrNotFound) && request.BindingID == "" && mode != retrieval.ModeSemantic {
 			mode = retrieval.ModeLexical
 		} else if bindingErr != nil {
 			return preparedSearch{}, bindingErr
 		}
 		if bindingErr == nil {
+			if mode == retrieval.ModeSemantic && !profile.embedders[binding.Name].Descriptor().SupportsTextQuery {
+				return preparedSearch{}, ErrSemanticUnavailable
+			}
 			request.BindingID = binding.Name
 			searcherConfig.Encoders = service.embeddings
 			authorization = document.EmbeddingAuthorization{ProviderID: binding.Descriptor.ID,
@@ -1736,7 +1783,7 @@ func (service *Service) prepareSearch(
 				MaxBatchItems:         1, MaxInputBytes: binding.MaxInputBytes, MaxResponseBytes: binding.MaxResponseBytes}
 		}
 	} else if mode == retrieval.ModeSemantic || mode == retrieval.ModeHybrid {
-		return preparedSearch{}, errors.New("semantic retrieval is not configured")
+		return preparedSearch{}, ErrSemanticUnavailable
 	}
 	var rerankingAuth *rerankingAuthorizer
 	if request.Rerank {
@@ -1790,6 +1837,9 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 			generation, err = service.chunkEmbeddingGeneration(ctx, version, profile, binding)
 			if err != nil {
 				return jobIDs, err
+			}
+			if len(generation.Inputs) == 0 {
+				continue
 			}
 		default:
 			return jobIDs, fmt.Errorf("embedding binding %q has an unsupported input kind", binding.Name)
@@ -1992,6 +2042,10 @@ func (service *Service) chunkEmbeddingGeneration(ctx context.Context, version st
 	if err != nil {
 		return store.EmbeddingInputGenerationRecord{}, err
 	}
+	if len(generated.Inputs) == 0 {
+		return store.EmbeddingInputGenerationRecord{}, nil
+	}
+
 	encoded, err := document.MarshalEmbeddingInputGeneration(generated)
 	if err != nil {
 		return store.EmbeddingInputGenerationRecord{}, err
@@ -2070,20 +2124,32 @@ func selectEmbeddingBinding(profile document.ProcessingProfileV1,
 	return document.EmbeddingBindingV1{}, fmt.Errorf("embedding binding %q: %w", name, store.ErrNotFound)
 }
 
+// selectDocumentSearchBinding returns the text-query binding for a search.
+// Semantic mode reports ErrSemanticUnavailable when the profile has no
+// text-query binding to default to or the named binding only accepts images;
+// an unknown binding name is store.ErrNotFound in every mode.
 func selectDocumentSearchBinding(profile document.ProcessingProfileV1,
-	name string,
+	name string, mode retrieval.Mode,
 ) (document.EmbeddingBindingV1, error) {
+	imageOnly := false
 	for _, binding := range profile.Embeddings {
-		if binding.InputKind != document.EmbeddingInputImage && (name == "" || binding.Name == name) {
+		if name != "" && binding.Name != name {
+			continue
+		}
+		if binding.InputKind != document.EmbeddingInputImage {
 			return binding, nil
 		}
+		imageOnly = true
+	}
+	if mode == retrieval.ModeSemantic && (name == "" || imageOnly) {
+		return document.EmbeddingBindingV1{}, ErrSemanticUnavailable
 	}
 	return document.EmbeddingBindingV1{}, fmt.Errorf("embedding binding %q: %w", name, store.ErrNotFound)
 }
 
 func (service *Service) profileFence(name string, fence SourceFence) (configuredProfile, []string, error) {
 	profile, ok := service.profiles[name]
-	if !ok {
+	if !ok || profile.hasFaces() {
 		return configuredProfile{}, nil, ErrProfileNotConfigured
 	}
 	if fence.VaultUID != service.catalog.VaultID() {
@@ -2095,7 +2161,7 @@ func (service *Service) profileFence(name string, fence SourceFence) (configured
 
 func (service *Service) resolve(ctx context.Context, selector Selector) (store.Node, store.ContentVersion, configuredProfile, error) {
 	profile, ok := service.profiles[selector.Profile]
-	if !ok {
+	if !ok || profile.hasFaces() {
 		return store.Node{}, store.ContentVersion{}, configuredProfile{}, ErrProfileNotConfigured
 	}
 	if selector.NodeID <= 0 || selector.ContentVersionID == "" {
@@ -2434,7 +2500,7 @@ func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.N
 	if size != version.Size {
 		return media.CapabilityRecord{}, errors.Join(errors.New("inspection source size changed"), reader.Close())
 	}
-	capability, inspectErr := media.InspectCapability(reader, policy)
+	capability, inspectErr := media.InspectCapability(ctx, reader, policy)
 	closeErr := reader.Close()
 	if inspectErr != nil || closeErr != nil {
 		return media.CapabilityRecord{}, errors.Join(inspectErr, closeErr)
@@ -2458,7 +2524,7 @@ func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.N
 			return media.CapabilityRecord{}, err
 		}
 		policy.UnlockPDF, policy.PDFPasswords = true, passwords
-		capability, inspectErr = media.InspectCapability(reader, policy)
+		capability, inspectErr = media.InspectCapability(ctx, reader, policy)
 		closeErr = reader.Close()
 		if inspectErr != nil || closeErr != nil {
 			return media.CapabilityRecord{}, errors.Join(inspectErr, closeErr)
@@ -2506,6 +2572,7 @@ func inspectionPolicy(filename string, version store.ContentVersion, profile con
 		declaredMediaType = baseType
 	}
 	return media.InspectionPolicy{Filename: filename, DeclaredMediaType: declaredMediaType,
+		PDFTextOnly:   profile.portable.Rendition.AdapterContract == pdftext.AdapterContract,
 		ExpectedBytes: version.Size, ExpectedSHA256: version.BlobHash,
 		DescriptorFingerprint: profile.provider.Descriptor().Fingerprint,
 		ProfileFingerprint:    profile.record.Fingerprint,
@@ -2705,7 +2772,7 @@ func embeddingRuntimeDisclosure(supplied RuntimeDisclosure, binding document.Emb
 	switch binding.InputKind {
 	case document.EmbeddingInputOriginalFile:
 		value.MetadataClasses = []string{"byte_length", "content_hash", "detected_media_type", "synthetic_filename"}
-	case document.EmbeddingInputImage:
+	case document.EmbeddingInputImage, document.EmbeddingInputFace:
 		value.MetadataClasses = []string{"byte_length", "content_hash", "detected_media_type"}
 	default:
 		value.MetadataClasses = []string{"chunk_key", "content_derived_heading_path"}

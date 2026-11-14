@@ -22,7 +22,7 @@ func TestDocumentPeopleResolution(t *testing.T) {
 		ContentVersionID: version,
 		Actors: []store.DocumentPeopleActor{{
 			Role: "sender", ActorKey: "email:ada@example.test",
-			EvidenceKind: "email_generation", EvidenceID: "claim-a",
+			EvidenceKind: "email_generation", EvidenceID: "claim\x00\\evidence",
 		}},
 		Bindings: map[string][]store.Person{
 			"email:ada@example.test": {{PersonID: ada, State: "curated"}},
@@ -31,6 +31,7 @@ func TestDocumentPeopleResolution(t *testing.T) {
 	output, report := ResolveDocumentPeople(input)
 	require.Len(t, output.Edges, 1)
 	require.Equal(t, ada, output.Edges[0].PersonID)
+	require.Equal(t, "claim\x00\\evidence", output.Edges[0].EvidenceID)
 	require.Zero(t, report.UnresolvedActors)
 
 	input.Bindings["email:ada@example.test"] = append(

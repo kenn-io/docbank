@@ -242,14 +242,13 @@ func TestRuntimeRealLimits(t *testing.T) {
 		ready, err := waitForReadyRenderer(waitCtx, spool)
 		if err != nil || ready != unit {
 			_ = cmd.Process.Kill()
-			<-exited
-			t.Fatalf("real recovery worker never became ready: unit=%q err=%v", ready, err)
+			t.Fatalf("real recovery worker never became ready: unit=%q err=%v; worker exited with %v", ready, err, <-exited)
 		}
 		stopErr := exec.CommandContext(ctx, "systemctl", "--user", "kill", "--signal=STOP", "--kill-whom=all", unit).Run()
 		// Model loss of the owning launcher without politely stopping its
 		// real descendant unit. Recovery, not Render's defer, must clean it.
 		_ = cmd.Process.Kill()
-		<-exited
+		t.Logf("killed recovery launcher exited with %v", <-exited)
 		require.NoError(t, stopErr)
 		require.NoError(t, RecoverStale(ctx, spool))
 		_, err = os.Stat(dir)

@@ -60,7 +60,7 @@ func validateSourceEvidenceV1(source SourceEvidenceV1, maxDocumentChars int) ([]
 	if !validEvidenceUnitKind(source.UnitKind) {
 		return nil, errors.New("source evidence has invalid unit kind")
 	}
-	if len(source.Units) == 0 || len(source.Units) > maxEvidenceUnits {
+	if len(source.Units) > maxEvidenceUnits || len(source.Units) == 0 && !omissionOnlyPDF(source.Family, source.UnitKind, source.Completeness, len(source.Omissions)) {
 		return nil, errors.New("source evidence must contain a bounded non-empty unit list")
 	}
 	if err := validateSourceOmissionLimit(source, maxEvidenceOmissions); err != nil {
@@ -95,7 +95,10 @@ func validateSourceEvidenceV1(source SourceEvidenceV1, maxDocumentChars int) ([]
 			remainingChars -= textMap.normalizedRunes
 		}
 	}
-	locatorSequence := evidenceLocatorSequence{completeness: source.Completeness}
+	if err := validateFamilyUnitKindForCompleteness(source.Family, source.UnitKind, source.Completeness); err != nil {
+		return nil, err
+	}
+	locatorSequence := evidenceLocatorSequence{completeness: source.Completeness, emptyPages: len(source.Units) == 0}
 	for index := range source.Units {
 		if err := validateSourceUnit(source, index, artifactIDs, textMaps[index]); err != nil {
 			return nil, err
@@ -106,6 +109,9 @@ func validateSourceEvidenceV1(source SourceEvidenceV1, maxDocumentChars int) ([]
 	}
 	if err := validateSourceOmissions(source.Omissions, textMaps); err != nil {
 		return nil, fmt.Errorf("source evidence omissions: %w", err)
+	}
+	if len(source.Units) == 0 && len(normalizeUnitOmissionLocators(source.Omissions)) != len(source.Omissions) {
+		return nil, errors.New("empty PDF evidence requires unit omissions")
 	}
 	if err := locatorSequence.requireGapOmissions(normalizeUnitOmissionLocators(source.Omissions)); err != nil {
 		return nil, err
@@ -180,7 +186,7 @@ func validateSourceUnit(
 			return fmt.Errorf("source evidence unit %d speaker contains NUL", index)
 		}
 	}
-	if err := validateSourceLocator(source.Family, source.UnitKind, source.Completeness, unit.Locator); err != nil {
+	if err := validateSourceLocator(source.UnitKind, unit.Locator); err != nil {
 		return fmt.Errorf("source evidence unit %d: %w", index, err)
 	}
 	for headingIndex, heading := range unit.HeadingPath {
@@ -207,18 +213,10 @@ func validateSourceUnit(
 	return nil
 }
 
-func validateSourceLocator(
-	family string,
-	unitKind EvidenceUnitKind,
-	completeness EvidenceCompleteness,
-	locator SourceEvidenceLocatorV1,
-) error {
+func validateSourceLocator(unitKind EvidenceUnitKind, locator SourceEvidenceLocatorV1) error {
 	want := locatorKindForUnit(unitKind)
 	if locator.Kind != want {
 		return fmt.Errorf("%s locator is required for unit kind %q", want, unitKind)
-	}
-	if err := validateFamilyUnitKindForCompleteness(family, unitKind, completeness); err != nil {
-		return err
 	}
 	if locator.Name != "" {
 		if err := validateBoundedUTF8(locator.Name, maxEvidenceIdentifierBytes, "locator name"); err != nil {
@@ -262,6 +260,7 @@ func validateSourceLocator(
 }
 
 type evidenceLocatorSequence struct {
+	emptyPages   bool
 	completeness EvidenceCompleteness
 	gaps         []EvidenceLocatorV1
 	presentNames map[string]struct{}
@@ -347,7 +346,30 @@ func (sequence *evidenceLocatorSequence) add(locator EvidenceLocatorV1) error {
 	return nil
 }
 
+func omissionOnlyPDF(family string, kind EvidenceUnitKind, completeness EvidenceCompleteness, omissions int) bool {
+	return family == "pdf" && kind == EvidenceUnitPage && completeness == EvidencePartial && omissions > 0
+}
+
 func (sequence *evidenceLocatorSequence) requireGapOmissions(omitted []EvidenceLocatorV1) error {
+	ordered := slices.Clone(omitted)
+	slices.SortFunc(ordered, func(left, right EvidenceLocatorV1) int {
+		if result := cmp.Compare(left.Start, right.Start); result != 0 {
+			return result
+		}
+		return cmp.Compare(left.End, right.End)
+	})
+	if !sequence.seen && sequence.emptyPages {
+		if len(omitted) == 0 {
+			return errors.New("empty evidence requires page omissions")
+		}
+		for index, locator := range ordered {
+			if locator.Kind != EvidenceLocatorPage || locator.IndexOrigin != EvidenceIndexOriginOne || locator.Start != int64(index+1) || locator.End != locator.Start || locator.Name != "" {
+				return errors.New("empty evidence requires contiguous one-based page omissions")
+			}
+		}
+		return nil
+	}
+
 	if sequence.seen && (sequence.previous.Kind == EvidenceLocatorMessage ||
 		sequence.previous.Kind == EvidenceLocatorSection) {
 		if len(omitted) > 0 && sequence.unnamed {
@@ -381,13 +403,6 @@ func (sequence *evidenceLocatorSequence) requireGapOmissions(omitted []EvidenceL
 		// Gaps between timed cues do not imply omitted speech.
 		return nil
 	}
-	ordered := slices.Clone(omitted)
-	slices.SortFunc(ordered, func(left, right EvidenceLocatorV1) int {
-		if result := cmp.Compare(left.Start, right.Start); result != 0 {
-			return result
-		}
-		return cmp.Compare(left.End, right.End)
-	})
 	omissionIndex := 0
 	for _, gap := range sequence.gaps {
 		cursor := gap.Start
@@ -1135,7 +1150,7 @@ func validateNormalizedEvidenceV1(evidence NormalizedEvidenceV1) error {
 		return fmt.Errorf("normalized evidence contract version must be %q", NormalizedEvidenceContractV1)
 	}
 	if !validEvidenceCompleteness(evidence.Completeness) || !validEvidenceUnitKind(evidence.UnitKind) ||
-		len(evidence.Units) == 0 || len(evidence.Units) > maxEvidenceUnits {
+		len(evidence.Units) > maxEvidenceUnits || len(evidence.Units) == 0 && !omissionOnlyPDF(evidence.Family, evidence.UnitKind, evidence.Completeness, len(evidence.Omissions)) {
 		return errors.New("normalized evidence identity is invalid")
 	}
 	if err := validateNormalizedOmissionLimit(evidence); err != nil {
@@ -1158,7 +1173,7 @@ func validateNormalizedEvidenceV1(evidence NormalizedEvidenceV1) error {
 		return err
 	}
 	textMaps := make([]evidenceTextMap, len(evidence.Units))
-	locatorSequence := evidenceLocatorSequence{completeness: evidence.Completeness}
+	locatorSequence := evidenceLocatorSequence{completeness: evidence.Completeness, emptyPages: len(evidence.Units) == 0}
 	for index, unit := range evidence.Units {
 		if unit.Order != index || !validEvidenceID(unit.ID, "unit") {
 			return fmt.Errorf("normalized evidence unit %d is not canonical", index)
@@ -1184,7 +1199,7 @@ func validateNormalizedEvidenceV1(evidence NormalizedEvidenceV1) error {
 		}
 		textMaps[index] = textMap
 		if err := validateSourceLocator(
-			evidence.Family, evidence.UnitKind, evidence.Completeness,
+			evidence.UnitKind,
 			SourceEvidenceLocatorV1{
 				End: unit.Locator.End, IndexOrigin: unit.Locator.IndexOrigin, Kind: unit.Locator.Kind,
 				Name: unit.Locator.Name, Start: unit.Locator.Start,
@@ -1226,6 +1241,9 @@ func validateNormalizedEvidenceV1(evidence NormalizedEvidenceV1) error {
 	}
 	if err := validateNormalizedOmissions(evidence.Omissions, textMaps, -1); err != nil {
 		return fmt.Errorf("normalized evidence omissions: %w", err)
+	}
+	if len(evidence.Units) == 0 && len(normalizedUnitOmissionLocators(evidence.Omissions)) != len(evidence.Omissions) {
+		return errors.New("empty PDF evidence requires unit omissions")
 	}
 	if err := locatorSequence.requireGapOmissions(normalizedUnitOmissionLocators(evidence.Omissions)); err != nil {
 		return err

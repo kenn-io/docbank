@@ -460,7 +460,7 @@ func buildPackagePreflightFromRoot(ctx context.Context, d Deps, g PackageMutatio
 		return PackagePreflight{}, err
 	}
 	files, validated, err := loadfile.Validate(ctx, loadfile.ValidateInput{Records: records, Images: images, Volumes: volumes, Resolver: resolver, PageCount: func(file io.ReadSeeker) (int, error) {
-		return pdfapi.PageCount(file, nil)
+		return pdfapi.PageCount(ctx, file, nil)
 	}})
 	if err != nil {
 		return PackagePreflight{}, err

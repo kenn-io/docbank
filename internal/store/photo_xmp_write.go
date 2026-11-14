@@ -110,7 +110,7 @@ func (s *Store) publishPhotoXMPTx(ctx context.Context, tx *sql.Tx, run IngestRun
 	if sc != nil {
 		r.Sidecar = PhotoSidecarProvenance{NodeID: sc.Node.ID, VersionID: sc.Node.CurrentVersionID, FileID: sc.FileID}
 		var err error
-		if r.Outside, err = livePhotoXMPSourcesTx(ctx, tx, sc.Node.ID, plan.Outside); err != nil {
+		if r.Outside, err = s.livePhotoXMPSourcesTx(ctx, tx, sc.Node.ID, plan.Outside); err != nil {
 			return nil, err
 		}
 	}
@@ -176,11 +176,11 @@ func (p PhotoXMPPacket) keepUnreadable(base PhotoXMPPacket) PhotoXMPPacket {
 }
 
 // livePhotoXMPSourcesTx drops packets of sources the sidecar no longer has.
-func livePhotoXMPSourcesTx(ctx context.Context, tx *sql.Tx, nodeID int64, sources []PhotoXMPSource) ([]PhotoXMPSource, error) {
+func (s *Store) livePhotoXMPSourcesTx(ctx context.Context, tx *sql.Tx, nodeID int64, sources []PhotoXMPSource) ([]PhotoXMPSource, error) {
 	if len(sources) == 0 {
 		return nil, nil
 	}
-	live, err := photoXMPSourceVersionsTx(ctx, tx, nodeID)
+	live, err := s.photoXMPSourceVersionsTx(ctx, tx, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +193,7 @@ func livePhotoXMPSourcesTx(ctx context.Context, tx *sql.Tx, nodeID int64, source
 // checks the work's freshness, so the pairing read does not.
 func (s *Store) CheckPhotoXMPPairing(ctx context.Context, w PhotoXMPWork, extension string) error {
 	return s.withReadTx(ctx, func(tx *sql.Tx) error {
-		intended, err := photoSidecarIntendedTarget(ctx, tx, PhotoFile{Role: PhotoRoleSidecar, AssetID: w.Original.AssetID, SidecarOfID: &w.Original.ID}, w.Sidecar.Node, extension)
+		intended, err := s.photoSidecarIntendedTarget(ctx, tx, PhotoFile{Role: PhotoRoleSidecar, AssetID: w.Original.AssetID, SidecarOfID: &w.Original.ID}, w.Sidecar.Node, extension)
 		if err != nil {
 			return err
 		}
@@ -218,7 +218,7 @@ func (s *Store) CheckPhotoXMPClaim(ctx context.Context, w PhotoXMPWork, sourcePa
 		folder := strings.ToLower(path.Dir(normalizePhotoSourcePath(sourcePath)))
 		var local []string
 		err := queryRows(ctx, tx, `SELECT p.original_path FROM provenance p JOIN ingests i ON i.id=p.ingest_id
- WHERE p.node_id=$1 AND LOWER(i.source_kind) NOT LIKE 'embedded:%' AND i.source_kind<>'url' AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)`, []any{w.Node.ID}, func(rows *sql.Rows) error {
+ WHERE p.node_id=$1 AND NOT (`+(provenanceSQLDialect{postgres: s.postgresSchema != ""}).embedded("i.source_kind")+`) AND i.source_kind<>'url' AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)`, []any{w.Node.ID}, func(rows *sql.Rows) error {
 			var source string
 			if err := rows.Scan(&source); err != nil {
 				return err
@@ -331,7 +331,7 @@ func (s *Store) writePhotoXMPSidecarTx(ctx context.Context, tx *sql.Tx, run Inge
 	if err := s.insertPhotoFileTx(ctx, tx, PhotoFile{AssetID: w.Original.AssetID, NodeID: written.Node.ID, Role: PhotoRoleSidecar, SidecarOfID: &w.Original.ID, CreatedAt: nowRFC3339()}); err != nil {
 		return PhotoSidecarProvenance{}, err
 	}
-	if _, err := commitPhotoAssetTx(ctx, tx, before, before, "attach"); err != nil {
+	if _, err := s.commitPhotoAssetTx(ctx, tx, before, before, "attach"); err != nil {
 		return PhotoSidecarProvenance{}, err
 	}
 	var fileID string

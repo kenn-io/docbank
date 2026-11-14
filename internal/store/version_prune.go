@@ -202,7 +202,7 @@ func (s *Store) retainPhotoXMPVersionsTx(ctx context.Context, tx *sql.Tx, node N
 	if len(candidates) == 0 {
 		return nil
 	}
-	sources, err := photoXMPSourceVersionsTx(ctx, tx, node.ID)
+	sources, err := s.photoXMPSourceVersionsTx(ctx, tx, node.ID)
 	if err != nil {
 		return err
 	}
@@ -243,9 +243,9 @@ func (s *Store) retainedPhotoXMPReceiptsSQL() string {
 	return `SELECT r.after_json
  FROM photo_files sf JOIN ` + receiptTable + `
  ON r.operation='xmp_sync'
- WHERE sf.node_id=$1 AND ` + d.indexedText("r.after_json", "sync.sidecar.file_id") + `=sf.file_id
- AND ` + d.number("r.after_json", "sync.sidecar.node_id") + `=sf.node_id
- AND ` + d.text("r.after_json", "sync.settled.version_id") + ` IS NOT NULL`
+ WHERE sf.node_id=$1 AND ` + d.indexedText(d.receiptColumn("r"), "sync.sidecar.file_id") + `=sf.file_id
+ AND ` + d.number(d.receiptColumn("r"), "sync.sidecar.node_id") + `=sf.node_id
+ AND ` + d.text(d.receiptColumn("r"), "sync.settled.version_id") + ` IS NOT NULL`
 }
 
 func snapshotRetainedVersionTx(ctx context.Context, tx *sql.Tx, candidates map[string]bool) (string, error) {

@@ -1,6 +1,8 @@
 package store
 
 import (
+	"cmp"
+	"container/heap"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -18,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"go.kenn.io/docbank/document"
@@ -117,7 +120,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		}
 		return hits, page.Total > int64(limit), nil
 	}
-	fq := ftsQuery(query)
+	fq, _, _ := prepareSearch(query)
 	if fq == "" {
 		return nil, false, nil
 	}
@@ -715,6 +718,10 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		return SemanticSearchAuthority{}, err
 	}
 	binding, fingerprints, err := embeddingProfileBindingAuthority(ctx, s.db, profileFingerprint, bindingID)
+	if errors.Is(err, ErrNotFound) && fingerprints.Profile == "" {
+		// A configured profile can be searched before processing persists it.
+		return SemanticSearchAuthority{}, ErrVectorIndexUnavailable
+	}
 	if err != nil {
 		return SemanticSearchAuthority{}, err
 	}
@@ -731,6 +738,9 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		}
 	}
 	space, err := loadVectorSpaceTx(ctx, s.db, vectorSpaceID)
+	if errors.Is(err, ErrNotFound) {
+		return SemanticSearchAuthority{}, ErrVectorIndexUnavailable
+	}
 	if err != nil {
 		return SemanticSearchAuthority{}, err
 	}
@@ -742,6 +752,9 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		return SemanticSearchAuthority{}, errors.New("semantic search vector space does not match profile binding authority")
 	}
 	lease, err := s.AcquireVectorIndexGeneration(ctx, vectorSpaceID, owner, at, duration)
+	if errors.Is(err, ErrNotFound) {
+		return SemanticSearchAuthority{}, ErrVectorIndexUnavailable
+	}
 	if err != nil {
 		return SemanticSearchAuthority{}, err
 	}
@@ -1250,7 +1263,7 @@ func (s *Store) StageLexicalGeneration(
 	var generation LexicalGeneration
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		generation, err = stageLexicalGenerationTx(ctx, tx, generationID)
+		generation, err = stageLexicalGenerationTx(ctx, tx, generationID, s.postgresSchema != "")
 		return err
 	})
 	if err != nil {
@@ -1277,11 +1290,11 @@ func (s *Store) StageLexicalGenerationWithRoot(
 	var generation LexicalGeneration
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		generation, err = stageLexicalGenerationTx(ctx, tx, generationID)
+		generation, err = stageLexicalGenerationTx(ctx, tx, generationID, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
-		return putCurrentRenditionRootTx(ctx, tx, root)
+		return putCurrentRenditionRootTx(ctx, tx, root, s.postgresSchema != "")
 	})
 	if err != nil {
 		return LexicalGeneration{}, err
@@ -1291,6 +1304,7 @@ func (s *Store) StageLexicalGenerationWithRoot(
 
 func stageLexicalGenerationTx(
 	ctx context.Context, tx *sql.Tx, generationID string,
+	postgres bool,
 ) (LexicalGeneration, error) {
 	segments, err := readCatalogLexicalManifestRowsTx(ctx, tx, "")
 	if err != nil {
@@ -1300,11 +1314,12 @@ func stageLexicalGenerationTx(
 	if err != nil {
 		return LexicalGeneration{}, err
 	}
-	return stageLexicalGenerationRowsTx(ctx, tx, generationID, buildIDs, segments)
+	return stageLexicalGenerationRowsTx(ctx, tx, generationID, buildIDs, segments, postgres)
 }
 
 func stageLexicalGenerationExcludingTx(
 	ctx context.Context, tx *sql.Tx, excludedBuildIDs map[string]struct{},
+	postgres bool,
 ) (LexicalGeneration, error) {
 	segments, err := readCatalogLexicalManifestRowsTx(ctx, tx, "")
 	if err != nil {
@@ -1326,13 +1341,14 @@ func stageLexicalGenerationExcludingTx(
 		return LexicalGeneration{}, nil
 	}
 	generationID := lexicalReplacementGenerationID(segments, buildIDs)
-	return stageLexicalGenerationRowsTx(ctx, tx, generationID, buildIDs, segments)
+	return stageLexicalGenerationRowsTx(ctx, tx, generationID, buildIDs, segments, postgres)
 }
 
 func stageLexicalGenerationRowsTx(
 	ctx context.Context, tx *sql.Tx, generationID string,
 	buildIDs []string,
 	segments []lexicalManifestRow,
+	postgres bool,
 ) (LexicalGeneration, error) {
 	stored, err := loadAndValidateLexicalGenerationTx(ctx, tx, generationID)
 	if err == nil {
@@ -1341,7 +1357,7 @@ func stageLexicalGenerationRowsTx(
 	if !errors.Is(err, ErrNotFound) {
 		return LexicalGeneration{}, err
 	}
-	if _, err := extendLexicalStreamTx(ctx, tx, uuid.New().String(), LexicalGeneration{}, buildIDs, segments, generationID, nowRFC3339()); err != nil {
+	if _, err := extendLexicalStreamTx(ctx, tx, uuid.New().String(), LexicalGeneration{}, buildIDs, segments, generationID, nowRFC3339(), postgres); err != nil {
 		return LexicalGeneration{}, err
 	}
 	return loadAndValidateLexicalGenerationTx(ctx, tx, generationID)
@@ -1382,7 +1398,7 @@ func insertLexicalGenerationTx(ctx context.Context, tx *sql.Tx, generation Lexic
 
 // extendLexicalStreamTx shares indexing and ordered membership for staging and append.
 // A supplied generation ID preserves full-stage and metadata restore identities.
-func extendLexicalStreamTx(ctx context.Context, tx *sql.Tx, streamID string, from LexicalGeneration, buildIDs []string, rows []lexicalManifestRow, generationID, builtAt string) (LexicalGeneration, error) {
+func extendLexicalStreamTx(ctx context.Context, tx *sql.Tx, streamID string, from LexicalGeneration, buildIDs []string, rows []lexicalManifestRow, generationID, builtAt string, postgres bool) (LexicalGeneration, error) {
 	byBuild := make(map[string][]lexicalManifestRow)
 	for _, row := range rows {
 		byBuild[row.buildID] = append(byBuild[row.buildID], row)
@@ -1390,7 +1406,7 @@ func extendLexicalStreamTx(ctx context.Context, tx *sql.Tx, streamID string, fro
 	generation := from
 	for _, buildID := range buildIDs {
 		segments := byBuild[buildID]
-		if err := indexLexicalSegmentsTx(ctx, tx, segments); err != nil {
+		if err := indexLexicalSegmentsTx(ctx, tx, segments, postgres); err != nil {
 			return LexicalGeneration{}, err
 		}
 		generation.BuildCount++
@@ -1413,7 +1429,7 @@ func extendLexicalStreamTx(ctx context.Context, tx *sql.Tx, streamID string, fro
 	return generation, nil
 }
 
-func appendLexicalGenerationTx(ctx context.Context, tx *sql.Tx, buildIDs []string) (LexicalGeneration, error) {
+func appendLexicalGenerationTx(ctx context.Context, tx *sql.Tx, buildIDs []string, postgres bool) (LexicalGeneration, error) {
 	head, err := readActiveLexicalGeneration(ctx, tx)
 	if err != nil {
 		return LexicalGeneration{}, err
@@ -1453,7 +1469,7 @@ func appendLexicalGenerationTx(ctx context.Context, tx *sql.Tx, buildIDs []strin
 		}
 		segments = append(segments, rows...)
 	}
-	return extendLexicalStreamTx(ctx, tx, streamID, head, added, segments, "", nowRFC3339())
+	return extendLexicalStreamTx(ctx, tx, streamID, head, added, segments, "", nowRFC3339(), postgres)
 }
 
 // dropLexicalGenerationTx trims only the tail no retained generation can read.
@@ -1564,6 +1580,7 @@ func readCatalogLexicalManifestRowsTx(
 // indexed yet. Builds are immutable, so rows already present are exact.
 func indexLexicalSegmentsTx(
 	ctx context.Context, tx *sql.Tx, segments []lexicalManifestRow,
+	postgres bool,
 ) error {
 	indexed := make(map[string]bool)
 	for _, segment := range segments {
@@ -1584,7 +1601,7 @@ func indexLexicalSegmentsTx(
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO rendition_lexical_index(row_id,build_id,segment_id,text)
 			SELECT COALESCE(MAX(row_id),0)+1,$1,$2,$3 FROM rendition_lexical_index`,
-			segment.buildID, segment.segmentID, segment.text,
+			segment.buildID, storedString(postgres, segment.segmentID), storedString(postgres, segment.text),
 		); err != nil {
 			return fmt.Errorf("indexing lexical segment %s of build %s: %w",
 				segment.segmentID, segment.buildID, err)
@@ -2118,7 +2135,7 @@ func (s *Store) publishRenditionAttachmentsAndLexicalHeadsTx(
 			pair.head.AttachmentID != normalized.ID {
 			return errors.New("rendition head does not resolve through its exact attachment")
 		}
-		if err := ensureProcessingProfileTx(ctx, tx, normalized.Profile); err != nil {
+		if err := ensureProcessingProfileTx(ctx, tx, normalized.Profile, s.postgresSchema != ""); err != nil {
 			return err
 		}
 		build, err := validateRenditionPublicationTx(ctx, tx, normalized, generationID, authorization)
@@ -2135,7 +2152,7 @@ func (s *Store) publishRenditionAttachmentsAndLexicalHeadsTx(
 				return err
 			}
 		}
-		if err := insertRenditionAttachmentAndHeadTx(ctx, tx, normalized, pair.head); err != nil {
+		if err := insertRenditionAttachmentAndHeadTx(ctx, tx, normalized, pair.head, s.postgresSchema != ""); err != nil {
 			return err
 		}
 	}
@@ -2263,7 +2280,7 @@ func (s *Store) authorizeRenditionPublicationTx(
 // insertRenditionAttachmentAndHeadTx records the immutable attachment, or
 // proves an existing one names the same metadata, then moves the head.
 func insertRenditionAttachmentAndHeadTx(
-	ctx context.Context, tx *sql.Tx, normalized RenditionAttachmentRecord, head RenditionHeadRecord,
+	ctx context.Context, tx *sql.Tx, normalized RenditionAttachmentRecord, head RenditionHeadRecord, postgres bool,
 ) error {
 	result, err := tx.ExecContext(ctx, `
 			INSERT INTO rendition_attachments(
@@ -2274,7 +2291,7 @@ func insertRenditionAttachmentAndHeadTx(
 		normalized.ID, normalized.VaultID, normalized.ContentVersionID, normalized.BuildID,
 		normalized.Profile.Fingerprint, normalized.Profile.RetentionDisclosureFingerprint,
 		normalized.Profile.AttachmentPolicyFingerprint, normalized.Profile.ConsentFingerprint,
-		normalized.Profile.RenditionDisclosureFingerprint, normalized.Profile.TrustBoundary,
+		normalized.Profile.RenditionDisclosureFingerprint, storedString(postgres, normalized.Profile.TrustBoundary),
 		normalized.AttachedAt)
 	if err != nil {
 		return fmt.Errorf("inserting rendition attachment %s: %w", normalized.ID, err)
@@ -2397,6 +2414,69 @@ func ftsQuery(input string) string {
 	return strings.Join(terms, " ")
 }
 
+// SearchRequiredTerms returns the terms required by ordinary lexical search.
+func SearchRequiredTerms(query string) []string {
+	_, terms, _ := prepareSearch(query)
+	return terms
+}
+
+func prepareSearch(query string) (string, []string, bool) {
+	quotes := strings.NewReplacer("“", `"`, "”", `"`, "„", `"`).Replace(query)
+	fallback := func() (string, []string, bool) { return ftsQuery(query), strings.Fields(query), false }
+	if strings.Count(quotes, `"`)%2 != 0 {
+		return fallback()
+	}
+	analyzer := lexical.Literal()
+	natural, err := analyzer.PrepareNatural(query)
+	if err != nil {
+		return fallback()
+	}
+	wordless := func(r rune) bool { return unicode.IsPunct(r) || unicode.IsSymbol(r) || unicode.IsSpace(r) }
+	// A phrase of stop words alone does not make unquoted stop words optional.
+	if len(natural.Phrases) > 0 && len(natural.Words) == 0 {
+		onlyStopWords := true
+		for _, phrase := range natural.Phrases {
+			words := strings.FieldsFunc(strings.ToLower(phrase), wordless)
+			for _, word := range words {
+				if !lexical.IsStopWord(word) {
+					onlyStopWords = false
+				}
+			}
+		}
+		if onlyStopWords {
+			var unquoted []string
+			for i, part := range strings.Split(quotes, `"`) {
+				if i%2 == 0 {
+					unquoted = append(unquoted, part)
+				}
+			}
+			prepared, _ := analyzer.PrepareNatural(strings.Join(unquoted, " "))
+			natural.Words = prepared.Words
+		}
+	}
+	var groups, terms []string
+	typed := strings.Fields(strings.ReplaceAll(strings.ToLower(quotes), `"`, " "))
+	for _, word := range natural.Words {
+		var forms []string
+		for _, form := range word.Forms {
+			literal, _ := analyzer.PreparePhrase(form)
+			match := literal.Match
+			if slices.ContainsFunc(typed, func(t string) bool { return strings.TrimFunc(t, wordless) == form }) {
+				match += "*"
+			}
+			forms = append(forms, match)
+		}
+		groups = append(groups, "("+strings.Join(forms, " OR ")+")")
+		terms = append(terms, word.Text)
+	}
+	for _, phrase := range natural.Phrases {
+		literal, _ := analyzer.PreparePhrase(phrase)
+		groups = append(groups, literal.Match)
+		terms = append(terms, `"`+phrase+`"`)
+	}
+	return strings.Join(groups, " AND "), terms, len(natural.Phrases) > 0
+}
+
 // nameSearchCandidates leaves filtering and name-based ties to the outer
 // query. A candidate cutoff here would discard eligible equal-score names.
 func nameSearchCandidates(match string) (sqlquery.Query, error) {
@@ -2445,7 +2525,7 @@ func (s *Store) SearchPageWithOptions(
 	if err != nil {
 		return nil, false, err
 	}
-	fq := ftsQuery(query)
+	fq, _, _ := prepareSearch(query)
 	if SearchNeedsQuery(query, opts) {
 		return nil, false, ErrSearchQueryRequired
 	}
@@ -2476,11 +2556,18 @@ func (s *Store) SearchPageWithOptions(
 		return nameHits, true, nil
 	}
 
-	// Content may also match a node already returned by name. Over-fetch by
-	// the complete name set so duplicate filtering cannot conceal truncation.
+	seen := make(map[int64]struct{}, len(nameHits))
+	for _, hit := range nameHits {
+		seen[hit.Node.ID] = struct{}{}
+	}
 	remaining := limit - len(nameHits)
 	var contentHits []SearchHit
 	queryContent := func(queryer metadataQuerier, generationID string) error {
+		if filterSQL == "" {
+			contentHits, err = leadingContentHits(ctx, queryer, query, fq, generationID, seen, remaining+1)
+			return err
+		}
+		// Over-fetch by the name set so overlap cannot conceal truncation.
 		cte, from, rank, contentArgs := contentSearchMatches(fq, generationID, nil)
 		contentQuery := `WITH ` + cte + ` SELECT ` + nodeCols + ` FROM ` + from + ` WHERE n.trashed_at IS NULL ` + filterSQL + ` ORDER BY ` + rank + `,n.name,n.id LIMIT ?`
 		contentArgs = append(contentArgs, filterArgs...)
@@ -2500,16 +2587,15 @@ func (s *Store) SearchPageWithOptions(
 	if err != nil {
 		return nil, false, err
 	}
-	seen := make(map[int64]struct{}, len(nameHits))
-	for _, hit := range nameHits {
-		seen[hit.Node.ID] = struct{}{}
-	}
-	filtered := contentHits[:0]
-	for _, hit := range contentHits {
-		if _, exists := seen[hit.Node.ID]; exists {
-			continue
+	filtered := contentHits
+	if filterSQL != "" {
+		filtered = contentHits[:0]
+		for _, hit := range contentHits {
+			if _, exists := seen[hit.Node.ID]; exists {
+				continue
+			}
+			filtered = append(filtered, hit)
 		}
-		filtered = append(filtered, hit)
 	}
 	truncated := len(filtered) > remaining
 	if truncated {
@@ -2897,23 +2983,133 @@ func (s *Store) addSearchPaths(ctx context.Context, hits []SearchHit) error {
 	return nil
 }
 
-// contentSearchMatches shares retained-text ranking and publication bindings with Photos.
-func contentSearchMatches(match, generation string, profile *string) (cte, from, rank string, args []any) {
+// contentSearchSource shares FTS eligibility between grouped and streaming reads.
+func contentSearchSource(match, generation string, profile *string, join string) (from, where string, args []any) {
 	if generation == "" {
-		return `matched_blobs AS (SELECT blob_hash,MIN(rank) best_rank FROM content_fts WHERE content_fts MATCH ? GROUP BY blob_hash)`,
-			`matched_blobs mb CROSS JOIN content_versions cv ON cv.blob_hash=mb.blob_hash CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id`, `mb.best_rank`, []any{match}
+		return `content_fts`, `content_fts MATCH ?`, []any{match}
 	}
-	profileFilter := ""
+	from = `rendition_lexical_fts
+  ` + join + ` rendition_attachments a ON a.build_id=rendition_lexical_fts.build_id
+  ` + join + ` rendition_heads rh ON rh.content_version_id=a.content_version_id AND rh.profile_fingerprint=a.profile_fingerprint AND rh.attachment_id=a.attachment_id`
+	where = `rendition_lexical_fts MATCH ? AND EXISTS (SELECT 1 FROM rendition_lexical_generation_builds gb WHERE gb.generation_id=? AND gb.build_id=rendition_lexical_fts.build_id)`
 	args = []any{match, generation}
 	if profile != nil {
-		profileFilter = ` AND a.profile_fingerprint=?`
+		where += ` AND a.profile_fingerprint=?`
 		args = append(args, *profile)
 	}
-	return `matched_versions AS (SELECT a.content_version_id version_id,MIN(rendition_lexical_fts.rank) best_rank FROM rendition_lexical_fts
-  JOIN rendition_attachments a ON a.build_id=rendition_lexical_fts.build_id
-  JOIN rendition_heads rh ON rh.content_version_id=a.content_version_id AND rh.profile_fingerprint=a.profile_fingerprint AND rh.attachment_id=a.attachment_id
-  WHERE rendition_lexical_fts MATCH ? AND EXISTS (SELECT 1 FROM rendition_lexical_generation_builds gb WHERE gb.generation_id=? AND gb.build_id=rendition_lexical_fts.build_id)` + profileFilter + ` GROUP BY a.content_version_id)`,
+	return from, where, args
+}
+
+// contentSearchMatches shares retained-text ranking and publication bindings with Photos.
+func contentSearchMatches(match, generation string, profile *string) (cte, from, rank string, args []any) {
+	source, where, args := contentSearchSource(match, generation, profile, "JOIN")
+	if generation == "" {
+		return `matched_blobs AS (SELECT blob_hash,MIN(rank) best_rank FROM ` + source + ` WHERE ` + where + ` GROUP BY blob_hash)`,
+			`matched_blobs mb CROSS JOIN content_versions cv ON cv.blob_hash=mb.blob_hash CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id`, `mb.best_rank`, args
+	}
+	return `matched_versions AS (SELECT a.content_version_id version_id,MIN(rendition_lexical_fts.rank) best_rank FROM ` + source + `
+  WHERE ` + where + ` GROUP BY a.content_version_id)`,
 		`matched_versions mv CROSS JOIN content_versions cv ON cv.version_id=mv.version_id CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id`, `mv.best_rank`, args
+}
+
+type contentHitKey struct {
+	id   int64
+	name string
+	rank float64
+}
+
+func compareContentHit(a, b contentHitKey) int {
+	if order := cmp.Compare(a.rank, b.rank); order != 0 {
+		return order
+	}
+	if order := cmp.Compare(a.name, b.name); order != 0 {
+		return order
+	}
+	return cmp.Compare(a.id, b.id)
+}
+
+// The worst retained key stays at the root, including name and ID rank ties.
+type contentHitHeap []contentHitKey
+
+func (h *contentHitHeap) Len() int           { return len(*h) }
+func (h *contentHitHeap) Less(i, j int) bool { return compareContentHit((*h)[i], (*h)[j]) > 0 }
+func (h *contentHitHeap) Swap(i, j int)      { (*h)[i], (*h)[j] = (*h)[j], (*h)[i] }
+func (h *contentHitHeap) Push(x any) {
+	key, ok := x.(contentHitKey)
+	if !ok {
+		panic("store: invalid content hit heap key")
+	}
+	*h = append(*h, key)
+}
+func (h *contentHitHeap) Pop() any {
+	old := *h
+	x := old[len(old)-1]
+	*h = old[:len(old)-1]
+	return x
+}
+
+func leadingContentHits(ctx context.Context, queryer metadataQuerier, query, match, generation string, seen map[int64]struct{}, n int) ([]SearchHit, error) {
+	from, where, args := contentSearchSource(match, generation, nil, "CROSS JOIN")
+	rank, version := `rendition_lexical_fts.rank`, `a.content_version_id`
+	if generation == "" {
+		rank, version = `content_fts.rank`, `cv.version_id`
+		from += ` CROSS JOIN content_versions cv ON cv.blob_hash=content_fts.blob_hash`
+	} else {
+		from += ` CROSS JOIN content_versions cv ON cv.version_id=a.content_version_id`
+	}
+	from += ` CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=` + version
+	if generation == "" {
+		from += ` CROSS JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id`
+	}
+	streamRows, err := queryer.QueryContext(ctx, `SELECT n.id,n.name,`+rank+` FROM `+from+` WHERE `+where+` AND n.trashed_at IS NULL ORDER BY `+rank, args...)
+	if err != nil {
+		return nil, fmt.Errorf("streaming content hits: %w", err)
+	}
+	defer func() { _ = streamRows.Close() }()
+	kept := make(contentHitHeap, 0, n)
+	members := make(map[int64]struct{}, n)
+	for streamRows.Next() {
+		var key contentHitKey
+		if err := streamRows.Scan(&key.id, &key.name, &key.rank); err != nil {
+			return nil, fmt.Errorf("scanning content hit: %w", err)
+		}
+		if len(kept) == n && key.rank > kept[0].rank {
+			break
+		}
+		if _, exists := seen[key.id]; exists {
+			continue
+		}
+		if _, exists := members[key.id]; exists {
+			continue
+		}
+		if len(kept) < n {
+			heap.Push(&kept, key)
+		} else if compareContentHit(key, kept[0]) < 0 {
+			delete(members, kept[0].id)
+			kept[0] = key
+			heap.Fix(&kept, 0)
+		} else {
+			continue
+		}
+		members[key.id] = struct{}{}
+	}
+	if err := errors.Join(streamRows.Err(), streamRows.Close()); err != nil {
+		return nil, fmt.Errorf("streaming content hits: %w", err)
+	}
+	slices.SortFunc(kept, compareContentHit)
+	ids := make([]int64, len(kept))
+	for i, key := range kept {
+		ids[i] = key.id
+	}
+	encoded, err := json.Marshal(ids)
+	if err != nil {
+		return nil, fmt.Errorf("encoding content hit IDs: %w", err)
+	}
+	rows, err := queryer.QueryContext(ctx, `SELECT `+nodeCols+` FROM json_each(?) page CROSS JOIN `+nodeFrom+` WHERE n.id=page.value ORDER BY CAST(page.key AS INTEGER)`, string(encoded))
+	if err != nil {
+		return nil, fmt.Errorf("loading content hits: %w", err)
+	}
+	return scanSearchRows(rows, SearchMatchContent, query)
 }
 
 // photoAssetTextCandidates ranks every member of the asset that owns matching

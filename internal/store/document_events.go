@@ -191,7 +191,7 @@ func (s *Store) publishDocumentEventsTx(
 		if err != nil {
 			return DocumentEventGeneration{}, err
 		}
-	} else if err := insertDocumentEventGeneration(ctx, tx, generation, record); err != nil {
+	} else if err := insertDocumentEventGeneration(ctx, tx, generation, record, s.postgresSchema != ""); err != nil {
 		return DocumentEventGeneration{}, err
 	}
 	if err := checkDocumentEventGeneration(s.VaultID(), generation, record); err != nil {
@@ -271,7 +271,7 @@ func insertDocumentEventGeneration(
 	ctx context.Context,
 	tx *sql.Tx,
 	generation DocumentEventGeneration,
-	record document.DocumentEventsV1,
+	record document.DocumentEventsV1, postgres bool,
 ) error {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO document_event_generations(
 		generation_id,content_version_id,contract_version,deriver_fingerprint,inputs_sha256,
@@ -289,11 +289,11 @@ func insertDocumentEventGeneration(
 			claim_basis,parse_confidence,evidence_kind,evidence_id,evidence_sha256,
 			evidence_locator,sensitive
 		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`, generation.GenerationID,
-			event.EventID, event.SourceKey, event.DateKind, event.SourceKindRaw, event.DateValue,
-			event.RawValue, event.Precision, event.FractionDigits, event.TimezoneKind, event.ZoneText,
+			event.EventID, storedString(postgres, event.SourceKey), event.DateKind, storedString(postgres, event.SourceKindRaw), event.DateValue,
+			storedString(postgres, event.RawValue), event.Precision, event.FractionDigits, event.TimezoneKind, storedString(postgres, event.ZoneText),
 			nullableDocumentEventOffset(event.OffsetSeconds), event.AxisKey,
 			nullableString(event.UTCKey), event.ClaimBasis, event.ParseConfidence,
-			event.EvidenceKind, event.EvidenceID, event.EvidenceSHA256, []byte(event.EvidenceLocator),
+			event.EvidenceKind, storedString(postgres, event.EvidenceID), event.EvidenceSHA256, []byte(event.EvidenceLocator),
 			documentEventBool(event.Sensitive)); err != nil {
 			return fmt.Errorf("recording document event %s: %w", event.EventID, err)
 		}
@@ -302,8 +302,8 @@ func insertDocumentEventGeneration(
 				generation_id,event_id,role,ordinal,actor_key,display_name,address,claim_json,
 				evidence_kind,evidence_id,sensitive
 			) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, generation.GenerationID, event.EventID, actor.Role,
-				actor.Ordinal, actor.ActorKey, actor.DisplayName, actor.Address, []byte(actor.Claim),
-				actor.EvidenceKind, actor.EvidenceID, documentEventBool(actor.Sensitive)); err != nil {
+				actor.Ordinal, actor.ActorKey, storedString(postgres, actor.DisplayName), storedString(postgres, actor.Address), []byte(actor.Claim),
+				actor.EvidenceKind, storedString(postgres, actor.EvidenceID), documentEventBool(actor.Sensitive)); err != nil {
 				return fmt.Errorf("recording document event %s actor: %w", event.EventID, err)
 			}
 		}
@@ -312,7 +312,7 @@ func insertDocumentEventGeneration(
 		if _, err := tx.ExecContext(ctx, `INSERT INTO document_event_primaries(
 			generation_id,scope_class,disclosure,event_id,rule_id,reason
 		) VALUES($1,$2,$3,$4,$5,$6)`, generation.GenerationID, primary.ScopeClass,
-			primary.Disclosure, primary.EventID, primary.RuleID, primary.Reason); err != nil {
+			primary.Disclosure, primary.EventID, primary.RuleID, storedString(postgres, primary.Reason)); err != nil {
 			return fmt.Errorf("recording document event primary: %w", err)
 		}
 	}

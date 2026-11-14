@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/answer"
 	"go.kenn.io/docbank/internal/api"
@@ -50,8 +53,12 @@ type answerFakeClient struct {
 	profiles      []api.ProcessingProfileSummary
 	documents     []api.DocumentSummary
 	fenceVersions []string
+	pageGaps      []api.PageTextGap
+	pageCoverage  string
+	coverageFence api.DocumentSourceFence
 	empty         bool
 	validations   int
+	coverageErr   error
 }
 
 func (f *answerFakeClient) ListDocumentProcessingProfiles(context.Context) ([]api.ProcessingProfileSummary, error) {
@@ -60,6 +67,58 @@ func (f *answerFakeClient) ListDocumentProcessingProfiles(context.Context) ([]ap
 	}
 	return []api.ProcessingProfileSummary{{Name: "default", Fingerprint: strings.Repeat("a", 64), QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: true}}, nil
 }
+func (f *answerFakeClient) GetPDFPageCoverage(_ context.Context, fence api.DocumentSourceFence) (api.CoverageReport, error) {
+	f.coverageFence = fence
+	if f.coverageErr != nil {
+		return api.CoverageReport{}, f.coverageErr
+	}
+	return api.CoverageReport{PagesWithoutText: f.pageGaps, PageCoverage: f.pageCoverage}, nil
+}
+
+func TestAnswerQuestionPageCoverage(t *testing.T) {
+	version := "00000000-0000-4000-8000-000000000002"
+	for _, tc := range []struct {
+		name        string
+		coverageErr error
+		gaps        []api.PageTextGap
+		check       func(*testing.T, answerOutput, error)
+	}{
+		{name: "unavailable", coverageErr: errors.New("coverage unavailable"), check: func(t *testing.T, out answerOutput, err error) {
+			t.Helper()
+			require.NoError(t, err)
+			require.Len(t, out.Passages, 1)
+			require.Contains(t, out.CoverageReasons, "page_coverage_unavailable")
+			require.False(t, out.CoverageComplete)
+		}},
+		{name: "canceled", coverageErr: context.Canceled, check: func(t *testing.T, _ answerOutput, err error) {
+			t.Helper()
+			require.ErrorIs(t, err, context.Canceled)
+		}},
+		{name: "partial gaps", gaps: []api.PageTextGap{{ContentVersionID: version, Pages: []int{1, 3, 4, 7}}}, check: func(t *testing.T, out answerOutput, err error) {
+			t.Helper()
+			require.NoError(t, err)
+			require.False(t, out.CoverageComplete)
+			require.Contains(t, out.CoverageReasons, "pages_without_text")
+			require.Contains(t, out.CoverageReasons, "page_coverage_incomplete")
+			require.Equal(t, answer.IncompleteCoverage, out.Status)
+			require.Equal(t, []answerPageGap{{ContentVersionID: version, Pages: [][2]int{{1, 1}, {3, 4}, {7, 7}}}}, out.PagesWithoutText)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &answerFakeClient{coverageErr: tc.coverageErr, pageGaps: tc.gaps, report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}}}
+			if tc.gaps != nil {
+				f.pageCoverage = "partial"
+			} else {
+				f.results = []api.DocumentSearchResult{{VaultUID: "00000000-0000-4000-8000-000000000001", NodeID: 1, ContentVersionID: version, Path: "/example", Rank: 1, LexicalRank: 1, Excerpt: "answer text", Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: strings.Repeat("a", 64), SegmentID: "segment-a"}}}}
+			}
+			session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
+			out, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"missing"}`))
+			require.Equal(t, []string{version}, f.coverageFence.ContentVersionIDs)
+			tc.check(t, out, err)
+		})
+	}
+}
+
 func (f *answerFakeClient) ResolveDocumentSourceFence(context.Context, api.DocumentSourceFenceResolveRequest) (api.DocumentSourceFenceResolution, error) {
 	versions := f.fenceVersions
 	if versions == nil {
@@ -169,11 +228,15 @@ func TestAnswerQuestionEvidenceAndCoverage(t *testing.T) {
 
 func TestAnswerQuestionEnvelopeBound(t *testing.T) {
 	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 50, CompleteDocuments: 50}, Reranking: &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 50}}}
+	for i := range 50 {
+		id := fmt.Sprintf("00000000-0000-4000-8000-%012d", i+2)
+		f.fenceVersions = append(f.fenceVersions, id)
+		f.pageGaps = append(f.pageGaps, api.PageTextGap{ContentVersionID: id, Pages: []int{4997, 4999}})
+	}
 	pathPrefix := "/" + strings.Repeat(strings.Repeat("p", 254)+"/", 63)
 	for i := 1; i <= 50; i++ {
 		version := fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1)
 		name := strings.Repeat("n", 251) + fmt.Sprintf("%04d", i)
-		f.fenceVersions = append(f.fenceVersions, version)
 		renditions := make([]api.DocumentRenditionIdentity, 64)
 		for j := range renditions {
 			renditions[j] = api.DocumentRenditionIdentity{ProfileFingerprint: fmt.Sprintf("%064x", j+1),
@@ -193,6 +256,8 @@ func TestAnswerQuestionEnvelopeBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	require.Equal(t, len(f.pageGaps), out.OmittedPageGapDocuments)
+	require.NotEmpty(t, out.Passages)
 	if len(links) == 0 {
 		t.Fatal("expected retained resource links")
 	}
@@ -301,4 +366,16 @@ func TestAnswerProcessingErrorsStayScopedToAnswerTool(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSelectAnswerSearchKeepsConfiguredDefaultWithPDFText(t *testing.T) {
+	profiles := []api.ProcessingProfileSummary{{Name: "docbank-pdf-text"}, {Name: "z", QueryEmbeddingBindings: []string{"query"}}}
+	selected, candidates, err := selectAnswerSearch(profiles, answerInput{})
+	require.NoError(t, err)
+	require.Equal(t, "z", selected.Name)
+	require.Len(t, candidates, 1)
+	require.Equal(t, "z", candidates[0].Profile)
+	selected, _, err = selectAnswerSearch(profiles, answerInput{Profile: "docbank-pdf-text"})
+	require.NoError(t, err)
+	require.Equal(t, "docbank-pdf-text", selected.Name)
 }

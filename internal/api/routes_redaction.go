@@ -42,6 +42,7 @@ func registerRedactionRoutes(mux *http.ServeMux, api huma.API, d Deps) {
 		return &output{CacheControl: "no-store", Body: result}, nil
 	})
 	registerNumberedReservationRoute(api, d)
+	registerRedactionPublicationRoute(api, d)
 	registerRedactionRenderOpenAPI(api)
 	mux.HandleFunc("POST /api/v1/redaction/render", func(w http.ResponseWriter, r *http.Request) {
 		serveRedactionRender(w, r, func(ctx context.Context, request processing.RedactionRenderRequest, send processing.RedactionSender) error {
@@ -179,6 +180,9 @@ func registerNumberedReservationRoute(api huma.API, d Deps) {
 		request, err := processing.DecodeNumberedReservationRequest(input.RawBody)
 		if err != nil {
 			return nil, (*redactionWireError)(NewError(400, "invalid_redaction_request", "explicit original-retention consent and a valid reservation request are required"))
+		}
+		if err := clearRequestReadDeadline(ctx); err != nil {
+			return nil, (*redactionWireError)(redactionProblem(ctx, err))
 		}
 		result, err := d.Processing.ReserveNumberedPDF(ctx, request, d.PageRuntime)
 		if err != nil {

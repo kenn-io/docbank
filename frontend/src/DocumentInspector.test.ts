@@ -290,7 +290,9 @@ it("reuses matching PDF facts, fetches missing or historical facts, and discards
   expect(screen.getByRole("group", { name: "Security" }).textContent).toContain(
     "Covers the whole file",
   );
-  expect((screen.getByRole("group", { name: "Security" }) as HTMLDetailsElement).open).toBe(false);
+  expect(screen.getByRole("group", { name: "Security" }).querySelector("details")?.open).toBe(
+    false,
+  );
   await view.rerender(props);
   await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
   await view.rerender({
@@ -312,7 +314,7 @@ it("reuses matching PDF facts, fetches missing or historical facts, and discards
   );
 
   expect(screen.getByRole("group", { name: "Security" }).textContent).not.toContain("Permissions");
-  expect((screen.getByRole("group", { name: "Security" }) as HTMLDetailsElement).open).toBe(true);
+  expect(screen.getByRole("group", { name: "Security" }).querySelector("details")?.open).toBe(true);
   expect(request.mock.calls[1]?.[0]).toBe("22222222-2222-4222-8222-222222222222");
   finish(previous);
   await Promise.resolve();

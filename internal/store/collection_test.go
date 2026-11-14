@@ -256,7 +256,7 @@ func addCollectionMembership(
 	tb.Helper()
 	ctx := context.Background()
 	require.NoError(tb, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if _, err := ensureIngestRunTx(ctx, tx, run); err != nil {
+		if _, err := s.ensureIngestRunTx(ctx, tx, run); err != nil {
 			return err
 		}
 		fact := metadataProvenance{
@@ -270,7 +270,7 @@ func addCollectionMembership(
 		fact.Identity = identity
 		_, err = tx.ExecContext(tb.Context(), `INSERT INTO provenance(
 			identity,node_id,ingest_id,original_path,original_mtime,supersedes
-		) VALUES(?,?,?,?,?,?)`, fact.Identity, fact.NodeID, fact.IngestID,
+		) VALUES($1,$2,$3,$4,$5,$6)`, fact.Identity, fact.NodeID, fact.IngestID,
 			fact.OriginalPath, fact.OriginalMTime, fact.Supersedes)
 		return err
 	}))

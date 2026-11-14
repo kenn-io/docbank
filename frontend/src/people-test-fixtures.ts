@@ -1,4 +1,10 @@
-import type { Person, PersonMergeReceipt, PersonSummary } from "./generated/docbank.js";
+import type {
+  FaceCandidate,
+  FaceSuggestionFace,
+  Person,
+  PersonMergeReceipt,
+  PersonSummary,
+} from "./generated/docbank.js";
 
 export const person = (id: string, overrides: Partial<PersonSummary> = {}): PersonSummary => ({
   person_id: id,
@@ -60,4 +66,60 @@ export const grace: PersonSummary = person("00000000-0000-4000-8000-000000000002
   display_name: "Grace",
   display_name_folded: "grace",
   photo_summary: { library_count: 2 },
+});
+export const candidateFace = (
+  id: string,
+  overrides: Partial<FaceSuggestionFace> = {},
+): FaceSuggestionFace => ({
+  face_id: id,
+  content_version_id: `version-${id}`,
+  box: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+  revision: 3,
+  created_at: "2026-01-01T00:00:00Z",
+  dismissed: false,
+  hidden: false,
+  preview: {
+    asset_id: `asset-${id}`,
+    content_version_id: `version-${id}`,
+    generation_id: `generation-${id}`,
+    rotation: 0,
+    box: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+  },
+  photo_recorded_at: "2026-01-01T00:00:00Z",
+  ...overrides,
+});
+export const candidate = (
+  id: string,
+  faces: FaceSuggestionFace[],
+  overrides: Partial<FaceCandidate> = {},
+): FaceCandidate => ({
+  candidate_id: id,
+  display_name: "Unnamed person",
+  revision: 1,
+  faces,
+  ...overrides,
+});
+
+export const f1 = candidateFace("face-1");
+export const f2 = candidateFace("face-2", {
+  content_version_id: f1.content_version_id,
+  preview: f1.preview,
+  photo_recorded_at: f1.photo_recorded_at,
+});
+export const f3 = candidateFace("face-3", {
+  photo_recorded_at: "2026-03-01T00:00:00Z",
+});
+export const isAda = candidate("candidate-ada", [f1, f2, f3], {
+  display_name: "Ada",
+  suggested_person_id: ada.person_id,
+  revision: 2,
+});
+export const unnamed = candidate("candidate-who", [f1, f2], { revision: 4 });
+export const decided = (
+  row: ReturnType<typeof candidate>,
+  state: "linked" | "rejected" = "linked",
+) => ({
+  candidate_id: row.candidate_id,
+  revision: row.revision + 1,
+  state,
 });

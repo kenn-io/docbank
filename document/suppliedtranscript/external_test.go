@@ -41,7 +41,7 @@ func TestSuppliedAudioTranscriptRendersThroughAuthorizedUpload(t *testing.T) {
 			})
 			require.NoError(t, err)
 			policy := inspectionPolicy(testCase.data, testCase.filename, testCase.media)
-			record, err := media.InspectCapability(bytes.NewReader(testCase.data), policy)
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(testCase.data), policy)
 			require.NoError(t, err)
 			require.True(t, record.Eligible)
 			assert.Equal(t, "audio", record.MediaFamily)
@@ -71,7 +71,7 @@ func TestSuppliedAudioTranscriptRendersThroughAuthorizedUpload(t *testing.T) {
 			MaxDocumentChars: 100,
 		})
 		require.NoError(t, err)
-		record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, filename, mediaType))
+		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), inspectionPolicy(data, filename, mediaType))
 		require.NoError(t, err)
 		require.True(t, record.Eligible)
 		assert.Equal(t, "audio", record.MediaFamily)

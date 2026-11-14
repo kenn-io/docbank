@@ -20,7 +20,8 @@ func batesBrowserRequestAllowed(r *http.Request) bool {
 	parts := strings.Split(path, "/")
 	switch parts[0] {
 	case "namespaces":
-		return len(parts) == 1 && (r.Method == http.MethodGet || r.Method == http.MethodPost)
+		return len(parts) == 1 && (r.Method == http.MethodGet || r.Method == http.MethodPost) ||
+			len(parts) == 2 && r.Method == http.MethodGet && r.URL.RawQuery == "" && validBatesBrowserID(parts[1])
 	case "preview":
 		return len(parts) == 1 && r.Method == http.MethodPost
 	case "allocations":

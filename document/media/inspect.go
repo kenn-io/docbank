@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/csv"
@@ -69,6 +70,7 @@ const (
 // InspectionPolicy binds finite preflight limits and downstream authority to
 // one exact source. Every supported family must have an enforceable bound.
 type InspectionPolicy struct {
+	PDFTextOnly       bool     `json:"pdf_text_only,omitzero"`
 	PDFPasswords      []string `json:"-"`
 	pdfPassword       *string
 	UnlockPDF         bool   `json:"-"`
@@ -152,7 +154,10 @@ type capabilityRecordIdentity CapabilityRecord
 
 // InspectCapability reads one bounded source, verifies its declared identity, and
 // returns a checksum-sealed finite capability decision.
-func InspectCapability(reader io.Reader, policy InspectionPolicy) (CapabilityRecord, error) {
+func InspectCapability(ctx context.Context, reader io.Reader, policy InspectionPolicy) (CapabilityRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return CapabilityRecord{}, err
+	}
 	if reader == nil {
 		return CapabilityRecord{}, errors.New("media: inspection source is required")
 	}
@@ -192,7 +197,7 @@ func InspectCapability(reader io.Reader, policy InspectionPolicy) (CapabilityRec
 	case strings.HasPrefix(baseType, "image/") || strings.HasPrefix(baseType, "video/"):
 		record = inspectVisualCapability(data, baseType, policy)
 	case baseType == "application/pdf" || ext == ".pdf":
-		record = inspectPDF(data, &policy)
+		record = inspectPDF(ctx, data, &policy)
 	case strings.HasPrefix(baseType, "audio/"):
 		record = CapabilityRecord{Eligible: false, Reason: CapabilityReasonUnboundedFamily,
 			MediaFamily: "audio", MediaType: baseType, Format: strings.TrimPrefix(ext, ".")}
@@ -221,6 +226,9 @@ func InspectCapability(reader io.Reader, policy InspectionPolicy) (CapabilityRec
 			record.Eligible = false
 			record.Reason = CapabilityReasonMalformed
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return CapabilityRecord{}, err
 	}
 	return sealCapabilityRecord(policy, int64(len(data)), digestHex, record)
 }
@@ -1298,9 +1306,10 @@ func inspectVisualCapability(data []byte, declaredType string, policy Inspection
 	return record
 }
 
-func inspectPDF(data []byte, policy *InspectionPolicy) CapabilityRecord {
+func inspectPDF(ctx context.Context, data []byte, policy *InspectionPolicy) CapabilityRecord {
 	record := CapabilityRecord{MediaFamily: "pdf", MediaType: "application/pdf", Format: "pdf"}
-	measurements, err := formatdetect.InspectPDF(data, formatdetect.PDFLimits{
+	measurements, err := formatdetect.InspectPDF(ctx, data, formatdetect.PDFLimits{
+		TextOnly:         policy.PDFTextOnly,
 		MaxExpandedBytes: policy.MaxExpandedBytes,
 		MaxEntryBytes:    policy.MaxEntryBytes,
 		MaxEntries:       policy.MaxEntries,
@@ -1311,14 +1320,14 @@ func inspectPDF(data []byte, policy *InspectionPolicy) CapabilityRecord {
 		var unlockErr error
 		if policy.pdfPassword != nil {
 			password = *policy.pdfPassword
-			unlocked, unlockErr = formatdetect.DecryptPDF(data, password, policy.MaxExpandedBytes)
+			unlocked, unlockErr = formatdetect.DecryptPDF(ctx, data, password, policy.MaxExpandedBytes)
 		} else {
-			unlocked, password, unlockErr = formatdetect.UnlockPDF(data, policy.PDFPasswords, policy.MaxExpandedBytes)
+			unlocked, password, unlockErr = formatdetect.UnlockPDF(ctx, data, policy.PDFPasswords, policy.MaxExpandedBytes)
 		}
 		err = unlockErr
 		if err == nil {
 			policy.pdfPassword = new(password)
-			measurements, err = formatdetect.InspectPDF(unlocked, formatdetect.PDFLimits{
+			measurements, err = formatdetect.InspectPDF(ctx, unlocked, formatdetect.PDFLimits{
 				MaxExpandedBytes: policy.MaxExpandedBytes, MaxEntryBytes: policy.MaxEntryBytes, MaxEntries: policy.MaxEntries,
 			})
 			clear(unlocked)
@@ -1367,8 +1376,8 @@ func inspectPDF(data []byte, policy *InspectionPolicy) CapabilityRecord {
 // CountPDFPages returns the authoritative page-tree count, including encrypted
 // PDFs that open with an empty user password. PDFs requiring a password return
 // ErrPDFEncrypted. InspectCapability still applies the password-file policy.
-func CountPDFPages(data []byte) (int64, error) {
-	return formatdetect.CountPDFPagesWithEmptyPassword(data)
+func CountPDFPages(ctx context.Context, data []byte) (int64, error) {
+	return formatdetect.CountPDFPagesWithEmptyPassword(ctx, data)
 }
 
 // PDFMetadata contains optional metadata resolved after core PDF validation.
@@ -1395,8 +1404,8 @@ type PDFInfoMetadata struct {
 }
 
 // ReadPDFMetadata resolves PDF metadata from the validated object graph.
-func ReadPDFMetadata(data []byte) (PDFMetadata, error) {
-	metadata, err := formatdetect.ReadPDFMetadata(data)
+func ReadPDFMetadata(ctx context.Context, data []byte) (PDFMetadata, error) {
+	metadata, err := formatdetect.ReadPDFMetadata(ctx, data)
 	if err != nil {
 		return PDFMetadata{}, err
 	}

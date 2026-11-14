@@ -52,14 +52,14 @@ func (r Recipe) Validate() error {
 		return err
 	}
 	if !r.QualifiedEngine() {
-		return errors.New("bates-stamp/v1 requires the qualified pdfcpu v0.15.0 engine")
+		return errors.New("bates-stamp/v1 requires the qualified pdfcpu v0.16.4 engine")
 	}
 	return nil
 }
 
 // QualifiedEngine selects local re-verification before any PDF is read.
 func (r Recipe) QualifiedEngine() bool {
-	return r.EngineIdentity.Name == "pdfcpu" && r.EngineIdentity.Version == "v0.15.0" &&
+	return r.EngineIdentity.Name == "pdfcpu" && r.EngineIdentity.Version == "v0.16.4" &&
 		r.EngineIdentity.API == "AddWatermarksMap" && slices.Equal(r.EngineIdentity.Options, []string{"onTop=true", "update=restamp"})
 }
 

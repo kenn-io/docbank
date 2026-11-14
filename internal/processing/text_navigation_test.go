@@ -14,10 +14,10 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"github.com/yuin/goldmark/ast"
-	"github.com/yuin/goldmark/parser"
-	"github.com/yuin/goldmark/text"
-	"github.com/yuin/goldmark/util"
+	"github.com/yuin/goldmark/v2/ast"
+	"github.com/yuin/goldmark/v2/parser"
+	"github.com/yuin/goldmark/v2/text"
+	"github.com/yuin/goldmark/v2/util"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
@@ -211,8 +211,13 @@ func TestTextNavigationParsingReleasesCapture(t *testing.T) {
 		defer release()
 		f.Service.textParser = func() parser.Parser {
 			p := newTextSectionParser()
-			p.AddOptions(parser.WithASTTransformers(
-				util.Prioritized(navigationParsePause{entered, resume}, 1000)))
+			// goldmark v2 keeps AddOptions on its concrete parser only.
+			configurable, ok := p.(interface {
+				AddOptions(options ...parser.Option)
+			})
+			require.True(t, ok, "goldmark parser no longer accepts added options")
+			configurable.AddOptions(parser.WithASTTransformers(
+				util.Prioritized[parser.ASTTransformer](navigationParsePause{entered, resume}, 1000)))
 			return p
 		}
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)

@@ -5,6 +5,7 @@ import App from "./App.svelte";
 import * as appOpened from "./app-opened.js";
 import { batchTagRequestDigest } from "./batch-tags.js";
 import { clearToasts } from "./toast.svelte.js";
+import { VerifiedUploadChannel } from "./upload.js";
 
 afterEach(() => {
   cleanup();
@@ -238,7 +239,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   });
   expect(tagSelector.hasAttribute("disabled")).toBe(true);
   resolveRoot(json(root));
-  await screen.findByText("Empty folder");
+  await screen.findByText("No documents yet");
   expect(tagSelector.hasAttribute("disabled")).toBe(false);
 
   await fireEvent.click(
@@ -255,7 +256,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
   await fireEvent.click(screen.getByRole("combobox", { name: "Browse or filter by tag: tax" }));
   await fireEvent.click(screen.getByRole("option", { name: "All tags" }));
-  await screen.findByText("Empty folder");
+  await screen.findByText("No documents yet");
   resolveInitialTagBrowse(
     json({
       items: [{ node: taxReport, path: "/Reports/quarterly-tax-report.txt" }],
@@ -274,7 +275,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
   expect(await screen.findByText("tag catalog temporarily unavailable")).toBeTruthy();
   expect(screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" })).toBeTruthy();
-  expect(screen.getByText("Empty folder")).toBeTruthy();
+  expect(screen.getByText("No documents yet")).toBeTruthy();
 
   await fireEvent.click(
     screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
@@ -288,7 +289,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
 
   await fireEvent.click(screen.getByRole("combobox", { name: "Browse or filter by tag: tax" }));
   await fireEvent.click(screen.getByRole("option", { name: "All tags" }));
-  await screen.findByText("Empty folder");
+  await screen.findByText("No documents yet");
 
   await fireEvent.input(input, { target: { value: "quarterly" } });
   await fireEvent.submit(input.closest("form")!);
@@ -1370,6 +1371,56 @@ it("keeps the inspected source after batch tagging when the folder refresh fails
   expect(screen.getByRole("region", { name: "Verified content of readme.txt" })).toBeTruthy();
 });
 
+it("refreshes inspected tags after closing an uncertain selection change", async () => {
+  prepareSelectionApp();
+  const { fetchMock } = installSelectionBackend();
+  const backend = fetchMock.getMockImplementation()!;
+  const tag = {
+    id: "33333333-3333-4333-8333-333333333333",
+    name: "tax",
+    revision: 2,
+    assignment_count: 4,
+  };
+  let changed = false;
+  let inspectorFailed = false;
+  const json = (value: unknown) => Response.json(value);
+  fetchMock.mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === `/api/v1/tags/${tag.id}`) return json(tag);
+    if (url === "/api/v1/nodes/3")
+      return json(selectionNode(3, "readme.txt", "file", 1, changed ? 2 : 1));
+    if (url === "/api/v1/nodes/3/tags?limit=1000&offset=0") {
+      if (!inspectorFailed) {
+        inspectorFailed = true;
+        return Response.json({ detail: "Inspector unavailable" }, { status: 503 });
+      }
+      return json({ items: changed ? [tag] : [], total: changed ? 1 : 0, limit: 1000, offset: 0 });
+    }
+    if (changed && url.includes("/children?"))
+      return Response.json({ detail: "Folder unavailable" }, { status: 503 });
+    if (url === "/api/v1/batch/tags") return new Response("unavailable", { status: 503 });
+    return backend(input, init);
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("cell", { name: "readme.txt" }));
+  await screen.findByRole("region", { name: "Verified content of readme.txt" });
+  await screen.findByText("Inspector unavailable");
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select readme.txt" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
+  await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
+    target: { value: "tax" },
+  });
+  await fireEvent.click(screen.getByRole("option", { name: /^tax \(\d+\)$/ }));
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await screen.findByRole("button", { name: "Check tag results" });
+  changed = true;
+  await fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(screen.queryByText("Inspector unavailable")).toBeNull());
+  await waitFor(() =>
+    expect(document.querySelector('[aria-label="Assigned tags"]')?.textContent).toContain("tax"),
+  );
+});
+
 it("uses refreshed live metadata for the selected row and tag actions", async () => {
   prepareSelectionApp();
   const { fetchMock } = installSelectionBackend();
@@ -2331,6 +2382,24 @@ it("retries failed folder metadata when reselecting it", async () => {
     ).toBe(false),
   );
   expect(screen.queryByText("Folder tags unavailable")).toBeNull();
+});
+
+it("offers the existing Add menu from an empty vault root", async () => {
+  prepareKeyboardApp();
+  vi.spyOn(VerifiedUploadChannel.prototype, "connect").mockResolvedValue();
+  installKeyboardBackend("success", true);
+  render(App);
+
+  const title = await screen.findByText("No documents yet");
+  const emptyState = within(title.closest<HTMLElement>(".kit-empty-state")!);
+  expect(emptyState.getByText("Add files or a folder to start your vault.")).toBeTruthy();
+  await fireEvent.click(emptyState.getByRole("button", { name: "Add" }));
+  const menu = within(await screen.findByRole("menu", { name: "Add documents" }));
+  const files = menu.getByRole("menuitem", { name: "Upload files" });
+  await waitFor(() => expect(files.getAttribute("aria-disabled")).not.toBe("true"));
+  await fireEvent.click(files);
+  expect(await screen.findByRole("dialog", { name: "Upload documents" })).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Upload to /" })).toBeTruthy();
 });
 
 it("loads and edits tag bindings in an empty vault", async () => {

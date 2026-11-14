@@ -12,9 +12,10 @@ import (
 	"go.kenn.io/kit/packstore"
 )
 
-func TestStorageOperationPersistsProgressAndCancellation(t *testing.T) {
+func checkStorageOperationPersistsProgressAndCancellation(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	created, err := s.CreateStorageOperation(t.Context(), StorageOperationCreate{
 		Kind: "place", RequestDigest: fakeHash("a5"),
 		RequestJSON: `{"version":1}`, PlanJSON: `{"hashes":["a"]}`, TotalObjects: 3,
@@ -61,9 +62,10 @@ func TestStorageOperationPersistsProgressAndCancellation(t *testing.T) {
 	require.ErrorIs(t, s.RequestStorageOperationCancel(t.Context(), created.ID), ErrStorageOperationTerminal)
 }
 
-func TestStorageOperationRejectsConcurrentEvacuationsForOneStore(t *testing.T) {
+func checkStorageOperationRejectsConcurrentEvacuationsForOneStore(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	secondary, err := s.PrepareSecondaryBlobStore(
 		"archive", "filesystem", "archive_nas",
 	)
@@ -95,11 +97,12 @@ func TestStorageOperationRejectsConcurrentEvacuationsForOneStore(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestStorageOperationRetryPreservesEvacuationFinalization(t *testing.T) {
+func checkStorageOperationRetryPreservesEvacuationFinalization(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, phase := range []string{"queued", "reclaimed"} {
 		t.Run(phase, func(t *testing.T) {
-			s := newTestStore(t)
+			s := open(t)
 			ctx := t.Context()
 			primary, err := s.PrimaryBlobStore(ctx)
 			require.NoError(t, err)
@@ -115,13 +118,13 @@ func TestStorageOperationRetryPreservesEvacuationFinalization(t *testing.T) {
 			_, err = s.ClaimStorageOperation(ctx, op.ID)
 			require.NoError(t, err)
 			hash := fakeHash("bb")
-			_, err = s.db.ExecContext(ctx, `INSERT INTO blobs(hash,size,created_at) VALUES(?,4,?)`, hash, nowRFC3339())
+			_, err = s.db.ExecContext(ctx, `INSERT INTO blobs(hash,size,created_at) VALUES($1,4,$2)`, hash, nowRFC3339())
 			require.NoError(t, err)
 			for _, location := range []struct{ storeID, generation string }{
 				{secondary.ID, "40000000-0000-4000-8000-000000000001"},
 				{primary.ID, "40000000-0000-4000-8000-000000000002"},
 			} {
-				_, err = s.db.ExecContext(ctx, `INSERT INTO blob_locations(blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible) VALUES(?,?,?,'loose','raw',4,1)`, hash, location.storeID, location.generation)
+				_, err = s.db.ExecContext(ctx, `INSERT INTO blob_locations(blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible) VALUES($1,$2,$3,'loose','raw',4,1)`, hash, location.storeID, location.generation)
 				require.NoError(t, err)
 			}
 			finalized, err := s.FinalizeBlobStoreEvacuation(ctx, op.ID, secondary.ID, primary.ID)
@@ -160,9 +163,10 @@ func TestStorageOperationRetryPreservesEvacuationFinalization(t *testing.T) {
 	}
 }
 
-func TestStorageOperationRejectsCancellationAfterTerminalState(t *testing.T) {
+func checkStorageOperationRejectsCancellationAfterTerminalState(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	created, err := s.CreateStorageOperation(t.Context(), StorageOperationCreate{
 		Kind: "place", RequestDigest: fakeHash("c7"),
 		RequestJSON: `{"version":1}`, PlanJSON: `{"hashes":[]}`,
@@ -177,9 +181,10 @@ func TestStorageOperationRejectsCancellationAfterTerminalState(t *testing.T) {
 	require.ErrorIs(t, err, ErrStorageOperationTerminal)
 }
 
-func TestStorageOperationCleanupPersistsUntilCompleted(t *testing.T) {
+func checkStorageOperationCleanupPersistsUntilCompleted(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	created, err := s.CreateStorageOperation(t.Context(), StorageOperationCreate{
 		Kind: "place", RequestDigest: fakeHash("d8"),
 		RequestJSON: `{"version":1}`, PlanJSON: `{"hashes":[]}`,
@@ -209,9 +214,10 @@ func TestStorageOperationCleanupPersistsUntilCompleted(t *testing.T) {
 	assert.Empty(t, items)
 }
 
-func TestPruneExpiredStorageOperationsPreservesPendingCleanup(t *testing.T) {
+func checkPruneExpiredStorageOperationsPreservesPendingCleanup(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	now := time.Now().UTC()
 	createTerminal := func() StorageOperation {
@@ -232,8 +238,8 @@ func TestPruneExpiredStorageOperationsPreservesPendingCleanup(t *testing.T) {
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE storage_operations
 		SET retention_until=CASE operation_id
-			WHEN ? THEN ? WHEN ? THEN ? WHEN ? THEN ? WHEN ? THEN ? END
-		WHERE operation_id IN (?,?,?,?)`,
+			WHEN $1 THEN $2 WHEN $3 THEN $4 WHEN $5 THEN $6 WHEN $7 THEN $8 END
+		WHERE operation_id IN ($9,$10,$11,$12)`,
 		expired.ID, now.Add(-time.Hour).Format(timestampLayout),
 		atBoundary.ID, now.Format(timestampLayout),
 		future.ID, now.Add(time.Hour).Format(timestampLayout),

@@ -46,8 +46,7 @@ func (s *Store) ImportMediaInputArtifact(
 		var sourceID, sourceVersionID string
 		var visible int
 		if err := tx.QueryRowContext(ctx, `SELECT source_id,COALESCE(source_version_id,''),visible
-			FROM media_occurrences WHERE occurrence_id=$1 AND caller_principal=$2`,
-			request.OccurrenceID, request.Operation.Principal).Scan(&sourceID, &sourceVersionID, &visible); err != nil {
+			FROM media_occurrences WHERE occurrence_id=$1 AND caller_principal=$2`, storedString(s.postgresSchema != "", request.OccurrenceID), storedString(s.postgresSchema != "", request.Operation.Principal)).Scan(&sourceID, &sourceVersionID, &visible); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return "", ErrNotFound
 			}
@@ -98,8 +97,7 @@ func (s *Store) RetainRemoteRecordingMedia(
 		err := tx.QueryRowContext(ctx, `SELECT o.source_id,COALESCE(o.source_version_id,''),o.visible,
 			s.kind,o.message_json FROM media_occurrences o
 			JOIN media_sources s ON s.source_id=o.source_id
-			WHERE o.occurrence_id=$1 AND o.caller_principal=$2`,
-			request.OccurrenceID, request.Operation.Principal).Scan(
+			WHERE o.occurrence_id=$1 AND o.caller_principal=$2`, storedString(s.postgresSchema != "", request.OccurrenceID), storedString(s.postgresSchema != "", request.Operation.Principal)).Scan(
 			&sourceID, &sourceVersionID, &visible, &sourceKind, &captureJSON)
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", ErrNotFound
@@ -121,7 +119,7 @@ func (s *Store) RetainRemoteRecordingMedia(
 			err := tx.QueryRowContext(ctx, `SELECT v.content_version_id,c.blob_hash,c.size,
 				COALESCE(c.mime_type,'') FROM media_source_versions v
 				JOIN content_versions c ON c.version_id=v.content_version_id
-				WHERE v.source_version_id=$1 AND v.source_id=$2`, sourceVersionID, sourceID).Scan(
+				WHERE v.source_version_id=$1 AND v.source_id=$2`, storedString(s.postgresSchema != "", sourceVersionID), storedString(s.postgresSchema != "", sourceID)).Scan(
 				&contentVersionID, &blobHash, &sourceBytes, &mediaType)
 			if errors.Is(err, sql.ErrNoRows) {
 				return "", ErrNotFound
@@ -137,7 +135,7 @@ func (s *Store) RetainRemoteRecordingMedia(
 				FROM media_source_versions v JOIN content_versions c
 				ON c.version_id=v.content_version_id
 				WHERE v.source_id=$1 AND c.blob_hash=$2 AND c.size=$3 AND COALESCE(c.mime_type,'')=$4
-				ORDER BY v.revision DESC LIMIT 1`, sourceID, request.InputSHA, request.ByteLength, request.MediaType).Scan(&sourceVersionID, &contentVersionID)
+				ORDER BY v.revision DESC LIMIT 1`, storedString(s.postgresSchema != "", sourceID), request.InputSHA, request.ByteLength, storedString(s.postgresSchema != "", request.MediaType)).Scan(&sourceVersionID, &contentVersionID)
 			if errors.Is(err, sql.ErrNoRows) {
 				content, sealErr := s.sealMediaContentTx(ctx, tx, request.VirtualPath, ContentVersion{
 					BlobHash: request.InputSHA, Size: request.ByteLength, MimeType: request.MediaType}, request.Physical)
@@ -145,7 +143,7 @@ func (s *Store) RetainRemoteRecordingMedia(
 					return "", sealErr
 				}
 				var currentRevision int64
-				if headErr := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(revision),0) FROM media_source_versions WHERE source_id=$1`, sourceID).Scan(&currentRevision); headErr != nil {
+				if headErr := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(revision),0) FROM media_source_versions WHERE source_id=$1`, storedString(s.postgresSchema != "", sourceID)).Scan(&currentRevision); headErr != nil {
 					return "", headErr
 				}
 				sourceVersionID, sealErr = newUUIDv4()
@@ -166,8 +164,7 @@ func (s *Store) RetainRemoteRecordingMedia(
 			} else {
 				result, updateErr := tx.ExecContext(ctx, `UPDATE media_occurrences SET source_version_id=$1
 					WHERE occurrence_id=$2 AND source_id=$3 AND caller_principal=$4 AND visible=1
-						AND source_version_id IS NULL`, sourceVersionID, request.OccurrenceID, sourceID,
-					request.Operation.Principal)
+						AND source_version_id IS NULL`, storedString(s.postgresSchema != "", sourceVersionID), storedString(s.postgresSchema != "", request.OccurrenceID), storedString(s.postgresSchema != "", sourceID), storedString(s.postgresSchema != "", request.Operation.Principal))
 				if updateErr != nil {
 					return "", updateErr
 				}
@@ -218,10 +215,8 @@ func (s *Store) retainMediaInputArtifactTx(
 		AND i.kind=$4 AND i.origin=$5 AND i.provider=$6 AND i.language=$7 AND i.input_sha256=$8
 		AND c.blob_hash=$9 AND c.size=$10 AND COALESCE(c.mime_type,'')=$11
 		FROM media_input_artifacts i JOIN content_versions c ON c.version_id=i.content_version_id
-		WHERE i.input_id=$12`,
-		request.OccurrenceID, request.Operation.SourceID, request.SourceVersionID, request.Kind, request.Origin,
-		request.Provider, request.Language, request.InputSHA, request.InputSHA,
-		request.ByteLength, request.MediaType, request.InputID).Scan(&versionID, &matches)
+		WHERE i.input_id=$12`, storedString(s.postgresSchema != "", request.OccurrenceID), storedString(s.postgresSchema != "", request.Operation.SourceID), storedString(s.postgresSchema != "", request.SourceVersionID), request.Kind, storedString(s.postgresSchema != "", request.Origin), storedString(s.postgresSchema != "", request.Provider), storedString(s.postgresSchema != "", request.Language), request.InputSHA, request.InputSHA,
+		request.ByteLength, storedString(s.postgresSchema != "", request.MediaType), storedString(s.postgresSchema != "", request.InputID)).Scan(&versionID, &matches)
 	if err == nil {
 		if !matches || (contentVersionID != "" && contentVersionID != versionID) {
 			return "", ErrMediaOperationConflict
@@ -239,12 +234,8 @@ func (s *Store) retainMediaInputArtifactTx(
 		}
 		contentVersionID = version.ID
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO media_input_artifacts(
-		input_id,occurrence_id,source_id,source_version_id,content_version_id,kind,
-		origin,provider,language,input_sha256,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-		request.InputID, request.OccurrenceID, request.Operation.SourceID, request.SourceVersionID,
-		contentVersionID, request.Kind, request.Origin, request.Provider,
-		request.Language, request.InputSHA, nowRFC3339())
+	err = insertMediaInputArtifactTx(ctx, tx, metadataMediaInputArtifact{InputID: request.InputID, OccurrenceID: request.OccurrenceID, SourceID: request.Operation.SourceID, SourceVersionID: &request.SourceVersionID, ContentVersionID: contentVersionID, Kind: request.Kind, Origin: request.Origin, Provider: request.Provider, Language: request.Language, InputSHA256: request.InputSHA, CreatedAt: nowRFC3339()}, s.postgresSchema != "")
+
 	return contentVersionID, err
 }
 

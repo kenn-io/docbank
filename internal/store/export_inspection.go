@@ -17,7 +17,7 @@ func (s *Store) ExportEmailPDFRecipes(ctx context.Context, owner, id string) (bu
 	if owner == "" || validateUUIDv4(id) != nil {
 		return out, bundle.ErrConflict
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return out, err
 	}
@@ -101,7 +101,17 @@ func (s *Store) ExportOutputProblems(ctx context.Context, owner, id string, afte
 	if owner == "" || validateUUIDv4(id) != nil || after < 0 || after > bundle.MaxOutputProblems {
 		return out, bundle.ErrConflict
 	}
-	p, err := s.ExportPlan(ctx, owner, id)
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		out, err = exportOutputProblems(ctx, tx, owner, id, after)
+		return err
+	})
+	return out, err
+}
+
+func exportOutputProblems(ctx context.Context, q metadataQuerier, owner, id string, after int) (bundle.OutputProblems, error) {
+	var out bundle.OutputProblems
+	p, err := loadExportPlanForOwner(ctx, q, owner, id)
 	if err != nil {
 		return out, err
 	}
@@ -118,7 +128,7 @@ func (s *Store) ExportOutputProblems(ctx context.Context, owner, id string, afte
 		}
 		out.Items = append(out.Items, problem)
 	}
-	err = s.WalkExportDocuments(ctx, id, func(d bundle.Document) error {
+	err = walkExportDocuments(ctx, q, id, func(d bundle.Document) error {
 		if e := validator.Add(d); e != nil {
 			return e
 		}

@@ -18,6 +18,7 @@ import {
   photo,
   photoTimelineCounts,
   stubPhotoTimeline,
+  stubDeferredPhotoFetch,
   preparedPhoto,
   mapPhoto,
   savedSmartSet as savedSmartSetFixture,
@@ -2662,11 +2663,13 @@ const facet = {
 it.each([
   { action: "reloadCounts", state: "loaded" },
   { action: "refresh", state: "loaded" },
+  { action: "live refresh", state: "loaded" },
   { action: "rating change", state: "partial" },
 ] as const)(
   "drops $state counts after $action while Filters is closed",
   async ({ action, state }) => {
     let finish!: (value: Response) => void;
+    let changed = false;
     const counts = vi
       .fn()
       .mockResolvedValueOnce(
@@ -2679,7 +2682,9 @@ it.each([
       )
       .mockImplementationOnce(() => new Promise<Response>((resolve) => (finish = resolve)));
     vi.stubGlobal("fetch", async (_url: string, init: RequestInit) =>
-      JSON.parse(init.body as string).page_size === 1 ? counts() : response([photo(1)]),
+      JSON.parse(init.body as string).page_size === 1
+        ? counts()
+        : response(changed ? [photo(2), photo(1)] : [photo(1)]),
     );
     const photos = new Photos("scoped", vi.fn());
     photos.filtersOpen = true;
@@ -2690,6 +2695,7 @@ it.each([
       expect(photos.facetsRetryable).toBe(false);
     }
     photos.toggleFilters();
+    changed = true;
     if (action === "rating change") {
       const before = preparedPhoto(1);
       photos.metadataChanged({
@@ -2697,7 +2703,8 @@ it.each([
         before: [before],
         after: [{ ...before, values: { ...before.values, rating: 5 } }],
       });
-    } else await photos[action]();
+    } else if (action === "live refresh") await photos.refresh(undefined, true);
+    else await photos[action]();
     expect(counts).toHaveBeenCalledOnce();
     expect(photos.facetsError).toBe("");
     expect(photos.facetsRetryable).toBe(true);
@@ -2711,6 +2718,81 @@ it.each([
     photos.dispose();
   },
 );
+
+it.each([
+  { live: true, more: true },
+  { live: true, more: false },
+  { live: false, more: true },
+  { live: false, more: false },
+])(
+  "settles a queued Load more after a newer refresh, live=$live, more=$more",
+  async ({ live, more }) => {
+    const { rows, fetcher } = stubDeferredPhotoFetch();
+    const photos = new Photos("scoped", vi.fn());
+    try {
+      const loading = photos.loadMore();
+      await vi.waitFor(() => expect(rows).toHaveLength(1));
+      rows[0]!(response([photo(1)], "old-next"));
+      await loading;
+      const superseded = photos.refresh(undefined, true);
+      await vi.waitFor(() => expect(rows).toHaveLength(2));
+      const clicked = photos.loadMore();
+      const refreshing = photos.refresh(undefined, live);
+      await vi.waitFor(() => expect(rows).toHaveLength(3));
+      rows[1]!(response([photo(99)], "stale-next"));
+      expect(await superseded).toBe(false);
+      rows[2]!(response([photo(2)], more ? "new-next" : undefined));
+      expect(await refreshing).toBe(true);
+      if (more) {
+        await vi.waitFor(() => expect(rows).toHaveLength(4));
+        expect(JSON.parse(String(fetcher.mock.calls[3]![1].body)).cursor).toBe("new-next");
+        rows[3]!(response([photo(3)]));
+      }
+      await clicked;
+      expect(fetcher).toHaveBeenCalledTimes(more ? 4 : 3);
+      expect(photos.items.map((item) => item.asset_id)).toEqual(
+        more ? ["photo-2", "photo-3"] : ["photo-2"],
+      );
+    } finally {
+      photos.dispose();
+    }
+  },
+);
+
+it("keeps counts through a live refresh until fresh ones replace them", async () => {
+  const { rows, counts } = stubDeferredPhotoFetch();
+  const photos = new Photos("scoped", vi.fn());
+  photos.filtersOpen = true;
+  const loading = photos.loadMore();
+  await vi.waitFor(() => expect(rows).toHaveLength(1));
+  rows[0]!(response([photo(1)], "next"));
+  await loading;
+  await vi.waitFor(() => expect(counts).toHaveLength(1));
+  counts[0]!(Response.json({ facets: [facet] }));
+  await vi.waitFor(() => expect(photos.facets).toEqual([facet]));
+
+  let refreshing = photos.refresh(undefined, true);
+  await vi.waitFor(() => expect(rows).toHaveLength(2));
+  expect(photos.facets).toEqual([facet]);
+  rows[1]!(response([photo(1)], "next"));
+  await vi.waitFor(() => expect(counts).toHaveLength(2));
+  expect(photos.facetsLoading).toBe(true);
+  expect(photos.facets).toEqual([facet]);
+  counts[1]!(Response.json({ facets: [facet] }));
+  await refreshing;
+  expect(photos.facets).toEqual([facet]);
+
+  refreshing = photos.refresh(undefined, true);
+  await vi.waitFor(() => expect(rows).toHaveLength(3));
+  rows[2]!(response([photo(2), photo(1)], "next"));
+  await vi.waitFor(() => expect(counts).toHaveLength(3));
+  expect(photos.facets).toEqual([facet]);
+  counts[2]!(Response.json({ facets: [{ ...facet, total: 2, missing: 2 }] }));
+  await refreshing;
+  expect(photos.facets).toEqual([{ ...facet, total: 2, missing: 2 }]);
+  expect(photos.items.map((item) => item.asset_id)).toEqual(["photo-2", "photo-1"]);
+  photos.dispose();
+});
 
 it.each([
   ["library", false],

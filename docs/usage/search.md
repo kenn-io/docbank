@@ -23,7 +23,7 @@ full. The report is `truncated` when either search omitted a match.
 Profiles and query bindings are tried in ascending name order until one
 succeeds. A failure that could differ by binding moves on to the next pair:
 missing consent, `processing_failed`, `processing_profile_unavailable`,
-`stale_index`, or `not_found` from a binding whose vector index is not built.
+`stale_index`, or `index_unavailable` from a binding whose vector index is not built.
 A failure that applies to every binding stops at once. Automatic search uses
 the whole live population, subject to the vector generation size limit.
 When every pair fails, the command reports the first failure reason.
@@ -51,6 +51,10 @@ returns the ordinary report with `hits`. Successful hybrid search returns the
 processing report with `actual_mode`, `coverage`, and `results`, plus a
 `folders` array of ordinary folder name hits. Check for `actual_mode` to tell
 the shapes apart, or pass `--mode lexical` to always get the ordinary report.
+
+Empty lexical and automatic hybrid reports can include
+[`hints`](searching.md#why-did-a-text-search-find-nothing), which other output
+modes print on stderr.
 
 After semantic retrieval, the daemon revalidates the complete report against
 current live versions, including unembedded lexical matches. A match trashed or
@@ -90,6 +94,11 @@ disclosure, even when the document's vectors already exist. Missing consent
 returns `processing_consent_required`. Expired or revoked consent returns
 `processing_consent_expired` or `processing_consent_revoked`. Search does not
 grant consent automatically.
+
+When similar search reports a missing source embedding, run the displayed
+`docbank processing plan` command and review the disclosure. Follow the
+[processing build instructions](document-processing.md) to process the
+document, then retry the search.
 
 Preview `docbank processing plan <path-or-id> --profile <configured-profile> --json`
 and review its query-text disclosure. Then either:

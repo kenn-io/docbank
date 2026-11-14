@@ -93,7 +93,7 @@ type pushState struct {
 	AcceptedAt string
 }
 
-func pushStateTx(ctx context.Context, tx *sql.Tx, name, ref string) (pushState, error) {
+func pushStateTx(ctx context.Context, tx *sql.Tx, name, ref string, postgres bool) (pushState, error) {
 	var state pushState
 	err := tx.QueryRowContext(ctx, `SELECT node_id, blob_hash, size, accepted_at
   FROM push_sources WHERE push_name=$1 AND source_ref=$2`, name, ref).
@@ -102,7 +102,7 @@ func pushStateTx(ctx context.Context, tx *sql.Tx, name, ref string) (pushState, 
 		// A stopped daemon watch can hand this identity to a client without
 		// uploading unchanged bytes. A push cursor takes precedence once a push
 		// has accepted a changed source observation.
-		cursor, watchErr := watchSourceTx(ctx, tx, name, ref)
+		cursor, watchErr := watchSourceTx(ctx, tx, name, ref, postgres)
 		if watchErr != nil {
 			return pushState{}, watchErr
 		}
@@ -148,16 +148,29 @@ func (s *Store) PushCursors(ctx context.Context, name, after string, limit int) 
 	if limit < 1 || limit > MaxPushCursorPage {
 		return nil, fmt.Errorf("push cursor page limit must be between 1 and %d", MaxPushCursorPage)
 	}
+	pushRef, pushAfter := "p.source_ref", after
+	watchDuplicate := "p.push_name=w.watch_name AND p.source_ref=w.source_ref"
+	if s.postgresSchema != "" {
+		pushRef = storedStringSQL(true, pushRef)
+		// Every valid push path excludes NUL, so its ordering against a watch
+		// cursor containing NUL is the same as against that cursor's prefix.
+		pushAfter, _, _ = strings.Cut(after, "\x00")
+		// Push paths reject NUL. Keep the text-key lookup indexed while a watch
+		// path containing NUL remains distinct and is returned losslessly.
+		watchDuplicate = `p.push_name=$1 AND p.source_ref=CASE
+			WHEN position(decode('00','hex') IN w.source_ref)=0
+			THEN convert_from(w.source_ref,'UTF8') END`
+	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT p.source_ref, p.node_id, p.blob_hash, p.size, n.trashed_at IS NOT NULL
+		SELECT `+pushRef+`, p.node_id, p.blob_hash, p.size, n.trashed_at IS NOT NULL
 		FROM push_sources p JOIN nodes n ON n.id=p.node_id
 		WHERE p.push_name=$1 AND p.source_ref>$2
 		UNION ALL
 		SELECT w.source_ref, w.node_id, w.blob_hash, w.size, n.trashed_at IS NOT NULL
 		FROM watch_sources w JOIN nodes n ON n.id=w.node_id
 		WHERE w.watch_name=$3 AND w.source_ref>$4 AND NOT EXISTS (
-			SELECT 1 FROM push_sources p WHERE p.push_name=w.watch_name AND p.source_ref=w.source_ref)
-		ORDER BY 1 LIMIT $5`, name, after, name, after, limit)
+			SELECT 1 FROM push_sources p WHERE `+watchDuplicate+`)
+		ORDER BY 1 LIMIT $5`, name, pushAfter, storedString(s.postgresSchema != "", name), storedString(s.postgresSchema != "", after), limit)
 	if err != nil {
 		return nil, fmt.Errorf("listing push cursors: %w", err)
 	}
@@ -212,7 +225,7 @@ func (s *Store) AcceptPush(
 		if err != nil {
 			return err
 		}
-		state, stateErr := pushStateTx(ctx, tx, source.Name, source.Ref)
+		state, stateErr := pushStateTx(ctx, tx, source.Name, source.Ref, s.postgresSchema != "")
 		switch {
 		case errors.Is(stateErr, ErrNotFound):
 			plan := IngestDirectoryPlan{anchorID: s.rootID, segments: segments}

@@ -1,16 +1,19 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import {
   copyExportMembers,
+  retryExportRequest,
   sealExportSource,
   parseExportJob,
   parseExportPlan,
   parseExportPreview,
   readExportEvents,
   exportTicket,
+  offerExportDownload,
   safeExportBasename,
   validateExportOptions,
   sealPhotoExportSource,
 } from "./exports.js";
+import { APIError } from "./api-transport.js";
 import { snapshotMemberHash } from "./snapshots.js";
 
 const id = "11111111-1111-4111-8111-111111111111";
@@ -79,7 +82,10 @@ function events(lines: string[]) {
     headers: { "Content-Type": "application/x-ndjson" },
   });
 }
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  document.querySelector('meta[name="docbank-base-path"]')?.remove();
+});
 
 it("copies exact content members, drops observed mutation revisions, and rejects duplicates and unsafe sizes", () => {
   const members = [{ node_id: 1, content_version_id: id, blob_hash: hash, size: 12, revision: 99 }];
@@ -327,6 +333,32 @@ it("requires exact receipt and native same-origin ticket and rejects unsafe base
   ).rejects.toThrow();
 });
 
+it.each(["", "/archive"])("offers archive downloads under mount %s", (basePath) => {
+  const meta = document.createElement("meta");
+  meta.name = "docbank-base-path";
+  meta.content = basePath;
+  document.head.append(meta);
+  const clicked: { href: string | null; name: string }[] = [];
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    clicked.push({ href: this.getAttribute("href"), name: this.download });
+  });
+  offerExportDownload(
+    {
+      url: "/api/daemon/web-download/file?ticket=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      receipt: complete.receipt,
+    },
+    "Review.zip",
+  );
+  expect(clicked).toEqual([
+    {
+      href: `${basePath}/api/daemon/web-download/file?ticket=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`,
+      name: "Review.zip",
+    },
+  ]);
+});
+
 it("sends an explicit attachment set without requiring the plan header to echo it", async () => {
   const { createExportPlan } = await import("./exports.js");
   const publications = [{ version_id: id, operation_id: "empty-second" }];
@@ -426,4 +458,40 @@ it("validates photo settings and binds source and plan requests", async () => {
     kind: "photos",
     photos: selection,
   });
+});
+
+it("retries an ambiguous export failure once with the same request", async () => {
+  const run = vi
+    .fn()
+    .mockRejectedValueOnce(new TypeError("Connection lost"))
+    .mockResolvedValue("sealed");
+  expect(await retryExportRequest(run, new AbortController().signal)).toBe("sealed");
+  expect(run).toHaveBeenCalledTimes(2);
+});
+
+it.each([
+  new APIError("Rate limited", 429, "rate_limit"),
+  new APIError("Timed out", 503, "export_timeout"),
+])("does not retry an export rejection: $message", async (error) => {
+  const run = vi.fn().mockRejectedValue(error);
+  await expect(retryExportRequest(run, new AbortController().signal)).rejects.toBe(error);
+  expect(run).toHaveBeenCalledTimes(1);
+});
+
+it("does not retry an export after cancellation", async () => {
+  const controller = new AbortController();
+  const reason = new Error("Cancelled");
+  const run = vi.fn().mockImplementation(() => {
+    controller.abort(reason);
+    return Promise.reject(new TypeError("Connection lost"));
+  });
+  await expect(retryExportRequest(run, controller.signal)).rejects.toBe(reason);
+  expect(run).toHaveBeenCalledTimes(1);
+});
+
+it("stops after the second export server failure", async () => {
+  const failure = new APIError("Unavailable", 503, "unavailable");
+  const run = vi.fn().mockRejectedValue(failure);
+  await expect(retryExportRequest(run, new AbortController().signal)).rejects.toBe(failure);
+  expect(run).toHaveBeenCalledTimes(2);
 });

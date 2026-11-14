@@ -36,6 +36,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/processing"
@@ -47,6 +48,10 @@ type Connection struct {
 	base string
 	key  string
 	hc   *http.Client
+
+	// pinned is set only on ownership-proven connections. A transfer
+	// connection repeats the proof against this record.
+	pinned *pinnedDaemon
 }
 
 // ErrBackupRepositoryNotConfigured identifies only the absent configuration
@@ -90,14 +95,15 @@ func (c *Connection) WebSessionURL(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("parsing daemon browser origin: %w", err)
 	}
 	if u.Scheme != "http" || u.Host == "" || u.User != nil ||
-		u.Path != "/" || u.RawQuery != "" || u.Fragment != "" ||
+		!strings.HasSuffix(u.Path, "/") || u.RawPath != "" ||
+		config.ValidateWebBasePath(strings.TrimSuffix(u.Path, "/")) != nil ||
+		u.RawQuery != "" || u.Fragment != "" ||
 		!validBrowserOriginAddress(u.Host) {
 		return "", errors.New("daemon returned an invalid browser origin")
 	}
 	if u.Host == apiURL.Host {
 		return "", errors.New("daemon returned its reusable API origin for the browser")
 	}
-	u.Path = "/"
 	u.RawPath = ""
 	u.RawQuery = ""
 	u.Fragment = url.Values{
@@ -1032,6 +1038,20 @@ type SearchOptions struct {
 
 func (c *Connection) Search(ctx context.Context, query string, limit int) (api.SearchReport, error) {
 	return c.SearchWithOptions(ctx, query, limit, SearchOptions{})
+}
+
+// SearchTextCoverage reads recoverable text gaps after an empty search.
+func (c *Connection) SearchTextCoverage(ctx context.Context, opts SearchOptions) (api.SearchTextCoverage, error) {
+	params := apiclient.SearchTextCoverageQuery{PdfFilter: &opts.PDFFilter, SourcePresent: &opts.SourcePresent,
+		TagID: &opts.TagID, MimeType: &opts.MIMEType, ModifiedSince: &opts.ModifiedSince, ModifiedBefore: &opts.ModifiedBefore}
+	if opts.UnderNodeID != 0 {
+		params.UnderNodeID = &opts.UnderNodeID
+	}
+	out, err := c.API().SearchTextCoverage(ctx, &apiclient.SearchTextCoverageRequestOptions{Query: &params})
+	if err != nil {
+		return api.SearchTextCoverage{}, err
+	}
+	return *out, nil
 }
 
 // SearchWithOptions returns one bounded ranked or filter-only result set.
@@ -2611,6 +2631,9 @@ func (c *Connection) IngestStream(
 	decoder := jsontext.NewDecoder(resp.Body)
 	var result *api.IngestReport
 	for {
+		if err := ctx.Err(); err != nil {
+			return api.IngestReport{}, err
+		}
 		var event api.IngestEvent
 		if err := json.UnmarshalDecode(decoder, &event); err != nil {
 			if errors.Is(err, io.EOF) {
@@ -3164,6 +3187,9 @@ func (c *Connection) BackupCreateStream(
 	decoder := jsontext.NewDecoder(resp.Body)
 	var result *api.BackupSnapshot
 	for {
+		if err := ctx.Err(); err != nil {
+			return api.BackupSnapshot{}, err
+		}
 		var event api.BackupCreateEvent
 		if err := json.UnmarshalDecode(decoder, &event); err != nil {
 			if errors.Is(err, io.EOF) {
@@ -3237,6 +3263,9 @@ func (c *Connection) BackupVerifyStream(
 	decoder := jsontext.NewDecoder(resp.Body)
 	var result *api.BackupVerifyReport
 	for {
+		if err := ctx.Err(); err != nil {
+			return api.BackupVerifyReport{}, err
+		}
 		var event api.BackupVerifyEvent
 		if err := json.UnmarshalDecode(decoder, &event); err != nil {
 			if errors.Is(err, io.EOF) {
@@ -3314,6 +3343,9 @@ func (c *Connection) BackupRestoreStream(
 	decoder := jsontext.NewDecoder(resp.Body)
 	var result *api.BackupRestoreReport
 	for {
+		if err := ctx.Err(); err != nil {
+			return api.BackupRestoreReport{}, err
+		}
 		var event api.BackupRestoreEvent
 		if err := json.UnmarshalDecode(decoder, &event); err != nil {
 			if errors.Is(err, io.EOF) {

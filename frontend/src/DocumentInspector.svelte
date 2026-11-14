@@ -55,6 +55,8 @@
     source,
     authorizationRevision = 0,
     onauthfailure,
+    onpublished,
+    onproductions,
     onopen,
     onversions,
     onprovenance,
@@ -84,6 +86,8 @@
     session?: string;
     source?: SelectedSource;
     authorizationRevision?: number;
+    onpublished?: () => void;
+    onproductions?: () => void;
     onauthfailure?: (cause: unknown) => void;
     onopen?: () => void;
     onversions?: () => void;
@@ -414,6 +418,8 @@
       source={redacting.source}
       authorizationRevision={redacting.revision}
       {onauthfailure}
+      {onpublished}
+      {onproductions}
       onclose={() => (redacting = undefined)}
     />{/key}{/if}
 

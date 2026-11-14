@@ -26,12 +26,15 @@ type familyMCP struct {
 
 func startFamilyMCP(t *testing.T) *familyMCP {
 	t.Helper()
+	return startWorkflowMCP(t, mcp.ServerOptions{AllowReportWrites: true, AllowExportWrites: true})
+}
+
+func startWorkflowMCP(t *testing.T, options mcp.ServerOptions) *familyMCP {
+	t.Helper()
 	serverPipe, clientPipe := net.Pipe()
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
-	server := mcp.NewServerWithOptions(mcp.ServerOptions{
-		AllowReportWrites: true, AllowExportWrites: true,
-	})
+	server := mcp.NewServerWithOptions(options)
 	go func() { done <- mcp.ServeStdio(ctx, server, serverPipe, serverPipe, nil) }()
 	client := &familyMCP{connection: clientPipe, reader: bufio.NewReader(clientPipe)}
 	client.shutdown = sync.OnceFunc(func() {

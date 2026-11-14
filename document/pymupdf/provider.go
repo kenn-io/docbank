@@ -178,7 +178,10 @@ func (provider *Provider) Render(
 		return document.RenditionResult{}, providerError(document.RenditionErrorUnsupportedInput,
 			"PyMuPDF input is not a locally verified PDF", err)
 	}
-	localPages, err := formatdetect.CountPDFPages(source)
+	localPages, err := formatdetect.CountPDFPages(operationCtx, source)
+	if contextErr := provider.postProcessError(ctx, operationCtx, deadline, expiryDeadline); contextErr != nil {
+		return document.RenditionResult{}, contextErr
+	}
 	if err != nil || localPages <= 0 {
 		return document.RenditionResult{}, providerError(document.RenditionErrorUnsupportedInput,
 			"PyMuPDF page count could not be verified", err)

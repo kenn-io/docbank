@@ -31,10 +31,10 @@ func TestPDFMetadataEvidence(t *testing.T) {
 			data := mediatest.PDF()
 			if tc.keyBits != 0 {
 				var err error
-				data, err = mediatest.EncryptPDF(data, tc.password, "owner-secret", tc.keyBits, tc.flags)
+				data, err = mediatest.EncryptPDF(t.Context(), data, tc.password, "owner-secret", tc.keyBits, tc.flags)
 				require.NoError(t, err)
 			}
-			metadata, err := formatdetect.ReadPDFMetadata(data)
+			metadata, err := formatdetect.ReadPDFMetadata(t.Context(), data)
 			require.NoError(t, err)
 			assert.Equal(t, new(tc.keyBits != 0), metadata.Facts.Encrypted)
 			assert.Equal(t, tc.permissions, metadata.Facts.Permissions)
@@ -66,11 +66,11 @@ func TestPDFMetadataEvidence(t *testing.T) {
 			data := mediatest.PDFSignatureFields(tc.fields, strings.Split(tc.extra, "|")...)
 			if tc.rewrite {
 				var rewritten bytes.Buffer
-				require.NoError(t, api.AddProperties(bytes.NewReader(data), &rewritten, map[string]string{"Amendment": "Edited"}, model.NewDefaultConfiguration()))
+				require.NoError(t, api.AddProperties(t.Context(), bytes.NewReader(data), &rewritten, map[string]string{"Amendment": "Edited"}, model.NewDefaultConfiguration()))
 				require.Less(t, rewritten.Len(), len(data))
 				data = rewritten.Bytes()
 			}
-			metadata, err := formatdetect.ReadPDFMetadata(data)
+			metadata, err := formatdetect.ReadPDFMetadata(t.Context(), data)
 			require.NoError(t, err)
 			require.Equal(t, new(tc.count), metadata.Facts.SignatureFieldCount)
 			require.Equal(t, tc.coverage, metadata.Facts.LastSignatureCoversFile)
@@ -85,7 +85,7 @@ func TestPDFMetadataEvidence(t *testing.T) {
 
 func TestPDFMetadataReachableActionsAndAttachments(t *testing.T) {
 	data := mediatest.PDFWithActionsAndAttachment()
-	metadata, err := formatdetect.ReadPDFMetadata(data)
+	metadata, err := formatdetect.ReadPDFMetadata(t.Context(), data)
 	require.NoError(t, err)
 	require.Equal(t, new(int64(1)), metadata.Facts.EmbeddedFileCount)
 	require.Equal(t, new(true), metadata.Facts.HasJavaScript)
@@ -111,7 +111,7 @@ func TestPDFMetadataReachableActionsAndAttachments(t *testing.T) {
 					"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] " + tc.page + " >>", "<< /S /JavaScript /JS (void 0) /Next << /S /Launch /F (x) >> >>",
 				})
 			}
-			metadata, err := formatdetect.ReadPDFMetadata(data)
+			metadata, err := formatdetect.ReadPDFMetadata(t.Context(), data)
 			require.NoError(t, err)
 			require.Equal(t, new(tc.javascript), metadata.Facts.HasJavaScript)
 			require.Equal(t, new(tc.launch), metadata.Facts.HasLaunchActions)
@@ -131,7 +131,7 @@ func TestPDFMetadataReachableActionsAndAttachments(t *testing.T) {
 			"<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(note.txt) << /Type /Filespec /F (note.txt) /EF << /F 4 0 R >> >>] >> >> /AF [<< /Type /Filespec /F (note.txt) /EF << /F 4 0 R >> >>] >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>", "<< /Type /EmbeddedFile /Length 4 >>\nstream\nnote\nendstream"}), 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			metadata, err := formatdetect.ReadPDFMetadata(tc.data)
+			metadata, err := formatdetect.ReadPDFMetadata(t.Context(), tc.data)
 			require.NoError(t, err)
 			require.Equal(t, new(tc.count), metadata.Facts.EmbeddedFileCount)
 		})
@@ -143,7 +143,7 @@ func TestPDFMetadataUnsupportedEncryption(t *testing.T) {
 		"<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Count 1 /Kids [3 0 R] >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>", "<< /Filter /Adobe.PubSec >>",
 	})
 	data = bytes.Replace(data, []byte("/Root 1 0 R"), []byte("/Root 1 0 R /Encrypt 4 0 R /ID [<11111111111111111111111111111111> <11111111111111111111111111111111>]"), 1)
-	metadata, err := formatdetect.ReadPDFMetadata(data)
+	metadata, err := formatdetect.ReadPDFMetadata(t.Context(), data)
 	require.NoError(t, err)
 	require.Equal(t, new(true), metadata.Facts.Encrypted)
 	require.Nil(t, metadata.Facts.SignatureFieldCount)

@@ -266,16 +266,16 @@ func (in SetPhotoSettingsRequest) update(ctx context.Context, ifMatch string) (i
 		return 0, update, err
 	}
 	if in.runtimeNull {
-		return 0, update, huma.Error422UnprocessableEntity("Use reset_hidden_unlock_lifetime to reset the Hidden unlock lifetime")
+		return 0, update, NewError(http.StatusUnprocessableEntity, "validation", "Use reset_hidden_unlock_lifetime to reset the Hidden unlock lifetime")
 	}
 	if in.ResetPreference && in.Preference != nil {
-		return 0, update, huma.Error422UnprocessableEntity("Set preference or reset_preference, rather than both")
+		return 0, update, NewError(http.StatusUnprocessableEntity, "validation", "Set preference or reset_preference, rather than both")
 	}
 	if in.preferenceNull && (in.BurstGapSeconds != nil || overrides) {
-		return 0, update, huma.Error422UnprocessableEntity("Omit preference to keep it, or use reset_preference to reset it with another setting")
+		return 0, update, NewError(http.StatusUnprocessableEntity, "validation", "Omit preference to keep it, or use reset_preference to reset it with another setting")
 	}
 	if browserSessionRequest(ctx) && (update.Preference != nil || update.ResetPreference || overrides) {
-		return 0, update, huma.Error403Forbidden("Changing the display preference or Hidden unlock lifetime requires the API key")
+		return 0, update, NewError(http.StatusForbidden, "validation", "Changing the display preference or Hidden unlock lifetime requires the API key")
 	}
 	return revision, update, nil
 }

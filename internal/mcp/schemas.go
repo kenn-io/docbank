@@ -467,7 +467,7 @@ func batesRecipeSchema() schema {
 		"opacity": schema{"type": jsonSchemaNumber, jsonSchemaConst: 1}, "units": schema{"type": "string", jsonSchemaConst: "point"},
 		"rotation_policy": schema{"type": "string", jsonSchemaConst: "follow_page"}, "restamp": schema{"type": "boolean", jsonSchemaConst: false},
 		"engine_identity": objectSchema(schema{
-			"name": schema{"type": "string", jsonSchemaConst: "pdfcpu"}, "version": schema{"type": "string", jsonSchemaConst: "v0.15.0"},
+			"name": schema{"type": "string", jsonSchemaConst: "pdfcpu"}, "version": schema{"type": "string", jsonSchemaConst: "v0.16.4"},
 			"api":     schema{"type": "string", jsonSchemaConst: "AddWatermarksMap"},
 			"options": schema{"type": "array", jsonSchemaConst: []string{"onTop=true", "update=restamp"}},
 		}, "name", "version", "api", "options"),
@@ -532,7 +532,10 @@ func selectorExcludes(fields ...string) schema {
 func exportBatesFileSchemas() (schema, schema) {
 	return rootObjectSchema(schema{
 			"allocation_id": uuidSchema(), "destination_path": schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters},
-			"overwrite": booleanSchema(),
+			"overwrite":        booleanSchema(),
+			"preparation_path": schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters},
+			"masks_path":       schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters},
+			"review_path":      schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters},
 		}, "allocation_id", "destination_path", "overwrite"), rootObjectSchema(withPrivateCache(schema{
 			"allocation_id": uuidSchema(), "artifact_id": uuidSchema(), "destination_path": stringSchema(maxPathCharacters),
 			"blob_sha256": sha256Schema(), "manifest_sha256": sha256Schema(), "size": integerSchema(1, 512<<20), "verification": enumSchema("recorded_bytes_and_numbers", "masks_text_and_numbers", "stamped_labels"),
@@ -686,7 +689,7 @@ func searchDocumentsSchemas() (schema, schema) {
 	properties["binding_id"] = stringSchema(128)
 	properties["explain"] = booleanSchema()
 	properties["rerank"] = booleanSchema()
-	input := rootObjectSchema(properties, "query", "profile")
+	input := rootObjectSchema(properties, "query")
 	// Keep the exactly-one-scope rule without a root oneOf, which Anthropic rejects.
 	input["if"] = schema{"required": []string{"content_version_ids"}}
 	input["then"] = schema{"not": schema{"required": []string{"filters"}}}
@@ -702,6 +705,7 @@ func searchDocumentsSchemas() (schema, schema) {
 		"evidence_ids":       arraySchema(stringSchema(1024), 64),
 	}, "node_id", "content_version_id", "rank", "score", "path", "evidence_ids")
 	output := rootObjectSchema(withPrivateCache(schema{
+		"profile":              stringSchema(128),
 		schemaVaultIDField:     uuidSchema(),
 		"fence":                fenceAuthoritySchema(),
 		"fence_fingerprint":    fenceFingerprintSchema(),
@@ -715,10 +719,10 @@ func searchDocumentsSchemas() (schema, schema) {
 			schemaStateField:     stringSchema(64),
 		}, "binding_required", "scoped_documents", "complete_documents", schemaStateField),
 		"reranking":       searchRerankingSchema(),
-		"skipped_reasons": arraySchema(stringSchema(64), 64),
+		"skipped_reasons": arraySchema(stringSchema(2048), 64),
 		"results":         arraySchema(result, 100),
 		"truncated":       booleanSchema(),
-	}), cacheRequired("requested_mode",
+	}), cacheRequired("profile", "requested_mode",
 		"actual_mode", "coverage", "skipped_reasons", "results", "truncated")...)
 	output["if"] = schema{kataRequiredField: []string{"fence"}}
 	output["then"] = schema{
@@ -889,6 +893,9 @@ func getProcessingCoverageSchemas() (schema, schema) {
 	output := rootObjectSchema(withPrivateCache(schema{
 		"vault_id": uuidSchema(), "content_version_ids": arraySchema(uuidSchema(), 4096),
 		"profile_fingerprint": sha256Schema(), schemaStateField: stringSchema(64), "coverage": arraySchema(class, 65),
+		"pages_without_text":        arraySchema(objectSchema(schema{versionField: uuidSchema(), "pages": arraySchema(integerSchema(1, 0), 5000)}, versionField, "pages"), 4096),
+		"page_coverage":             enumSchema("partial"),
+		"page_coverage_unavailable": booleanSchema(),
 	}), cacheRequired("vault_id", "content_version_ids", "profile_fingerprint", schemaStateField, "coverage")...)
 	return input, output
 }

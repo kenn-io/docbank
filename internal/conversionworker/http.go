@@ -17,8 +17,11 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/workerprotocol"
 	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/kit/safefileio"
@@ -153,7 +156,11 @@ func (w *Worker) accept(ctx context.Context, out http.ResponseWriter, r *http.Re
 	if !exists {
 		defer func() { w.mu.Lock(); w.reserved -= w.reservation(); w.mu.Unlock() }()
 	}
-	r.Body = http.MaxBytesReader(out, r.Body, w.options.MaxSourceBytes+(64<<10))
+	limit := w.options.MaxSourceBytes
+	if exists {
+		limit = existing.Bytes
+	}
+	r.Body = http.MaxBytesReader(out, r.Body, limit+(64<<10))
 	defer func() { _ = r.Body.Close() }()
 	stage := ""
 	if !exists {
@@ -170,7 +177,7 @@ func (w *Worker) accept(ctx context.Context, out http.ResponseWriter, r *http.Re
 		}
 		defer func() { _ = os.RemoveAll(stage) }()
 	}
-	item, err := w.receive(ctx, r, stage)
+	item, err := w.receive(ctx, r, stage, limit)
 	if err != nil {
 		status := 400
 		var tooLarge *http.MaxBytesError
@@ -197,8 +204,42 @@ func (w *Worker) accept(ctx context.Context, out http.ResponseWriter, r *http.Re
 			http.Error(out, "worker request key conflict", http.StatusConflict)
 			return
 		}
+		w.runMu.Lock()
+		w.mu.Lock()
+		existing = w.jobs[existingID]
+		w.mu.Unlock()
+		if existing.State == "failure" && existing.BackendID == "" && existing.Submissions == 3 {
+			existing.State = "pending"
+			existing.Submissions = 0
+			if err := w.save(ctx, existing); err != nil {
+				w.runMu.Unlock()
+				http.Error(out, "worker storage unavailable", http.StatusServiceUnavailable)
+				return
+			}
+		}
+		w.runMu.Unlock()
 		writeJSON(ctx, out, 202, w.task(existing))
 		return
+	}
+	if item.MediaType == "audio/wav" || item.MediaType == "audio/mpeg" {
+		f, err := os.Open(filepath.Join(stage, "source"))
+		if err != nil {
+			http.Error(out, "worker source unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		fingerprint := strings.Repeat("0", 64)
+		record, inspectErr := media.InspectCapability(ctx, f, media.InspectionPolicy{
+			Filename: item.Filename, DeclaredMediaType: item.MediaType, ExpectedBytes: item.Bytes, ExpectedSHA256: item.SHA256,
+			DescriptorFingerprint: fingerprint, ProfileFingerprint: fingerprint, DisclosureFingerprint: fingerprint,
+			InputKind: document.RenditionInputOriginalFile, MaxSourceBytes: limit, MaxExpandedBytes: 1, MaxEntryBytes: 1,
+			MaxEntries: 1, MaxNestingDepth: 1, MaxTextLines: 1, MaxCharacters: 1, MaxRecords: 1, MaxPages: 1,
+			MaxSlides: 1, MaxSheets: 1, MaxCells: 1, MaxSpineItems: 1, MaxResources: 1, MaxDurationMS: time.Hour.Milliseconds(),
+		})
+		closeErr := f.Close()
+		if inspectErr != nil || closeErr != nil || !record.Eligible {
+			http.Error(out, "invalid or oversized worker audio", http.StatusBadRequest)
+			return
+		}
 	}
 	id := make([]byte, 16)
 	if _, err := rand.Read(id); err != nil {
@@ -206,6 +247,7 @@ func (w *Worker) accept(ctx context.Context, out http.ResponseWriter, r *http.Re
 		return
 	}
 	item.ID = hex.EncodeToString(id)
+	item.Version = manifestVersion
 	item.State = "pending"
 	manifest, err := json.Marshal(item)
 	if err == nil {
@@ -253,7 +295,7 @@ func sourceStorageFailure(operation string, err error) error {
 	return fmt.Errorf("%w: %s: %w", errSourceStorage, operation, err)
 }
 
-func (w *Worker) receive(ctx context.Context, r *http.Request, stage string) (job, error) {
+func (w *Worker) receive(ctx context.Context, r *http.Request, stage string, limit int64) (job, error) {
 	reader, err := r.MultipartReader()
 	if err != nil {
 		return job{}, fmt.Errorf("receive worker input: %w", err)
@@ -300,8 +342,8 @@ func (w *Worker) receive(ctx context.Context, r *http.Request, stage string) (jo
 				retained = &retainedSourceWriter{Writer: file}
 				dst = io.MultiWriter(h, retained)
 			}
-			item.Bytes, err = copyContext(ctx, dst, part, w.options.MaxSourceBytes)
-			if err != nil && item.Bytes > w.options.MaxSourceBytes {
+			item.Bytes, err = copyContext(ctx, dst, part, limit)
+			if err != nil && item.Bytes > limit {
 				err = errSourceTooLarge
 			}
 			if retained != nil && retained.err != nil {
@@ -349,7 +391,7 @@ func validFile(filename, mediaType string) bool {
 	if err != nil || len(params) > 0 || parsed != mediaType {
 		return false
 	}
-	return slices.Contains([]string{"application/pdf", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "image/png", "image/jpeg", "text/plain", "text/markdown", "audio/wav", "audio/mpeg"}, mediaType)
+	return slices.Contains([]string{"application/pdf", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "image/png", "image/jpeg", "audio/wav", "audio/mpeg"}, mediaType)
 }
 func validFields(fields [][2]string) bool {
 	return reflect.DeepEqual(fields, [][2]string{{"to_formats", "md"}, {"to_formats", "json"}, {"target_type", "inbody"}}) || reflect.DeepEqual(fields, [][2]string{{"to_formats", "json"}, {"target_type", "inbody"}}) || reflect.DeepEqual(fields, [][2]string{{"from_formats", "audio"}, {"to_formats", "json"}, {"target_type", "inbody"}})

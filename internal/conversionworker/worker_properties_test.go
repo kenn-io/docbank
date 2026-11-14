@@ -331,7 +331,7 @@ func TestWorkerBackendReceivesExactGeneratedOriginalAfterRestart(t *testing.T) {
 					}
 					_, _ = io.Copy(io.Discard, part)
 				}
-				return backendResponse(r, 202, `{"task_id":"backend-1","task_status":"pending"}`), nil
+				return backendResponse(r, 202, `{"task_id":"backend-1","task_status":"pending","task_type":"convert"}`), nil
 			}
 			return normal.RoundTrip(r)
 		})}

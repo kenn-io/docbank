@@ -1,6 +1,7 @@
 package formatdetect
 
 import (
+	"context"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -57,15 +58,15 @@ func simpleFont(ctx *model.Context, object types.Object) bool {
 	}
 }
 
-func unvalidatedPageFontDomains(ctx *model.Context, maxPages int) []bool {
-	if err := ctx.EnsurePageCount(); err != nil || ctx.PageCount < 1 || ctx.PageCount > maxPages {
+func unvalidatedPageFontDomains(ctx context.Context, pdfContext *model.Context, maxPages int) []bool {
+	if err := pdfContext.EnsurePageCount(); err != nil || pdfContext.PageCount < 1 || pdfContext.PageCount > maxPages {
 		return nil
 	}
-	domains := make([]bool, ctx.PageCount)
-	for page := 1; page <= ctx.PageCount; page++ {
-		_, _, attrs, err := ctx.PageDict(page, false)
+	domains := make([]bool, pdfContext.PageCount)
+	for page := 1; page <= pdfContext.PageCount; page++ {
+		_, _, attrs, err := pdfContext.PageDict(ctx, page, false)
 		if err == nil {
-			domains[page-1] = pageSimpleFontsOnly(ctx, attrs.Resources)
+			domains[page-1] = pageSimpleFontsOnly(pdfContext, attrs.Resources)
 		}
 	}
 	return domains

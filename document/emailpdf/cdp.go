@@ -282,7 +282,7 @@ func RunWorker(ctx context.Context, chromium, dir, expectedVersion string) error
 	if err = errors.Join(readErr, proof.Close()); err != nil {
 		return err
 	}
-	if _, err = VerifyPDF(pdf); err != nil {
+	if _, err = VerifyPDF(ctx, pdf); err != nil {
 		return err
 	}
 	if err = ctx.Err(); err != nil {

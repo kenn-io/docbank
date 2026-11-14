@@ -405,3 +405,29 @@ func TestTermReportDatePageByteLimits(t *testing.T) {
 		})
 	}
 }
+
+func TestRefreshTermReportSelectionRoute(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, nil)
+	node := createFileWithContent(t, ts, catalog, "/selection.txt", "selected")
+	identity := report.Identity{NodeID: node.ID, VersionID: node.CurrentVersionID, SHA256: node.BlobHash}
+	request := report.SelectedDocuments{Documents: []report.Identity{identity}}
+	encoded, err := json.Marshal(request)
+	require.NoError(t, err)
+	endpoint := "/api/v1/search-exports/selection"
+	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, endpoint, map[string]string{"X-Api-Key": ""}, string(encoded))
+	require.Equal(t, http.StatusUnauthorized, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodPost, endpoint, nil, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var items []store.TermReportSelectionItem
+	require.NoError(t, json.Unmarshal([]byte(body), &items))
+	require.Len(t, items, 1)
+	require.Equal(t, "current", items[0].Status)
+	require.Equal(t, identity, *items[0].Current)
+	for _, invalid := range []report.SelectedDocuments{{}, {Documents: []report.Identity{identity, identity}}} {
+		response, body = do(t, ts, http.MethodPost, endpoint, nil, invalid)
+		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	}
+	response, body = rawJSONRequest(t, ts.URL, http.MethodPost, endpoint, map[string]string{"X-Api-Key": testAPIKey}, `{"documents":[]}`+strings.Repeat(" ", 8<<20))
+	require.Equal(t, http.StatusRequestEntityTooLarge, response.StatusCode, body)
+}

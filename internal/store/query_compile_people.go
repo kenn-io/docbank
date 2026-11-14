@@ -20,5 +20,5 @@ func (c queryCompiler) compilePersonPredicate(id string) compiledQueryFragment {
 }
 
 func personVersionVisibleSQL(version string) string {
-	return `NOT EXISTS(SELECT 1 FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id=` + version + ` AND a.hidden_at IS NOT NULL)`
+	return `NOT EXISTS(SELECT 1 FROM content_versions visible_version JOIN photo_files visible_file ON visible_file.node_id=visible_version.node_id JOIN photo_assets visible_asset ON visible_asset.asset_id=visible_file.asset_id WHERE visible_version.version_id=` + version + ` AND visible_asset.hidden_at IS NOT NULL)`
 }

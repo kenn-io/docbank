@@ -301,8 +301,6 @@ func assertRedactionLeavesNoJobs(t *testing.T, root string) {
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 	var count int
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT
- (SELECT COUNT(*) FROM rendition_jobs) + (SELECT COUNT(*) FROM embedding_jobs) +
- (SELECT COUNT(*) FROM export_jobs)`).Scan(&count))
-	require.Zero(t, count, "redaction must not enqueue or retain jobs")
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT (SELECT COUNT(*) FROM embedding_jobs) + (SELECT COUNT(*) FROM export_jobs)`).Scan(&count))
+	require.Zero(t, count+countNonPDFTextRenditionJobs(t, db), "redaction must not enqueue or retain jobs")
 }

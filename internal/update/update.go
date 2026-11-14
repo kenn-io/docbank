@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/version"
+	kitdaemon "go.kenn.io/kit/daemon"
 )
 
 // NewClient builds the selfupdate.Client for docbank's kenn-io/docbank
@@ -48,8 +49,8 @@ type Options struct {
 	Root           string
 	Destination    string
 	WithLaunchLock func(context.Context, string, func() error) error
-	Stop           func(context.Context, string) (bool, error)
-	Start          func(context.Context, string) error
+	Stop           func(context.Context, string) (*kitdaemon.RuntimeRecord, error)
+	Start          func(context.Context, string, bool) error
 }
 
 // Run checks for a newer docbank release and, unless CheckOnly, installs it:
@@ -145,8 +146,8 @@ func Run(ctx context.Context, out io.Writer, opts Options) error {
 	}
 	startFn := opts.Start
 	if startFn == nil {
-		startFn = func(ctx context.Context, root string) error {
-			_, err := daemonconn.StartAnyVersion(ctx, root)
+		startFn = func(ctx context.Context, root string, persistent bool) error {
+			_, err := daemonconn.StartAnyVersion(ctx, root, persistent)
 			return err
 		}
 	}
@@ -156,16 +157,16 @@ func Run(ctx context.Context, out io.Writer, opts Options) error {
 	// launch lock Ensure uses, then stop, install, and restart with the new
 	// executable before other CLI calls can auto-start an old daemon.
 	return lockFn(ctx, root, func() error {
-		wasRunning, err := stopFn(ctx, root)
+		rec, err := stopFn(ctx, root)
 		if err != nil {
 			return fmt.Errorf("stopping daemon before update: %w", err)
 		}
-		if wasRunning {
+		if rec != nil {
 			_, _ = fmt.Fprintln(out, "stopped running daemon")
 		}
 		if err := c.Install(ctx, info, selfupdate.InstallOptions{DestinationPath: dest}); err != nil {
-			if wasRunning {
-				if rerr := startFn(ctx, root); rerr != nil {
+			if rec != nil {
+				if rerr := startFn(ctx, root, daemonconn.Explicit(*rec)); rerr != nil {
 					return fmt.Errorf("install failed (%w) and daemon restart failed: %w", err, rerr)
 				}
 				_, _ = fmt.Fprintln(out, "install failed; restarted previous daemon")
@@ -173,8 +174,8 @@ func Run(ctx context.Context, out io.Writer, opts Options) error {
 			return fmt.Errorf("installing %s: %w", info.LatestVersion, err)
 		}
 		_, _ = fmt.Fprintf(out, "installed %s -> %s\n", info.LatestVersion, dest)
-		if wasRunning {
-			if err := startFn(ctx, root); err != nil {
+		if rec != nil {
+			if err := startFn(ctx, root, daemonconn.Explicit(*rec)); err != nil {
 				return fmt.Errorf("daemon restart after update failed (start it with docbank daemon start): %w", err)
 			}
 			_, _ = fmt.Fprintln(out, "daemon restarted")

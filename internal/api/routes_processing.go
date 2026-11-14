@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,7 @@ import (
 
 func registerProcessingRoutes(api huma.API, d Deps) {
 	registerLocalTextRoutes(api, d)
+	registerFaceSetupRoutes(api, d)
 	registerTextCitationRoute(api, d)
 	registerRedactionPreparationRoute(api, d)
 	registerTextNavigationRoutes(api, d)
@@ -49,18 +51,30 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 	type profilesOutput struct{ Body []ProcessingProfileSummary }
 	huma.Register(api, huma.Operation{
 		OperationID: "listDocumentProcessingProfiles", Method: http.MethodGet,
-		Path: "/api/v1/processing/profiles", Summary: "List locally executable document-processing profiles",
-	}, func(_ context.Context, _ *struct{}) (*profilesOutput, error) {
+		Path: "/api/v1/processing/profiles", Summary: "List document-processing profiles",
+	}, func(_ context.Context, in *struct {
+		IncludeConfigured bool `query:"include_configured" doc:"Include configured profiles without an executable runtime"`
+	}) (*profilesOutput, error) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
 		}
-		profiles := d.Processing.Profiles()
-		result := make([]ProcessingProfileSummary, len(profiles))
-		for index, profile := range profiles {
-			result[index] = ProcessingProfileSummary{Name: profile.Name, Fingerprint: profile.Fingerprint,
-				Rendition: profile.Rendition, EmbeddingBindings: profile.EmbeddingBindings,
-				QueryEmbeddingBindings: profile.QueryEmbeddingBindings,
-				RerankingAvailable:     profile.RerankingAvailable}
+		result := processingProfileSummaries(d.Processing)
+		if in.IncludeConfigured {
+			seen := make(map[string]bool, len(result))
+			for _, profile := range result {
+				seen[profile.Name] = true
+			}
+			for name := range d.Cfg.ProcessingProfiles {
+				if seen[name] {
+					continue
+				}
+				fingerprint, err := configuredProfileFingerprint(d.Cfg, name)
+				if err != nil {
+					return nil, err
+				}
+				result = append(result, ProcessingProfileSummary{Name: name, Fingerprint: fingerprint})
+			}
+			sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 		}
 		return &profilesOutput{Body: result}, nil
 	})
@@ -631,9 +645,12 @@ func parseByteRange(value string, size int64) (int64, int64, error) {
 }
 
 func fromProcessingCoverage(report processing.Coverage) CoverageReport {
-	result := CoverageReport{VaultUID: report.VaultUID, ProfileFingerprint: report.ProfileFingerprint,
+	result := CoverageReport{VaultUID: report.VaultUID, ProfileFingerprint: report.ProfileFingerprint, PageCoverage: report.PageCoverage, PageCoverageUnavailable: report.PageCoverageUnavailable,
 		State: report.State, Renditions: fromProcessingCoverageClass(report.Renditions),
 		Embeddings: make([]CoverageClass, len(report.Embeddings))}
+	for _, gap := range report.PagesWithoutText {
+		result.PagesWithoutText = append(result.PagesWithoutText, PageTextGap{ContentVersionID: gap.ContentVersionID, Pages: gap.Pages})
+	}
 	for index, item := range report.Embeddings {
 		result.Embeddings[index] = fromProcessingCoverageClass(item)
 	}
@@ -817,9 +834,11 @@ func fromProcessingError(err error) error {
 		{processing.ErrPurgePlanChanged, http.StatusConflict, "derivative_purge_plan_changed", "derivative purge plan changed after preview"},
 		{processing.ErrInvalidPurgeRequest, http.StatusUnprocessableEntity, "invalid_derivative_purge", "derivative purge request is invalid"},
 		{processing.ErrInvalidConsentExpiry, http.StatusUnprocessableEntity, "invalid_processing_consent_expiry", "processing consent expiry is invalid"},
+		{processing.ErrSemanticUnavailable, http.StatusUnprocessableEntity, "semantic_unavailable", "semantic retrieval is not configured"},
 		{processing.ErrRerankingUnavailable, http.StatusUnprocessableEntity, "reranking_unavailable", "reranking is not configured"},
 		{retrieval.ErrRerankingFailed, http.StatusBadGateway, "reranking_failed", "document reranking failed"},
 		{store.ErrVectorIndexSourceStale, http.StatusConflict, "stale_index", "vector index source changed"},
+		{store.ErrVectorIndexUnavailable, http.StatusConflict, "index_unavailable", "The search index needs building."},
 		{store.ErrInvalidProcessingSourceFence, http.StatusUnprocessableEntity, "validation", "source fence request is invalid"},
 		{store.ErrProcessingSourceFenceStaleVersion, http.StatusConflict, "stale_version", "content version is not current and live"},
 		{store.ErrProcessingConsentRequired, http.StatusPreconditionRequired, "processing_consent_required", "processing consent is required"},

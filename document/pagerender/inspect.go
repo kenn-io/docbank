@@ -3,6 +3,7 @@ package pagerender
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -17,7 +18,7 @@ import (
 
 const Protocol = "docbank-page-inspect/v2"
 
-const ParserIdentity = "pdfcpu/v0.15.0"
+const ParserIdentity = "pdfcpu/v0.16.4"
 
 // VerifyPNG verifies the entire bounded image against its retained receipt.
 // Publication, HTTP reads and portable restore use the same decoder.
@@ -67,14 +68,14 @@ func verifySource(data []byte, source document.PageSource) error {
 
 // InspectSource is the compiled inspection child's entry point. Daemons use
 // Runtime.Inspect so PDF parsing and image decoding execute under a memory cap.
-func InspectSource(data []byte, source document.PageSource, mediaType string) (Inspection, error) {
+func InspectSource(ctx context.Context, data []byte, source document.PageSource, mediaType string) (Inspection, error) {
 	result := Inspection{Contract: Protocol, Complete: true, Source: source, ParserIdentity: ParserIdentity}
 	if err := verifySource(data, source); err != nil {
 		return Inspection{}, err
 	}
 	switch mediaType {
 	case "application/pdf":
-		pages, err := formatdetect.ReadPDFPageGeometry(data, document.MaxDocumentPages)
+		pages, err := formatdetect.ReadPDFPageGeometry(ctx, data, document.MaxDocumentPages)
 		if err != nil {
 			return Inspection{}, err
 		}
@@ -170,7 +171,7 @@ func inspectPNG(data []byte, requireDensity bool) (int64, int64, int64, int64, e
 }
 
 // InspectInput reads exactly one bounded source for the compiled bridge.
-func InspectInput(reader io.Reader, versionID, mediaType string) (Inspection, error) {
+func InspectInput(ctx context.Context, reader io.Reader, versionID, mediaType string) (Inspection, error) {
 	data, err := io.ReadAll(io.LimitReader(reader, document.MaxPageSourceBytes+1))
 	if err != nil {
 		return Inspection{}, err
@@ -181,5 +182,5 @@ func InspectInput(reader io.Reader, versionID, mediaType string) (Inspection, er
 	defer clear(data)
 	hash := sha256.Sum256(data)
 	source := document.PageSource{VersionID: versionID, SHA256: hex.EncodeToString(hash[:]), Size: int64(len(data))}
-	return InspectSource(data, source, mediaType)
+	return InspectSource(ctx, data, source, mediaType)
 }

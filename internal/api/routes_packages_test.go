@@ -407,7 +407,7 @@ func TestPreflightRejectsUnknownMembersAndOversizeBodies(t *testing.T) {
 	assert.Equal(t, 0, tableCounts(t, store).packagePreflights)
 }
 
-func TestPreflightRejectsEmptySource(t *testing.T) { //nolint:paralleltest // t.Chdir changes the process working directory
+func TestPreflightRejectsEmptySource(t *testing.T) {
 	root := syntheticPackageRoot(t)
 	t.Chdir(root)
 	srv, store := newPackageTestServer(t)

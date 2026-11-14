@@ -324,7 +324,7 @@ func (b *tuiDaemonBackend) ProcessingProfiles(
 	ctx context.Context,
 ) ([]api.ProcessingProfileSummary, error) {
 	return withTUIClient(ctx, b, func(c *daemonconn.Connection) ([]api.ProcessingProfileSummary, error) {
-		result, err := c.API().ListDocumentProcessingProfiles(ctx)
+		result, err := c.API().ListDocumentProcessingProfiles(ctx, &apiclient.ListDocumentProcessingProfilesRequestOptions{})
 		if err != nil {
 			var zero []api.ProcessingProfileSummary
 			return zero, err

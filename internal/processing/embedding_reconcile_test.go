@@ -21,6 +21,7 @@ type countedReconcileCatalog struct {
 	enqueued           int
 	pauseClaims        bool
 	beforePrepareImage func()
+	afterValidation    func(EmbeddingWorkClaim)
 }
 
 func (c *countedReconcileCatalog) ReconcileEmbeddingJobs(ctx context.Context, request store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error) {
@@ -42,6 +43,16 @@ func (c *countedReconcileCatalog) ClaimNextEmbeddingWork(ctx context.Context, ow
 		return EmbeddingWorkClaim{}, EmbeddingWork{}, false, nil
 	}
 	return c.Store.ClaimNextEmbeddingWork(ctx, owner, at, lease, fingerprints)
+}
+
+func (c *countedReconcileCatalog) ValidateEmbeddingWork(ctx context.Context, claim EmbeddingWorkClaim, work EmbeddingWork, at time.Time) error {
+	err := c.Store.ValidateEmbeddingWork(ctx, claim, work, at)
+	if err == nil && c.afterValidation != nil {
+		hook := c.afterValidation
+		c.afterValidation = nil
+		hook(claim)
+	}
+	return err
 }
 
 func TestEmbeddingWorkerWakesForConsentAndExpiry(t *testing.T) {

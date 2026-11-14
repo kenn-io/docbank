@@ -3,7 +3,7 @@
   import * as generated from "./generated/docbank.js";
   import { onMount } from "svelte";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
-  import { Button, Chip, IconButton, Spinner } from "@kenn-io/kit-ui";
+  import { Disclosure, Button, Chip, IconButton, Spinner } from "@kenn-io/kit-ui";
   import CommandBox from "./CommandBox.svelte";
   import InspectorDetails, { type InspectorFact } from "./InspectorDetails.svelte";
   import { APIError } from "./api-transport.js";
@@ -19,6 +19,7 @@
   let { session, onclose, onauthfailure }: Props = $props();
 
   let report = $state<AuditVerifyReport | null>(null);
+  let protectionDisabled = $state(false);
   let loading = $state(true);
   let loaded = $state(false);
   let error = $state("");
@@ -83,6 +84,17 @@
     report = null;
     error = "";
     try {
+      const status = await generated
+        .auditStatus({}, { session: session, signal: active.signal })
+        .catch((cause) => {
+          if (cause instanceof APIError && cause.status === 401) throw cause;
+          return null;
+        });
+      if (request !== generation) return;
+      if (status?.enabled === false) {
+        protectionDisabled = true;
+        return;
+      }
       const next = await generated.verifyAudit({}, { session: session, signal: active.signal });
       if (request !== generation) return;
       report = next;
@@ -112,7 +124,7 @@
   {onclose}
 >
   {#snippet actions()}
-    {#if loaded && !(report && !report.enabled)}
+    {#if loaded && !protectionDisabled && !(report && !report.enabled)}
       <IconButton
         size="sm"
         ariaLabel="Run permanent audit verification again"
@@ -138,7 +150,7 @@
         <span>Protected history needs attention</span>
       </div>
       {@render problems()}
-    {:else if report && !report.enabled}
+    {:else if protectionDisabled || (report && !report.enabled)}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       <div class="empty">
         <p>No folders are protected. To protect one, run</p>
@@ -157,8 +169,7 @@
       <InspectorDetails label="Verification summary" facts={summary} />
       {@render problems()}
 
-      <details class="details">
-        <summary>Details</summary>
+      <Disclosure variant="plain" title="Details">
         <div class="breakdown">
           <InspectorDetails label="Verified audit history" facts={identity} />
           <section aria-label="Verified audit scope heads">
@@ -181,7 +192,7 @@
             {/if}
           </section>
         </div>
-      </details>
+      </Disclosure>
     {/if}
   </div>
 </DrawerShell>
@@ -276,17 +287,6 @@
   code {
     overflow-wrap: anywhere;
     font-size: var(--font-size-sm);
-  }
-
-  summary {
-    cursor: pointer;
-    width: fit-content;
-    color: var(--text-secondary);
-  }
-
-  summary:focus-visible {
-    outline: 2px solid var(--accent-blue);
-    outline-offset: 2px;
   }
 
   .breakdown,

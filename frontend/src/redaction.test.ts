@@ -60,3 +60,57 @@ it("accepts only the resolver's proposal for a mask in this generation and map",
     ),
   ).toThrow();
 });
+it("accepts a checked text expansion or the server's explicit multi-span rectangle", () => {
+  const id = "00000000-0000-4000-8000-000000000001";
+  const mask: RedactionMask = {
+    id,
+    selector: { kind: "text", map_sha256: fixture.map.sha256, span: { start: 0, end: 6 } },
+  };
+  const box = fixture.map.atoms[0]!.boxes[0]!;
+  const proposal = {
+    code: "selection_expansion_required",
+    decision_ids: [id],
+    expanded_map_sha256: fixture.map.sha256,
+    expanded_spans: [{ start: 0, end: 7 }],
+    expanded_boxes: [box],
+    expanded: { kind: "text", map_sha256: fixture.map.sha256, span: { start: 0, end: 7 } },
+  };
+  expect(decodeExpansion(proposal, fixture, [mask]).selector).toEqual(proposal.expanded);
+  const disjoint = {
+    ...proposal,
+    expanded: null,
+    expanded_spans: [
+      { start: 0, end: 6 },
+      { start: 7, end: 8 },
+    ],
+  };
+  expect(decodeExpansion(disjoint, fixture, [mask]).selector).toEqual({
+    kind: "rectangle",
+    map_sha256: fixture.map.sha256,
+    boxes: [box],
+  });
+  expect(() =>
+    decodeExpansion({ ...disjoint, expanded_spans: [{ start: 7, end: 8 }] }, fixture, [mask]),
+  ).toThrow();
+  expect(() =>
+    decodeExpansion(
+      { ...disjoint, expanded_boxes: [{ ...box, frame_sha256: "0".repeat(64) }] },
+      fixture,
+      [mask],
+    ),
+  ).toThrow();
+  expect(() =>
+    decodeExpansion(
+      { ...proposal, expanded: { ...proposal.expanded, unexpected: true } },
+      fixture,
+      [mask],
+    ),
+  ).toThrow();
+  expect(() =>
+    decodeExpansion(
+      { ...proposal, expanded: { ...proposal.expanded, span: { start: 0, end: 999999 } } },
+      fixture,
+      [mask],
+    ),
+  ).toThrow();
+});

@@ -69,7 +69,7 @@ func (s *Store) RegisterMailboxArchive(ctx context.Context, a MailboxArchive) er
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var old MailboxArchive
-		err := tx.QueryRowContext(ctx, `SELECT id,owner,description FROM mailbox_archives WHERE id=?`, a.ID).Scan(&old.ID, &old.Owner, &old.Description)
+		err := tx.QueryRowContext(ctx, `SELECT id,owner,description FROM mailbox_archives WHERE id=$1`, storedString(s.postgresSchema != "", a.ID)).Scan(&old.ID, &old.Owner, &old.Description)
 		if err == nil {
 			if old != a {
 				return ErrMailboxConflict
@@ -79,7 +79,7 @@ func (s *Store) RegisterMailboxArchive(ctx context.Context, a MailboxArchive) er
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_archives(id,owner,description) VALUES(?,?,?)`, a.ID, a.Owner, a.Description)
+		_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_archives(id,owner,description) VALUES($1,$2,$3)`, storedString(s.postgresSchema != "", a.ID), storedString(s.postgresSchema != "", a.Owner), storedString(s.postgresSchema != "", a.Description))
 		return err
 	})
 }
@@ -130,14 +130,14 @@ func loadMailboxTransferReceipt(ctx context.Context, q metadataQuerier, id strin
 	}
 	return r, validateMetadataTime("mailbox receipt created_at", r.CreatedAt)
 }
-func mailboxTransferHead(ctx context.Context, q metadataQuerier, owner, archive, reference string) (MailboxTransferReceipt, error) {
+func mailboxTransferHead(ctx context.Context, q metadataQuerier, owner, archive, reference string, postgres bool) (MailboxTransferReceipt, error) {
 	// Each reference targets one node, so its newest receipt has the highest node revision.
 	var id string
 	err := q.QueryRowContext(ctx, `SELECT r.id FROM mailbox_transfer_receipts r
 		JOIN mailbox_archives a ON a.id=r.archive_id
 		JOIN content_versions v ON v.version_id=r.target_version_id
-		WHERE r.archive_id=? AND r.source_ref=? AND a.owner=?
-		ORDER BY v.node_revision DESC LIMIT 1`, archive, reference, owner).Scan(&id)
+		WHERE r.archive_id=$1 AND r.source_ref=$2 AND a.owner=$3
+		ORDER BY v.node_revision DESC LIMIT 1`, storedString(postgres, archive), storedString(postgres, reference), storedString(postgres, owner)).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MailboxTransferReceipt{}, ErrNotFound
 	}
@@ -147,7 +147,7 @@ func mailboxTransferHead(ctx context.Context, q metadataQuerier, owner, archive,
 	return loadMailboxTransferReceipt(ctx, q, id)
 }
 func (s *Store) MailboxTransfer(ctx context.Context, owner, archive, reference string) (MailboxTransferReceipt, error) {
-	return mailboxTransferHead(ctx, s.db, owner, archive, reference)
+	return mailboxTransferHead(ctx, s.db, owner, archive, reference, s.postgresSchema != "")
 }
 
 // PublishMailboxTransfer publishes source, complete decoded inventory, child
@@ -171,7 +171,7 @@ func (s *Store) publishMailboxTransferTx(ctx context.Context, tx *sql.Tx, p Mail
 		return MailboxTransferReceipt{}, err
 	}
 	var owner string
-	if err = tx.QueryRowContext(ctx, `SELECT owner FROM mailbox_archives WHERE id=?`, p.Request.ArchiveID).Scan(&owner); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT owner FROM mailbox_archives WHERE id=$1`, storedString(s.postgresSchema != "", p.Request.ArchiveID)).Scan(&owner); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return MailboxTransferReceipt{}, ErrNotFound
 		}
@@ -180,7 +180,7 @@ func (s *Store) publishMailboxTransferTx(ctx context.Context, tx *sql.Tx, p Mail
 	if owner != p.Owner {
 		return MailboxTransferReceipt{}, ErrNotFound
 	}
-	prior, err := mailboxTransferHead(ctx, tx, p.Owner, p.Request.ArchiveID, p.Request.Reference)
+	prior, err := mailboxTransferHead(ctx, tx, p.Owner, p.Request.ArchiveID, p.Request.Reference, s.postgresSchema != "")
 	existing := err == nil
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return MailboxTransferReceipt{}, err
@@ -269,12 +269,12 @@ func (s *Store) publishMailboxTransferTx(ctx context.Context, tx *sql.Tx, p Mail
 		return MailboxTransferReceipt{}, err
 	}
 	receipt := MailboxTransferReceipt{ID: id, Request: p.Request, RequestDigest: digest, Target: documentIdentity(content.Version), TargetRevision: content.Node.Revision, EmailAttachmentID: view.Attachment.ID, DocumentPublicationID: children.OperationID, CreatedAt: nowRFC3339(), Outcome: "imported", Location: p.Location}
-	if err = insertMailboxTransferReceipt(ctx, tx, receipt); err != nil {
+	if err = insertMailboxTransferReceipt(ctx, tx, receipt, s.postgresSchema != ""); err != nil {
 		return MailboxTransferReceipt{}, err
 	}
 	return receipt, nil
 }
-func insertMailboxTransferReceipt(ctx context.Context, tx *sql.Tx, r MailboxTransferReceipt) error {
+func insertMailboxTransferReceipt(ctx context.Context, tx *sql.Tx, r MailboxTransferReceipt, postgres bool) error {
 	b, err := json.Marshal(r)
 	if err != nil {
 		return err
@@ -282,6 +282,6 @@ func insertMailboxTransferReceipt(ctx context.Context, tx *sql.Tx, r MailboxTran
 	if len(b) > 1<<20 {
 		return ErrMailboxLimit
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_transfer_receipts(id,archive_id,source_ref,target_version_id,document_publication_id,receipt_json) VALUES(?,?,?,?,?,?)`, r.ID, r.Request.ArchiveID, r.Request.Reference, r.Target.VersionID, r.DocumentPublicationID, b)
+	_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_transfer_receipts(id,archive_id,source_ref,target_version_id,document_publication_id,receipt_json) VALUES($1,$2,$3,$4,$5,$6)`, r.ID, storedString(postgres, r.Request.ArchiveID), storedString(postgres, r.Request.Reference), r.Target.VersionID, r.DocumentPublicationID, b)
 	return err
 }

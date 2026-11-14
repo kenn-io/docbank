@@ -16,7 +16,6 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/version"
 )
 
 func TestServerDiscoverPublishesOnlyDocbankExactProtocol(t *testing.T) {
@@ -43,14 +42,7 @@ func TestServerDiscoverPublishesOnlyDocbankExactProtocol(t *testing.T) {
 		assert.NotContains(t, wire.Result.Capabilities, absent)
 	}
 
-	var serverInfo sdkmcp.Implementation
-	require.NoError(t, json.Unmarshal(wire.Result.Meta[sdkmcp.MetaKeyServerInfo], &serverInfo))
-	assert.Equal(t, sdkmcp.Implementation{
-		Name:        "docbank",
-		Title:       "Docbank",
-		Description: "Self-sovereign document system",
-		Version:     version.Version,
-	}, serverInfo)
+	assertMCPServerInfo(t, wire.Result.Meta[sdkmcp.MetaKeyServerInfo])
 }
 
 func TestIngressRejectsRequestsOutsideExactProtocolBeforeSDKDispatch(t *testing.T) {
@@ -350,7 +342,8 @@ func exchangeRunnerRaw(t *testing.T, server runner, request []byte) []byte {
 		_ = clientWriter.Close()
 		_ = clientReader.Close()
 		select {
-		case <-done:
+		case err := <-done:
+			t.Logf("MCP server returned %v", err)
 		default:
 		}
 	})

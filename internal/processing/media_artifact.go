@@ -209,7 +209,7 @@ func (service *Service) importRemoteRecordingMedia(
 	if owned {
 		defer func() { _ = staged.Close() }()
 	}
-	record, err := media.InspectCapability(staged, remoteRecordingInspectionPolicy(request.Filename,
+	record, err := media.InspectCapability(ctx, staged, remoteRecordingInspectionPolicy(request.Filename,
 		request.MediaType, request.SHA256, request.ByteLength, limit, video))
 	if err != nil {
 		return MediaReceipt{}, err

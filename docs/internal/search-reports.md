@@ -42,7 +42,7 @@ evidence. A separate current-version preflight cannot replace that check.
 Missing, trashed, or replaced versions reject the whole run as
 `report_selection_changed`. Availability is checked across the whole set before
 classifying a wrong hash on a matching current version as an invalid request.
-Equal bytes under a new version ID still conflict.
+Equal bytes under a new version ID still conflict. The read-only selection endpoint compares the selected identities in one snapshot for the drawer; report creation repeats admission after the user chooses replacements.
 
 Names, paths, tags, relationships, and processing evidence are observed during
 capture. Metadata-only changes do not replace selected content identity.
@@ -169,10 +169,11 @@ local delivery.
 
 ## Inspect current evidence separately
 
-CLI coverage and rendition windows use the daemon's executable-profile
-inventory. Reports can use retained evidence under a configured profile omitted
-from that inventory. A profile lookup failure therefore does not prove that
-retained evidence is missing or justify starting processing.
+CLI coverage uses the daemon's executable-profile inventory. A window without
+a profile selects the sole readable active rendition, including retained text
+from profiles whose runtime is unavailable or whose configuration changed.
+Multiple readable renditions require an explicit profile or attachment choice.
+Reports can also use retained evidence under a configured profile.
 
 Coverage submits exactly one requested version and preserves every returned
 class counter. Stale or unavailable coverage is successful diagnostic output;

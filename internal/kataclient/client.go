@@ -23,8 +23,6 @@ const (
 	operationTimeout = 10 * time.Second
 	maxRequestBytes  = 1 << 20
 	maxResponseBytes = 2 << 20
-	// maxSupportedSchemaMinor is verified against Kata v0.20.0.
-	maxSupportedSchemaMinor = 31
 )
 
 type Issue struct {
@@ -46,7 +44,7 @@ type Error struct {
 
 // SupportedSchemaRange describes the Kata API schemas accepted by this client.
 func SupportedSchemaRange() string {
-	return fmt.Sprintf("0.21.0 through 0.%d.x", maxSupportedSchemaMinor)
+	return ">=0.21.0, <1.0.0"
 }
 
 func (e *Error) Error() string {
@@ -449,7 +447,7 @@ func supportedSchema(version string) bool {
 		}
 		numbers[i] = n
 	}
-	if numbers[0] != 0 || numbers[1] > maxSupportedSchemaMinor {
+	if numbers[0] != 0 {
 		return false
 	}
 	if numbers[1] > 21 {

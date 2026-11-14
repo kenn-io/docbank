@@ -173,8 +173,11 @@ deadline and qualified renderer's 300 DPI, 512 MiB WASM and 1 GiB process-RSS
 limits apply. Evidence size is not a peak-memory bound.
 
 RSS refusals preserve a typed cause with observed and allowed byte counts in
-daemon diagnostics. A live request receives 503 `redaction_preparation_memory`;
-an internal deadline receives 503 `redaction_preparation_worker_timeout`.
+daemon diagnostics. On macOS the ceiling measures the process's physical
+footprint. macOS keeps memory the Go runtime has returned in resident size, so
+that value would not fall after the worker frees memory before refusing a job.
+A live request receives 503 `redaction_preparation_memory`; an internal
+deadline receives 503 `redaction_preparation_worker_timeout`.
 Only the original request context selects 408 cancellation or 504 timeout.
 A stopped service or missing runtime returns 503 unavailable; a second request
 returns 503 busy. Limit and unsupported-source refusals are 422, stale selection
@@ -190,7 +193,7 @@ qualifies normalized evidence, including fractional-position Courier text.
 
 ### Native-PDF mask execution
 
-The API-key-only resolve and render routes admit a live file's exact retained
+The resolve and plain render routes admit a live file's exact retained
 version, hash and size. They do not require the observed node revision.
 Preparation still checks its own requested revision. The preparation and review
 digests use typed projections that exclude revisions; observed/admitted revisions
@@ -335,9 +338,9 @@ Authenticated preview routes are under `/api/v1/redaction/previews`:
 The random 48-hex ID is never authority by itself. Unknown, expired, retired and
 other-owner previews return 410 `redaction_preview_unavailable`. Confirmation
 mismatch is 409 `redaction_review_changed`; an occupied cache is 503
-`redaction_preview_busy`. Only prepare, resolve and these preview operations are
-added to browser admission. Query parameters are refused. Direct render and
-reservations remain API-key-only.
+`redaction_preview_busy`. Browser admission covers prepare, resolve, these preview
+operations, and the separate reservation/publication routes. Query parameters are
+refused. The generic ZIP render remains API-key-only.
 
 One mutex protects a global building, ready or retired entry awaiting readers or
 cleanup. Ready publication is fenced against session revocation. It releases the native-PDF
@@ -368,8 +371,9 @@ ceiling. PNGs are capped at 128 MiB each and 1 GiB total; the ZIP at 544 MiB.
 | Packaging | 2,080 MiB plus bounded text/receipt: PNGs, PDF and ZIP |
 | Ready | 1,568 MiB: PNGs and ZIP only |
 
-One ready preview plus another native operation may use about 3.7 GiB. These
-are file-payload bounds, not a global disk quota; tmpfs space is outside process
+One ready preview plus another native operation may use about 3.7 GiB. A ready
+recipient package adds up to 512 MiB, bringing the combined bound to about
+4.2 GiB. These are file-payload bounds, not a global disk quota; tmpfs space is outside process
 RSS accounting. Preview handles, masks and reviews are not persisted to SQLite.
 The browser keeps the original's verified bytes in one EmbedPDF reader during
 reading and review. Original downloads use the latest observed node revision.
@@ -395,6 +399,27 @@ Returning to reading restores its zoom mode, including Fit width and Automatic,
 so the page continues to fit when the window resizes. Keyboard arrow movement
 accounts for viewing rotation before updating physical mask coordinates.
 
+Completed one-page text selections use exact run contexts, prefixes and suffixes
+from the reader's permission-checked text API. Each full context must occur once
+in both complete page extracts. Matching uses literal Unicode, never browser
+glyph coordinates or indexes as native offsets. Native UTF-8 spans must contain
+whole server atoms. The resolver derives their physical masks; the browser draws
+the same native atom boxes. Exact selected whitespace can join adjacent spans;
+reversed native order leaves separate selectors grouped only in the editor.
+Ambiguity and disagreement refuse the entire addition, with rectangle/page
+marking still available.
+
+Selection work is bounded to one page, 32 contexts/spans, 4,096 browser glyph
+positions, 64 KiB of context/separator text and 1 MiB per page extract. There is
+one extraction task; generation, document, map, range and decoded-page checks
+prevent stale results from becoming masks. Page/zoom/rotation changes, selected
+page readiness loss, mode changes and disposal cancel transient selections.
+Text selectors consume mask slots but no input boxes. On explicit approval of a
+multi-span expansion, the browser constructs a rectangle selector from the
+server's checked `expanded_boxes`. It retains whitespace between glyphs and
+uses the shared 1,024-box budget. No normalization or geometry fallback is used
+when matching selections.
+
 Redacted keeps one server PNG URL, verifies its length/hash and header before
 decode, and binds its frame to preparation. These are the images checked against
 the delivered PDF. Text is compared with the resolved runs.
@@ -412,6 +437,29 @@ keep the original reader and masks; a changed version blocks new output.
 
 ### Retained numbered native PDFs
 
+Browser publication uses `POST /api/v1/redaction/publications`, with the reviewed
+preparation, masks, review digest and required numbered allocation ID. It owns
+the shared native slot for at most ten minutes and calls the same admission,
+snapshot capture, render and first-winner publication pipeline as CLI rendering.
+It returns the existing export detail without packaging a ZIP or retaining page
+images. Body reads have a finite 60-second deadline, cleared before publication.
+Completed retries use the first verified retained PDF without a page runtime.
+Cleanup failure after commit is logged without reporting a failed publication.
+
+`GET /api/v1/bates/namespaces/{id}` reads the namespace and its advisory
+`next_sequence` together. The cursor is separate from immutable namespace objects
+embedded in recipes and receipts. It includes reserved and skipped numbers; it
+is not a global free-range guarantee. A missing or invalid cursor fails rather
+than defaulting to one. An exhausted cursor is `10^padding`. This read makes no
+snapshot, reservation or native operation and returns `private, no-store`.
+
+Browser gates allow only the exact namespace-detail GET and named reservation
+and publication POSTs without query parameters. Frozen numbering inputs and their
+controller live independently of temporary previews. Expiry removes preview
+assets but does not abort publication or change the confirmed start. The existing
+preview storage allowance remains in force alongside publication staging. There
+is no retained browser draft or implicit storage of private review files.
+
 A numbered delivery uses the existing reservation ledger and a real sealed
 collection snapshot. The snapshot's sole member and occurrence name the original
 version, hash, size and source pages; `UnstampedSHA256` remains the original's
@@ -421,7 +469,7 @@ preparation, decisions and review digests, qualified renderer, namespace, explic
 start, pages, footer policy and indefinite original retention. Revisions are
 informational and excluded from this identity.
 
-The API-key-only `POST /api/v1/redaction/reservations` requires literal
+`POST /api/v1/redaction/reservations` requires literal
 `retain_original: true`. New requests validate the review, namespace range and
 footer fit before taking permanent authority. After fresh inspection, one store
 transaction checks for an existing operation, seals the snapshot, reserves the
@@ -472,9 +520,56 @@ bindings, independently of installed dependency versions. Current-engine
 qualification runs before creation, rendering or full verification; an engine
 mismatch is a verifier-version refusal, not an integrity claim. Presentation
 geometry is derived from the recorded footer without loading the installed font.
+
 The offline ZIP verifier derives the same expectations from its checked receipt.
 The receipt is not cryptographic proof of issuance, and neither scope proves
 unmasked pixels match the original.
+
+### Browser recipient packages
+
+`POST /api/v1/redaction/recipient-packages` takes one completed allocation and
+its preparation, masks and review digest. It checks the retained recipe and
+allocation against the review, pins the PDF and label-free text descriptors,
+and copies the verified retained blob under capture. `VerifySaved` checks that
+same handle against the reviewed plan and numbered presentation. The recipient
+writer and finished-archive checker then enforce the ordinary recipient-package
+contract. This path does not inspect or render the source, create a snapshot,
+reserve numbers, or publish a new artifact. It works without the page runtime.
+Unsupported verifier versions are refused before packaging.
+
+The POST has a 17 MiB body limit and a finite 60-second upload deadline, cleared
+after strict decoding. Building and delivery each have a ten-minute deadline.
+The response is at most 256 KiB and contains the checked receipt and an existing
+one-use web-download ticket. Browser code checks its single document against the
+completed delivery and independently hashes the approved UTF-8 text. ZIP bytes
+stream through the browser's download path, rather than a JavaScript buffer.
+The build POST is counted as a read by the browser transport. API-key clients
+can use the same build, release and ticket endpoints; CLI users can package
+multiple completed deliveries with `redaction package`.
+
+A separate, global one-entry store owns the package directory and verified ZIP
+handle. The native-operation slot is released when building finishes; the entry
+expires after two minutes if unused. An admitted transfer pins that handle and
+cancels expiry, with request, owner and service cancellation interrupting blocked
+socket writes. Only the ZIP remains when ready. `DELETE` on the build path
+cancels this owner's build or transfer, waits for it to stop, then removes its
+files. It answers 204 only after removal. Removal failure, or the 60-second
+request deadline expiring first, is reported as an error, and the browser keeps
+a release-retry state. Logout and shutdown revoke without waiting. Lost or
+ambiguous POST responses use a fresh owner-scoped DELETE before another attempt.
+There is no admission fence for a POST that has not reached the service yet;
+the single entry and expiry bound that race. Closing the review releases only
+its package, without revoking the browser session.
+
+As with previews, deletion failure retains files and capacity for retry. A
+retired entry releases lifecycle registration once creation and readers finish,
+independently of deletion success, so shutdown drains. Startup spool recovery
+removes abandoned `native-pdf-*` directories. A failed build can retain both its
+512 MiB PDF and 512 MiB ZIP, rather than only the ready ZIP. Together with a ready
+preview and a new native operation, this is at most 4,768 MiB of file payload.
+If preview cleanup also failed at its 2,176 MiB ceiling, the conservative combined
+bound is 5,376 MiB. These bounds are not a global disk quota; tmpfs storage is
+outside the RSS limit.
 
 The retained object is the PDF, not the ZIP or review inputs. Backup and restore
 retain its artifact records, number lookup and snapshot source. The original
@@ -518,7 +613,7 @@ The proof has two parts:
    ink. Any nonzero alpha is ink. A single inked alias makes that object's
    whitespace unproven, even if the alias is unused on the page.
 
-The child returns `docbank-page-inspect/v2`, `parser_identity: pdfcpu/v0.15.0`
+The child returns `docbank-page-inspect/v2`, `parser_identity: pdfcpu/v0.16.4`
 and one required `simple_fonts_only` boolean per page. Native inspection accepts
 these facts only for the exact staged source identity and ordered frames.
 Rebuild an older inspector and update its configured executable SHA-256 pin;

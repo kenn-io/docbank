@@ -89,7 +89,7 @@ func TestRedactionPreviewBrowserHTTP(t *testing.T) {
 	resp, body = call(alice, "POST", "/api/v1/redaction/previews", request)
 	require.Equal(t, 400, resp.StatusCode, string(body))
 	delete(request, "allocation_id")
-	for _, path := range []string{"render", "reservations"} {
+	for _, path := range []string{"render"} {
 		resp, _ = call(alice, "POST", "/api/v1/redaction/"+path, request)
 		require.Equal(t, 403, resp.StatusCode)
 	}

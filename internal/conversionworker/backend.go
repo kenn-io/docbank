@@ -78,11 +78,9 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 	slices.Sort(ids)
 	var item job
 	found := false
-	// Keep polling and retaining known work before admitting another backend
-	// submission. Random issued IDs must not let new uploads displace it.
 	for _, id := range ids {
 		j := w.jobs[id]
-		if j.BackendID != "" && (j.State == "pending" || j.State == "started") {
+		if j.State == "started" && time.Since(j.StartedAt) < w.options.StallAfter {
 			item, found = j, true
 			break
 		}
@@ -90,9 +88,18 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 	if !found {
 		for _, id := range ids {
 			j := w.jobs[id]
-			if j.State == "pending" || j.State == "started" {
+			if j.State == "pending" {
 				item = j
 				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		for _, id := range ids {
+			j := w.jobs[id]
+			if j.State == "started" {
+				item, found = j, true
 				break
 			}
 		}
@@ -149,11 +156,13 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 		var task struct {
 			ID    string `json:"task_id"`
 			State string `json:"task_status"`
+			Type  string `json:"task_type"`
 		}
-		if json.Unmarshal(body, &task) != nil || !validBackendID(task.ID) {
+		if json.Unmarshal(body, &task) != nil || !validBackendID(task.ID) || task.Type != "convert" {
 			return true, nil
 		}
 		item.BackendID = task.ID
+		item.StartedAt = time.Now().UTC()
 		item.State = "started"
 		if err := w.save(ctx, item); err != nil {
 			return true, err
@@ -178,8 +187,9 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 	var task struct {
 		ID    string `json:"task_id"`
 		State string `json:"task_status"`
+		Type  string `json:"task_type"`
 	}
-	if json.Unmarshal(body, &task) != nil || task.ID != item.BackendID {
+	if json.Unmarshal(body, &task) != nil || task.ID != item.BackendID || task.Type != "convert" {
 		item.State = "failure"
 		return true, w.save(ctx, item)
 	}

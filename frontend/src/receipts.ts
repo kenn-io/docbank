@@ -773,7 +773,6 @@ export function parseRenditionMarkdown(artifact: string) {
     throw new Error("The rendition frontmatter is incomplete or too large.");
   const frontmatter = artifact.slice(4, closing);
   const markdown = artifact.slice(closing + 5);
-  if (!markdown) throw new Error("The rendition Markdown body is empty.");
   const metadata = parseRenditionFrontmatter(frontmatter, markdown);
   const bodyHash = metadata.bodyHash;
   if (bytesToHex(sha256(utf8ToBytes(markdown))) !== bodyHash) {
@@ -878,6 +877,23 @@ function digestField(value: UnknownRecord, key: string): string {
   return field;
 }
 
+// An image-only PDF retains its page omissions under an empty body, as the Go
+// envelope writer permits for exactly this source shape.
+function omittedPDFEntries(docbank: UnknownRecord): [] {
+  const { source, rendition, document, navigation } = docbank as Record<string, UnknownRecord>;
+  if (
+    source!.format !== "pdf" ||
+    source!.media_type !== "application/pdf" ||
+    rendition!.completeness !== "partial" ||
+    document!.unit_kind !== "page" ||
+    document!.unit_count !== 0 ||
+    navigation!.complete !== true ||
+    navigation!.entries !== null
+  )
+    throw new Error("The rendition Markdown body is empty.");
+  return [];
+}
+
 function parseRenditionFrontmatter(
   frontmatter: string,
   markdown: string,
@@ -949,14 +965,14 @@ function parseRenditionFrontmatter(
     title: textField(documentValue, "title", true),
     language: textField(documentValue, "language", true),
     unitKind,
-    unitCount: integerField(documentValue, "unit_count", 1),
+    unitCount: integerField(documentValue, "unit_count", markdown ? 1 : 0),
   };
 
   const navigationValue = record(docbank.navigation, "navigation");
   exactKeys(navigationValue, ["offset_base", "complete", "entries"]);
   if (textField(navigationValue, "offset_base") !== "body")
     throw new Error("The rendition navigation offset base is invalid.");
-  const rawEntries = navigationValue.entries;
+  const rawEntries = markdown ? navigationValue.entries : omittedPDFEntries(docbank);
   if (
     !Array.isArray(rawEntries) ||
     rawEntries.length > 1024 ||

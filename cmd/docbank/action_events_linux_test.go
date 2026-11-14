@@ -86,6 +86,8 @@ func TestCLICompletedSearchAndContentActions(t *testing.T) {
 			assert.NoError(t, json.MarshalWrite(w, api.DocumentSimilarReport{State: "ready", Source: api.DocumentSimilarSource{NodeID: 42, ContentVersionID: version}, BindingID: "semantic", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}}))
 		case r.URL.Path == "/api/v1/search":
 			assert.NoError(t, json.MarshalWrite(w, api.SearchReport{Limit: 20, Hits: hits}))
+		case r.URL.Path == "/api/v1/search/text-coverage":
+			assert.NoError(t, json.MarshalWrite(w, api.SearchTextCoverage{Families: []string{}}))
 		case r.URL.Path == "/api/v1/nodes/42":
 			assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 42, Kind: kind, CurrentVersionID: version, BlobHash: hash, Size: int64(len(content))}))
 		case strings.HasSuffix(r.URL.Path, "/content"):

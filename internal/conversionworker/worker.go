@@ -29,6 +29,7 @@ import (
 
 const protocol = workerprotocol.Contract
 const overhead = int64(4096)
+const manifestVersion = 1
 
 // Options fixes a worker's private storage, authenticated backend and bounds.
 type Options struct {
@@ -41,10 +42,13 @@ type Options struct {
 	MaxJobs        int
 	MaxSpoolBytes  int64
 	PollInterval   time.Duration
+	StallAfter     time.Duration
 	Client         *http.Client
 }
 
 type job struct {
+	Version           int         `json:"version"`
+	StartedAt         time.Time   `json:"started_at"`
 	BackendOrigin     string      `json:"backend_origin"`
 	ID                string      `json:"id"`
 	Key               string      `json:"key"`
@@ -101,6 +105,9 @@ func Open(ctx context.Context, options Options) (_ *Worker, retErr error) {
 	if options.PollInterval == 0 {
 		options.PollInterval = 5 * time.Second
 	}
+	if options.StallAfter == 0 {
+		options.StallAfter = 2 * time.Hour
+	}
 	backend, err := url.Parse(options.BackendURL)
 	if err != nil || backend.Scheme != "http" || backend.User != nil || backend.Path != "" || backend.RawQuery != "" || backend.Fragment != "" {
 		return nil, errors.New("worker backend must be a numeric loopback root HTTP origin")
@@ -118,7 +125,7 @@ func Open(ctx context.Context, options Options) (_ *Worker, retErr error) {
 	if err != nil || !address.IsLoopback() {
 		return nil, errors.New("worker backend must be loopback")
 	}
-	if !filepath.IsAbs(options.Directory) || len(options.APIKey) < 16 || len(options.APIKey) > 4096 || options.BackendKey == "" || options.MaxSourceBytes <= 0 || options.MaxSourceBytes > 100<<20 || options.MaxResultBytes <= 0 || options.MaxResultBytes > 128<<20 || options.MaxJobs < 1 || options.MaxJobs > 128 || options.MaxSpoolBytes < overhead || options.MaxSpoolBytes > 40<<30 || options.PollInterval <= 0 || options.PollInterval > time.Minute {
+	if !filepath.IsAbs(options.Directory) || len(options.APIKey) < 16 || len(options.APIKey) > 4096 || options.BackendKey == "" || options.MaxSourceBytes <= 0 || options.MaxSourceBytes > 100<<20 || options.MaxResultBytes <= 0 || options.MaxResultBytes > 128<<20 || options.MaxJobs < 1 || options.MaxJobs > 128 || options.MaxSpoolBytes < overhead || options.MaxSpoolBytes > 40<<30 || options.PollInterval <= 0 || options.PollInterval > time.Minute || options.StallAfter <= 0 {
 		return nil, errors.New("worker configuration is outside bounds")
 	}
 	if _, err := os.Lstat(options.Directory); err == nil {
@@ -191,7 +198,7 @@ func Open(ctx context.Context, options Options) (_ *Worker, retErr error) {
 		if err := json.Unmarshal(data, &item, json.RejectUnknownMembers(true)); err != nil {
 			return nil, errors.New("invalid committed worker manifest")
 		}
-		if item.BackendOrigin != options.BackendURL || item.ID != entry.Name() || !isHex(item.Key, 64) || !isHex(item.SHA256, 64) || item.Bytes <= 0 || item.Bytes > options.MaxSourceBytes || item.Submissions < 0 || item.Submissions > 3 || !slices.Contains([]string{"pending", "started", "success", "failure"}, item.State) || !validBackendTaskStatus(item.BackendTaskStatus) || (item.BackendTaskStatus != "" && item.State != "success") || !validSubmission(item.MediaType, item.Fields) || !validFile(item.Filename, item.MediaType) || (item.BackendID != "" && (!validBackendID(item.BackendID) || item.Submissions == 0)) || (item.State == "started" && item.BackendID == "") || (item.State == "pending" && item.BackendID != "") {
+		if item.Version != manifestVersion || item.BackendOrigin != options.BackendURL || item.ID != entry.Name() || !isHex(item.Key, 64) || !isHex(item.SHA256, 64) || item.Bytes <= 0 || item.Bytes > 100<<20 || item.Submissions < 0 || item.Submissions > 3 || !slices.Contains([]string{"pending", "started", "success", "failure"}, item.State) || !validBackendTaskStatus(item.BackendTaskStatus) || (item.BackendTaskStatus != "" && item.State != "success") || !validSubmission(item.MediaType, item.Fields) || !validFile(item.Filename, item.MediaType) || (item.BackendID != "" && (!validBackendID(item.BackendID) || item.Submissions == 0)) || (item.State == "started" && item.BackendID == "") || (item.State == "pending" && item.BackendID != "") {
 			return nil, errors.New("worker manifest contract is invalid")
 		}
 		if _, exists := w.keys[item.Key]; exists {
@@ -201,7 +208,7 @@ func Open(ctx context.Context, options Options) (_ *Worker, retErr error) {
 			return nil, err
 		}
 		if item.State == "success" {
-			if item.ResultBytes <= 0 || item.ResultBytes > options.MaxResultBytes {
+			if item.ResultBytes <= 0 || item.ResultBytes > 128<<20 {
 				return nil, errors.New("worker result size is invalid")
 			}
 			if err := verifyPrivate(ctx, filepath.Join(path, "result.json"), item.ResultBytes, item.ResultSHA256); err != nil {
@@ -213,10 +220,8 @@ func Open(ctx context.Context, options Options) (_ *Worker, retErr error) {
 		}
 		w.jobs[item.ID] = item
 		w.keys[item.Key] = item.ID
-		w.used += w.reservation()
-	}
-	if len(w.jobs) > options.MaxJobs || w.used > options.MaxSpoolBytes {
-		return nil, errors.New("existing worker spool exceeds configured limits")
+		// The original limits are not stored, so retain the hard-cap reservation.
+		w.used += (100 << 20) + 2*(128<<20) + overhead
 	}
 	return w, nil
 }

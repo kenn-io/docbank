@@ -30,7 +30,7 @@ func TestWebMapConfiguration(t *testing.T) {
 	t.Parallel()
 	tiles := config.MapTilesConfig{TileURL: "https://tiles.example.org/{z}/{x}/{y}.png?key=synthetic-provider-key", Attribution: `<img src=x onerror="alert(1)">`, MaxZoom: 19}
 	mux := http.NewServeMux()
-	registerWeb(mux, true, "http://localhost:8080", "", tiles, nil)
+	registerWeb(mux, true, "http://localhost:8080", "", "", tiles, nil)
 	paths := []string{"/", "/photos", "/photos/map", "/photos/map/22222222-2222-4222-8222-0000000000aa"}
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
@@ -55,7 +55,7 @@ func TestWebMapConfiguration(t *testing.T) {
 	mux.ServeHTTP(invalid, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/photos/map/invalid", nil))
 	require.Equal(t, http.StatusNotFound, invalid.Code)
 	mux = http.NewServeMux()
-	registerWeb(mux, true, "http://localhost:8080", "", config.MapTilesConfig{}, nil)
+	registerWeb(mux, true, "http://localhost:8080", "", "", config.MapTilesConfig{}, nil)
 	for _, path := range paths {
 		disabled := httptest.NewRecorder()
 		mux.ServeHTTP(disabled, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))

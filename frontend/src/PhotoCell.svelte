@@ -106,17 +106,20 @@
       document.removeEventListener("pointercancel", cancel, true);
     };
   });
+  const assetID = $derived(photo.asset_id);
+  const previewState = $derived(photo.previews.grid.state);
+  const generationID = $derived(photo.previews.grid.generation_id);
+  const previewCache = $derived(cache);
   $effect(() => {
-    const slot = photo.previews.grid;
     void retry;
     url = "";
     failed = false;
     errorMessage = "";
-    if (slot.state !== "ready" || !slot.generation_id) return;
+    if (previewState !== "ready" || !generationID) return;
     return previewObjectURL(
-      cache,
-      photo.asset_id,
-      slot.generation_id,
+      previewCache,
+      assetID,
+      generationID,
       (value) => (url = value),
       (cause) => {
         failed = true;

@@ -2,12 +2,12 @@ package config
 
 import (
 	"errors"
-	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"go.kenn.io/kit/embedconfig"
 	"go.kenn.io/kit/secretref"
 )
 
@@ -20,12 +20,13 @@ type IntegrationsConfig struct {
 //
 //nolint:recvcheck // TOML decoding mutates config; resolving a connection leaves it unchanged.
 type KataConfig struct {
-	Enabled        bool   `toml:"enabled"`
-	Endpoint       string `toml:"endpoint"`
-	APIKeyEnv      string `toml:"api_key_env"`
-	APIKeyFile     string `toml:"api_key_file"`
-	DefaultProject string `toml:"default_project"`
-	decodeInvalid  bool
+	Enabled             bool   `toml:"enabled"`
+	Endpoint            string `toml:"endpoint"`
+	APIKeyEnv           string `toml:"api_key_env"`
+	APIKeyFile          string `toml:"api_key_file"`
+	DefaultProject      string `toml:"default_project"`
+	TrustPrivateNetwork bool   `toml:"trust_private_network"`
+	decodeInvalid       bool
 }
 
 // UnmarshalTOML defers shape errors in this optional section until a Kata operation.
@@ -36,9 +37,13 @@ func (k *KataConfig) UnmarshalTOML(value any) error {
 		return nil
 	}
 	for field, value := range table {
-		if field == "enabled" {
+		if field == "enabled" || field == "trust_private_network" {
+			target := &k.Enabled
+			if field == "trust_private_network" {
+				target = &k.TrustPrivateNetwork
+			}
 			var valid bool
-			k.Enabled, valid = value.(bool)
+			*target, valid = value.(bool)
 			k.decodeInvalid = k.decodeInvalid || !valid
 			continue
 		}
@@ -82,11 +87,12 @@ func (k KataConfig) Resolve(root string) (KataConnection, error) {
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" ||
 		u.Opaque != "" || u.RawPath != "" || u.Path != "" && u.Path != "/" ||
 		u.Scheme != "https" && u.Scheme != "http" {
-		return KataConnection{}, errors.New("integrations.kata: invalid endpoint; use HTTPS or loopback HTTP")
+		return KataConnection{}, errors.New("integrations.kata: invalid endpoint; omit credentials, query, fragment, and path beyond /; use HTTPS, loopback HTTP, or trusted private HTTP with trust_private_network = true")
 	}
-	if ip := net.ParseIP(u.Hostname()); u.Scheme == "http" &&
-		!strings.EqualFold(u.Hostname(), "localhost") && (ip == nil || !ip.IsLoopback()) {
-		return KataConnection{}, errors.New("integrations.kata: HTTP endpoint must be loopback")
+	if u.Scheme == "http" {
+		if _, err := embedconfig.CanonicalEndpoint(u.String(), k.TrustPrivateNetwork); err != nil {
+			return KataConnection{}, errors.New("integrations.kata: HTTP endpoint must be loopback or, with trust_private_network = true, on a trusted private network; public IPs require HTTPS; a hostname is required")
+		}
 	}
 	if (k.APIKeyEnv == "") == (k.APIKeyFile == "") {
 		return KataConnection{}, errors.New("integrations.kata: select exactly one of api_key_env or api_key_file")

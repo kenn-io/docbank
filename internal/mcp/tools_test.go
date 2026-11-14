@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,10 +21,114 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+const (
+	defaultToolCatalogBudget  = 150_000
+	allWriteToolCatalogBudget = 235_000
+)
+
+func listCatalogThroughClient(t *testing.T, server *Server) *sdkmcp.ListToolsResult {
+	t.Helper()
+	ct, st := sdkmcp.NewInMemoryTransports()
+	ss, err := server.sdk.Connect(t.Context(), st, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, ss.Close()) })
+	cs, err := sdkmcp.NewClient(testImplementation(), nil).Connect(t.Context(), ct, &sdkmcp.ClientSessionOptions{ProtocolVersion: ProtocolVersion})
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, cs.Close()) })
+	result, err := cs.ListTools(t.Context(), nil)
+	require.NoError(t, err)
+	require.Empty(t, result.NextCursor, "catalog budget must cover every tool")
+	return result
+}
+
+func catalogJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false) // Match the SDK's JSON-RPC encoder.
+	require.NoError(t, encoder.Encode(value))
+	return bytes.TrimSuffix(buffer.Bytes(), []byte("\n"))
+}
+
+func catalogWireJSON(t *testing.T, server *Server) json.RawMessage {
+	t.Helper()
+	var wire struct {
+		Result json.RawMessage `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal(exchangeRaw(t, server, requestFor("tools/list", nil)), &wire))
+	return wire.Result
+}
+
+func toolCatalogBudgetError(t *testing.T, result *sdkmcp.ListToolsResult, ceiling int) error {
+	t.Helper()
+	// Measure compact JSON of the complete client-decoded result.
+	data := catalogJSON(t, result)
+	if len(data) <= ceiling {
+		return nil
+	}
+	var details strings.Builder
+	fmt.Fprintf(&details, "tool catalog: %d bytes exceeds %d-byte budget", len(data), ceiling)
+	for _, tool := range result.Tools {
+		data := catalogJSON(t, tool)
+		fmt.Fprintf(&details, "\n%s: %d bytes", tool.Name, len(data))
+	}
+	return errors.New(details.String())
+}
+
+func TestToolCatalogBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		options ServerOptions
+		ceiling int
+	}{
+		{name: "default", ceiling: defaultToolCatalogBudget},
+		{name: "all writes", ceiling: allWriteToolCatalogBudget, options: ServerOptions{
+			AllowProcessing: true, AllowPackageWrites: true, AllowPhotoEdits: true,
+			AllowExportWrites: true, AllowReportWrites: true, AllowKataWrites: true,
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := NewServerWithOptions(tc.options)
+			result := listCatalogThroughClient(t, server)
+			require.Len(t, catalogJSON(t, result), len(catalogWireJSON(t, server)))
+			require.NoError(t, toolCatalogBudgetError(t, result, tc.ceiling))
+		})
+	}
+}
+
+func TestToolCatalogBudgetRejectsOversize(t *testing.T) {
+	server := NewServerWithOptions(ServerOptions{})
+	baseline := listCatalogThroughClient(t, server)
+	// Replace a description so the fixture needs no spare bytes in the production catalog.
+	fixture := *baseline.Tools[0]
+	fixture.Description = "<>&"
+	register := func() {
+		server.sdk.AddTool(&fixture, func(context.Context, *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
+			return &sdkmcp.CallToolResult{}, nil
+		})
+	}
+	register()
+	data := catalogJSON(t, listCatalogThroughClient(t, server))
+	fixture.Description += strings.Repeat("x", defaultToolCatalogBudget+1-len(data))
+	register()
+	result := listCatalogThroughClient(t, server)
+	data = catalogJSON(t, result)
+	require.Len(t, data, defaultToolCatalogBudget+1)
+	wire := catalogWireJSON(t, server)
+	require.Len(t, wire, defaultToolCatalogBudget+1)
+	err := toolCatalogBudgetError(t, result, defaultToolCatalogBudget)
+	require.ErrorContains(t, err, fmt.Sprintf("%d bytes exceeds %d-byte budget", defaultToolCatalogBudget+1, defaultToolCatalogBudget))
+	var catalog struct {
+		Tools []json.RawMessage `json:"tools"`
+	}
+	require.NoError(t, json.Unmarshal(wire, &catalog))
+	require.ErrorContains(t, err, fmt.Sprintf("%s: %d bytes", fixture.Name, len(catalog.Tools[0])))
+}
+
 func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 	tools := toolCatalog(ServerOptions{})
 	wantNames := []string{
-		"read_document_content",
+		"read_document_content", "get_original_download_url",
 		"resolve_text_citation", "check_answer", "get_text_outline", "read_text_section",
 		"get_kata_context",
 		"get_export_plan", "get_export_problems",
@@ -44,7 +149,7 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		assert.Equal(t, wantNames[index], tool.Name)
 		require.NotNil(t, tool.Annotations)
 		assert.True(t, tool.Annotations.ReadOnlyHint)
-		assert.True(t, tool.Annotations.IdempotentHint)
+		assert.Equal(t, tool.Name != "get_original_download_url", tool.Annotations.IdempotentHint)
 		assert.Equal(t, new(false), tool.Annotations.DestructiveHint)
 		assert.Equal(t, new(tool.Name == "get_kata_context" || tool.Name == "search_documents" || tool.Name == "answer_question"), tool.Annotations.OpenWorldHint)
 		assertSchemaContract(t, tool.InputSchema)
@@ -236,6 +341,8 @@ func TestToolSchemasPinInputsBoundsAndStableIdentities(t *testing.T) {
 		}}, "ttlMs": 0, "cacheScope": "private",
 	})
 
+	assertSchemaRejects(t, tools["find_conflicts"].InputSchema, map[string]any{"query": "refund", "filters": map[string]any{}})
+
 	search := tools["search_documents"]
 	assertSchemaAccepts(t, search.InputSchema, map[string]any{
 		"query": "synthetic", "profile": "local", "content_version_ids": []any{"00000000-0000-4000-8000-000000000007"},
@@ -260,7 +367,7 @@ func TestToolSchemasPinInputsBoundsAndStableIdentities(t *testing.T) {
 		"query": "synthetic", "profile": "local", "filters": map[string]any{"modified_since": "not-a-date"},
 	})
 
-	scopedOutput := map[string]any{"vault_id": testVaultID, "requested_mode": "hybrid", "actual_mode": "hybrid",
+	scopedOutput := map[string]any{"profile": "local", "vault_id": testVaultID, "requested_mode": "hybrid", "actual_mode": "hybrid",
 		"coverage":        map[string]any{"binding_required": true, "scoped_documents": 5000, "complete_documents": 5000, "state": "complete"},
 		"skipped_reasons": []any{}, "results": []any{}, "truncated": false, "ttlMs": 0, "cacheScope": "private"}
 	assertSchemaAccepts(t, search.OutputSchema, scopedOutput)

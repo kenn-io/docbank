@@ -101,7 +101,9 @@ func resetFlags(c *cobra.Command) {
 
 func setupVaultHome(t *testing.T) string {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
@@ -767,7 +769,7 @@ func TestRefsFindsCurrentHistoricalAndTrashedContent(t *testing.T) {
 
 	out, err = runCLI(t, "refs", strings.Repeat("f", 64))
 	require.NoError(t, err, out)
-	assert.Equal(t, "no authoritative references\n", out)
+	assert.Equal(t, "no document versions found for this content hash on this page\n", out)
 	_, err = runCLI(t, "refs", "ABC")
 	require.ErrorContains(t, err, "canonical lowercase SHA-256")
 	_, err = runCLI(t, "refs", hash, "--limit", "0")
@@ -822,13 +824,34 @@ func requireJob(t *testing.T, list api.JobList, name string) api.Job {
 // when nothing configured keeps the daemon alive.
 const idleTimeoutJob = "daemon.idle-timeout"
 
-func TestBackgroundDaemonWatchesForIdleShutdown(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("DOCBANK_HOME", home)
-	t.Setenv(daemonconn.EnvBackgroundDaemon, "1")
-	startTestDaemon(t, home)
-	assert.Equal(t, "running", requireJob(t, daemonJobs(t), idleTimeoutJob).Status,
-		"a background daemon with nothing to keep it alive exits after idle_timeout")
+func TestIdleWatchArmedOnlyForAutomaticBackgroundDaemons(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		background bool
+		persistent bool
+	}{
+		{name: "automatic", background: true},
+		{name: "explicit", background: true, persistent: true},
+		{name: "foreground"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("DOCBANK_HOME", home)
+			if tc.background {
+				t.Setenv(daemonconn.EnvBackgroundDaemon, "1")
+			} else {
+				t.Setenv(daemonconn.EnvBackgroundDaemon, "")
+			}
+			t.Setenv(daemonconn.EnvPersistentDaemon, strconv.FormatBool(tc.persistent))
+			startTestDaemon(t, home)
+			jobs := daemonJobs(t)
+			_, watched := jobNamed(jobs, idleTimeoutJob)
+			assert.Equal(t, tc.background && !tc.persistent, watched, "only automatic background daemons have an idle timeout")
+			if tc.background && !tc.persistent {
+				assert.Equal(t, "running", requireJob(t, jobs, idleTimeoutJob).Status)
+			}
+		})
+	}
 }
 
 func TestConfiguredBackupsCaptureAndKeepDaemonAlive(t *testing.T) {

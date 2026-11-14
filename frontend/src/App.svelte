@@ -1,5 +1,6 @@
 <script lang="ts">
-  import VaultDrawer from "./VaultDrawer.svelte";
+  import { webURL, webPath } from "./web-path.js";
+  import VaultDrawer, { type SearchByMeaningSetup } from "./VaultDrawer.svelte";
   import TelemetryNotice from "./TelemetryNotice.svelte";
   import ToolPage from "./ToolPage.svelte";
   import ExportMenu from "./ExportMenu.svelte";
@@ -41,6 +42,7 @@
     MenuItem,
     MenuTrigger,
     Modal,
+    SearchByMeaningHint,
     SearchInput,
     FormField,
     SelectDropdown,
@@ -52,6 +54,7 @@
     ROOT_SCOPE,
     createShortcutManager,
     formatShortcutKeys,
+    type MenuAlign,
     type SortDirection,
   } from "@kenn-io/kit-ui";
   import AuditHistoryDrawer from "./AuditHistoryDrawer.svelte";
@@ -137,7 +140,7 @@
   import { parseNodeVersionLink, resolveNodeVersionLink } from "./nodeVersionLink.js";
   import { APIError, isCurrentSessionError, mutationsInFlight } from "./api-transport.js";
   import { changeNodeTag, documentSearch, liveNodeTags } from "./receipts.js";
-  import { takeFragmentSession, type BrowserSession } from "./browser-session.js";
+  import { rememberSession, takeFragmentSession, type BrowserSession } from "./browser-session.js";
   import { getSignInStatus, signIn, tabSession } from "./web-login.js";
   import { startTelemetryReporting } from "./app-opened.js";
   import { startSessionReporting } from "./session-duration.js";
@@ -190,6 +193,8 @@
     type TagHotkeyBindings,
   } from "./tag-hotkeys.js";
   import { VerifiedUploadChannel } from "./upload.js";
+  import UploadChannelNotice from "./UploadChannelNotice.svelte";
+  import { UploadReconnect, type UploadConnectionState } from "./uploadReconnect.js";
   import {
     evidenceKindLabels,
     naturalSearchFallbackNote,
@@ -240,6 +245,7 @@
           | "trash"
           | "tagCatalog"
           | "telemetry"
+          | "searchByMeaning"
           | "photoImport";
       }
     | {
@@ -273,6 +279,7 @@
     upload: "upload",
     mailbox: "mailbox",
     loadFile: "load_file",
+    searchByMeaning: null,
     photoImport: null,
   };
 
@@ -392,7 +399,7 @@
     isMapPath(path) ||
     ["/photos", "/photos/hidden", "/photos/albums", "/photos/people"].includes(path) ||
     path.startsWith("/photos/albums/");
-  let photoMode = $state(isPhotoPath(location.pathname));
+  let photoMode = $state(isPhotoPath(webPath()));
   let openedPhotos = false;
   $effect(() => {
     if (photoMode) openedPhotos = true;
@@ -429,7 +436,7 @@
       window.removeEventListener("pageshow", resume);
     };
   });
-  let photoPath = $state(location.pathname);
+  let photoPath = $state(webPath());
   $effect(() => {
     void photoPath;
     void photoMode;
@@ -482,7 +489,7 @@
   const photoNavigation = photoNavigationGuard((url) => {
     const id = new URLSearchParams(url.hash.slice(1)).get("photo") ?? "";
     return (
-      (url.pathname !== photoPath || id !== photoID) &&
+      (webPath(url.pathname) !== photoPath || id !== photoID) &&
       photoMode &&
       !!retainedPhotoEditor() &&
       !retainedPhotoEditor()!.canChangeTarget()
@@ -490,9 +497,9 @@
   });
   onMount(() => photoNavigation.listen());
   function pushPhotoHistory(state: Record<string, unknown> | null, url: string) {
-    photoNavigation.push(state, url);
+    photoNavigation.push(state, webURL(url));
     nodeVersionHash = location.hash;
-    if (!isPhotoPath(location.pathname)) docsPage = pageAt(location.pathname);
+    if (!isPhotoPath(webPath())) docsPage = pageAt(webPath());
   }
   function guardPhotoUnload(event: BeforeUnloadEvent) {
     if (!photoMode || !retainedPhotoEditor()?.dirty) return;
@@ -508,7 +515,7 @@
       ? (path.slice(1) as DocsPage)
       : null;
   }
-  let docsPage = $state(pageAt(location.pathname));
+  let docsPage = $state(pageAt(webPath()));
   const docsScreens = {
     searches: "saved_queries",
     productions: "bates",
@@ -524,10 +531,10 @@
   function syncPhotoLocation() {
     if (photoNavigation.blocked()) return;
     nodeVersionHash = location.hash;
-    if (!isPhotoPath(location.pathname)) docsPage = pageAt(location.pathname);
+    if (!isPhotoPath(webPath())) docsPage = pageAt(webPath());
     clearPhotoNotice();
     const id = new URLSearchParams(location.hash.slice(1)).get("photo") ?? "",
-      path = location.pathname;
+      path = webPath();
     const showing = photoMode && path === photoPath;
     // Album views are recreated when their path changes, so only the open album can keep a return record.
     const photos =
@@ -886,7 +893,8 @@
     ].filter((photos): photos is Photos => !!photos);
     // The People directory reloads on return, so only an open one refreshes.
     const people = photoPath === "/photos/people" ? peopleView : undefined;
-    if (lists.some((photos) => photos.loading) || people?.loading) return false;
+    if (lists.some((photos) => photos.loading) || people?.loading || people?.suggestions.loading)
+      return false;
     // Documents show the same files, so they reload when the user returns to them.
     pendingPhotoDocuments = true;
     for (const photos of lists)
@@ -900,6 +908,7 @@
         people?.refresh(),
       ]);
       listRefreshed = true;
+      if (people?.suggestions.error) throw new Error(people.suggestions.error);
     } finally {
       // A viewer's unavailable result must land after any older list rows.
       await settleReads(lists.map((photos) => photos.changed({ ...change, listRefreshed })));
@@ -1050,7 +1059,7 @@
       return;
     clearPhotoNotice();
     navOpen = false;
-    if (photoMode && path === photoPath && path === location.pathname && !photoID) return;
+    if (photoMode && path === photoPath && path === webPath() && !photoID) return;
     if (!photoMode || path !== photoPath) void invalidateLibrary(false);
     if (path !== photoPath) revalidatedChangeID = null;
     hiddenPhotoActionError = "";
@@ -1095,6 +1104,15 @@
   }
   let uploadChannel = $state<VerifiedUploadChannel | null>(null);
   let uploadChannelError = $state("");
+  let uploadConnectionState = $state<UploadConnectionState>("connecting");
+  let uploadReconnect: UploadReconnect | undefined;
+  let reconnectFocus: Element | null = null;
+  let reconnectFocusPending = false;
+  const reconnectUpload = (): void => {
+    reconnectFocus = document.activeElement?.closest('[role="dialog"]') ?? null;
+    reconnectFocusPending = !!document.activeElement?.matches(".notice button");
+    uploadReconnect?.retry();
+  };
   let directory = $state<Node | null>(null);
   let rows = $state<Row[]>([]);
   let stack = $state<Snapshot[]>([]);
@@ -1167,6 +1185,12 @@
   let naturalRerank = $state(false);
   let naturalSearchNote = $state("");
   let naturalProfilesError = $state("");
+  let naturalProfilesLoaded = $state(false);
+  // Shown as the shared Turn on hint rather than as text.
+  const searchByMeaningOff = "Search by meaning is off";
+  // Setup can outlast the drawer, so its request and result belong to the session.
+  let localText = $state<SearchByMeaningSetup>({ readError: "", pending: false, error: "" });
+  let localTextRead: AbortController | undefined;
   let naturalRerankPending = $state(false);
   let naturalProfileDefaultPending = $state<{ request: number; session: string } | null>(null);
   let profileGeneration = 0;
@@ -1229,6 +1253,13 @@
   const snapshotActive = $derived(snapshot.state.status !== "idle");
   const tagBrowse = $derived(activeTagID !== "" && activeQuery === "");
   const panelScreen = $derived(activePanel ? panelScreens[activePanel.kind] : null);
+  // Upload drawers show their own channel notice, so the page banner would repeat it.
+  const uploadBannerVisible = $derived(
+    (uploadConnectionState === "failed" ||
+      uploadConnectionState === "manual" ||
+      uploadConnectionState === "fatal") &&
+      !(activePanel && ["photoImport", "upload", "mailbox", "loadFile"].includes(activePanel.kind)),
+  );
   const visibleScreen = $derived<generated.TelemetryEventPropertiesScreen>(
     shortcutHelpOpen
       ? "help"
@@ -1350,6 +1381,7 @@
     selectedSnapshotRows.map((row) => ({
       node_id: row.node_id,
       revision: snapshotTargetRevision(row, snapshot.overlays),
+      name: row.path,
     })),
   );
   const allVisibleSnapshotRowsSelected = $derived(
@@ -1373,6 +1405,7 @@
     sortedRows.filter((row) => row.node.kind === "file").length,
   );
   const showingResults = $derived(activeQuery !== "" || tagBrowse);
+  const emptyRoot = $derived(!showingResults && directory?.path === "/");
   const columns = $derived(
     snapshotActive
       ? resultColumns(snapshotResultsWidth, { match: false, actions: false })
@@ -1571,6 +1604,7 @@
   });
 
   function activateBrowserSession(session: BrowserSession, keyLogin = false): void {
+    rememberSession(keyLogin ? null : session);
     disposeBrowserSession?.();
     webSession = session.token;
     hasProductions = false;
@@ -1584,28 +1618,51 @@
     const reporter = startTelemetryReporting(session.token);
     telemetryReporting = reporter;
     sessionReporting = startSessionReporting(reporter);
-    const channel = new VerifiedUploadChannel(session, undefined, () => {
-      if (uploadChannel !== channel) return;
-      uploadChannelError = keyLogin
-        ? "The verified upload channel ended. Reload and sign in again before selecting more files."
-        : "The verified upload channel ended. Run `docbank web` again before selecting more files.";
+    uploadConnectionState = "connecting";
+    reconnectFocusPending = false;
+    reconnectFocus = null;
+    const reconnect = new UploadReconnect(session, (state, channel, cause) => {
+      if (!mounted || webSession !== session.token) return;
+      uploadConnectionState = state;
+      if (state === "connected" && channel) {
+        uploadChannel = channel;
+        uploadChannelError = "";
+        if (reconnectFocusPending) {
+          const target = reconnectFocus;
+          reconnectFocus = null;
+          reconnectFocusPending = false;
+          void tick().then(() => {
+            if (!mounted || webSession !== session.token) return;
+            if (!target) {
+              if (document.querySelector('[role="dialog"]')) return;
+              document.querySelector<HTMLElement>(".document-add-trigger")?.focus();
+              return;
+            }
+            if (!target.isConnected) return;
+            target
+              .querySelector<HTMLElement>(
+                ".chooser button:not(:disabled), .controls button:not(:disabled), .tool-body button:not(:disabled)",
+              )
+              ?.focus();
+          });
+        }
+      } else if (state === "fatal") {
+        if (cause instanceof APIError && (cause.status === 401 || cause.status === 403)) {
+          handleFailure(new APIError("Browser session rejected", 401, ""));
+        } else uploadChannelError = cause instanceof Error ? cause.message : String(cause);
+      } else if (state === "failed" || state === "manual") {
+        uploadChannelError = "Upload channel disconnected. Choose Reconnect.";
+      } else if (state === "reconnecting") uploadChannelError = "Reconnecting upload channel";
     });
-    void channel.connect().then(
-      () => {
-        if (mounted && webSession === session.token) uploadChannel = channel;
-        else channel.close();
-      },
-      (cause) => {
-        if (mounted && webSession === session.token)
-          uploadChannelError = cause instanceof Error ? cause.message : String(cause);
-      },
-    );
+    uploadReconnect = reconnect;
+    reconnect.start();
     const reporting = sessionReporting;
     disposeBrowserSession = () => {
       reporting.stop();
       reporter.stop();
       telemetryReporting = undefined;
-      channel.close();
+      reconnect.close();
+      if (uploadReconnect === reconnect) uploadReconnect = undefined;
     };
   }
 
@@ -1636,10 +1693,11 @@
   async function loadNaturalProfiles(session: string): Promise<void> {
     const request = ++profileGeneration;
     try {
-      const profiles = await generated.listDocumentProcessingProfiles({ session });
+      const profiles = await generated.listDocumentProcessingProfiles(undefined, { session });
       if (request !== profileGeneration || session !== webSession) return;
       naturalProfiles = profiles;
       naturalProfilesError = "";
+      naturalProfilesLoaded = true;
       const selected = selectNaturalSearchProfile(profiles);
       const defaultMode: NaturalSearchMode = selected ? "auto" : "names";
       if (snapshotActive) {
@@ -1665,6 +1723,7 @@
       if (request !== profileGeneration || session !== webSession) return;
       naturalProfileDefaultPending = null;
       naturalProfiles = [];
+      naturalProfilesLoaded = false;
       if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
       else
         naturalProfilesError = naturalSearchFallbackNote(
@@ -1875,10 +1934,10 @@
   }
 
   function resetLocalSessionUI(): void {
+    rememberSession(null);
     readerRequest++;
     reader = undefined;
     clearToasts();
-    taggingOutcomeUnknown = false;
     leaveSnapshotMode();
     activePanel = null;
     savedQueryDraft = null;
@@ -1930,6 +1989,9 @@
     activeQuery = "";
     activeTagID = "";
     naturalProfiles = [];
+    naturalProfilesLoaded = false;
+    localTextRead?.abort();
+    localText = { readError: "", pending: false, error: "" };
     naturalSearchMode = "names";
     naturalRerank = false;
     submittedSearchQuery = "";
@@ -1956,6 +2018,51 @@
       return;
     }
     error = cause instanceof Error ? cause.message : String(cause);
+  }
+
+  function readLocalTextStatus(): () => void {
+    localTextRead?.abort();
+    const controller = (localTextRead = new AbortController());
+    const session = webSession;
+    localText.readError = "";
+    void generated
+      .getLocalTextStatus({ session, signal: controller.signal })
+      .then((status) => {
+        if (controller.signal.aborted || session !== webSession) return;
+        localText.status = status;
+        if (status.active || status.restart_required) localText.error = "";
+      })
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted || session !== webSession) return;
+        if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
+        else localText.readError = cause instanceof Error ? cause.message : String(cause);
+      });
+    return () => controller.abort();
+  }
+
+  // Clicking Turn on is the consent, so the reviewed plan is applied without another prompt.
+  async function turnOnLocalText(): Promise<void> {
+    const session = webSession;
+    localText.pending = true;
+    localText.error = "";
+    let error = "";
+    try {
+      const plan = await generated.planLocalText({ server: "auto" }, { session });
+      await generated.applyLocalText(
+        { server: "auto", plan_fingerprint: plan.fingerprint, consent: true },
+        { session },
+      );
+    } catch (cause) {
+      if (session !== webSession) return;
+      if (cause instanceof APIError && cause.status === 401) return handleFailure(cause);
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+    if (session !== webSession) return;
+    localText.pending = false;
+    localText.error = error;
+    // Saving always leaves a restart pending, so a failed re-read still shows the restart step.
+    if (!error && localText.status) localText.status.restart_required = true;
+    readLocalTextStatus();
   }
 
   async function loadRoot(): Promise<void> {
@@ -2134,6 +2241,7 @@
           refreshing,
           session,
           controller.signal,
+          profile ? "" : searchByMeaningOff,
         );
         accepted = !!outcome;
         if (accepted && request === generation && requestedSort) applyResultSort(requestedSort);
@@ -2839,6 +2947,7 @@
       if (!inspectorRequestCurrent(request, tagGeneration, session, nodeID, sourceKey)) return;
       selectedLiveNode = listing.node;
       selectedLiveSourceKey = sourceKey ?? "";
+      selectedTagsError = "";
       selectedTags = sortTags(listing.items);
       selectedTagsTotal = listing.total;
       const source = selectedSource;
@@ -3002,11 +3111,14 @@
     batchTagsTargets = targets.map((target) => ({ ...target }));
   }
 
-  function handleBatchTagsChanged(_receipt: BatchTagReceipt): void {
-    // A replay describes a historical success. Reload current observations
-    // instead of overwriting newer rows with the receipt's old revisions.
+  // A replay describes a historical success, so reload current observations
+  // instead of overwriting newer rows with the receipt's old revisions.
+  function refreshTaggedViews(): void {
+    const source = selectedSource;
+    const nodeID = selectedID;
     refreshCurrentView();
-    if (selectedID !== undefined) void loadSelectedTags(selectedID, selectedSource?.key);
+    if (source) void loadSelectedTags(source.nodeID, source.key);
+    else if (nodeID !== undefined) void loadSelectedTags(nodeID);
   }
 
   function leaveSnapshotMode(resumeLive = false): void {
@@ -3291,12 +3403,6 @@
     void hiddenWorkspace?.refresh();
     void loadTagCatalog();
     refreshDocumentsView();
-  }
-
-  let taggingOutcomeUnknown = $state(false);
-  function handleUnknownTagging(): void {
-    taggingOutcomeUnknown = true;
-    refreshCurrentView();
   }
 
   function failToast(cause: unknown, session: string): void {
@@ -3783,6 +3889,26 @@
   />
 {/snippet}
 
+{#snippet emptyAddMenu()}
+  {@render addMenu("start")}
+{/snippet}
+
+{#snippet addMenu(align: MenuAlign)}
+  <DocumentAddMenu
+    {align}
+    disabledReason={!directory || loading
+      ? "Waiting for the folder to load"
+      : uploadChannelError || (!uploadChannel ? "Connecting upload channel" : "")}
+    onselect={(choice) => {
+      if (!directory || loading || !uploadChannel || uploadChannelError) return;
+      activePanel =
+        choice === "files" || choice === "folder"
+          ? { kind: "upload", target: directory, picker: choice }
+          : { kind: choice, target: directory };
+    }}
+  />
+{/snippet}
+
 <svelte:window
   onpopstate={syncPhotoLocation}
   onhashchange={syncPhotoLocation}
@@ -3997,7 +4123,9 @@
         </div>
       {/if}
       <div class="nav-group vault-nav">
-        <AppTooltip text="Disk use, backups, protected folders, and usage reporting" side="right"
+        <AppTooltip
+          text="Disk use, backups, protected folders, usage reporting, and search by meaning"
+          side="right"
           ><button type="button" class="nav-item" onclick={() => openPanel({ kind: "storage" })}>
             <ArchiveIcon size="16" aria-hidden="true" />System
           </button></AppTooltip
@@ -4148,6 +4276,15 @@
         {/snippet}
       </TopBar>
 
+      {#if photoMode && uploadBannerVisible}
+        <div class="banner error">
+          <UploadChannelNotice
+            state={uploadConnectionState}
+            message={uploadChannelError}
+            onreconnect={reconnectUpload}
+          />
+        </div>
+      {/if}
       {#if hiddenAccess?.lockError}<div class="photo-access-error">
           <p role="alert">Hidden did not lock. {hiddenAccess.lockError}</p>
           <Button
@@ -4611,7 +4748,7 @@
                 <div class="loading"><Spinner size={16} /> Creating frozen snapshot…</div>
               {:else}
                 <div class="snapshot-failure">
-                  <p>No snapshot results were accepted.</p>
+                  <p>Couldn't load the snapshot results.</p>
                   {#if snapshot.state.query && snapshot.state.options}<Button
                       onclick={runSnapshotAgain}>Run again</Button
                     >{/if}
@@ -4714,18 +4851,7 @@
                     <RefreshCwIcon size="14" aria-hidden="true" />
                   </IconAction>
                   {#if !showingResults}
-                    <DocumentAddMenu
-                      disabledReason={!directory || loading
-                        ? "Waiting for the folder to load"
-                        : uploadChannelError || (!uploadChannel ? "Connecting upload channel" : "")}
-                      onselect={(choice) => {
-                        if (!directory || loading || !uploadChannel || uploadChannelError) return;
-                        activePanel =
-                          choice === "files" || choice === "folder"
-                            ? { kind: "upload", target: directory, picker: choice }
-                            : { kind: choice, target: directory };
-                      }}
-                    />
+                    {@render addMenu("end")}
                   {/if}
                 </div>
               </div>
@@ -4733,7 +4859,23 @@
               {#if error}
                 <div class="banner error" role="alert">{error}</div>
               {/if}
-              {#if naturalSearchNote}
+              {#if uploadBannerVisible}
+                <div class="banner error">
+                  <UploadChannelNotice
+                    state={uploadConnectionState}
+                    message={uploadChannelError}
+                    onreconnect={reconnectUpload}
+                  />
+                </div>
+              {/if}
+              {#if naturalSearchNote === searchByMeaningOff}
+                <!-- Discovery can finish after the search, so the hint waits for it to confirm. -->
+                {#if naturalProfilesLoaded && !naturalProfile && !localText.status?.restart_required}
+                  <div class="banner search-note" role="status" aria-live="polite">
+                    <SearchByMeaningHint onturnon={() => openPanel({ kind: "searchByMeaning" })} />
+                  </div>
+                {/if}
+              {:else if naturalSearchNote}
                 <div class="banner search-note" role="status" aria-live="polite">
                   {naturalSearchNote}
                 </div>
@@ -4769,10 +4911,15 @@
                     ? "No matching documents"
                     : tagBrowse
                       ? "No documents with this tag"
-                      : "Empty folder"}
+                      : emptyRoot
+                        ? "No documents yet"
+                        : "Empty folder"}
                   description={tagBrowse && taggedTrashed > 0
                     ? `${taggedTrashed} trashed assignment${taggedTrashed === 1 ? " is" : "s are"} omitted.`
-                    : undefined}
+                    : emptyRoot
+                      ? "Add files or a folder to start your vault."
+                      : undefined}
+                  children={emptyRoot ? emptyAddMenu : undefined}
                 >
                   {#snippet icon()}
                     {#if activeQuery}
@@ -4959,6 +5106,8 @@
           <aside class="detail" aria-label="Document inspector">
             {#if selectedSnapshot}
               <DocumentInspector
+                onpublished={() => productionsDiscoveryRevision++}
+                onproductions={() => openDocsPage("productions")}
                 session={webSession}
                 source={selectedSource ?? undefined}
                 authorizationRevision={currentInspectorNode?.revision}
@@ -5039,6 +5188,8 @@
               </DocumentInspector>
             {:else if !snapshotActive && selected}
               <DocumentInspector
+                onpublished={() => productionsDiscoveryRevision++}
+                onproductions={() => openDocsPage("productions")}
                 session={webSession}
                 source={selectedSource ?? undefined}
                 authorizationRevision={currentInspectorNode?.revision}
@@ -5171,6 +5322,11 @@
     </div>
     {#if reader}
       <DocumentReader
+        onpublished={() => productionsDiscoveryRevision++}
+        onproductions={() => {
+          closeReader();
+          openDocsPage("productions");
+        }}
         session={webSession}
         source={reader.source}
         authorizationRevision={reader.revision}
@@ -5281,12 +5437,15 @@
           onauthfailure={handleFailure}
         />
       {/if}
-      {#if ["jobs", "auditEvidence", "backups", "storage", "telemetry"].includes(panel.kind)}
+      {#if ["jobs", "auditEvidence", "backups", "storage", "telemetry", "searchByMeaning"].includes(panel.kind)}
         <VaultDrawer
           session={webSession}
           initialTab={panel.kind}
+          searchByMeaning={localText}
           onclose={closePanel(panel)}
           onauthfailure={handleFailure}
+          onreadsearchbymeaning={readLocalTextStatus}
+          onturnonsearchbymeaning={turnOnLocalText}
         />
       {/if}
       {#if panel.kind === "savedQueries"}
@@ -5336,6 +5495,8 @@
           session={webSession}
           channel={uploadChannel}
           disabledReason={uploadChannelError}
+          connectionState={uploadConnectionState}
+          onreconnect={reconnectUpload}
           onclose={closePanel(panel)}
           oncomplete={async () => {
             await Promise.all([
@@ -5360,6 +5521,8 @@
           directory={panel.target}
           initialPicker={panel.picker}
           disabledReason={uploadChannelError}
+          connectionState={uploadConnectionState}
+          onreconnect={reconnectUpload}
           onclose={closePanel(panel)}
           oncomplete={async () => {
             if (activePanel === panel) await loadDirectory(panel.target.id, false);
@@ -5372,6 +5535,9 @@
           session={webSession}
           channel={uploadChannel}
           directory={panel.target}
+          disabledReason={uploadChannelError}
+          connectionState={uploadConnectionState}
+          onreconnect={reconnectUpload}
           onclose={closePanel(panel)}
           oncomplete={async () => {
             if (activePanel === panel) await loadDirectory(panel.target.id, false);
@@ -5386,6 +5552,9 @@
           session={webSession}
           channel={uploadChannel}
           destination={panel.target.path ?? "/"}
+          disabledReason={uploadChannelError}
+          connectionState={uploadConnectionState}
+          onreconnect={reconnectUpload}
           onclose={closePanel(panel)}
           oncomplete={async () => {
             hasProductions = true;
@@ -5438,10 +5607,12 @@
         targets={batchTagsTargets}
         catalog={tagCatalog}
         disabled={loading}
-        onchanged={handleBatchTagsChanged}
-        onunknown={handleUnknownTagging}
+        onchanged={refreshTaggedViews}
         oncreated={() => void loadTagCatalog(false, true)}
-        onclose={() => (batchTagsTargets = null)}
+        onclose={(recovered) => {
+          batchTagsTargets = null;
+          if (recovered) refreshTaggedViews();
+        }}
         onauthfailure={handleFailure}
       />
     {/if}
@@ -5459,10 +5630,12 @@
         errorMessage={snapshot.actionError}
         onstart={(choice) => void startSnapshotAction(choice)}
         onchanged={handleSnapshotSelectionTagged}
-        onunknown={handleUnknownTagging}
         oncreated={() => void loadTagCatalog(false, true)}
         onimport={(bytes) => void snapshot.importAction(bytes)}
-        onclose={() => snapshot.cancelAction()}
+        onclose={(recovered) => {
+          snapshot.cancelAction();
+          if (recovered) refreshTaggedViews();
+        }}
         onauthfailure={handleFailure}
       />
     {/if}
@@ -5478,14 +5651,6 @@
         onclose={() => snapshot.dismissRecovery()}
         onauthfailure={handleFailure}
       />
-    {/if}
-    {#if taggingOutcomeUnknown}
-      <Modal title="Tagging result unknown" onclose={() => (taggingOutcomeUnknown = false)}>
-        <p role="alert">The result is unknown. Check these documents' tags before trying again.</p>
-        {#snippet footer()}
-          <Button onclick={() => (taggingOutcomeUnknown = false)}>Dismiss</Button>
-        {/snippet}
-      </Modal>
     {/if}
   </div>
 {/if}

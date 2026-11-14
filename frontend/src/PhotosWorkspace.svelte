@@ -4,6 +4,7 @@
 </script>
 
 <script lang="ts">
+  import { webURL } from "./web-path.js";
   import IconAction from "./IconAction.svelte";
   import PhotoSearchStatus from "./PhotoSearchStatus.svelte";
   import { reportAction, reportFailure } from "./action-events.js";
@@ -559,7 +560,7 @@
   const fromGrid = $derived(photos.viewerReturn?.contextID === photos.contextID);
   const listed = $derived(!!photoID && !!photos.rowByID(photoID));
   const membershipNote = $derived(
-    photoID && fromGrid && !listed && !photos.loading
+    photoID && fromGrid && !listed && !photos.blocking
       ? "This photo is no longer in the refreshed result."
       : "",
   );
@@ -1193,7 +1194,7 @@
         >
       </div>
     {/if}
-    {#if mapMode && photos.loading}<div class="photo-loading" role="status">
+    {#if mapMode && photos.blocking}<div class="photo-loading" role="status">
         <Spinner size={14} />Loading located photos: {photos.items.length.toLocaleString()} of {Math.min(
           photos.total,
           mapPhotoLimit,
@@ -1439,7 +1440,7 @@
           {#if albums?.error}<div class="photo-error" role="alert">{albums.error}</div>{/if}
           {#if albums?.notice}<div class="photo-notice" role="status">
               {albums.notice}{#if albums.noticeID}<a
-                  href={`/photos/albums/${albums.noticeID}`}
+                  href={webURL(`/photos/albums/${albums.noticeID}`)}
                   onclick={(event) => {
                     event.preventDefault();
                     onnavigate(`/photos/albums/${albums!.noticeID}`);
@@ -1465,7 +1466,10 @@
           <div class="photo-browser">
             {#if searchable && photos.filtersOpen}
               <div id={filtersID} class="photo-facets">
-                {#if photos.facetsLoading}<div class="photo-loading" role="status">
+                {#if photos.facetsLoading && !photos.facets.length}<div
+                    class="photo-loading"
+                    role="status"
+                  >
                     <Spinner size={14} />Loading counts…
                   </div>{/if}
                 {#if photos.facetsError}<div class="photo-error" role="alert">
@@ -1565,7 +1569,7 @@
                     />
                   {/key}
                 {/if}
-                {#if !shown.length && !(photos.loading || photos.error)}
+                {#if !shown.length && !(photos.blocking || photos.error)}
                   <EmptyState
                     title={mapMode
                       ? photos.items.length
@@ -1600,12 +1604,12 @@
                 {/if}
               {/if}
               <div role="status">
-                {#if !mapMode && photos.loading}<div class="photo-pill kit-popover-card">
+                {#if !mapMode && photos.blocking}<div class="photo-pill kit-popover-card">
                     <Spinner size={14} />Loading photos…
                   </div>{/if}
               </div>
               {#if !mapMode && photos.cursor && !photos.error}<div class="photo-loading">
-                  {#if !photos.loading}<Button
+                  {#if !photos.blocking}<Button
                       size="sm"
                       onclick={() => void photos.loadMore(preserve)}>Load more</Button
                     >{/if}

@@ -174,7 +174,7 @@ function Install-Docbank {
         Write-Info 'Checksum verified.'
 
         Assert-ZipLayout -Path $archive
-        Expand-Archive -LiteralPath $archive -DestinationPath $temporaryDirectory
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($archive, $temporaryDirectory)
         $source = Join-Path $temporaryDirectory $binaryName
         if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
             throw "release archive does not contain $binaryName"

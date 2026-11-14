@@ -89,6 +89,8 @@ are 100 MiB and 128 MiB. Admission reserves space for source, result staging
 and bounded metadata before receiving a new job. One upload and one backend
 conversion run at a time. Polling and retained result reads remain available
 while an upload is in progress.
+Lowering a limit keeps accepted jobs and their reserved capacity. New jobs wait
+until the spool is within the configured limits.
 
 The worker acknowledges input only after committing it to the spool. A stable
 request key returns the same issued job ID after a connection loss or restart.
@@ -100,7 +102,9 @@ A confirmed missing Docling task can be recomputed from retained input. The
 worker persists a lifetime limit of three accepted or possibly accepted
 backend submissions per job. A definite HTTP 429 refusal releases its reserved
 attempt and waits. An ambiguous transport or server failure keeps it charged.
-After exhaustion, the job fails and retains its input for operator inspection.
+After exhaustion, the job fails and retains its input. Rerun the Docbank job
+to retry it under the same worker ID. After two hours, a started backend task
+no longer holds up pending jobs; the worker keeps its handle and polls it later.
 Crashes can repeat compute; publication in Docbank remains separately fenced.
 
 There is no automatic expiry or garbage collection. At the storage or job
@@ -136,8 +140,8 @@ not provide these durable replay guarantees. Gateways accept only the listed
 fixed document or audio upload options; upstream support for richer pipelines
 does not enable them here.
 
-The protocol accepts PDF, PPTX, XLSX, PNG/JPEG, text/Markdown and WAV/MP3 content
-types. Clients remain responsible for local eligibility inspection, exact
+The protocol accepts PDF, PPTX, XLSX, PNG/JPEG, and WAV/MP3 content types.
+Audio is limited to one hour. Clients remain responsible for local eligibility inspection, exact
 source authorization and qualified evidence mapping. Keep cheap text local
 and prefer an available supplied transcript. Password-decrypted PDFs require
 a separate deterministic-input contract before they can be retried safely.

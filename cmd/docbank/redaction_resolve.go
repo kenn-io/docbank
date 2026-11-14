@@ -16,7 +16,7 @@ func newRedactionResolveCommand() *cobra.Command {
 		Long:    "Masks select UTF-8 byte spans, rectangles, or whole pages.\nReview the effective masks and retained text before rendering.",
 		Example: "  docbank redaction resolve preparation.json masks.json --json > review.json",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			request, err := readRedactionInputs(args[0], args[1])
+			request, err := readRedactionInputs(cmd.Context(), args[0], args[1])
 			if err != nil {
 				return err
 			}

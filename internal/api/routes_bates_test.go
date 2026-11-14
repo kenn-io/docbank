@@ -237,7 +237,7 @@ func batesTestRecipe(namespace api.BatesNamespace, start int) pdfstamp.Recipe {
 		Prefix: namespace.Prefix, Suffix: namespace.Suffix, Padding: namespace.Padding, StartAt: start,
 		Position: "bottom-right", MarginPoints: 24, FontName: "Helvetica", FontSizePoints: 9, Color: "#000000",
 		Opacity: 1, Units: "point", RotationPolicy: "follow_page", EngineIdentity: pdfstamp.EngineIdentity{
-			Name: "pdfcpu", Version: "v0.15.0", API: "AddWatermarksMap", Options: []string{"onTop=true", "update=restamp"}}}
+			Name: "pdfcpu", Version: "v0.16.4", API: "AddWatermarksMap", Options: []string{"onTop=true", "update=restamp"}}}
 }
 
 func decodeBatesAllocation(t *testing.T, body []byte) api.BatesAllocation {
@@ -324,7 +324,7 @@ func TestBatesReadRecordedStampEngine(t *testing.T) {
 	ns, err := s.EnsureBatesNamespace(t.Context(), "OLD", "", 6)
 	require.NoError(t, err)
 	recipe := batesTestRecipe(api.BatesNamespace{NamespaceID: ns.NamespaceID, Prefix: ns.Prefix, Padding: ns.Padding}, 1)
-	recipe.EngineIdentity.Version = "v0.14.0"
+	recipe.EngineIdentity.Version = "v0.15.0"
 	encoded, err := canonical.Marshal(recipe)
 	require.NoError(t, err)
 	request := store.BatesPlanRequest{NamespaceID: ns.NamespaceID, SnapshotID: snapshot.SnapshotID,

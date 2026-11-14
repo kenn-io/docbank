@@ -50,14 +50,10 @@ func newProcessingLocalCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, err := daemonconn.Stop(cmd.Context(), layout.Root); err != nil {
-				return fmt.Errorf("text indexing choice saved; run docbank daemon start to activate it: %w", err)
-			}
-			reconnected, err := daemonconn.Ensure(cmd.Context())
+			_, _, err = daemonconn.Restart(cmd.Context(), layout.Root, false)
 			if err != nil {
 				return fmt.Errorf("text indexing choice saved; run docbank daemon start to activate it: %w", err)
 			}
-			defer func() { _ = reconnected.Close() }()
 			_, err = fmt.Fprintln(cmd.OutOrStdout(), "Text indexing enabled for this vault and new imports.")
 			if err != nil {
 				return fmt.Errorf("write text indexing result: %w", err)
@@ -81,7 +77,7 @@ func applyLocalText(ctx context.Context, plan api.LocalTextPlan) (retErr error) 
 
 func writeLocalTextPlan(cmd *cobra.Command, p api.LocalTextPlan) error {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintf(w, "profile:\t%s\nserver:\t%s\nindex:\t%s\nscope:\tthis vault and new imports\n", p.Profile, p.Server, p.VectorEffect)
+	_, _ = fmt.Fprintf(w, "profile:\t%s\nserver:\t%s\nindex:\t%s\nscope:\t%s\n", p.Profile, p.Server, p.VectorEffect, p.Scope)
 	_, _ = fmt.Fprintf(w, "retained:\t%s\n", strings.Join(p.RetainedClasses, ", "))
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("write local text plan: %w", err)
@@ -93,33 +89,22 @@ func writeLocalTextPlan(cmd *cobra.Command, p api.LocalTextPlan) error {
 // Running the command is the approval, so Kit's pre-download callback only
 // reports the download size.
 func installLocalText(cmd *cobra.Command, managed bool) error {
-	return installLocalTextWithRuntime(cmd, managed, embedlocal.Endpoint, embedlocal.Install)
+	return installLocalTextWithRuntime(cmd, managed, embedlocal.TextModel, embedlocal.Endpoint, embedlocal.Install)
 }
 
-func installLocalTextWithRuntime(cmd *cobra.Command, managed bool,
+func installLocalTextWithRuntime(cmd *cobra.Command, managed bool, model string,
 	endpoint func(context.Context, embedlocal.Options) (string, error),
 	install func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error),
 ) error {
 	if !managed {
 		return nil
 	}
-	_, err := endpoint(cmd.Context(), embedlocal.Options{SkipOllama: true})
-	if err == nil {
-		return nil
-	}
-	if !errors.Is(err, embedlocal.ErrNotFound) {
-		return fmt.Errorf("discover embeddings server: %w", err)
-	}
-	dir, err := embedlocal.DefaultDir()
-	if err != nil {
-		return fmt.Errorf("find embeddings directory: %w", err)
-	}
-	report := func(_ context.Context, bytes int64) (bool, error) {
+	confirm := func(_ context.Context, bytes int64) (bool, error) {
 		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Downloading local embeddings: %d bytes\n", bytes); err != nil {
 			return false, fmt.Errorf("write download size: %w", err)
 		}
 		return true, nil
 	}
-	_, err = install(cmd.Context(), embedlocal.InstallOptions{DataDir: dir, Confirm: report})
+	_, err := localEmbeddingOriginWithRuntime(cmd.Context(), model, confirm, endpoint, install)
 	return err
 }

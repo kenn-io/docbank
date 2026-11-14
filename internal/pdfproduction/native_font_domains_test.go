@@ -20,7 +20,7 @@ func TestNativeFontDomainsBindStagedSource(t *testing.T) {
 		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>", "")
 	identity := document.PageSource{VersionID: "00000000-0000-4000-8000-000000000001",
 		SHA256: hashBytes(data), Size: int64(len(data))}
-	inspection, err := pagerender.InspectSource(data, identity, "application/pdf")
+	inspection, err := pagerender.InspectSource(t.Context(), data, identity, "application/pdf")
 	require.NoError(t, err)
 	source := Source{Reader: bytes.NewReader(data), Size: identity.Size, SHA256: identity.SHA256, StagingDirectory: t.TempDir()}
 	domains, err := nativeFontDomains(t.Context(), runtime, bytes.NewReader(data), source,
@@ -50,7 +50,7 @@ func TestNativeFontDomainsRejectCIDWithQualifiedProgram(t *testing.T) {
 			"<< /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> >>")
 	identity := document.PageSource{VersionID: "00000000-0000-4000-8000-000000000001",
 		SHA256: hashBytes(data), Size: int64(len(data))}
-	inspection, err := pagerender.InspectSource(data, identity, "application/pdf")
+	inspection, err := pagerender.InspectSource(t.Context(), data, identity, "application/pdf")
 	require.NoError(t, err)
 	source := Source{Reader: bytes.NewReader(data), Size: identity.Size, SHA256: identity.SHA256, StagingDirectory: t.TempDir()}
 	domains, err := nativeFontDomains(t.Context(), runtime, bytes.NewReader(data), source,

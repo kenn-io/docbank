@@ -84,8 +84,8 @@ func TestPrimaryRestoreHandoffRecoversUnpublishedNewVault(t *testing.T) {
 }
 
 func TestPrimaryRestoreHandoffRetainsMarkerUntilCompletion(t *testing.T) {
-	for _, recover := range []bool{false, true} {
-		t.Run(strconv.FormatBool(recover), func(t *testing.T) {
+	for _, withRecovery := range []bool{false, true} {
+		t.Run(strconv.FormatBool(withRecovery), func(t *testing.T) {
 			blobsDir := filepath.Join(t.TempDir(), "blobs")
 			next := testOwnership("20000000-0000-4000-8000-000000000002")
 			priorDigest := ""
@@ -101,7 +101,7 @@ func TestPrimaryRestoreHandoffRetainsMarkerUntilCompletion(t *testing.T) {
 				return failure
 			}
 			finish := func() error {
-				if recover {
+				if withRecovery {
 					digest := testDatabaseDigest('2')
 					return RecoverPrimaryRestoreHandoff(t.Context(), blobsDir, &next, &digest, complete)
 				}

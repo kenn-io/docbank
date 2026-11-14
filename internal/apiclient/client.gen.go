@@ -2236,6 +2236,52 @@ func (c *Client) CreateBatesNamespace(ctx context.Context, options *CreateBatesN
 	return responseParser(ctx, resp)
 }
 
+// ReadBatesNamespace Read a Bates namespace and its next sequence
+func (c *Client) ReadBatesNamespace(ctx context.Context, options *ReadBatesNamespaceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadBatesNamespaceResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/bates/namespaces/{id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadBatesNamespaceResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadBatesNamespaceResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReadBatesNamespaceResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReadBatesNamespaceErrorResponse](resp, "ReadBatesNamespaceErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/bates/namespaces/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // PlanBatesStamp Preview tentative Bates labels without stamping or reserving
 func (c *Client) PlanBatesStamp(ctx context.Context, options *PlanBatesStampRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanBatesStampResponse, error) {
 	var err error
@@ -8966,6 +9012,105 @@ func (c *Client) GetPeopleCoverage(ctx context.Context, reqEditors ...runtime.Re
 	return responseParser(ctx, resp)
 }
 
+// ListFaceCandidates Review suggested face groups
+func (c *Client) ListFaceCandidates(ctx context.Context, options *ListFaceCandidatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListFaceCandidatesResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"limit":  {Style: "form", Explode: &[]bool{false}[0]},
+		"offset": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/people/face-candidates",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListFaceCandidatesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListFaceCandidatesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListFaceCandidatesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListFaceCandidatesErrorResponse](resp, "ListFaceCandidatesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/face-candidates")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DecideFaceCandidate Confirm or dismiss a suggested face group
+func (c *Client) DecideFaceCandidate(ctx context.Context, options *DecideFaceCandidateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DecideFaceCandidateResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/people/face-candidates/{candidate_id}/decision",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*DecideFaceCandidateResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(DecideFaceCandidateResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "DecideFaceCandidateResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DecideFaceCandidateErrorResponse](resp, "DecideFaceCandidateErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/face-candidates/{candidate_id}/decision")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // RebuildDocumentPeople Start or replay person attribution rebuild
 func (c *Client) RebuildDocumentPeople(ctx context.Context, options *RebuildDocumentPeopleRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RebuildDocumentPeopleResponse, error) {
 	var err error
@@ -10002,6 +10147,7 @@ func (c *Client) ReadPhotoPreview(ctx context.Context, options *ReadPhotoPreview
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
+		"face_id":   {Style: "form", Explode: &[]bool{false}[0]},
 		"person_id": {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
@@ -11928,6 +12074,98 @@ func (c *Client) RevokeProcessingConsent(ctx context.Context, options *RevokePro
 	return responseParser(ctx, resp)
 }
 
+// PlanFaces Preview local face suggestions
+func (c *Client) PlanFaces(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*PlanFacesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/processing/faces/plans",
+		Method:     "POST",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PlanFacesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PlanFacesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PlanFacesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PlanFacesErrorResponse](resp, "PlanFacesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/faces/plans")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ApplyFaces Enable local face suggestions
+func (c *Client) ApplyFaces(ctx context.Context, options *ApplyFacesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ApplyFacesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/processing/faces/setup",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ApplyFacesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ApplyFacesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ApplyFacesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ApplyFacesErrorResponse](resp, "ApplyFacesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/faces/setup")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // StartDocumentProcessing Start the exact reviewed document-processing plan
 func (c *Client) StartDocumentProcessing(ctx context.Context, options *StartDocumentProcessingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartDocumentProcessingResponse, error) {
 	var err error
@@ -12109,6 +12347,51 @@ func (c *Client) ApplyLocalText(ctx context.Context, options *ApplyLocalTextRequ
 	return responseParser(ctx, resp)
 }
 
+// GetLocalTextStatus Read search by meaning setup status
+func (c *Client) GetLocalTextStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetLocalTextStatusResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/processing/local/status",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetLocalTextStatusResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetLocalTextStatusResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetLocalTextStatusResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetLocalTextStatusErrorResponse](resp, "GetLocalTextStatusErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/local/status")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // PlanDocumentProcessing Preview provider disclosure for one document version
 func (c *Client) PlanDocumentProcessing(ctx context.Context, options *PlanDocumentProcessingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanDocumentProcessingResponse, error) {
 	var err error
@@ -12156,12 +12439,18 @@ func (c *Client) PlanDocumentProcessing(ctx context.Context, options *PlanDocume
 	return responseParser(ctx, resp)
 }
 
-// ListDocumentProcessingProfiles List locally executable document-processing profiles
-func (c *Client) ListDocumentProcessingProfiles(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListDocumentProcessingProfilesResponse, error) {
+// ListDocumentProcessingProfiles List document-processing profiles
+func (c *Client) ListDocumentProcessingProfiles(ctx context.Context, options *ListDocumentProcessingProfilesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListDocumentProcessingProfilesResponse, error) {
 	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"include_configured": {Style: "form", Explode: &[]bool{false}[0]},
+	}
 	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/processing/profiles",
-		Method:     "GET",
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/processing/profiles",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
@@ -12842,6 +13131,139 @@ func (c *Client) ReadRedactionPreviewText(ctx context.Context, options *ReadReda
 	}
 	if resp.Streaming {
 		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PublishNumberedPDF Publish one reviewed numbered PDF into retained storage
+func (c *Client) PublishNumberedPDF(ctx context.Context, options *PublishNumberedPDFRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PublishNumberedPDFResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/redaction/publications",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PublishNumberedPDFResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PublishNumberedPDFResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PublishNumberedPDFResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PublishNumberedPDFErrorResponse](resp, "PublishNumberedPDFErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/redaction/publications")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DiscardRecipientPackages Cancel this owner's recipient package and transfer
+func (c *Client) DiscardRecipientPackages(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/redaction/recipient-packages",
+		Method:     "DELETE",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DiscardRecipientPackagesErrorResponse](resp, "DiscardRecipientPackagesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/redaction/recipient-packages")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
+// BuildRecipientPackage Prepare a recipient ZIP from one completed numbered review
+func (c *Client) BuildRecipientPackage(ctx context.Context, options *BuildRecipientPackageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*BuildRecipientPackageResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/redaction/recipient-packages",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*BuildRecipientPackageResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(BuildRecipientPackageResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "BuildRecipientPackageResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[BuildRecipientPackageErrorResponse](resp, "BuildRecipientPackageErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/redaction/recipient-packages")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
 	}
 	return responseParser(ctx, resp)
 }
@@ -13714,6 +14136,53 @@ func (c *Client) CreateTermReport(ctx context.Context, options *CreateTermReport
 	return responseParser(ctx, resp)
 }
 
+// RefreshTermReportSelection Compare selected document versions
+func (c *Client) RefreshTermReportSelection(ctx context.Context, options *RefreshTermReportSelectionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RefreshTermReportSelectionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/search-exports/selection",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RefreshTermReportSelectionResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RefreshTermReportSelectionResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RefreshTermReportSelectionResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RefreshTermReportSelectionErrorResponse](resp, "RefreshTermReportSelectionErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search-exports/selection")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ReleaseTermReport Release a live report handle
 func (c *Client) ReleaseTermReport(ctx context.Context, options *ReleaseTermReportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
 	var err error
@@ -14059,6 +14528,63 @@ func (c *Client) FindSimilarDocuments(ctx context.Context, options *FindSimilarD
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search/similar")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SearchTextCoverage Count files waiting for searchable text
+func (c *Client) SearchTextCoverage(ctx context.Context, options *SearchTextCoverageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchTextCoverageResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"mime_type":       {Style: "form", Explode: &[]bool{false}[0]},
+		"modified_before": {Style: "form", Explode: &[]bool{false}[0]},
+		"modified_since":  {Style: "form", Explode: &[]bool{false}[0]},
+		"pdf_filter":      {Style: "form", Explode: &[]bool{false}[0]},
+		"source_present":  {Style: "form", Explode: &[]bool{false}[0]},
+		"tag_id":          {Style: "form", Explode: &[]bool{false}[0]},
+		"under_node_id":   {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/search/text-coverage",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*SearchTextCoverageResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(SearchTextCoverageResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "SearchTextCoverageResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[SearchTextCoverageErrorResponse](resp, "SearchTextCoverageErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search/text-coverage")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -15846,6 +16372,53 @@ func (c *Client) GetContentVersionBytes(ctx context.Context, options *GetContent
 	return responseParser(ctx, resp)
 }
 
+// PrepareOriginalDownload Issue a single-use original download URL valid for two minutes
+func (c *Client) PrepareOriginalDownload(ctx context.Context, options *PrepareOriginalDownloadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PrepareOriginalDownloadResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/versions/{version_id}/download-ticket",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PrepareOriginalDownloadResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PrepareOriginalDownloadResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PrepareOriginalDownloadResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PrepareOriginalDownloadErrorResponse](resp, "PrepareOriginalDownloadErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/versions/{version_id}/download-ticket")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetEmailMetadata Read selected email metadata for one immutable version
 func (c *Client) GetEmailMetadata(ctx context.Context, options *GetEmailMetadataRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailMetadataResult, error) {
 	var err error
@@ -17483,6 +18056,37 @@ func (o *CreateBatesNamespaceRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *CreateBatesNamespaceRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ReadBatesNamespaceRequestOptions is the options needed to make a request to ReadBatesNamespace.
+type ReadBatesNamespaceRequestOptions struct {
+	PathParams *ReadBatesNamespacePath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReadBatesNamespaceRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReadBatesNamespaceRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReadBatesNamespaceRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReadBatesNamespaceRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -22014,6 +22618,79 @@ func (o *SplitPersonRequestOptions) GetHeader() (map[string]string, error) {
 	return headers, err
 }
 
+// ListFaceCandidatesRequestOptions is the options needed to make a request to ListFaceCandidates.
+type ListFaceCandidatesRequestOptions struct {
+	Query *ListFaceCandidatesQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListFaceCandidatesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListFaceCandidatesRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListFaceCandidatesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListFaceCandidatesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// DecideFaceCandidateRequestOptions is the options needed to make a request to DecideFaceCandidate.
+type DecideFaceCandidateRequestOptions struct {
+	PathParams *DecideFaceCandidatePath
+	Body       *DecideFaceCandidateBody
+	Header     *DecideFaceCandidateHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DecideFaceCandidateRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *DecideFaceCandidateRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DecideFaceCandidateRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *DecideFaceCandidateRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // RebuildDocumentPeopleRequestOptions is the options needed to make a request to RebuildDocumentPeople.
 type RebuildDocumentPeopleRequestOptions struct {
 	Body *RebuildDocumentPeopleBody
@@ -23944,6 +24621,34 @@ func (o *RevokeProcessingConsentRequestOptions) GetHeader() (map[string]string, 
 	return nil, nil
 }
 
+// ApplyFacesRequestOptions is the options needed to make a request to ApplyFaces.
+type ApplyFacesRequestOptions struct {
+	Body *ApplyFacesBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ApplyFacesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ApplyFacesRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ApplyFacesRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ApplyFacesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // StartDocumentProcessingRequestOptions is the options needed to make a request to StartDocumentProcessing.
 type StartDocumentProcessingRequestOptions struct {
 	Body *StartDocumentProcessingBody
@@ -24084,6 +24789,37 @@ func (o *PlanDocumentProcessingRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *PlanDocumentProcessingRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ListDocumentProcessingProfilesRequestOptions is the options needed to make a request to ListDocumentProcessingProfiles.
+type ListDocumentProcessingProfilesRequestOptions struct {
+	Query *ListDocumentProcessingProfilesQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListDocumentProcessingProfilesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListDocumentProcessingProfilesRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListDocumentProcessingProfilesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListDocumentProcessingProfilesRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -24487,6 +25223,62 @@ func (o *ReadRedactionPreviewTextRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *ReadRedactionPreviewTextRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// PublishNumberedPDFRequestOptions is the options needed to make a request to PublishNumberedPDF.
+type PublishNumberedPDFRequestOptions struct {
+	Body *PublishNumberedPDFBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PublishNumberedPDFRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *PublishNumberedPDFRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PublishNumberedPDFRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PublishNumberedPDFRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// BuildRecipientPackageRequestOptions is the options needed to make a request to BuildRecipientPackage.
+type BuildRecipientPackageRequestOptions struct {
+	Body *BuildRecipientPackageBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *BuildRecipientPackageRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *BuildRecipientPackageRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *BuildRecipientPackageRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *BuildRecipientPackageRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -25064,6 +25856,34 @@ func (o *CreateTermReportRequestOptions) GetHeader() (map[string]string, error) 
 	return nil, nil
 }
 
+// RefreshTermReportSelectionRequestOptions is the options needed to make a request to RefreshTermReportSelection.
+type RefreshTermReportSelectionRequestOptions struct {
+	Body *RefreshTermReportSelectionBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RefreshTermReportSelectionRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *RefreshTermReportSelectionRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RefreshTermReportSelectionRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *RefreshTermReportSelectionRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ReleaseTermReportRequestOptions is the options needed to make a request to ReleaseTermReport.
 type ReleaseTermReportRequestOptions struct {
 	PathParams *ReleaseTermReportPath
@@ -25318,6 +26138,37 @@ func (o *FindSimilarDocumentsRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *FindSimilarDocumentsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// SearchTextCoverageRequestOptions is the options needed to make a request to SearchTextCoverage.
+type SearchTextCoverageRequestOptions struct {
+	Query *SearchTextCoverageQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SearchTextCoverageRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *SearchTextCoverageRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SearchTextCoverageRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *SearchTextCoverageRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -26361,6 +27212,41 @@ func (o *GetContentVersionBytesRequestOptions) GetHeader() (map[string]string, e
 	return headers, err
 }
 
+// PrepareOriginalDownloadRequestOptions is the options needed to make a request to PrepareOriginalDownload.
+type PrepareOriginalDownloadRequestOptions struct {
+	PathParams *PrepareOriginalDownloadPath
+	Body       *PrepareOriginalDownloadBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PrepareOriginalDownloadRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *PrepareOriginalDownloadRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PrepareOriginalDownloadRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PrepareOriginalDownloadRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetEmailMetadataRequestOptions is the options needed to make a request to GetEmailMetadata.
 type GetEmailMetadataRequestOptions struct {
 	PathParams *GetEmailMetadataPath
@@ -26613,6 +27499,12 @@ const (
 	RenditionTextProfileConfigurationConfigured      RenditionTextProfileConfiguration = "configured"
 	RenditionTextProfileConfigurationProfileRequired RenditionTextProfileConfiguration = "profile_required"
 	RenditionTextProfileConfigurationUnconfigured    RenditionTextProfileConfiguration = "unconfigured"
+)
+
+type RenditionTextReceiptPageCoverage string
+
+const (
+	RenditionTextReceiptPageCoverageUnavailable RenditionTextReceiptPageCoverage = "unavailable"
 )
 
 type RenditionTextReceiptState string
@@ -26881,6 +27773,10 @@ type SplitPersonHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
 
+type DecideFaceCandidateHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
 type DeletePhotoAlbumHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
@@ -27013,6 +27909,10 @@ type DownloadBatesExportContentPath struct {
 }
 
 type DownloadBatesExportPath struct {
+	ID uuid.UUID `json:"id"`
+}
+
+type ReadBatesNamespacePath struct {
 	ID uuid.UUID `json:"id"`
 }
 
@@ -27362,6 +28262,10 @@ type SplitPersonPath struct {
 	PersonID uuid.UUID `json:"person_id"`
 }
 
+type DecideFaceCandidatePath struct {
+	CandidateID uuid.UUID `json:"candidate_id"`
+}
+
 type GetPeopleRebuildPath struct {
 	OperationID uuid.UUID `json:"operation_id"`
 }
@@ -27609,6 +28513,10 @@ type GetContentVersionBytesPath struct {
 	VersionID string `json:"version_id"`
 }
 
+type PrepareOriginalDownloadPath struct {
+	VersionID uuid.UUID `json:"version_id"`
+}
+
 type GetEmailMetadataPath struct {
 	VersionID uuid.UUID `json:"version_id"`
 }
@@ -27836,6 +28744,8 @@ type MergePersonBody = MergePersonRequest
 
 type SplitPersonBody = SplitPersonRequest
 
+type DecideFaceCandidateBody = FaceCandidateDecisionRequest
+
 type RebuildDocumentPeopleBody = PeopleRebuildRequest
 
 type CreatePhotoAlbumBody = CreatePhotoAlbumRequest
@@ -27916,6 +28826,8 @@ type GrantProcessingConsentBody = ProcessingConsentRequest
 
 type RevokeProcessingConsentBody = ProcessingConsentRevocationRequest
 
+type ApplyFacesBody = FaceSetupApplyRequest
+
 type StartDocumentProcessingBody = StartProcessingRequest
 
 type PlanLocalTextBody = LocalTextPlanRequest
@@ -27940,6 +28852,10 @@ type CreateRedactionPreviewBody = PreviewInput
 
 type DownloadRedactionPreviewBody = RedactionPreviewConfirmation
 
+type PublishNumberedPDFBody = RedactionRenderRequest
+
+type BuildRecipientPackageBody = RedactionRenderRequest
+
 type RenderNativePDFBody = RedactionRenderRequest
 
 type ReserveNumberedPDFBody = NumberedReservationRequest
@@ -27961,6 +28877,8 @@ type RunSavedQueryBody = SavedQueryRunRequest
 type SearchDocumentsBody = DocumentSearchRequest
 
 type CreateTermReportBody = Request
+
+type RefreshTermReportSelectionBody = SelectedDocuments
 
 type GetTermReportDatesBody = DatePageRequest
 
@@ -28013,6 +28931,8 @@ type EmptyTrashBody = EmptyTrashRequest
 type UploadFileBody struct {
 	File runtime.File `json:"file"`
 }
+
+type PrepareOriginalDownloadBody = OriginalDownloadSelection
 
 type EnsureEmailMetadataBody = map[string]any
 
@@ -28272,6 +29192,9 @@ type ListPeopleQuery struct {
 	// PhotoSummary Return only people with a visible photo, with Library photo counts and one readable card portrait. Include Hidden counts and allow a Hidden portrait while unlocked.
 	PhotoSummary *bool `json:"photo_summary,omitempty"`
 
+	// FaceID Rank people by similarity to this face
+	FaceID *uuid.UUID `json:"face_id,omitempty"`
+
 	// RecentFirst Rank name groups by their newest visible depicted evidence, then by name. Namesakes stay together.
 	RecentFirst *bool `json:"recent_first,omitempty"`
 }
@@ -28281,12 +29204,18 @@ type GetPersonQuery struct {
 	AssertionLimit  *int64     `json:"assertion_limit,omitempty"`
 }
 
+type ListFaceCandidatesQuery struct {
+	Limit  *int64 `json:"limit,omitempty"`
+	Offset *int64 `json:"offset,omitempty"`
+}
+
 type DetachPhotoFileQuery struct {
 	ClearDependentSidecars *bool `json:"clear_dependent_sidecars,omitempty"`
 }
 
 type ReadPhotoPreviewQuery struct {
 	PersonID *uuid.UUID `json:"person_id,omitempty"`
+	FaceID   *uuid.UUID `json:"face_id,omitempty"`
 }
 
 type GetPhotoCheckoutQuery struct {
@@ -28300,6 +29229,11 @@ type UndoPhotoFaceDecisionQuery struct {
 
 type ListPersonFacePreviewsQuery struct {
 	Hidden *bool `json:"hidden,omitempty"`
+}
+
+type ListDocumentProcessingProfilesQuery struct {
+	// IncludeConfigured Include configured profiles without an executable runtime
+	IncludeConfigured *bool `json:"include_configured,omitempty"`
 }
 
 type ListPushSourcesQuery struct {
@@ -28370,6 +29304,16 @@ type SearchQuery struct {
 type ListTermReportHistoryQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 	Limit  *int64 `json:"limit,omitempty"`
+}
+
+type SearchTextCoverageQuery struct {
+	PdfFilter      *string `json:"pdf_filter,omitempty"`
+	SourcePresent  *bool   `json:"source_present,omitempty"`
+	TagID          *string `json:"tag_id,omitempty"`
+	MimeType       *string `json:"mime_type,omitempty"`
+	UnderNodeID    *int64  `json:"under_node_id,omitempty"`
+	ModifiedSince  *string `json:"modified_since,omitempty"`
+	ModifiedBefore *string `json:"modified_before,omitempty"`
 }
 
 type StorageStatusQuery struct {
@@ -28578,6 +29522,10 @@ type ListBatesNamespacesErrorResponse = Error
 type CreateBatesNamespaceResponse = api.BatesNamespace
 
 type CreateBatesNamespaceErrorResponse = Error
+
+type ReadBatesNamespaceResponse = api.BatesNamespaceDetail
+
+type ReadBatesNamespaceErrorResponse = Error
 
 type PlanBatesStampResponse = api.BatesPlan
 
@@ -29280,6 +30228,14 @@ type GetPeopleCoverageResponse = api.PeopleCoverage
 
 type GetPeopleCoverageErrorResponse = Error
 
+type ListFaceCandidatesResponse = api.FaceCandidatePage
+
+type ListFaceCandidatesErrorResponse = Error
+
+type DecideFaceCandidateResponse = api.FaceCandidateDecisionResult
+
+type DecideFaceCandidateErrorResponse = Error
+
 type RebuildDocumentPeopleResponse = api.PeopleBuild
 
 type RebuildDocumentPeopleErrorResponse = Error
@@ -29530,6 +30486,14 @@ type RevokeProcessingConsentResponse = document.ProcessingConsentRevocationRecei
 
 type RevokeProcessingConsentErrorResponse = Error
 
+type PlanFacesResponse = api.LocalTextPlan
+
+type PlanFacesErrorResponse = Error
+
+type ApplyFacesResponse = api.LocalTextPlan
+
+type ApplyFacesErrorResponse = Error
+
 type StartDocumentProcessingResponse = []byte
 
 type StartDocumentProcessingErrorResponse = Error
@@ -29545,6 +30509,10 @@ type PlanLocalTextErrorResponse = Error
 type ApplyLocalTextResponse = api.LocalTextPlan
 
 type ApplyLocalTextErrorResponse = Error
+
+type GetLocalTextStatusResponse = api.LocalTextStatus
+
+type GetLocalTextStatusErrorResponse = Error
 
 type PlanDocumentProcessingResponse = api.ProcessingPlan
 
@@ -29627,6 +30595,36 @@ type ReadRedactionPreviewPageErrorResponse = Error
 type ReadRedactionPreviewTextResponse = []byte
 
 type ReadRedactionPreviewTextErrorResponse = Error
+
+type PublishNumberedPDFResponse = api.BatesExport
+
+type PublishNumberedPDFErrorResponse api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON403 api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON404 api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON408 api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON409 api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON413 api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON422 api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON500 api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON503 api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON504 api.Error
+
+type DiscardRecipientPackagesErrorResponse = Error
+
+type BuildRecipientPackageResponse = RecipientPackageDownload
+
+type BuildRecipientPackageErrorResponse = Error
 
 type RenderNativePDFResponse = []byte
 
@@ -29738,6 +30736,10 @@ type CreateTermReportResponse = report.Summary
 
 type CreateTermReportErrorResponse = Error
 
+type RefreshTermReportSelectionResponse []TermReportSelectionItem
+
+type RefreshTermReportSelectionErrorResponse = Error
+
 type ReleaseTermReportErrorResponse = Error
 
 type GetTermReportResponse = report.Summary
@@ -29767,6 +30769,10 @@ type ReviseTermReportErrorResponse = Error
 type FindSimilarDocumentsResponse = api.DocumentSimilarReport
 
 type FindSimilarDocumentsErrorResponse = Error
+
+type SearchTextCoverageResponse = api.SearchTextCoverage
+
+type SearchTextCoverageErrorResponse = Error
 
 type ValidateDocumentSearchResponse = api.DocumentSearchValidation
 
@@ -29972,6 +30978,10 @@ type GetContentVersionBytesResponse206 = runtime.File
 
 type GetContentVersionBytesErrorResponse = Error
 
+type PrepareOriginalDownloadResponse = api.OriginalDownloadTicket
+
+type PrepareOriginalDownloadErrorResponse = Error
+
 type GetEmailMetadataResponse = api.EmailMetadata
 
 type GetEmailMetadataResponseJSON = api.EmailPending
@@ -30161,6 +31171,8 @@ type BatesExportPage = api.BatesExportPage
 type BatesExportRequest = api.BatesExportRequest
 
 type BatesNamespace = api.BatesNamespace
+
+type BatesNamespaceDetail = api.BatesNamespaceDetail
 
 type BatesNamespacePage = api.BatesNamespacePage
 
@@ -30507,6 +31519,18 @@ type ExportJob = bundle.ExportJob
 
 type FaceBox = document.FaceBox
 
+type FaceCandidate = store.FaceCandidate
+
+type FaceCandidateDecisionRequest = api.FaceCandidateDecisionRequest
+
+type FaceCandidateDecisionResult = api.FaceCandidateDecisionResult
+
+type FaceCandidatePage = api.FaceCandidatePage
+
+type FaceSetupApplyRequest = api.FaceSetupApplyRequest
+
+type FaceSuggestionFace = store.FaceSuggestionFace
+
 type Filters = query.Filters
 
 type ForgetBackupSnapshotsRequest struct {
@@ -30608,6 +31632,8 @@ type LocalTextApplyRequest = api.LocalTextApplyRequest
 type LocalTextPlan = api.LocalTextPlan
 
 type LocalTextPlanRequest = api.LocalTextPlanRequest
+
+type LocalTextStatus = api.LocalTextStatus
 
 type Locator = report.Locator
 
@@ -30748,6 +31774,10 @@ type NumberedReservation = processing.NumberedReservation
 
 type NumberedReservationRequest = processing.NumberedReservationRequest
 
+type OriginalDownloadSelection = api.OriginalDownloadSelection
+
+type OriginalDownloadTicket = api.OriginalDownloadTicket
+
 type OutputCounts = bundle.OutputCounts
 
 type OutputProblem = bundle.OutputProblem
@@ -30865,6 +31895,8 @@ type PageRuntimeIdentity = document.PageRuntimeIdentity
 type PageSelectionRequest = api.PageSelectionRequest
 
 type PageSource = document.PageSource
+
+type PageTextGap = api.PageTextGap
 
 type Pending = kataevidence.Pending
 
@@ -31185,6 +32217,8 @@ type ProcessingSelector = api.ProcessingSelector
 
 type ProcessingStatus = api.ProcessingStatus
 
+type Profile = loadfile.Profile
+
 type PromotePhotoNodeRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string                      `json:"$schema,omitempty"`
@@ -31241,6 +32275,27 @@ type QueryPreview = api.QueryPreview
 type Receipt = bundle.Receipt
 
 type Recipe = pdfstamp.Recipe
+
+type RecipientPackageDocument = processing.RecipientPackageDocument
+
+type RecipientPackageDownload struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema       *string                 `json:"$schema,omitempty"`
+	AllocationID uuid.UUID               `json:"allocation_id"`
+	Contract     string                  `json:"contract"`
+	ExpiresAt    time.Time               `json:"expires_at"`
+	ID           string                  `json:"id"`
+	Name         string                  `json:"name"`
+	Receipt      RecipientPackageReceipt `json:"receipt"`
+	Sha256       string                  `json:"sha256"`
+	Size         int64                   `json:"size"`
+	URL          string                  `json:"url"`
+	Verification string                  `json:"verification"`
+}
+
+type RecipientPackageFile = processing.RecipientPackageFile
+
+type RecipientPackageReceipt = processing.RecipientPackageReceipt
 
 type RedactionArchive = processing.RedactionArchive
 
@@ -31336,26 +32391,31 @@ type RenditionTextProfile struct {
 
 type RenditionTextReceipt struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema       *string                   `json:"$schema,omitempty"`
-	Artifact     *RenditionTextArtifact    `json:"artifact,omitempty"`
-	AttachmentID string                    `json:"attachment_id"`
-	BuildID      string                    `json:"build_id"`
-	GenerationID string                    `json:"generation_id"`
-	Profile      RenditionTextProfile      `json:"profile"`
-	Source       RenditionTextSource       `json:"source"`
-	State        RenditionTextReceiptState `json:"state"`
+	Schema           *string                           `json:"$schema,omitempty"`
+	Artifact         *RenditionTextArtifact            `json:"artifact,omitempty"`
+	AttachmentID     string                            `json:"attachment_id"`
+	BuildID          string                            `json:"build_id"`
+	GenerationID     string                            `json:"generation_id"`
+	PageCoverage     *RenditionTextReceiptPageCoverage `json:"page_coverage,omitempty"`
+	PagesWithoutText []int64                           `json:"pages_without_text,omitempty"`
+	Profile          RenditionTextProfile              `json:"profile"`
+	Source           RenditionTextSource               `json:"source"`
+	State            RenditionTextReceiptState         `json:"state"`
 }
 
 type RenditionTextRequest struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema    *string                `json:"$schema,omitempty"`
-	BlobHash  string                 `json:"blob_hash"`
-	NodeID    int64                  `json:"node_id"`
-	Observed  *RenditionTextObserved `json:"observed,omitempty"`
-	Profile   *string                `json:"profile,omitempty"`
-	Revision  int64                  `json:"revision"`
-	Size      int64                  `json:"size"`
-	VersionID uuid.UUID              `json:"version_id"`
+	Schema   *string `json:"$schema,omitempty"`
+	BlobHash string  `json:"blob_hash"`
+
+	// ExactRendition Resolve the exact observed active rendition independently of the current default profile
+	ExactRendition *bool                  `json:"exact_rendition,omitempty"`
+	NodeID         int64                  `json:"node_id"`
+	Observed       *RenditionTextObserved `json:"observed,omitempty"`
+	Profile        *string                `json:"profile,omitempty"`
+	Revision       int64                  `json:"revision"`
+	Size           int64                  `json:"size"`
+	VersionID      uuid.UUID              `json:"version_id"`
 }
 
 type RenditionTextSource struct {
@@ -31500,6 +32560,8 @@ type SearchHit = api.SearchHit
 
 type SearchReport = api.SearchReport
 
+type SearchTextCoverage = api.SearchTextCoverage
+
 type SelectedDocuments = report.SelectedDocuments
 
 type Selector = kataevidence.Selector
@@ -31615,6 +32677,8 @@ type Term = report.Term
 type TermReportHistory = store.TermReportHistory
 
 type TermReportHistoryPage = store.TermReportHistoryPage
+
+type TermReportSelectionItem = store.TermReportSelectionItem
 
 type TextCitation = document.TextCitation
 

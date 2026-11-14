@@ -138,7 +138,7 @@ it.each(["%2FArchive%2Freport.txt", "%2FArchive"])(
     });
 
     render(App);
-    await screen.findByText("Empty folder");
+    await screen.findByText("No documents yet");
     await fireEvent.click(screen.getByRole("button", { name: "Imports" }));
     const drawer = await screen.findByRole("main", { name: "Imports" });
     await fireEvent.click(

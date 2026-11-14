@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -181,8 +182,31 @@ func newProvenClientForDial(
 	}
 	c := New("http://"+rec.Address, rec.Metadata[metaAPIKey])
 	c.hc = hc
+	c.pinned = &pinnedDaemon{record: rec}
 	ready = true
 	return c, nil
+}
+
+// pinnedDaemon is the runtime record whose ownership a connection proved.
+type pinnedDaemon struct{ record kitdaemon.RuntimeRecord }
+
+// errTransferTransport reports a process whose default HTTP transport was replaced.
+var errTransferTransport = errors.New("default HTTP transport cannot be cloned")
+
+// TransferConnection returns a connection to the same daemon for one long
+// transfer, so a slow body cannot occupy this connection's socket. A proven
+// connection repeats the ownership proof against its pinned runtime record and
+// fails rather than reaching a different listener. The caller owns and must
+// close the result; the receiver is never reused or closed.
+func (c *Connection) TransferConnection(ctx context.Context) (*Connection, error) {
+	if c.pinned != nil {
+		return newProvenClientFor(ctx, c.pinned.record)
+	}
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return nil, errTransferTransport
+	}
+	return &Connection{base: c.base, key: c.key, hc: &http.Client{Transport: transport.Clone()}}, nil
 }
 
 // errInvalidProofResponse marks a proof response that broke the exchange's
@@ -308,7 +332,7 @@ func Ensure(ctx context.Context) (*Connection, error) {
 	if err != nil {
 		return nil, err
 	}
-	res, err := EnsureDaemon(ctx, layout.Root)
+	res, err := EnsureDaemon(ctx, layout.Root, false)
 	if err != nil {
 		return nil, err
 	}
@@ -342,7 +366,7 @@ func EnsureWeb(ctx context.Context) (*Connection, error) {
 	if err != nil {
 		return nil, err
 	}
-	res, err := ensureDaemonWithOptions(ctx, layout.Root, Start, webDiscoverOptions())
+	res, err := ensureDaemonWithOptions(ctx, layout.Root, false, Start, webDiscoverOptions())
 	if err != nil {
 		return nil, err
 	}
@@ -358,26 +382,26 @@ func EnsureWeb(ctx context.Context) (*Connection, error) {
 
 // EnsureDaemon converges the vault on exactly one version- and
 // protocol-matched daemon: it returns the running daemon when it is compatible
-// with this binary, and otherwise — under the launch lock — stops it and starts
-// a fresh one. `daemon start`, `daemon restart`, and the data commands'
-// auto-start all share this path, so there is a single replacement policy and
-// no command ever leaves a stale daemon behind.
-func EnsureDaemon(ctx context.Context, root string) (EnsureResult, error) {
-	return ensureDaemon(ctx, root, Start)
+// with this binary unchanged, and otherwise replaces it under the launch lock.
+// `daemon start` and data commands' auto-start share this replacement policy.
+func EnsureDaemon(ctx context.Context, root string, persistent bool) (EnsureResult, error) {
+	return ensureDaemon(ctx, root, persistent, Start)
 }
 
 func ensureDaemon(
 	ctx context.Context,
 	root string,
-	startFn func(context.Context, string) (kitdaemon.RuntimeRecord, error),
+	persistent bool,
+	startFn func(context.Context, string, bool) (kitdaemon.RuntimeRecord, error),
 ) (EnsureResult, error) {
-	return ensureDaemonWithOptions(ctx, root, startFn, discoverOptions(true))
+	return ensureDaemonWithOptions(ctx, root, persistent, startFn, discoverOptions(true))
 }
 
 func ensureDaemonWithOptions(
 	ctx context.Context,
 	root string,
-	startFn func(context.Context, string) (kitdaemon.RuntimeRecord, error),
+	persistent bool,
+	startFn func(context.Context, string, bool) (kitdaemon.RuntimeRecord, error),
 	opts kitdaemon.DiscoverOptions,
 ) (EnsureResult, error) {
 	var res EnsureResult
@@ -418,6 +442,7 @@ func ensureDaemonWithOptions(
 					old.PID, old.Version, err)
 			}
 			res.Replaced = &old
+			persistent = persistent || Explicit(old)
 		} else {
 			// Shutdown closes the listener before background jobs finish. During
 			// that window ping-based discovery returns no daemon even though the
@@ -449,26 +474,48 @@ func ensureDaemonWithOptions(
 			}
 		}
 
-		res.Record, err = startFn(ctx, root)
+		res.Record, err = startFn(ctx, root, persistent)
 		res.Started = err == nil
 		return err
 	})
 	return res, err
 }
 
+// Restart serializes stop and start with automatic launches. A persistent request
+// or the stopped daemon's explicit intent keeps the replacement running.
+func Restart(ctx context.Context, root string, persistent bool) (kitdaemon.RuntimeRecord, bool, error) {
+	return restart(ctx, root, persistent, Stop, Start)
+}
+
+func restart(ctx context.Context, root string, persistent bool,
+	stopFn func(context.Context, string) (*kitdaemon.RuntimeRecord, error),
+	startFn func(context.Context, string, bool) (kitdaemon.RuntimeRecord, error),
+) (rec kitdaemon.RuntimeRecord, wasRunning bool, err error) {
+	err = WithLaunchLock(ctx, root, func() error {
+		stopped, err := stopFn(ctx, root)
+		if err != nil {
+			return err
+		}
+		wasRunning = stopped != nil
+		rec, err = startFn(ctx, root, persistent || (stopped != nil && Explicit(*stopped)))
+		return err
+	})
+	return rec, wasRunning, err
+}
+
 // Start spawns a detached daemon and waits for a compatible ping.
-func Start(ctx context.Context, root string) (kitdaemon.RuntimeRecord, error) {
-	return start(ctx, root, true)
+func Start(ctx context.Context, root string, persistent bool) (kitdaemon.RuntimeRecord, error) {
+	return start(ctx, root, true, persistent)
 }
 
 // StartAnyVersion spawns a detached daemon and waits for any docbank daemon.
 // update uses this after replacing the executable, because the old updater
 // process cannot know the new binary's version string at compile time.
-func StartAnyVersion(ctx context.Context, root string) (kitdaemon.RuntimeRecord, error) {
-	return start(ctx, root, false)
+func StartAnyVersion(ctx context.Context, root string, persistent bool) (kitdaemon.RuntimeRecord, error) {
+	return start(ctx, root, false, persistent)
 }
 
-func start(ctx context.Context, root string, requireVersion bool) (_ kitdaemon.RuntimeRecord, retErr error) {
+func start(ctx context.Context, root string, requireVersion, persistent bool) (_ kitdaemon.RuntimeRecord, retErr error) {
 	root, err := home.CanonicalRoot(root)
 	if err != nil {
 		return kitdaemon.RuntimeRecord{}, err
@@ -492,7 +539,7 @@ func start(ctx context.Context, root string, requireVersion bool) (_ kitdaemon.R
 	err = kitdaemon.StartDetached(ctx, kitdaemon.StartDetachedOptions{
 		Executable: exe,
 		Args:       []string{"daemon", "run"},
-		Env:        append(os.Environ(), EnvBackgroundDaemon+"=1", "DOCBANK_HOME="+root),
+		Env:        append(os.Environ(), EnvBackgroundDaemon+"=1", EnvPersistentDaemon+"="+strconv.FormatBool(persistent), "DOCBANK_HOME="+root),
 		Stdout:     logFile,
 		Stderr:     logFile,
 		AfterStart: func(cmd *exec.Cmd) { child = cmd.Process },
@@ -683,28 +730,28 @@ func proveOwnershipWithClient(
 
 // Stop gracefully stops the discovered daemon: token endpoint first,
 // SIGTERM only when the process identity still matches the recorded PID. Returns
-// false when no daemon was running.
-func Stop(ctx context.Context, root string) (bool, error) {
+// nil when no daemon was running. A pingless owner's record carries no explicit
+// intent for a replacement.
+func Stop(ctx context.Context, root string) (*kitdaemon.RuntimeRecord, error) {
 	root, err := home.CanonicalRoot(root)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	rec, _, ok, err := Find(ctx, root)
 	if err != nil && !errors.Is(err, kitdaemon.ErrDaemonUnreachable) {
-		return false, err
+		return nil, err
 	}
-	if ok {
-		return true, stopRecord(ctx, rec)
+	stopFn := stopRecord
+	if !ok {
+		// A draining owner has no proven endpoint; signal only its verified PID.
+		rec, ok, err = liveRuntimeRecord(root)
+		stopFn = signalStopRecord
+		delete(rec.Metadata, MetaExplicitStart)
 	}
-	// A daemon that already closed its listener can still be draining jobs.
-	// Recognize only an identity-verified runtime PID without ping evidence.
-	rec, ok, err = liveRuntimeRecord(root)
 	if err != nil || !ok {
-		return false, err
+		return nil, err
 	}
-	// Do not probe or send secrets to a listener that may have been rebound
-	// after the recorded daemon stopped answering. Signal only the verified PID.
-	return true, signalStopRecord(ctx, rec)
+	return &rec, stopFn(ctx, rec)
 }
 
 func stopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {

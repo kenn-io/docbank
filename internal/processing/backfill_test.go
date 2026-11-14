@@ -181,6 +181,23 @@ func TestBackfillSettlesUntilWriteRevisionChanges(t *testing.T) {
 	})
 }
 
+func TestBackfillCapsIdleDelay(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		catalog := newFakeBackfillCatalog()
+		backfill := newTestBackfill(catalog, 1, false)
+		backfill.IdleDelay, backfill.MaxIdleDelay = time.Second, time.Second
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- backfill.Run(ctx) }()
+		time.Sleep(10*time.Second + time.Millisecond)
+		synctest.Wait()
+		cancel()
+		require.ErrorIs(t, <-done, context.Canceled)
+		assert.Equal(t, 11, catalog.listed, "an empty scan waits at most one second")
+	})
+}
+
 func TestBackfillBusyKeepsListingUntilReleased(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {

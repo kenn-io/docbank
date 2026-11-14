@@ -580,7 +580,7 @@ func (s *Store) applyPhotoKeywordsTx(ctx context.Context, tx *sql.Tx, receipt *P
 		if err := checkPhotoAuthoredReceiptSize(*receipt); err != nil {
 			return err
 		}
-		return persistPhotoAuthoredReceiptTx(ctx, tx, *receipt)
+		return s.persistPhotoAuthoredReceiptTx(ctx, tx, *receipt)
 	}
 	slices.SortFunc(changes, func(a, b PhotoKeywordDelta) int {
 		if order := cmp.Compare(a.TagID, b.TagID); order != 0 {
@@ -634,7 +634,7 @@ func (s *Store) applyPhotoKeywordsTx(ctx context.Context, tx *sql.Tx, receipt *P
 			nodes[result.NodeID] = node
 		}
 	}
-	return persistPhotoAuthoredReceiptTx(ctx, tx, *receipt)
+	return s.persistPhotoAuthoredReceiptTx(ctx, tx, *receipt)
 }
 
 // anyArgs converts query arguments for a variadic database call.

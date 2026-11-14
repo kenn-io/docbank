@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/v2"
 	"fmt"
@@ -14,8 +15,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -532,4 +536,83 @@ func TestRestartWhenNotRunningStartsFresh(t *testing.T) {
 	require.NoError(t, err, out)
 	t.Cleanup(func() { _, _ = daemonconn.Stop(context.Background(), dir) })
 	assert.Contains(t, out, "started (was not running)")
+}
+
+func TestDaemonLifetimeTransitions(t *testing.T) {
+	bin := buildDocbank(t)
+	root := t.TempDir()
+	run := func(bin string, args ...string) string {
+		cmd := exec.CommandContext(t.Context(), bin, args...)
+		cmd.Env = append(os.Environ(), "DOCBANK_HOME="+root)
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(out))
+		return string(out)
+	}
+	t.Cleanup(func() { _, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root) })
+
+	run(bin, "search", "missing")
+	automaticPID := waitForDaemon(t, root).PID
+	var status map[string]any
+	run(bin, "daemon", "start")
+	assert.Equal(t, automaticPID, waitForDaemon(t, root).PID)
+	require.NoError(t, json.Unmarshal([]byte(run(bin, "daemon", "status", "--json")), &status))
+	assert.Equal(t, false, status["explicit_start"])
+	assert.Equal(t, "30m0s", status["idle_timeout"])
+
+	run(bin, "daemon", "restart")
+	assert.Contains(t, run(bin, "daemon", "status"), "Stays running until docbank daemon stop")
+	require.NoError(t, json.Unmarshal([]byte(run(bin, "daemon", "status", "--json")), &status))
+	assert.Equal(t, true, status["explicit_start"])
+	assert.Equal(t, "0s", status["idle_timeout"])
+
+	legacy := waitForDaemon(t, root)
+	delete(legacy.Metadata, daemonconn.MetaExplicitStart)
+	delete(legacy.Metadata, daemonconn.MetaIdleTimeout)
+	_, err := daemonconn.RuntimeStore(root).Write(legacy)
+	require.NoError(t, err)
+	status = nil
+	require.NoError(t, json.Unmarshal([]byte(run(bin, "daemon", "status", "--json")), &status))
+	assert.Equal(t, true, status["running"])
+	assert.NotContains(t, status, "explicit_start")
+	assert.NotContains(t, status, "idle_timeout")
+}
+
+func startOutput(rec kitdaemon.RuntimeRecord) string {
+	var out bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&out)
+	printEnsured(cmd, daemonconn.EnsureResult{Record: rec})
+	return out.String()
+}
+
+func TestStartOutputReflectsDaemonLifetimeState(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		metadata map[string]string
+		lifetime string
+		advice   bool
+	}{
+		{"legacy", nil, "Lifetime unavailable", true},
+		{"automatic", map[string]string{daemonconn.MetaExplicitStart: "false", daemonconn.MetaIdleTimeout: "30m0s"}, "Exits after 30m idle (started automatically)", true},
+		{"idle_off", map[string]string{daemonconn.MetaExplicitStart: "false", daemonconn.MetaIdleTimeout: "0s"}, "Idle exit is off", true},
+		{"foreground", map[string]string{daemonconn.MetaExplicitStart: "false"}, "", false},
+		// The explicit request survives later config changes and replacements.
+		{"explicit", map[string]string{daemonconn.MetaExplicitStart: "true", daemonconn.MetaIdleTimeout: "0s"}, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := startOutput(kitdaemon.RuntimeRecord{Metadata: tc.metadata})
+			if tc.lifetime == "" {
+				assert.NotContains(t, out, "idle")
+				assert.NotContains(t, out, "Lifetime")
+				assert.NotContains(t, out, "Stays running")
+			} else {
+				assert.Contains(t, out, tc.lifetime)
+			}
+			if tc.advice {
+				assert.Contains(t, out, "Run docbank daemon restart to keep it running.")
+			} else {
+				assert.NotContains(t, out, "Run docbank daemon restart to keep it running.")
+			}
+		})
+	}
 }

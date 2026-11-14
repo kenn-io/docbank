@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import type { PreparedAction } from "./actionRecovery.js";
 import type { PersistedAction } from "./actionJournal.js";
 import { batchTagRequestDigest } from "./batch-tags.js";
+import { receiptFor } from "./test/receiptFor.js";
 import { canonicalQuery, type Query } from "./query.js";
 import { snapshotMemberHash, type SnapshotPage, type SnapshotRow } from "./snapshots.js";
 
@@ -542,7 +543,89 @@ it("disables tagging during reruns and ignores the old selection's late receipt"
   expect(screen.queryByText(/^Added “Review” to \d+ documents?\.$/)).toBeNull();
 });
 
-it("preserves the draft after dismissing an uncertain selection tag warning", async () => {
+it("refreshes the view and tag catalog after recovery closes", async () => {
+  history.replaceState(
+    null,
+    "",
+    `/#web_session=fresh-session&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(query))}`,
+  );
+  const [first] = await pages();
+  const fresh = {
+    ...first,
+    snapshot_id: "1123456789abcdef0123456789abcdef",
+    rows: first.rows.map((row) => (row.node_id === 1 ? { ...row, revision: 5 } : row)),
+  };
+  const writes: { nodes: { node_id: number; revision: number }[] }[] = [];
+  const root = {
+    id: 1000,
+    name: "",
+    kind: "dir",
+    path: "/",
+    revision: 1,
+    size: 0,
+    created_at: "2026-09-11T00:00:00Z",
+    modified_at: "2026-09-11T00:00:00Z",
+  };
+  const json = (value: unknown) => new Response(JSON.stringify(value));
+  const searches: Record<string, unknown>[] = [];
+  let catalogReads = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/path?path=%2F") return json(root);
+    if (url.includes("/children?"))
+      return json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
+    if (url === `/api/v1/tags/${tag.id}`) return json(tag);
+    if (url === "/api/v1/tags?limit=1000&offset=0") {
+      catalogReads++;
+      return json({ items: [tag], total: 1, limit: 1000, offset: 0 });
+    }
+    if (url === "/api/v1/queries/parse")
+      return json({ query, query_fingerprint: first.query_fingerprint, dependencies: [] });
+    if (url === "/api/v1/workspace/queries") {
+      searches.push(JSON.parse(String(init?.body)));
+      return json(searches.length === 1 ? first : fresh);
+    }
+    if (url === "/api/v1/batch/tags") {
+      const request = JSON.parse(String(init?.body));
+      writes.push(request);
+      if (writes.length === 1) throw new TypeError("Lost response");
+      return json(await receiptFor(request));
+    }
+    throw new Error(`unexpected request: ${url}`);
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+  await screen.findByRole("cell", { name: "/records/report-1.pdf" });
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select /records/report-1.pdf" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
+  await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
+    target: { value: "Rev" },
+  });
+  await fireEvent.click(screen.getByRole("option", { name: "Review (0)" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Apply" }));
+  const warning = await screen.findByText(
+    "Docbank couldn't confirm the tag change. Check the documents' tags before trying again.",
+  );
+  expect(warning.closest('[role="alert"]')).toBeTruthy();
+  expect(searches).toHaveLength(1);
+  const readsBeforeClose = catalogReads;
+  await fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(searches).toHaveLength(2));
+  await waitFor(() => expect(catalogReads).toBe(readsBeforeClose + 1));
+  expect(searches[1]).toEqual(searches[0]);
+  await screen.findByText(fresh.snapshot_id);
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select /records/report-1.pdf" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
+  await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
+    target: { value: "Rev" },
+  });
+  await fireEvent.click(screen.getByRole("option", { name: "Review (0)" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await waitFor(() => expect(writes).toHaveLength(2));
+  expect(writes[1].nodes).toEqual([{ node_id: 1, revision: 5 }]);
+});
+
+it("keeps the snapshot selection when a report adopts a changed version", async () => {
   history.replaceState(
     null,
     "",
@@ -559,68 +642,60 @@ it("preserves the draft after dismissing an uncertain selection tag warning", as
     created_at: "2026-09-11T00:00:00Z",
     modified_at: "2026-09-11T00:00:00Z",
   };
-  const json = (value: unknown) => new Response(JSON.stringify(value));
-  const searches: Record<string, unknown>[] = [];
+  const selected = { node_id: 1, version_id: row(1).content_version_id, sha256: row(1).blob_hash };
+  const current = { ...selected, version_id: "00000000-0000-4000-8000-000000000999" };
+  let snapshotRequests = 0;
+  const json = (value: unknown) =>
+    new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url === "/api/v1/path?path=%2F") return json(root);
-    if (url.includes("/children?"))
+    if (url === "/api/v1/nodes/1000/children?limit=1000&offset=0")
       return json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
     if (url === "/api/v1/tags?limit=1000&offset=0")
-      return json({ items: [tag], total: 1, limit: 1000, offset: 0 });
+      return json({ items: [], total: 0, limit: 1000, offset: 0 });
     if (url === "/api/v1/queries/parse")
       return json({ query, query_fingerprint: first.query_fingerprint, dependencies: [] });
     if (url === "/api/v1/workspace/queries") {
-      searches.push(JSON.parse(String(init?.body)));
+      snapshotRequests++;
       return json(first);
     }
-    if (url === "/api/v1/batch/tags/preview")
-      return json({
-        tag_id: tag.id,
-        tag_revision: 2,
-        nodes: [{ node_id: 1, revision: 3, assigned: false }],
+    if (url.startsWith("/api/v1/search-exports?") || url.startsWith("/api/v1/collections?"))
+      return json({ items: [], total: 0 });
+    if (url === "/api/v1/search-exports/selection")
+      return json([
+        {
+          selected,
+          current,
+          status: "changed",
+          name: "report-1.pdf",
+          path: "/records/report-1.pdf",
+        },
+      ]);
+    if (url === "/api/v1/search-exports" && init?.method === "POST")
+      return new Response(JSON.stringify({ code: "report_selection_changed" }), {
+        status: 409,
+        headers: { "Content-Type": "application/problem+json" },
       });
-    // A server error leaves the client unable to confirm whether the change committed.
-    if (url === "/api/v1/batch/tags") return new Response("unavailable", { status: 503 });
     throw new Error(`unexpected request: ${url}`);
   });
   render(App);
-  await fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+  await screen.findByRole("dialog", { name: "Filters and sort" });
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
   await screen.findByRole("cell", { name: "/records/report-1.pdf" });
-  await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), {
-    target: { value: "unfinished draft" },
-  });
-  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
-    target: { value: '{"size_min":' },
-  });
-  await fireEvent.click(screen.getByRole("combobox", { name: "Documents per page: 100" }));
-  await fireEvent.click(screen.getByRole("option", { name: "250" }));
-  await fireEvent.keyDown(window, { key: "Escape" });
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select /records/report-1.pdf" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
-  await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
-    target: { value: "Rev" },
-  });
-  await fireEvent.click(screen.getByRole("option", { name: "Review (0)" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Apply" }));
-  await waitFor(() => expect(searches).toHaveLength(2));
-  await screen.findByRole("cell", { name: "/records/report-1.pdf" });
-  expect(searches[1]).toEqual(searches[0]);
-  const warning = await screen.findByText(
-    "The result is unknown. Check these documents' tags before trying again.",
+  await fireEvent.click(screen.getByRole("button", { name: "Report selected documents" }));
+  const drawer = await screen.findByRole("dialog", { name: "Search term report" });
+  await fireEvent.click(within(drawer).getByRole("button", { name: "Create report" }));
+  await fireEvent.click(await within(drawer).findByRole("button", { name: "Refresh selection" }));
+  await fireEvent.click(
+    await within(drawer).findByRole("checkbox", { name: "Include current version" }),
   );
-  expect(warning.closest('[role="alert"]')).toBeTruthy();
-  await fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+  await fireEvent.click(within(drawer).getByRole("button", { name: "Use this selection" }));
+  await within(drawer).findByText("Selection updated");
   expect(
-    screen.queryByText("The result is unknown. Check these documents' tags before trying again."),
-  ).toBeNull();
-  expect(
-    (screen.getByRole("searchbox", { name: "Search documents" }) as HTMLInputElement).value,
-  ).toBe("unfinished draft");
-  await fireEvent.focusIn(screen.getByRole("button", { name: "Advanced" }));
-  expect((await screen.findByRole("tooltip")).textContent).toBe("Unapplied changes");
-  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-  expect((screen.getByLabelText("Filters JSON") as HTMLTextAreaElement).value).toBe('{"size_min":');
-  expect(screen.getByRole("combobox", { name: "Documents per page: 250" })).toBeTruthy();
+    screen.getByRole<HTMLInputElement>("checkbox", { name: "Select /records/report-1.pdf" })
+      .checked,
+  ).toBe(true);
+  expect(snapshotRequests).toBe(1);
 });

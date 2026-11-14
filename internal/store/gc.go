@@ -540,7 +540,7 @@ func (s *Store) PurgeDerivatives(
 			if !generation.headed || !generation.targetsExcluded {
 				continue
 			}
-			replacement, err := stageLexicalGenerationExcludingTx(ctx, tx, headExclusions)
+			replacement, err := stageLexicalGenerationExcludingTx(ctx, tx, headExclusions, s.postgresSchema != "")
 			if err != nil {
 				return fmt.Errorf("staging lexical purge replacement: %w", err)
 			}
@@ -977,7 +977,7 @@ func (s *Store) purgeEmbeddingCatalogTx(
 			return nil, err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM current_rendition_roots WHERE root_kind=$1 AND root_id IN (
-			SELECT job_id FROM embedding_jobs WHERE generation_id IN (SELECT value FROM `+d.arrayValues("$2")+`))`,
+			SELECT `+storedStringSQL(d.postgres, "job_id")+` FROM embedding_jobs WHERE generation_id IN (SELECT value FROM `+d.arrayValues("$2")+`))`,
 			RenditionRootWorkerLease, string(generations)); err != nil {
 			return nil, fmt.Errorf("removing selected embedding worker leases: %w", err)
 		}
@@ -1161,19 +1161,19 @@ func (s *Store) PutCurrentRenditionRoot(ctx context.Context, root CurrentRenditi
 		return err
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return putCurrentRenditionRootTx(ctx, tx, root)
+		return putCurrentRenditionRootTx(ctx, tx, root, s.postgresSchema != "")
 	})
 }
 
 func putCurrentRenditionRootTx(
-	ctx context.Context, tx *sql.Tx, root CurrentRenditionRoot,
+	ctx context.Context, tx *sql.Tx, root CurrentRenditionRoot, postgres bool,
 ) error {
 	var stored CurrentRenditionRoot
 	var storedActive bool
 	err := tx.QueryRowContext(ctx, `
 			SELECT root_id,root_kind,target_kind,target_id,fencing_token,recorded_at,
 			       COALESCE(expires_at,''),active
-			FROM current_rendition_roots WHERE root_id=$1`, root.ID,
+			FROM current_rendition_roots WHERE root_id=$1`, storedString(postgres, root.ID),
 	).Scan(&stored.ID, &stored.Kind, &stored.TargetKind, &stored.TargetID,
 		&stored.FencingToken, &stored.RecordedAt, &stored.ExpiresAt, &storedActive)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -1204,7 +1204,7 @@ func putCurrentRenditionRootTx(
 				INSERT INTO current_rendition_roots(
 					root_id,root_kind,target_kind,target_id,fencing_token,recorded_at,expires_at,
 					active,released_at
-				) VALUES($1,$2,$3,$4,$5,$6,NULLIF($7,''),1,NULL)`, root.ID, root.Kind, root.TargetKind,
+				) VALUES($1,$2,$3,$4,$5,$6,NULLIF($7,''),1,NULL)`, storedString(postgres, root.ID), root.Kind, root.TargetKind,
 			root.TargetID, root.FencingToken, root.RecordedAt, root.ExpiresAt)
 		if err != nil {
 			return fmt.Errorf("recording current rendition root %s: %w", root.ID, err)
@@ -1216,7 +1216,7 @@ func putCurrentRenditionRootTx(
 			SET root_kind=$1,target_kind=$2,target_id=$3,fencing_token=$4,recorded_at=$5,
 			    expires_at=NULLIF($6,''),active=1,released_at=NULL
 			WHERE root_id=$7`, root.Kind, root.TargetKind, root.TargetID,
-		root.FencingToken, root.RecordedAt, root.ExpiresAt, root.ID); err != nil {
+		root.FencingToken, root.RecordedAt, root.ExpiresAt, storedString(postgres, root.ID)); err != nil {
 		return fmt.Errorf("renewing current rendition root %s: %w", root.ID, err)
 	}
 	return nil
@@ -1235,7 +1235,7 @@ func (s *Store) ReleaseCurrentRenditionRoot(
 		result, err := tx.ExecContext(ctx, `
 			UPDATE current_rendition_roots SET active=0,released_at=$1
 			WHERE root_id=$2 AND fencing_token=$3 AND active=1`,
-			nowRFC3339(), rootID, fencingToken)
+			nowRFC3339(), storedString(s.postgresSchema != "", rootID), fencingToken)
 		if err != nil {
 			return fmt.Errorf("releasing current rendition root %s: %w", rootID, err)
 		}

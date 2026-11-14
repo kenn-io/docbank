@@ -159,7 +159,7 @@ test("import collections, label conflicts and stable document navigation", async
     await page.getByRole("button", { name: "Imports", exact: true }).click();
     await drawer
       .getByRole("button", {
-        name: "Browse import Discovery",
+        name: `Browse import Unlabeled import ${collectionID.slice(0, 8)}`,
         exact: true,
       })
       .click();
@@ -183,7 +183,7 @@ test("import collections, label conflicts and stable document navigation", async
     await page.getByRole("button", { name: "Imports", exact: true }).click();
     await drawer
       .getByRole("button", {
-        name: "Browse import Discovery",
+        name: `Browse import Unlabeled import ${collectionID.slice(0, 8)}`,
         exact: true,
       })
       .click();

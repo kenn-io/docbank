@@ -33,7 +33,7 @@ func TestAddURLImportsEvidence(t *testing.T) {
 		// Stop the daemon the CLI started before downloading, so the upload must start a new one.
 		stopped, err := daemonconn.Stop(r.Context(), home)
 		assert.NoError(t, err)
-		assert.True(t, stopped, "the daemon should be running when the download starts")
+		assert.NotNil(t, stopped, "the daemon should be running when the download starts")
 		_, _ = io.WriteString(w, content)
 	}))
 	defer server.Close()

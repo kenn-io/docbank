@@ -96,10 +96,11 @@
     const end = chunkAt(chunks, scrollTop + 2 * viewport);
     return chunks.slice(firstChunk, Math.min(chunks.length, end + 1));
   });
+  const timelineBlocking = $derived(timelineLoading && !timeline);
   const showTimeline = $derived(
     !!onjump &&
       (!!timelineError ||
-        timelineLoading ||
+        timelineBlocking ||
         !!timeline?.values.length ||
         (timeline?.missing ?? 0) > 0),
   );
@@ -226,7 +227,7 @@
 {#snippet dates(compact: boolean)}
   <PhotoTimeline
     facet={timeline}
-    loading={timelineLoading}
+    loading={timelineBlocking}
     error={timelineError}
     chosen={chosenYear}
     {current}

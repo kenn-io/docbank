@@ -7,13 +7,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPersonNameSearchFollowsAuthority(t *testing.T) {
+func checkPersonNameSearchFollowsAuthority(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	ctx := t.Context()
-	path := filepath.Join(t.TempDir(), "people.db")
-	s, err := Open(t.Context(), path)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	s := newStore(t)
 	person, err := s.CreatePerson(ctx, "Anne Smith", "operator")
 	require.NoError(t, err)
 	person, err = s.UpdatePerson(ctx, person.PersonID, person.Revision, "Jo Brown")

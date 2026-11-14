@@ -28,7 +28,7 @@ start with [Document understanding in Go](../document-understanding.md).
 | Web app and TUI | Preview processing, record consent, inspect jobs, and read retained sanitized renditions |
 
 The default configuration has no processing profiles. The daemon can execute
-its built-in plaintext and EPUB rendition adapters and the OpenAI-compatible
+its built-in plaintext, EPUB, and PDF text rendition adapters and the OpenAI-compatible
 and Voyage embedding runtimes listed in [Configuration][embedding-runtime].
 Other public provider packages are available to embedded Go callers. Adding a
 package does not register a daemon runtime. Configuration alone does not grant
@@ -39,8 +39,14 @@ consent or enqueue work.
 `configureRenditionProviders` selects `document/epub` for `docbank-epub-rendition/v1`
 and passes the existing byte and unit limits to its constructor. The provider
 owns the `epub.in-process-v1` descriptor and virtual-unit policy. Startup
-rejects descriptor or trust-boundary drift. Unknown adapters remain
-unavailable.
+rejects descriptor or trust-boundary drift. The same checks apply to
+`document/pdftext` and `docbank-pdftext-rendition/v1`, with byte and page limits
+bound into the descriptor. Its sealed `PDFTextOnly` inspection policy admits
+opaque image streams and external references while retaining parser bounds.
+The PDF text provider releases PDFium's shared lease after each page.
+Omission-only partial PDFs retain normalized evidence and a canonical
+frontmatter envelope with an empty body. Verified-empty reads require that
+exact envelope's size and checksum. Unknown adapters remain unavailable.
 
 [Document processing](../usage/document-processing.md) follows the operator
 workflow from profile selection through preview, consent, execution, and reads.
@@ -384,6 +390,11 @@ Choose the largest useful page size. Existing short citations still stream
 artifacts up to 64 MiB, independently of navigation slots. `rendition get` can
 retrieve an attachment still active for its version; it cannot retrieve a
 superseded attachment. Navigation does not add historical bulk download.
+
+Omission-only PDF builds settle chunk processing across restarts;
+original-file embedding bindings still need their own results.
+Older binaries refuse omission-only evidence or its empty
+Markdown body, so downgrading requires a version that can read these results.
 
 ## Retain, restore, or remove derived results
 

@@ -27,9 +27,10 @@ func TestPackagePreflightReadExpiresBeforeCleanup(t *testing.T) {
 	})
 }
 
-func TestExpiredPreflightsAreSweptAndUnexpiredOnesSurvive(t *testing.T) {
+func checkExpiredPreflightsAreSweptAndUnexpiredOnesSurvive(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	fresh := putPreflight(t, s, hoursFromNow(t, 0), hoursFromNow(t, 24))
 	stale := putPreflight(t, s, hoursFromNow(t, -48), hoursFromNow(t, -24))
 	removed, err := s.ExpirePackagePreflights(t.Context(), hoursFromNow(t, 0))
@@ -39,6 +40,36 @@ func TestExpiredPreflightsAreSweptAndUnexpiredOnesSurvive(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 	_, err = s.PackagePreflight(t.Context(), fresh.Owner, fresh.PreflightID)
 	require.NoError(t, err)
+}
+
+func checkPackagePreflightOwnerBlockingAndExpiry(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	t.Parallel()
+	s := newStore(t)
+	record := PackagePreflightRecord{
+		PreflightID: mustPackagePreflightID(t), Owner: "synthetic", SourceKind: "root", SourceRef: "synthetic-root",
+		ProfileSHA256: strings.Repeat("a", 64), MappingSHA256: strings.Repeat("b", 64),
+		ManifestSHA256: strings.Repeat("c", 64), ManifestBlobSHA256: strings.Repeat("c", 64),
+		CanonicalJSON: []byte("{}"), DiagnosticsJSON: []byte("[]"), Blocking: true,
+		CreatedAt: hoursFromNow(t, 0), ExpiresAt: hoursFromNow(t, 24),
+	}
+	stored, err := s.PutPackagePreflight(t.Context(), record)
+	require.NoError(t, err)
+	read, err := s.PackagePreflight(t.Context(), record.Owner, record.PreflightID)
+	require.NoError(t, err)
+	require.Equal(t, stored, read)
+	require.True(t, read.Blocking)
+	_, err = s.PackagePreflight(t.Context(), "other-owner", record.PreflightID)
+	require.ErrorIs(t, err, ErrNotFound)
+	record.PreflightID = mustPackagePreflightID(t)
+	record.CreatedAt, record.ExpiresAt = hoursFromNow(t, -24), hoursFromNow(t, -1)
+	_, err = s.PutPackagePreflight(t.Context(), record)
+	require.NoError(t, err)
+	_, err = s.PackagePreflight(t.Context(), record.Owner, record.PreflightID)
+	require.ErrorIs(t, err, ErrNotFound, "reads enforce expiry before the sweep runs")
+	var retained int
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM package_preflights WHERE preflight_id=$1`, record.PreflightID).Scan(&retained))
+	require.Equal(t, 1, retained)
 }
 
 func TestPackagePreflightBlobStagingIsAGCHold(t *testing.T) {

@@ -60,10 +60,12 @@ func BuildRenditionV1(evidence NormalizedEvidenceV1, policy RenditionPolicy) (Re
 		result.Warnings = append(result.Warnings, RenditionWarningV1{Code: "truncated"})
 	}
 
-	if len(markdownUnits) == 0 {
+	if len(markdownUnits) == 0 && len(evidence.Units) != 0 {
 		return RenditionV1{}, invalidRenditionError("evidence produced no readable text")
 	}
-	result.Markdown = []byte(strings.Join(markdownUnits, "\n\n---\n\n") + "\n")
+	if len(markdownUnits) > 0 {
+		result.Markdown = []byte(strings.Join(markdownUnits, "\n\n---\n\n") + "\n")
+	}
 	result.MarkdownChecksum = checksumBytes(result.Markdown)
 	result.Checksum = renditionChecksum(result)
 	return result, nil

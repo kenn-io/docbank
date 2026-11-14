@@ -9,7 +9,6 @@ import (
 	"image/color"
 	"image/draw"
 	"io"
-	"reflect"
 	"slices"
 	"strings"
 	"unicode"
@@ -127,8 +126,20 @@ func (s *resolvedSequence) Next(ctx context.Context) (PageArtifact, error) {
 		s.run++
 	}
 	runs := s.plan.Runs[firstRun:s.run]
-	if a.Runs != nil && !reflect.DeepEqual(a.Runs, runs) {
-		return PageArtifact{}, errors.New("artifact runs differ from resolved plan")
+	if a.Runs != nil {
+		// Compare the same canonical authority used to freeze the plan, including
+		// whitespace runs whose nil box lists become empty arrays when decoded.
+		actual, err := canonical.Marshal(a.Runs)
+		if err != nil {
+			return PageArtifact{}, err
+		}
+		expected, err := canonical.Marshal(runs)
+		if err != nil {
+			return PageArtifact{}, err
+		}
+		if !bytes.Equal(actual, expected) {
+			return PageArtifact{}, errors.New("artifact runs differ from resolved plan")
+		}
 	}
 	a.Runs = runs
 	firstMask := s.mask

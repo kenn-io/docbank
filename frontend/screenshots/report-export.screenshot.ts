@@ -14,7 +14,7 @@ const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".
 const captures = process.env.DOCBANK_REPORT_EXPORT_SCREENSHOT_DIR;
 test.skip(!captures, "DOCBANK_REPORT_EXPORT_SCREENSHOT_DIR enables this qualification");
 
-test("qualifies selected reports and original exports", async ({ page }) => {
+test("qualifies selected reports and original exports under a mount", async ({ page }) => {
   test.setTimeout(240_000);
   const binary = process.env.DOCBANK_SCREENSHOT_BINARY;
   if (!binary || !path.isAbsolute(binary)) {
@@ -23,6 +23,7 @@ test("qualifies selected reports and original exports", async ({ page }) => {
   await access(binary);
   const scratch = await mkdtemp(path.join(tmpdir(), "docbank-report-export-"));
   const vault = path.join(scratch, "vault");
+  const basePath = "/archive";
   const run = async (...args: string[]) =>
     (
       await exec(binary, args, {
@@ -36,7 +37,8 @@ test("qualifies selected reports and original exports", async ({ page }) => {
   const post = (route: string) =>
     page.waitForResponse(
       (response) =>
-        new URL(response.url()).pathname === route && response.request().method() === "POST",
+        new URL(response.url()).pathname === basePath + route &&
+        response.request().method() === "POST",
     );
   let started = false;
   let failure: unknown;
@@ -57,6 +59,10 @@ test("qualifies selected reports and original exports", async ({ page }) => {
   };
   try {
     await mkdir(captures!, { recursive: true, mode: 0o700 });
+    await mkdir(vault, { mode: 0o700 });
+    await writeFile(path.join(vault, "config.toml"), `[web]\nbase_path = "${basePath}"\n`, {
+      mode: 0o600,
+    });
     const sources = new Map([
       ["one.txt", Buffer.from("alpha. Document dated 2024-05-06.\n")],
       ["two.txt", Buffer.from("beta. Document dated 2024-05-06. Document dated 2024-06-07.\n")],
@@ -117,8 +123,8 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       await drawer.getByRole("textbox", { name: "Expression for term 1" }).fill("alpha");
       await drawer.getByText("Options", { exact: true }).click();
       await expect(
-        drawer.getByRole("combobox", { name: /^Coverage policy:/ }),
-      ).toHaveAccessibleName("Coverage policy: Stop on incomplete coverage");
+        drawer.getByRole("combobox", { name: /^Missing information:/ }),
+      ).toHaveAccessibleName("Missing information: Stop report");
       const creating = post("/api/v1/search-exports");
       await drawer.getByRole("button", { name: "Create report", exact: true }).click();
       const response = await creating;
@@ -176,6 +182,7 @@ test("qualifies selected reports and original exports", async ({ page }) => {
         await exportDrawer.getByTestId("export-archive-size").getAttribute("data-bytes"),
       );
       const download = await downloading;
+      expect(new URL(download.url()).pathname).toBe("/archive/api/daemon/web-download/file");
       await download.saveAs(archive);
       expect(await download.failure()).toBeNull();
       const bytes = await readFile(archive);
@@ -195,7 +202,7 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       await drawer.getByRole("button", { name: "Add term", exact: true }).click();
       await drawer.getByRole("textbox", { name: "Expression for term 2" }).fill("beta");
       await drawer.getByText("Options", { exact: true }).click();
-      await drawer.getByRole("combobox", { name: /^Coverage policy:/ }).click();
+      await drawer.getByRole("combobox", { name: /^Missing information:/ }).click();
       await page.getByRole("option", { name: "Count available text", exact: true }).click();
       const creating = post("/api/v1/search-exports");
       await drawer.getByRole("button", { name: "Create report", exact: true }).click();
@@ -221,7 +228,7 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       await expect(drawer.getByRole("table", { name: "Search report counts" })).toHaveCount(0);
       await expect(drawer.getByRole("button", { name: "Download evidence ZIP" })).toHaveCount(0);
       const loading = page.waitForResponse(
-        (r) => new URL(r.url()).pathname === `/api/v1/search-exports/${parent.id}/dates`,
+        (r) => new URL(r.url()).pathname === `${basePath}/api/v1/search-exports/${parent.id}/dates`,
       );
       await drawer.getByRole("button", { name: "Review dates", exact: true }).click();
       const dates: DatePage = await (await loading).json();
@@ -251,7 +258,7 @@ test("qualifies selected reports and original exports", async ({ page }) => {
         animations: "disabled",
       });
       const revising = post(`/api/v1/search-exports/${parent.id}/revisions`);
-      await drawer.getByRole("button", { name: "Create reviewed revision" }).click();
+      await drawer.getByRole("button", { name: "Create report with these date choices" }).click();
       const revision = await revising;
       expect(revision.status()).toBe(200);
       expect(revision.request().postDataJSON()).toEqual({ choices: [reviewedChoice] });
@@ -269,7 +276,7 @@ test("qualifies selected reports and original exports", async ({ page }) => {
           });
           return { status: response.status, summary: await response.json() };
         },
-        { url: getGetTermReportUrl(parent.id), session },
+        { url: basePath + getGetTermReportUrl(parent.id), session },
       );
       expect(parentRead).toMatchObject({ status: 200, summary: { state: "needs_review" } });
       const counts = {
@@ -307,8 +314,10 @@ test("qualifies selected reports and original exports", async ({ page }) => {
           "1",
         ]);
       }
-      await expect(drawer.getByRole("paragraph").filter({ hasText: "3 scoped" })).toContainText(
-        "3 scoped · 2 searchable · 1 missing text · 0 incomplete families · 1 fallback dates · expires",
+      await expect(
+        drawer.getByRole("paragraph").filter({ hasText: "3 in date ranges" }),
+      ).toContainText(
+        "3 in date ranges · 2 searchable · 1 missing text · 0 with incomplete relationships · 1 dated from vault records · expires",
       );
       await table.scrollIntoViewIfNeeded();
       await page.screenshot({
@@ -326,6 +335,7 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       const downloading = page.waitForEvent("download");
       await drawer.getByRole("button", { name: label!, exact: true }).click();
       const download = await downloading;
+      expect(new URL(download.url()).pathname).toBe("/archive/api/daemon/web-download/file");
       await download.saveAs(destination!);
       expect(await download.failure()).toBeNull();
     }
@@ -483,9 +493,23 @@ print('Verified report evidence, CSV and all three original byte streams')
       expect(response.request().postDataJSON().selected_documents.documents).toEqual(identities);
       expect(response.status()).toBe(409);
       expect(await response.json()).toMatchObject({ code: "report_selection_changed" });
-      await expect(drawer.getByRole("alert")).toHaveText(
-        "Selected documents changed. Refresh the workspace and reselect the intended current versions.",
+      await expect(
+        drawer.getByRole("region", { name: "Selected documents changed" }).getByRole("status"),
+      ).toContainText(
+        "The report didn't run. Some selected documents have a different version or are no longer available.",
       );
+      await page.screenshot({ path: path.join(captures!, "selection-before.png") });
+      await drawer.getByRole("button", { name: "Refresh selection" }).click();
+      await expect(drawer.getByText(/^Selected:/)).toBeVisible();
+      await page.screenshot({ path: path.join(captures!, "selection-after.png") });
+      const include = drawer.getByRole("checkbox", { name: "Include current version" });
+      await expect(include).not.toBeChecked();
+      await include.check();
+      await drawer.getByRole("button", { name: "Use this selection" }).click();
+      await expect(
+        drawer.getByRole("status").filter({ hasText: "Selection updated" }),
+      ).toBeVisible();
+      await page.screenshot({ path: path.join(captures!, "selection-updated.png") });
       await expect(drawer.getByRole("table", { name: "Search report counts" })).toHaveCount(0);
       expect(await history()).toEqual(before);
     });

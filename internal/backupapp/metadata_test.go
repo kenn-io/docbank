@@ -41,7 +41,7 @@ func TestDerivativeAuthorityStatsAcceptEveryCatalogArtifactRole(t *testing.T) {
 	) VALUES('preview-generation','preview-blob',17,'preview-checksum','ready')`)
 	require.NoError(t, err)
 
-	stats, present, err := computeDerivativeAuthorityStats(t.Context(), db)
+	stats, present, err := computeDerivativeAuthorityStats(t.Context(), db, false)
 	require.NoError(t, err)
 	require.True(t, present)
 	require.NotNil(t, stats)
@@ -70,7 +70,7 @@ func TestDerivativeAuthorityStatsRefuseUnregisteredRole(t *testing.T) {
 		VALUES(?,'build','artifact','blob',1,'checksum');`, role)
 			require.NoError(t, err)
 
-			stats, present, err := computeDerivativeAuthorityStats(t.Context(), db)
+			stats, present, err := computeDerivativeAuthorityStats(t.Context(), db, false)
 			require.EqualError(t, err, fmt.Sprintf("backupapp: derivative artifact class %q is not catalog-authorized", role))
 			assert.False(t, present)
 			assert.Nil(t, stats)

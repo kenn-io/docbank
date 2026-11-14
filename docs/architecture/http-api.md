@@ -1,7 +1,7 @@
 ---
 last_edited: 2026-11-01
 title: HTTP API
-description: The agent-first HTTP API: filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
+description: The agent-first HTTP API, with filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
 
 # HTTP API
@@ -121,6 +121,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /people/by-id/{person_id}` | inspect one person, its identities, and its external UIDs | Implemented |
 | `PATCH /people/by-id/{person_id}` · `POST /people/by-id/{person_id}/retire` | rename or retire one person under `If-Match` | Implemented |
 | `POST /people/by-id/{person_id}/merge` · `POST /people/by-id/{person_id}/split` | merge or split person authority under revision and operation fences | Implemented |
+| `POST /versions/{version_id}/download-ticket` | issue a two-minute single-use original download capability for an exact vault, live file node, retained version, hash and size | Implemented |
 | `GET /versions/{version_id}` · `GET /versions/{version_id}/content` | inspect or stream one immutable version by stable UUID | Implemented |
 | `GET\|POST /versions/{version_id}/email` | read or synchronously ensure canonical email metadata for one immutable version | Implemented |
 | `GET /versions/{version_id}/email/generations/{generation_id}` | read one immutable email generation attached to that version | Implemented |
@@ -207,6 +208,11 @@ require substantial work before reaching `limit`. The normal `limit` and
 `truncated` contract remains in force, without a cursor. If `truncated` is true,
 the page is incomplete. Narrowing time bounds cannot split a group with identical
 modification timestamps, such as nodes restored together.
+
+`GET /api/v1/search/text-coverage` takes the ordinary search filters and counts
+current files after an empty text search. `no_text` counts files a processing
+profile could make searchable, by `families` (`pdf`, `office`, `other`), and
+`pending` counts native-text files still queued for extraction. PDF page coverage reads at most 16 distinct evidence builds; `pdf_page_coverage_partial` marks incomplete coverage, and the PDF and page counts are lower bounds when it is true.
 
 Set `fuzzy=true` on ordinary `GET /search` to append bounded ASCII filename
 and path discovery after existing hits. Blank text returns `422 validation`;
@@ -778,6 +784,8 @@ current source visibility and serving evidence. Missing required coverage keeps
 the aggregate state `partial` even if another class is rebuilding. This read
 does not grant consent or start provider work.
 
+For `docbank-pdf-text`, `pages_without_text` lists source version IDs and one-based PDF page numbers without a text layer. Each response inspects at most 16 candidate builds and contains at most 8,192 page numbers. When `page_coverage` is `partial`, narrow the source fence to inspect more pages. `page_coverage_unavailable` reports evidence that could not be read. Text rendition receipts also expose `pages_without_text` for the source PDF independently of the selected profile, or `page_coverage: "unavailable"` when its evidence could not be read.
+
 `POST /search` uses JSON, separately from ordinary lexical `GET /search`:
 
 ```json
@@ -818,11 +826,20 @@ The Go library and MCP version lists send fences.
 
 Search requires nonblank `query` text of at most 8,192 characters, `profile`,
 and `mode` (`lexical`, `semantic`, `hybrid`, or `auto`). `limit` defaults to 50
-and accepts 1–100. `binding_id` selects the embedding binding. Omitting it uses
+and accepts 1–100. `binding_id` selects the embedding binding. When the profile has
+embeddings, an unknown binding returns `404 not_found`. Profiles without embeddings
+ignore it for lexical and auto search. Omitting it uses
 the profile's first binding. Set it explicitly for semantic/hybrid search when
 several are configured. The explicit CLI processing form requires that choice. `auto` uses lexical
 retrieval. See [processing consent](#processing-consent) before choosing a mode
 that embeds query text.
+
+Semantic search requires a binding whose provider supports text queries; otherwise
+it returns `422 semantic_unavailable` after validating the source and binding.
+Hybrid search on a profile without embeddings returns that same error. An index
+without an active generation returns `409 index_unavailable`, so clients can try
+another binding while preserving `404 not_found` for invalid selections. Daemon
+protocol revision 123 requires these distinct errors for MCP profile selection.
 
 For exact recording attribution, add `media_sources`, up to 4,096 distinct
 objects. Omission keeps ordinary search; empty arrays and `null` are rejected.
@@ -897,13 +914,15 @@ envelope. Common processing codes are:
 | 428 | `processing_consent_required` | No matching grant; review and grant consent |
 | 412 | `processing_consent_expired`, `processing_consent_revoked` | Existing consent cannot authorize this operation |
 | 409 | `processing_plan_changed` | Preview the changed source or profile again |
+| 409 | `index_unavailable` | The selected vector index has no active generation |
 | 409 | `stale_index` | The vector index source changed and the index is stale |
 | 409 | `rendition_operator_required` | Processing needs operator intervention; an unreadable PDF passwords file returns the fixed detail `PDF passwords file can't be read; check media.pdf_passwords_file` without its path |
 | 422 | `processing_profile_unavailable`, `foreign_vault`, `version_node_mismatch` | Profile or source identity does not match |
 | 422 | `invalid_processing_consent_expiry`, `search_query_required`, `validation` | Invalid expiry, blank query, or request schema violation |
+| 422 | `semantic_unavailable` | The profile has no query-capable binding for semantic search, or no embeddings for hybrid search |
 | 422 | `rendition_failed` | Required rendition work failed |
 | 422 | `rendition_source_ineligible` | Local inspection refuses to send this source to the rendition provider; the plan's `rendition_ineligible_reason` says why. A locked PDF that no configured password opens instead creates a job that ends `failed` with `failure_code=pdf_password_required` |
-| 404 | `not_found` | Requested node, version, job, or active rendition is absent |
+| 404 | `not_found` | Requested node, version, binding, job, or active rendition is absent |
 | 503 | `processing_unavailable` | The processing service is not configured |
 | 500 | `processing_failed` | An otherwise unclassified processing failure |
 
@@ -1027,6 +1046,7 @@ All paths below start with `/api/v1/search-exports` and require authentication.
 | Method and suffix | Request and response |
 | --- | --- |
 | `POST /` | Version 1 request, up to 8 MiB; returns a summary with state `complete` or `needs_review`. Counts and downloads are withheld in `needs_review`. |
+| `POST /selection` | Read-only comparison of exact document identities in one snapshot. Returns each selected identity with status `current`, `changed`, `trashed`, or `missing`, and current identity, path, and version dates when available. The request uses `{"documents":[...]}` and the same selection limits as report creation. Results are ordered by node ID. |
 | `GET /` | `offset` (0–100) and `limit` (1–50, default 20); returns `items` containing reusable `request` and `summary`, and `total`. Lists vault history, including expired receipts. |
 | `GET /{id}` | Returns the caller's live frozen summary. |
 | `DELETE /{id}` | API-key release of an owned live handle; returns 204 without a body. ID must be 48 lowercase hexadecimal characters. |
@@ -1038,11 +1058,17 @@ All paths below start with `/api/v1/search-exports` and require authentication.
 
 Create accepts all-document, collection, or exact current-document scope. The
 selected identities are admitted together in the same read observation as the
-report. Stale selection returns `409 report_selection_changed`. Malformed
+report. Stale selection returns `409 report_selection_changed`. Use `/selection` to compare the full set before choosing replacements. Malformed
 selection or a wrong hash for a current version returns
 `422 invalid_report_request`. Selected-member overflow returns `413 report_limit`,
 while collection-count overflow still returns 422. See the guide for null/empty
 semantics and identity requirements.
+
+The selection comparison accepts up to 8 MiB. An empty, malformed, or duplicate
+selection returns `422 invalid_report_request`; more than 50,000 identities
+returns `413 report_limit`. Comparison checks the full identity, so a wrong
+hash on the current version is `changed` here, although report creation rejects
+that hash as an invalid request.
 
 History pages are also limited to 16 MiB. Advance `offset` by the number of
 returned items when the byte limit shortens a page. Source deletion does not
@@ -1201,6 +1227,13 @@ These root-level routes are outside `/api/v1` and auth-exempt: `GET /health`,
 `GET /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
 and `/`, `/searches`, `/productions`, `/imports`, `/trash`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, `/photos/albums/{set_id}`, and `/assets/` (the static web application, when `[web] enabled`). Album page IDs must be canonical UUIDv4 values.
 
+`[web] base_path` mounts the browser app and its API requests under a configured
+prefix. The daemon removes that prefix before authorization, loopback checks,
+and timeout classification; the endpoint contracts below remain unchanged.
+Root API endpoints stay available to CLI clients. Browser launch URLs include
+the prefix, while `public_origin` continues to contain only the scheme and
+authority. See [proxy subpaths](../usage/web.md#serve-docbank-under-a-path).
+
 A hidden `POST /api/daemon/shutdown` (not in the OpenAPI document) backs
 `docbank daemon stop`. It isn't auth-exempt: it requires both the API key and
 its own shutdown token. The hidden `POST /api/daemon/web-session` exchanges
@@ -1259,8 +1292,13 @@ configured-backup, verified-download, map-tile, and usage-event workflows.
 They are not another general API credential. Browser file bytes use the
 hidden `/api/daemon/web-upload` WebSocket instead. The page verifies a
 challenge proof over the upload secret before sending bytes, binds the socket
-to one session, and never reconnects it. An ordinary browser token is
-forbidden from `POST /api/v1/uploads`.
+to one session, and verifies a fresh proof when replacing it. The daemon checks
+for an existing matching upload before receiving bytes on an unconfirmed file
+retry. During stored-content verification, `verification_progress` messages
+carry the request ID and the increasing `verified_size` read from storage.
+Each message renews the browser's 60-second inactivity deadline; a stalled
+check ends without sending file bytes. An ordinary browser token is forbidden
+from `POST /api/v1/uploads`.
 
 Photo folders use `plan_photo_import` and `begin_photo_group` on `/api/daemon/web-upload`, with server grouping and hash verification before each group commits. The plan declares `expected_hash` as an empty string for files the browser has not hashed. When such a file's size equals an eligible earlier browser photo's, the server replies `photo_import_hashes_needed` with those `indexes`, and the browser resends the plan with only those hashes. Other files hash with their group, and the server pins each hash at its first attempt. The plan returns an `import_id` owned by that connection; each group must reference it and match the planned paths and sizes. The selection shares one ingest run. An optional `source_id` UUID in the plan is retained separately from the connection's plan ID and appears in browser provenance paths; omitting it creates a new source. Browser source IDs preserve provenance and grouping. Browser photo imports create files and deduplicate identical content; reusing a source ID and path with changed bytes creates or resolves to a separate node and preserves the existing node's content, revision, and current version. The browser saves the source ID, destination, picker kind, and a versioned SHA-256 digest over the sorted complete manifest of paths, sizes, and modified times through authenticated `/api/daemon/photo-import-checkpoint` routes before uploading. The vault keeps one private version-2 JSONL checkpoint per browser profile outside database, audit, and backup records. A persistent HttpOnly, SameSite=Strict cookie scoped to `docbank.localhost` locates it across fresh random daemon origins; the cookie carries no authorization. A header round trip confirms cookie persistence before saving or uploading. `GET /api/daemon/photo-import-checkpoint/header` reads only the bounded identity record, `GET /api/daemon/photo-import-checkpoint` reads the selection digest and picker kind, and `PUT /api/daemon/photo-import-checkpoint` compares the expected source and revision before atomic replacement or clearing. Both PUT fields are required and nullable: `expected: null` creates a checkpoint, and `next: null` clears it. Checkpoint requests allow 64 KiB; the upload plan allows at most 32,768 files in an 8 MiB declaration. Successful writes refresh the 365-day profile cookie. Clearing removes the checkpoint file. Minting a new profile cookie removes matching checkpoints and atomic temporary files older than 366 days. Host and Origin must match the current browser origin. Resume verifies the full selection and reuses that source ID on a fresh connection. A new selection gets a new source ID. Checkpoint replacement detects a competing tab, and confirmed completion clears it. Receipts include the ambiguity reason when pairing needs manual review; daemon-host path imports still require the master key. Control messages are limited by their `type`: 8 MiB for `plan_photo_import`, about 2.1 MiB for `begin_photo_group`, and 4 KiB for every other message. The server closes the socket with status 1009 when a message is over its limit.
 
@@ -1433,7 +1471,8 @@ with API-key clients.
 `GET /watches` returns `{items: [...]}` in stable watch-name order. Each item
 joins the effective machine-local source, virtual destination, settle and scan
 durations, and the `exclude` and `exclude_patterns` lists with its current
-`watch:<name>` job record.
+`watch:<name>` job record. The `exclude_patterns` list is effective: it includes
+the default patterns unless `default_excludes = false`.
 Watches with a processing profile include `processing` with `profile` and `consent_state` (`active`, `required`, `expired`, or `revoked`).
 If consent lookup fails, `error` describes the status failure instead.
 `GET /jobs` includes the same optional status on watch jobs, so browser sessions can display it without access to machine-local watch configuration.
@@ -1545,9 +1584,15 @@ A face conflict returns `409 person_merge_conflict` with up to 20 visible `face_
 
 `POST` on the same path accepts `box: {x, y, width, height}` and optional `person_id`, or `person_id` for a whole-photo mark. To create a person with that mark, also supply `person_name` and choose a UUIDv4 `person_id`. Retain both fields for retries. A new name must be nonblank and at most 200 UTF-8 bytes. A name without an ID, an existing ID with a different name, or `person_name` with a box returns `422 invalid_photo_face`. A retired person returns `404 not_found`. Repeating the same ID and name reuses the saved person and assertion. The person and mark save in one transaction, so a refused mark leaves no new person. A boxed request requires a caller-supplied UUIDv4 `face_id`. Retain it for retries: the same ID, version and box return the current saved result, including a named face whose person has since retired; a supplied person must match its canonical person. Conflicting reuse returns `409 exists`. A write past 1,000 faces or 1,000 depicted people on one version returns `409 photo_face_limit`. The result contains `face` for a box and the saved `assertion` when a person is supplied. Repeated whole-photo marks reuse their assertion.
 
-Boxes use normalized coordinates in the EXIF-oriented preview before authored rotation. API-key clients can use every face route. Browser sessions can list faces, create boxed faces, mark an existing person or create a person by name in a whole photo, and name, clear, or remove a face through revision-fenced `name`, `retract`, or `dismiss` decisions. They can clear an existing whole-photo mark with `retract`, its `assertion_id`, and its assertion `revision`. `reject`, `withdraw_rejection`, and `key` require the API key. Hidden photos also require the existing unlock cookie. Replies use `Cache-Control: no-store`. Audited vault writes fail with `audit_mutation_unsupported`. [Automatic face detection](https://github.com/kenn-io/docbank/blob/main/docs/configuration.md#automatic-face-detection) adds unnamed faces when configured and consent is granted. Face suggestions remain unavailable. See [photo face storage](https://github.com/kenn-io/docbank/blob/main/docs/internal/storage-design.md#photo-face-authority) for replay, merge and backup rules.
+Boxes use normalized coordinates in the EXIF-oriented preview before authored rotation. API-key clients can use every face route. Browser sessions can list faces, create boxed faces, mark an existing person or create a person by name in a whole photo, and name, clear, reject, or remove a face through revision-fenced `name`, `retract`, `reject`, or `dismiss` decisions. They can clear an existing whole-photo mark with `retract`, its `assertion_id`, and its assertion `revision`. `withdraw_rejection` and `key` require the API key. Hidden photos also require the existing unlock cookie. Replies use `Cache-Control: no-store`. Audited vault writes fail with `audit_mutation_unsupported`. [Automatic face detection](https://github.com/kenn-io/docbank/blob/main/docs/configuration.md#automatic-face-detection) adds unnamed faces when configured and consent is granted. Face suggestions use the local face embedding profile after consent; `docbank processing faces` installs the face runtime and model assets. See [photo face storage](https://github.com/kenn-io/docbank/blob/main/docs/internal/storage-design.md#photo-face-authority) for replay, merge and backup rules.
+
+If an older text embeddings server is running, `docbank processing faces` downloads the required assets and reports the server PID to restart. Stop that server and rerun the command to start the updated runtime and enable face suggestions.
 
 `POST /api/v1/photos/versions/{content_version_id}/face-decisions` takes `face_id`, `revision`, and `action` (`name`, `retract`, `reject`, `dismiss`, `withdraw_rejection`, or `key`). Naming takes either `person_id` or `person_name`, limited to 200 UTF-8 bytes. `retract` accepts exactly one `face_id` or whole-photo `assertion_id`. Clearing a whole-photo mark keeps its assertion active while named faces still use it; otherwise it becomes withdrawn. A new name creates the person and assigns the face in one transaction; a failed revision check rolls both back. Retain `operation_id` for an identical replay after an uncertain response. Rejection, withdrawal and key selection take `person_id`; key selection also takes `person_revision`, and omitting `face_id` clears the key. Existing IDs replay through create; edits use this decision route. Each decision returns `receipt_id`. Undoing a face's new-name decision retires the new person unless it was edited or has other evidence. Undoing that undo returns not found once the person is retired. Clearing a name or a whole-photo mark leaves the person. `POST /api/v1/photos/face-decisions/{receipt_id}/undo` restores changed rows while their saved revisions still match, returning `412 stale_revision` after a conflicting edit. Face reads include `rejected_person_ids` and `dismissed`; dismissed records remain in the API for undo and disappear from browser rows, boxes, and closeups.
+
+`GET /api/v1/people/face-candidates` returns open face suggestions as `items` and `total`, with `limit` (default 24, maximum 250) and `offset` (maximum 10,000). Each item carries its `candidate_id`, `revision`, `display_name`, optional `suggested_person_id`, and exact source `faces`. Visibility filtering precedes pagination. Known-person suggestions propose that person; unnamed groups require choosing or creating a person.
+
+`POST /api/v1/people/face-candidates/{candidate_id}/decision` requires the candidate revision in `If-Match`. Actions are `link` with `person_id`, `new_person` with `display_name`, or `reject`. Optional `face_ids` selects up to 48 faces for confirmation; omitted faces remain unnamed. Rejecting an unnamed group dismisses that exact suggestion while preserving visible, nameable faces. Changed evidence can form a different suggestion. Browser sessions can make these decisions under the existing Hidden and person visibility rules. The response carries the new candidate `revision` and `state`, with its revision in `ETag`.
 
 Person detail accepts `assertion_cursor` and `assertion_limit` (1–1,000) and returns `assertions_next_cursor`, `key_face_id`, and document and photo assertion selectors. Hidden filtering precedes pagination. Merge conflicts include up to 20 visible `face_ids`, `more`, and `hidden_face_conflict`; retained versions can be corrected through the same Hidden gate.
 
@@ -1770,7 +1815,8 @@ trailer on a fixed-length message, and pre-reading a large loose or packed
 blob solely to populate a header would double physical I/O. Clients that need
 independent transfer proof hash the body themselves and compare both their
 digest and the trailer with the node's `blob_hash`. The version header must
-equal `current_version_id`.
+equal `current_version_id`. A failed copy or blob verification aborts the
+transfer without a digest trailer.
 
 `GET /nodes/{id}/versions` returns a bounded, newest-first page with `items`,
 `total`, `limit`, and `offset`. `GET /versions/{version_id}` resolves immutable
@@ -1785,6 +1831,25 @@ whole version. The `Content-Digest` trailer covers only the returned window.
 MCP clients verify the assembled bytes against the selected version's size
 and SHA-256. Every window streams from the beginning of the blob up to the
 requested bytes, so a window costs time in proportion to its offset.
+
+`POST /api/v1/versions/{version_id}/download-ticket` issues an original
+download ticket. It requires API authentication and a live file node.
+The request body binds `vault_id`, `node_id`, `blob_hash`,
+and `size` to the path's `version_id`. A retained older version is valid;
+a mismatched selection returns 409 `download_selection_stale`.
+The response contains `url`, `name`, and `expires_in_seconds: 120`.
+Issuance does not stage content and does not require the web app.
+
+The returned relative `/api/daemon/web-download/file?ticket=…` URL needs
+no API key. GET atomically consumes the ticket, rechecks its selection,
+and streams the whole original through the verified blob reader. Identity
+headers name the selected version, SHA-256 and size; the `Content-Digest`
+trailer covers the returned bytes. Verification or streaming failure fails the
+response. HEAD returns 405 without spending the ticket. One GET spends the
+ticket. Reuse or expiry returns 404
+`download_not_found`. Expiry and shutdown revoke capabilities without
+removing retained content. See [Download originals](../usage/mcp.md#download-originals)
+for the MCP relay, proxy setup, and transfer limits.
 
 `GET /nodes/{id}/provenance` returns the requested file node, its live path when
 one exists, and a bounded newest-ingest-first page from one read snapshot. Each

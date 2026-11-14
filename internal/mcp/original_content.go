@@ -8,6 +8,7 @@ import (
 	"maps"
 	"uuid"
 
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
 )
@@ -92,14 +93,11 @@ func (in originalContentInput) checkSelection(ctx context.Context, c *daemonconn
 	if err != nil {
 		return err
 	}
-	if info.VaultID != in.VaultID.String() {
-		return errors.New("original content vault does not match the selection")
-	}
 	node, err := c.API().GetNode(ctx, &apiclient.GetNodeRequestOptions{PathParams: &apiclient.GetNodePath{ID: in.NodeID}})
 	if err != nil {
 		return err
 	}
-	if node.ID != in.NodeID || node.Kind != "file" || node.TrashedAt != "" || node.Path == "" {
+	if node.Path == "" {
 		return errors.New("original content node is unavailable")
 	}
 	version, err := c.API().GetContentVersion(ctx, &apiclient.GetContentVersionRequestOptions{
@@ -108,8 +106,8 @@ func (in originalContentInput) checkSelection(ctx context.Context, c *daemonconn
 	if err != nil {
 		return err
 	}
-	if version.ID != in.ContentVersionID.String() || version.NodeID != in.NodeID ||
-		version.BlobHash != in.BlobHash || version.Size != in.Size {
+	selection := api.OriginalDownloadSelection{VaultID: in.VaultID.String(), NodeID: in.NodeID, BlobHash: in.BlobHash, Size: in.Size}
+	if !selection.Matches(info.VaultID, in.ContentVersionID.String(), *node, *version) {
 		return errors.New("original content version does not match the selection")
 	}
 	return nil

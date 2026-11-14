@@ -242,7 +242,10 @@ permits plaintext secret capture for that backup.
 Kit's structured progress events remain structured across the daemon boundary.
 The streaming create endpoint emits NDJSON stage updates followed by one
 terminal result or error. The typed client validates that sequence before
-reporting success. The human CLI renders the same events as terminal bars or
+reporting success. If a progress callback cancels the caller context, the typed
+client stops delivering events and returns the context error even when a result
+is already buffered. Cancellation does not undo work the daemon already
+completed. The human CLI renders the same events as terminal bars or
 plain log lines. Machine-readable CLI output uses the non-streaming endpoint so
 stdout remains one JSON document.
 

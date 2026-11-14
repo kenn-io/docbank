@@ -38,6 +38,9 @@ separate storage repack to reclaim physical pack space.`,
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 				"%d packed blob(s), %d stored byte(s) pending repack\n",
 				rep.PendingPackedBlobs, rep.PendingPackedBytes)
+			if gcRun {
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Run docbank storage repack to reclaim space. Default thresholds can skip recent or small sparse packs; see docbank storage repack --help.")
+			}
 		}
 		if !gcRun {
 			if rep.CandidateBlobs+rep.UntrackedFiles > 0 {

@@ -187,7 +187,8 @@ func providerVariant(
 	for _, capability := range []document.CapabilityKey{
 		document.CapabilityText, document.CapabilityPages, document.CapabilityTranscript,
 	} {
-		if !descriptorSupports(descriptor, metadata, capability) {
+		qualification, qualified := providerQualification(descriptor, metadata.ID, capability)
+		if !descriptorSupports(descriptor, metadata, capability, qualified) {
 			continue
 		}
 		eligible = true
@@ -195,7 +196,7 @@ func providerVariant(
 			State: document.CapabilityUnqualified, Provider: descriptor.ID,
 			ProviderFingerprint: descriptor.Fingerprint,
 		}
-		if qualification, found := providerQualification(descriptor, metadata.ID, capability); found {
+		if qualified {
 			state.Evidence = qualification.Evidence
 			state.State = document.CapabilityQualified
 		}
@@ -205,7 +206,7 @@ func providerVariant(
 }
 
 func descriptorSupports(
-	descriptor document.RenditionDescriptor, metadata document.FormatMetadata, capability document.CapabilityKey,
+	descriptor document.RenditionDescriptor, metadata document.FormatMetadata, capability document.CapabilityKey, qualified bool,
 ) bool {
 	if capability == document.CapabilityTranscript && metadata.Family != "audio_video" {
 		return false
@@ -218,7 +219,10 @@ func descriptorSupports(
 	var role document.EvidenceArtifactRole
 	switch capability {
 	case document.CapabilityText:
-		return descriptor.ReturnsMarkdown
+		if descriptor.ReturnsMarkdown {
+			return true
+		}
+		return descriptor.ReturnsStructured && qualified
 	case document.CapabilityPages:
 		role = document.EvidenceArtifactImage
 	case document.CapabilityTranscript:

@@ -78,9 +78,10 @@ func TestDocumentPeopleKeepsIndependentActorEvidenceAfterReopen(t *testing.T) {
 	require.Equal(t, documentPeopleStatePublished, head.State)
 }
 
-func TestDocumentPeopleResolverInputsProvisionEligibleIdentityOnce(t *testing.T) {
+func checkDocumentPeopleResolverInputsProvisionEligibleIdentityOnce(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	version := seedDocumentPeopleEvent(t, s, "auto.txt", "d1", nil)
 
 	first, err := s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
@@ -102,7 +103,8 @@ func TestDocumentPeopleResolverInputsProvisionEligibleIdentityOnce(t *testing.T)
 	require.Equal(t, 1, identities)
 }
 
-func TestDocumentPeopleBoundsDerivedLabelsWithoutChangingEvidence(t *testing.T) {
+func checkDocumentPeopleBoundsDerivedLabelsWithoutChangingEvidence(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	longName := strings.Repeat("界", 67)
 	longAddress := strings.Repeat("a", 192) + "@example.test"
@@ -116,7 +118,7 @@ func TestDocumentPeopleBoundsDerivedLabelsWithoutChangingEvidence(t *testing.T) 
 		{name: "candidate key", key: "name_alias:" + longName, want: strings.Repeat("界", 66), candidate: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			version := seedDocumentPeopleEvent(t, s, "long-label.txt", "d7", []document.DocumentEventActorV1{{
 				Role: "author", ActorKey: tc.key, DisplayName: tc.display, Address: tc.address, Claim: `"author"`,
 			}})
@@ -138,15 +140,16 @@ func TestDocumentPeopleBoundsDerivedLabelsWithoutChangingEvidence(t *testing.T) 
 			person := input.Bindings[tc.key][0]
 			require.Equal(t, tc.want, person.DisplayName)
 			var identity string
-			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT kind || ':' || value_normalized FROM person_identities WHERE person_id=?`, person.PersonID).Scan(&identity))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT kind || ':' || value_normalized FROM person_identities WHERE person_id=$1`, person.PersonID).Scan(&identity))
 			require.Equal(t, tc.key, identity)
 		})
 	}
 }
 
-func TestDocumentPeopleProvisioningKeepsPublishedVersionsCurrent(t *testing.T) {
+func checkDocumentPeopleProvisioningKeepsPublishedVersionsCurrent(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	for index, address := range []string{"ada@example.test", "grace@example.test"} {
 		version := seedDocumentPeopleEvent(t, s, address+".txt", fakeSHA256([]byte(address)), []document.DocumentEventActorV1{{
 			Role: "sender", ActorKey: "email:" + address, Address: address, DisplayName: address, Claim: `"sender"`,
@@ -164,9 +167,10 @@ func TestDocumentPeopleProvisioningKeepsPublishedVersionsCurrent(t *testing.T) {
 	}
 }
 
-func TestDocumentPeopleNameAliasIsOnlyASuggestion(t *testing.T) {
+func checkDocumentPeopleNameAliasIsOnlyASuggestion(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	person, err := s.CreatePerson(t.Context(), "Ada", "operator")
 	require.NoError(t, err)
 	_, err = s.AddPersonIdentity(t.Context(), person.PersonID, person.Revision, PersonIdentity{
@@ -185,9 +189,10 @@ func TestDocumentPeopleNameAliasIsOnlyASuggestion(t *testing.T) {
 	require.Equal(t, person.PersonID, suggestion)
 }
 
-func TestDocumentPeopleReusedIdentitySuggestsOnlyActiveOwner(t *testing.T) {
+func checkDocumentPeopleReusedIdentitySuggestsOnlyActiveOwner(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	old, err := s.CreatePerson(ctx, "Previous Owner", "operator")
 	require.NoError(t, err)
@@ -226,9 +231,10 @@ func TestDocumentPeopleReusedIdentitySuggestsOnlyActiveOwner(t *testing.T) {
 	require.Equal(t, current.PersonID, candidates[0].SuggestedPersonID)
 }
 
-func TestDocumentPeopleRetiredNameAliasKeepsUnassignedCandidate(t *testing.T) {
+func checkDocumentPeopleRetiredNameAliasKeepsUnassignedCandidate(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Former Author", "operator")
 	require.NoError(t, err)
@@ -254,9 +260,10 @@ func TestDocumentPeopleRetiredNameAliasKeepsUnassignedCandidate(t *testing.T) {
 	require.Equal(t, "name_only", candidates[0].Reason)
 }
 
-func TestDocumentPeopleDisplayOnlyActorRemainsUnresolved(t *testing.T) {
+func checkDocumentPeopleDisplayOnlyActorRemainsUnresolved(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	version := seedDocumentPeopleEvent(t, s, "display-only.txt", "b2", []document.DocumentEventActorV1{{
 		Role: "author", DisplayName: "An unnamed contributor", Claim: `"contributor"`,
 	}})
@@ -269,17 +276,19 @@ func TestDocumentPeopleDisplayOnlyActorRemainsUnresolved(t *testing.T) {
 	require.Zero(t, candidates)
 }
 
-func TestDocumentPeopleLoadFailureHasNoPublishableInputs(t *testing.T) {
+func checkDocumentPeopleLoadFailureHasNoPublishableInputs(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	input, err := s.PrepareDocumentPeopleInputs(t.Context(), "00000000-0000-4000-8000-000000000099")
 	require.ErrorIs(t, err, ErrNotFound)
 	require.Empty(t, input.ContentVersionID)
 }
 
-func TestDocumentPeopleDerivationDoesNotMutateAuditedAuthority(t *testing.T) {
+func checkDocumentPeopleDerivationDoesNotMutateAuditedAuthority(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	version := seedDocumentPeopleEvent(t, s, "audited.txt", "d7", nil)
 	audited, err := s.Mkdir(t.Context(), s.RootID(), "Audited")
 	require.NoError(t, err)
@@ -317,9 +326,10 @@ func TestDocumentPeopleDerivationDoesNotMutateAuditedAuthority(t *testing.T) {
 	require.Zero(t, candidates)
 }
 
-func TestDocumentPeopleResolverInputsOpensNameOnlyCandidate(t *testing.T) {
+func checkDocumentPeopleResolverInputsOpensNameOnlyCandidate(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	actor := document.DocumentEventActorV1{ActorKey: "name_alias:ada lovelace", Claim: `"Ada Lovelace"`,
 		DisplayName: "Ada Lovelace", Ordinal: 0, Role: "author"}
 	secondActor := actor
@@ -385,9 +395,10 @@ func TestDocumentPeopleResolverInputsCountsCandidateQueueOverflow(t *testing.T) 
 	require.EqualValues(t, 1, input.CandidateOverflow)
 }
 
-func TestDocumentPeopleResolverInputsHonorsExternalUIDUnlink(t *testing.T) {
+func checkDocumentPeopleResolverInputsHonorsExternalUIDUnlink(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	person, err := s.CreatePerson(t.Context(), "Synthetic transfer person", "transfer")
 	require.NoError(t, err)
 	identity := PersonExternalIdentity{PersonID: person.PersonID, System: "msgvault", ArchiveID: "synthetic",
@@ -417,7 +428,8 @@ func TestDocumentPeopleResolverInputsHonorsExternalUIDUnlink(t *testing.T) {
 	require.Zero(t, candidates, "an explicit unlink suppresses the transfer key instead of opening fallback review")
 }
 
-func TestPublishDocumentPeopleRejectsChangedInputsBeforeWriting(t *testing.T) {
+func checkPublishDocumentPeopleRejectsChangedInputsBeforeWriting(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, test := range []struct {
 		name   string
@@ -425,22 +437,24 @@ func TestPublishDocumentPeopleRejectsChangedInputsBeforeWriting(t *testing.T) {
 	}{
 		{"binding epoch", func(t *testing.T, s *Store, _ DocumentPeopleInputs) {
 			t.Helper()
-			_, err := s.db.ExecContext(t.Context(), `UPDATE document_people_state SET binding_epoch=binding_epoch+1`)
+			_, err := s.CreatePerson(t.Context(), "Another person", "operator")
 			require.NoError(t, err)
 		}},
 		{"event generation", func(t *testing.T, s *Store, input DocumentPeopleInputs) {
 			t.Helper()
-			generation := fakeHash("replacement-event")
-			_, err := s.db.ExecContext(t.Context(), `INSERT INTO document_event_generations(generation_id,content_version_id,contract_version,deriver_fingerprint,inputs_sha256,document_kind,canonical_json,checksum,event_count,created_at)
-				VALUES(?,?,'document-events/v1',?,?,'other','{}',?,0,?)`, generation, input.ContentVersionID,
-				fakeHash("resolver"), fakeHash("inputs"), fakeHash("checksum"), nowRFC3339())
+			require.NoError(t, s.EnsureDocumentEventRecipe(t.Context(), fakeHash("e1")))
+			targets, err := s.MissingDocumentEventTargetsAfter(t.Context(), fakeHash("e1"), "", 100)
 			require.NoError(t, err)
-			_, err = s.db.ExecContext(t.Context(), `UPDATE document_event_heads SET generation_id=? WHERE content_version_id=?`, generation, input.ContentVersionID)
+			target := byTargetID(targets, input.ContentVersionID)
+			require.Equal(t, input.ContentVersionID, target.ContentVersionID)
+			record := documentEventRecord(t, s.VaultID(), input.ContentVersionID, "d4")
+			_, err = s.PublishDocumentEvents(t.Context(), target, fakeHash("e1"),
+				requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
 			require.NoError(t, err)
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			version := seedDocumentPeopleEvent(t, s, "fence.txt", "d3", nil)
 			input, err := s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
 			require.NoError(t, err)
@@ -456,9 +470,10 @@ func TestPublishDocumentPeopleRejectsChangedInputsBeforeWriting(t *testing.T) {
 	}
 }
 
-func TestPublishDocumentPeopleReplayInputIdentity(t *testing.T) {
+func checkPublishDocumentPeopleReplayInputIdentity(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	version := seedDocumentPeopleEvent(t, s, "publish.txt", "e1", nil)
 	input, err := s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
 	require.NoError(t, err)
@@ -562,9 +577,10 @@ func TestPublishDocumentPeopleDetectsCollisionAndRollsBackForeignKeyFailure(t *t
 	})
 }
 
-func TestDocumentPeopleFailureRemainsRetryableAndCannotEraseSuccess(t *testing.T) {
+func checkDocumentPeopleFailureRemainsRetryableAndCannotEraseSuccess(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	version := seedDocumentPeopleEvent(t, s, "retry.txt", "f1", nil)
 	input, err := s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
 	require.NoError(t, err)
@@ -584,9 +600,10 @@ func TestDocumentPeopleFailureRemainsRetryableAndCannotEraseSuccess(t *testing.T
 	require.Empty(t, current.FailureReason)
 }
 
-func TestDocumentPeopleFailureReplacesOlderSuccessfulCoverage(t *testing.T) {
+func checkDocumentPeopleFailureReplacesOlderSuccessfulCoverage(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	version := seedDocumentPeopleEvent(t, s, "stale-failure.txt", "f2", nil)
 	input, err := s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
 	require.NoError(t, err)
@@ -606,17 +623,18 @@ func TestDocumentPeopleFailureReplacesOlderSuccessfulCoverage(t *testing.T) {
 	require.Equal(t, "derivation_failed", head.FailureReason)
 	require.Equal(t, newer.BindingEpoch, head.BindingEpoch)
 	var edges int
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM document_people WHERE content_version_id=?`, version.ID).Scan(&edges))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM document_people WHERE content_version_id=$1`, version.ID).Scan(&edges))
 	require.Zero(t, edges)
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT publication_epoch FROM document_people_state WHERE singleton=1`).Scan(&publicationEpoch))
 	require.EqualValues(t, 3, publicationEpoch)
 }
 
-func TestDocumentPeopleReadsWithholdStaleAttributionAndRetainHistory(t *testing.T) {
+func checkDocumentPeopleReadsWithholdStaleAttributionAndRetainHistory(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, change := range []string{"person merge", "event evidence"} {
 		t.Run(change, func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			ctx := t.Context()
 			survivor, err := s.CreatePerson(ctx, "Synthetic survivor", "operator")
 			require.NoError(t, err)
@@ -664,22 +682,23 @@ func TestDocumentPeopleReadsWithholdStaleAttributionAndRetainHistory(t *testing.
 				require.Equal(t, survivor.PersonID, edges[0].PersonID)
 			}
 			var retainedJSON []byte
-			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT canonical_json FROM document_people_generations WHERE generation_id=?`, original.GenerationID).Scan(&retainedJSON))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT canonical_json FROM document_people_generations WHERE generation_id=$1`, original.GenerationID).Scan(&retainedJSON))
 			require.JSONEq(t, string(originalJSON), string(retainedJSON))
 		})
 	}
 }
 
-func TestDocumentPeopleMembershipChangesInvalidateOnlyAffectedDocument(t *testing.T) {
+func checkDocumentPeopleMembershipChangesInvalidateOnlyAffectedDocument(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, change := range []string{"trash", "restore", "replace"} {
 		t.Run(change, func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			ctx := t.Context()
 			version := seedDocumentPeopleEvent(t, s, "membership.txt", "a1", nil)
 			other := seedDocumentPeopleEvent(t, s, "unrelated.txt", "a2", nil)
 			var ingestID string
-			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT ingest_id FROM provenance WHERE node_id=?`, version.NodeID).Scan(&ingestID))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT ingest_id FROM provenance WHERE node_id=$1`, version.NodeID).Scan(&ingestID))
 			person, err := s.CreatePerson(ctx, "Synthetic Custodian", "operator")
 			require.NoError(t, err)
 			_, err = s.SetCustodian(ctx, CustodianRequest{
@@ -748,7 +767,7 @@ func TestDocumentPeopleMembershipChangesInvalidateOnlyAffectedDocument(t *testin
 func seedDocumentPeopleEvent(t *testing.T, s *Store, name, seed string, actors []document.DocumentEventActorV1) ContentVersion {
 	t.Helper()
 	version, target := ingestDocumentEventTarget(t, s, name, seed)
-	_, err := s.db.ExecContext(t.Context(), `INSERT INTO document_event_state(singleton,contract_version,deriver_fingerprint,input_epoch,publication_epoch,updated_at) VALUES(1,?,?,?,?,?) ON CONFLICT(singleton) DO NOTHING`,
+	_, err := s.db.ExecContext(t.Context(), `INSERT INTO document_event_state(singleton,contract_version,deriver_fingerprint,input_epoch,publication_epoch,updated_at) VALUES(1,$1,$2,$3,$4,$5) ON CONFLICT(singleton) DO NOTHING`,
 		document.DocumentEventsContractV1, fakeHash("e0"), 1, 1, nowRFC3339())
 	require.NoError(t, err)
 	record := documentEventRecord(t, s.VaultID(), version.ID, seed)

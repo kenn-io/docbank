@@ -19,6 +19,36 @@ import (
 	"go.kenn.io/docbank/internal/vectorindex"
 )
 
+func TestSearchContentHydrationCancellation(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	node, err := s.CreateFile(t.Context(), s.RootID(), "report.txt", fakeHash("ab"), 7, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{
+		BlobHash: node.BlobHash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "mercury",
+	}))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	queryer := &searchHydrationCancelQuerier{metadataQuerier: s.db, cancel: cancel}
+	hits, err := leadingContentHits(ctx, queryer, "mercury", ftsQuery("mercury"), "", nil, 2)
+	require.ErrorIs(t, err, context.Canceled)
+	require.ErrorContains(t, err, "loading content hits")
+	require.Nil(t, hits)
+}
+
+type searchHydrationCancelQuerier struct {
+	metadataQuerier
+
+	cancel context.CancelFunc
+}
+
+func (q *searchHydrationCancelQuerier) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if strings.Contains(query, "FROM json_each(?) page") {
+		q.cancel()
+	}
+	return q.metadataQuerier.QueryContext(ctx, query, args...)
+}
+
 func TestSimilarSharedRowsExpandMembershipBeforeSourceExclusion(t *testing.T) {
 	t.Parallel()
 	s, sourceVersion, profile, sourceAttachment := newEmbeddingCatalogFixture(t)
@@ -360,7 +390,7 @@ func TestResolveAndRevalidateSemanticCandidatesIsolateSharedVectorSpaceAndCovera
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	otherProfile := embeddingCatalogProfileVariant(t)
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return ensureProcessingProfileTx(t.Context(), tx, otherProfile)
+		return ensureProcessingProfileTx(t.Context(), tx, otherProfile, s.postgresSchema != "")
 	}))
 	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
@@ -813,6 +843,25 @@ func TestReduceSemanticCandidatesKeepsBestChunkPerDocument(t *testing.T) {
 	assert.Equal(t, len(neighbors), consumed)
 }
 
+func TestAcquireSemanticSearchAuthorityUnavailableBindings(t *testing.T) {
+	t.Parallel()
+	s, _, profile, _ := newEmbeddingCatalogFixture(t)
+	for _, tc := range []struct {
+		name, profile, binding string
+		want                   error
+	}{
+		{name: "unknown binding", profile: profile.Fingerprint, binding: "missing", want: ErrNotFound},
+		{name: "unprocessed profile", profile: strings.Repeat("f", 64), binding: "optional", want: ErrVectorIndexUnavailable},
+		{name: "unbuilt vector space", profile: profile.Fingerprint, binding: "optional", want: ErrVectorIndexUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := s.AcquireSemanticSearchAuthority(t.Context(), tc.profile,
+				tc.binding, "reader", time.Now().UTC(), time.Minute, SearchOptions{})
+			require.ErrorIs(t, err, tc.want)
+		})
+	}
+}
+
 func TestAcquireSemanticSearchAuthorityUsesStoredDescriptor(t *testing.T) {
 	t.Parallel()
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
@@ -825,6 +874,9 @@ func TestAcquireSemanticSearchAuthorityUsesStoredDescriptor(t *testing.T) {
 			InputKind: record.InputKind}, SetID: record.ID, VectorSpaceID: record.VectorSpace.ID,
 		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 	}))
+	_, err := s.AcquireSemanticSearchAuthority(t.Context(), profile.Fingerprint,
+		record.BindingID, "unindexed-reader", time.Now().UTC(), time.Minute, SearchOptions{})
+	require.ErrorIs(t, err, ErrVectorIndexUnavailable)
 	set, _, err := document.DecodeVectorSetV1(record.VectorSet.Payload, document.VectorBounds{
 		MaxRows: 100, MaxDimension: record.VectorSpace.Descriptor.Dimension,
 		MaxBytes: len(record.VectorSet.Payload),
@@ -1100,6 +1152,79 @@ func TestSearchPrefixAndRename(t *testing.T) {
 	hits, _, err = s.SearchPage(ctx, "car", 0)
 	require.NoError(t, err)
 	assert.Len(t, hits, 1)
+}
+
+func TestSearchPreparedWordsAndPhrases(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	words, err := s.Mkdir(t.Context(), s.RootID(), "words")
+	require.NoError(t, err)
+	stops, err := s.Mkdir(t.Context(), s.RootID(), "stops")
+	require.NoError(t, err)
+	for _, group := range []struct {
+		parent int64
+		names  []string
+	}{
+		{words.ID, []string{"invoice.pdf", "tax 2026.pdf", "tax draft 2026.pdf", "2026 tax.pdf", "case.pdf", "cased.pdf", "casing.pdf", "cases.pdf", "casework.pdf", "cash.pdf"}},
+		{stops.ID, []string{"the report.pdf", "the and.pdf", "tax.pdf", "of to and.pdf", "of to.pdf", "tax value.pdf", "the of.pdf"}},
+	} {
+		for _, name := range group.names {
+			_, err := s.CreateFile(t.Context(), group.parent, name, fakeHash(name), 1, "application/pdf")
+			require.NoError(t, err)
+		}
+	}
+	content, err := s.CreateFile(t.Context(), words.ID, "memo.txt", fakeHash("bc"), 4, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{BlobHash: content.BlobHash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "Refunds take five days."}))
+	for _, tc := range []struct {
+		query  string
+		parent int64
+		want   []string
+		terms  []string
+	}{
+		{"the invoices", 0, []string{"invoice.pdf"}, []string{"invoices"}},
+		{"the invoice absent", 0, nil, []string{"invoice", "absent"}},
+		{`"tax 2026"`, 0, []string{"tax 2026.pdf"}, []string{`"tax 2026"`}},
+		{`"tax 2026" absent`, 0, nil, []string{"absent", `"tax 2026"`}},
+		{`"the invoices`, 0, nil, []string{`"the`, "invoices"}},
+		{"the refunds", 0, []string{"memo.txt"}, []string{"refunds"}},
+		{`"refunds take"`, 0, []string{"memo.txt"}, []string{`"refunds take"`}},
+		{`"the" and`, stops.ID, []string{"the and.pdf"}, []string{"and", `"the"`}},
+		{`"the +" and`, stops.ID, []string{"the and.pdf"}, []string{"and", `"the +"`}},
+		{`"the report" and`, stops.ID, []string{"the report.pdf"}, []string{`"the report"`}},
+		{`"the" and absent`, stops.ID, nil, []string{"absent", `"the"`}},
+		{`"tax" and`, stops.ID, []string{"tax.pdf", "tax value.pdf"}, []string{`"tax"`}},
+		{`"of to" and`, stops.ID, []string{"of to and.pdf"}, []string{"and", `"of to"`}},
+		{`"of-to" and`, stops.ID, []string{"of to and.pdf"}, []string{"and", `"of-to"`}},
+		{`"tax-value" and`, stops.ID, []string{"tax value.pdf"}, []string{`"tax-value"`}},
+		{`"the" "of"`, stops.ID, []string{"the of.pdf"}, []string{`"the"`, `"of"`}},
+		{`"the" "of" and`, stops.ID, nil, []string{"and", `"the"`, `"of"`}},
+	} {
+		hits, _, err := s.SearchPageWithOptions(t.Context(), tc.query, 20, SearchOptions{UnderNodeID: tc.parent})
+		require.NoError(t, err)
+		var names []string
+		for _, hit := range hits {
+			names = append(names, hit.Node.Name)
+		}
+		require.Equal(t, tc.want, names, tc.query)
+		require.Equal(t, tc.terms, SearchRequiredTerms(tc.query), tc.query)
+	}
+	hits, _, err := s.SearchPage(t.Context(), "cases", 20)
+	require.NoError(t, err)
+	var names []string
+	for _, hit := range hits {
+		names = append(names, hit.Node.Name)
+	}
+	require.ElementsMatch(t, []string{"case.pdf", "cased.pdf", "casing.pdf", "cases.pdf"}, names)
+	for _, query := range []string{"case cases", "cases case"} {
+		hits, _, err := s.SearchPage(t.Context(), query, 20)
+		require.NoError(t, err)
+		var names []string
+		for _, hit := range hits {
+			names = append(names, hit.Node.Name)
+		}
+		require.ElementsMatch(t, []string{"case.pdf", "cased.pdf", "casing.pdf", "cases.pdf", "casework.pdf"}, names, query)
+	}
 }
 
 func TestSearchSurvivesOperatorInput(t *testing.T) {
@@ -3269,4 +3394,115 @@ func TestAcquireSemanticSearchAuthorityReleasesLeaseOnFenceCancellation(t *testi
 	var leases int
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vector_index_reader_leases`).Scan(&leases))
 	require.Zero(t, leases)
+}
+
+// Compare paging with the original grouped query across ties and duplicate rows.
+func TestSearchPageLeadingContentMatchesGrouped(t *testing.T) {
+	t.Parallel()
+	for _, generation := range []bool{false, true} {
+		t.Run(fmt.Sprintf("generation=%t", generation), func(t *testing.T) {
+			s, _ := newRenditionCatalogFixture(t)
+			ctx := t.Context()
+			profile := catalogProcessingProfile(t, false)
+			var eligible []int64
+			for i, name := range []string{"z.txt", "y.txt", "x.txt", "a.txt", "same.txt", "same.txt", "mercury.txt", "short.txt", "long.txt", "trashed.txt", "replaced.txt"} {
+				parent, err := s.Mkdir(ctx, s.RootID(), fmt.Sprintf("folder-%d", i))
+				require.NoError(t, err)
+				hash := fakeHash(fmt.Sprintf("%02x", i+1))
+				if i < 3 {
+					hash = fakeHash("01")
+				}
+				mimeType := "text/plain"
+				if name == "long.txt" {
+					mimeType = "text/markdown"
+				}
+				node, err := s.CreateFile(ctx, parent.ID, name, hash, 7, mimeType)
+				require.NoError(t, err)
+				text := "mercury equal evidence"
+				switch name {
+				case "short.txt":
+					text = "mercury mercury"
+				case "long.txt":
+					text += strings.Repeat(" filler", 30)
+				}
+				if generation {
+					build := lexicalSearchBuild(s, profile, fakeHash(fmt.Sprintf("%02x", i+32)), text)
+					build.SourceSHA256 = node.BlobHash
+					second := build.LexicalSegments[0]
+					second.ID = "lexical_segment_" + fakeHash("42")
+					second.Order = 1
+					second.Text = text + strings.Repeat(" filler", 50)
+					second.CharEnd = len([]rune(second.Text))
+					second.Checksum = testSHA256([]byte(second.Text))
+					build.LexicalSegments = append(build.LexicalSegments, second)
+					require.NoError(t, s.StageRenditionBuild(ctx, build))
+					attachment := RenditionAttachmentRecord{ID: fakeHash(fmt.Sprintf("%02x", i+64)), VaultID: s.VaultID(), ContentVersionID: node.CurrentVersionID, BuildID: build.ID, Profile: profile, AttachedAt: embeddingCatalogTime}
+					require.NoError(t, publishAttachmentForTest(t, s, attachment))
+				}
+				if !generation {
+					for j, body := range []string{text, text + strings.Repeat(" filler", 50)} {
+						require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{BlobHash: node.BlobHash, Extractor: []string{"plain-text", "synthetic"}[j], ExtractorVersion: 1, Status: ExtractionOK, Text: body}))
+					}
+				}
+				switch name {
+				case "trashed.txt":
+					_, _, err = s.Trash(ctx, node.ID, node.Revision)
+				case "replaced.txt":
+					_, _, err = s.ReplaceContent(ctx, node.ID, node.Revision, fakeHash("f9"), 7, "text/plain")
+				default:
+					eligible = append(eligible, node.ID)
+				}
+				require.NoError(t, err)
+			}
+			names, err := nameSearchCandidates(ftsQuery("mercury"))
+			require.NoError(t, err)
+			rows, err := s.db.QueryContext(ctx, nameSearchPageSQL(names.SQL, ""), append(names.Args, 1000)...)
+			require.NoError(t, err)
+			grouped, err := scanSearchRows(rows, SearchMatchName, "mercury")
+			require.NoError(t, err)
+			require.Len(t, grouped, 1)
+			require.Equal(t, "mercury.txt", grouped[0].Node.Name)
+			require.NoError(t, s.withLexicalGenerationRead(ctx, func(queryer metadataQuerier, generation LexicalGeneration) error {
+				cte, from, rank, args := contentSearchMatches(ftsQuery("mercury"), generation.ID, nil)
+				rows, err := queryer.QueryContext(ctx, `WITH `+cte+` SELECT `+nodeCols+` FROM `+from+` WHERE n.trashed_at IS NULL ORDER BY `+rank+`,n.name,n.id`, args...)
+				if err != nil {
+					return err
+				}
+				content, err := scanSearchRows(rows, SearchMatchContent, "mercury")
+				if err != nil {
+					return err
+				}
+				for _, hit := range content {
+					if hit.Node.ID != grouped[0].Node.ID {
+						grouped = append(grouped, hit)
+					}
+				}
+				return nil
+			}))
+			require.NoError(t, s.addSearchPaths(ctx, grouped))
+			for _, limit := range []int{1, 2, 5, len(grouped) - 1, len(grouped), 1000} {
+				hits, truncated, err := s.SearchPage(ctx, "mercury", limit)
+				require.NoError(t, err)
+				require.Equal(t, grouped[:min(limit, len(grouped))], hits, "limit %d", limit)
+				require.Equal(t, limit < len(grouped), truncated)
+			}
+			var ids []int64
+			for _, hit := range grouped {
+				ids = append(ids, hit.Node.ID)
+			}
+			expected := []int64{eligible[6], eligible[7], eligible[3], eligible[4], eligible[5], eligible[2], eligible[1], eligible[0], eligible[8]}
+			require.Equal(t, expected, ids)
+
+			// The filtered page must exclude name/content overlap and still
+			// detect the eighth matching file beyond the seven-hit page.
+			hits, truncated, err := s.SearchPageWithOptions(ctx, "mercury", 7, SearchOptions{MIMEType: "text/plain"})
+			require.NoError(t, err)
+			ids = ids[:0]
+			for _, hit := range hits {
+				ids = append(ids, hit.Node.ID)
+			}
+			require.Equal(t, expected[:7], ids)
+			require.True(t, truncated)
+		})
+	}
 }

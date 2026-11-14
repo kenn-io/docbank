@@ -44,7 +44,7 @@ func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
 			{
 				Name: "zeta", Source: filepath.Join(t.TempDir(), "later"),
 				Destination: "/later", SettleTime: config.Duration(time.Minute),
-				ScanInterval: config.Duration(time.Second),
+				ScanInterval: config.Duration(time.Second), DefaultExcludes: new(false),
 			},
 			{
 				Name: "archive", Source: source, Destination: "/records", Tags: []string{"receipts"},
@@ -73,7 +73,7 @@ func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
 	assert.Equal(t, "168h0m0s", got.Items[0].MinimumAge)
 	assert.Equal(t, "15s", got.Items[0].ScanInterval)
 	assert.Equal(t, []string{"cache/", ".DS_Store"}, got.Items[0].Exclude)
-	assert.Equal(t, []string{"*.swp", ".syncthing.*.tmp"}, got.Items[0].ExcludePatterns)
+	assert.Equal(t, []string{".syncthing.*.tmp", "~syncthing~*.tmp", "*.sync-conflict-*", "*.crdownload", "*.swp"}, got.Items[0].ExcludePatterns)
 	assert.Empty(t, got.Items[1].ExcludePatterns)
 	assert.Contains(t, body, `"exclude_patterns":[]`)
 	require.NotNil(t, got.Items[0].Job)

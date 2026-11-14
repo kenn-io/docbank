@@ -172,8 +172,8 @@ moved [231] /taxes/2025/filing-checklist.pdf
 
 ## Search
 
-Search matches the start of each word in document names and supported current
-text. Every term must match:
+Search matches prepared words and their regular forms in document names and supported current
+text. Every remaining word must match. Quote a phrase within the query to require adjacent words:
 
 ```bash
 docbank search tax check

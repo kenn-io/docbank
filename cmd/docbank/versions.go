@@ -35,10 +35,11 @@ var versionsCmd = &cobra.Command{
 version (UUID).
 list shows them newest first; cat prints one; document revert makes an old
 one current; prune releases history.`,
-	GroupID: groupDocuments,
-	Use:     "versions",
-	Short:   "Inspect and maintain immutable content versions",
-	Args:    cobra.NoArgs,
+	GroupID:     groupDocuments,
+	Use:         "versions",
+	Short:       "Inspect and maintain immutable content versions",
+	Args:        cobra.NoArgs,
+	Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker},
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		return cmd.Help()
 	},

@@ -500,3 +500,39 @@ func TestTermReportSelectedAdmission(t *testing.T) {
 	_, err = capture(request)
 	require.ErrorIs(t, err, ErrReportSelectionChanged)
 }
+
+func TestRefreshTermReportSelection(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	a, err := s.CreateFile(ctx, s.RootID(), "changed.txt", testSHA256([]byte("old")), 3, "text/plain")
+	require.NoError(t, err)
+	b, err := s.CreateFile(ctx, s.RootID(), "trash.txt", testSHA256([]byte("trash")), 5, "text/plain")
+	require.NoError(t, err)
+	c, err := s.CreateFile(ctx, s.RootID(), "current.txt", testSHA256([]byte("current")), 7, "text/plain")
+	require.NoError(t, err)
+	identity := func(n Node) report.Identity {
+		return report.Identity{NodeID: n.ID, VersionID: n.CurrentVersionID, SHA256: n.BlobHash}
+	}
+	old, trash, current := identity(a), identity(b), identity(c)
+	updated, _, err := s.ReplaceContent(ctx, a.ID, a.Revision, testSHA256([]byte("new")), 3, "text/plain")
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, b.ID, b.Revision)
+	require.NoError(t, err)
+	missing := old
+	missing.NodeID = 99999
+	got, err := s.RefreshTermReportSelection(ctx, []report.Identity{missing, current, trash, old})
+	require.NoError(t, err)
+	require.Len(t, got, 4)
+	require.Equal(t, "changed", got[0].Status)
+	require.Equal(t, identity(updated), *got[0].Current)
+	require.Equal(t, "/changed.txt", got[0].Path)
+	require.NotEmpty(t, got[0].SelectedRecorded)
+	require.NotEmpty(t, got[0].Modified)
+	require.Equal(t, "trashed", got[1].Status)
+	require.Nil(t, got[1].Current)
+	require.Equal(t, "current", got[2].Status)
+	require.Equal(t, "missing", got[3].Status)
+	_, err = s.RefreshTermReportSelection(ctx, []report.Identity{old, old})
+	require.ErrorIs(t, err, report.ErrInvalidSelection)
+}

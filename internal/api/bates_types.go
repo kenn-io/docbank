@@ -23,6 +23,12 @@ type BatesNamespace struct {
 	CreatedAt   string `json:"created_at"`
 }
 
+// BatesNamespaceDetail reports an advisory cursor without changing recorded namespaces.
+type BatesNamespaceDetail struct {
+	Namespace    BatesNamespace `json:"namespace"`
+	NextSequence int64          `json:"next_sequence" minimum:"1" maximum:"10000000000"`
+}
+
 type BatesNamespacePage struct {
 	Items      []BatesNamespace `json:"items"`
 	Total      int              `json:"total"`

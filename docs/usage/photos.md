@@ -159,7 +159,7 @@ Rotation applies to the displayed photo in the grid, viewer, and album cover wit
 
 ## Browse in the web app
 
-**System** in the sidebar opens **Disk use**, **Running now**, **Backups**, **Protected folders**, and **Usage reporting**.
+**System** in the sidebar opens **Disk use**, **Running now**, **Backups**, **Protected folders**, **Usage reporting**, and **Search by meaning**.
 
 Open `docbank web` and choose **Photos** in the sidebar. Library opens at
 `/photos`, newest captures first. A photo without a readable capture date sits

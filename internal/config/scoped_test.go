@@ -60,3 +60,10 @@ func TestLauncherLoadersCheckOnlyTheirSections(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadMCPHTTPPublicOriginEnvironment(t *testing.T) {
+	t.Setenv("DOCBANK_MCP_HTTP_PUBLIC_ORIGIN", "https://archive.example")
+	cfg, err := LoadMCPHTTP(privateTestConfigDir(t))
+	require.NoError(t, err)
+	require.Equal(t, "https://archive.example", cfg.MCP.HTTP.PublicOrigin)
+}

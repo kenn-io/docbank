@@ -561,6 +561,13 @@ func newPublicationFixture(tb testing.TB) publicationFixture {
 	root := tb.TempDir()
 	catalog, err := store.Open(tb.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(tb, err)
+	return publicationFixtureWithStore(tb, root, catalog)
+}
+
+type publicationFixtureFactory func(testing.TB) publicationFixture
+
+func publicationFixtureWithStore(tb testing.TB, root string, catalog *store.Store) publicationFixture {
+	tb.Helper()
 	tb.Cleanup(func() { require.NoError(tb, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
 	require.NoError(tb, err)

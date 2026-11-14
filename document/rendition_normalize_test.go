@@ -1,7 +1,6 @@
 package document
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -12,12 +11,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/ast"
-	"github.com/yuin/goldmark/extension"
-	extensionast "github.com/yuin/goldmark/extension/ast"
-	goldmarkhtml "github.com/yuin/goldmark/renderer/html"
-	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/v2/ast"
+	extensionast "github.com/yuin/goldmark/v2/extension/ast"
+	"github.com/yuin/goldmark/v2/text"
 )
 
 func TestBuildRenditionV1(t *testing.T) {
@@ -1857,22 +1853,15 @@ func assertNestedLinkCodeIsInert(t *testing.T, evidence NormalizedEvidenceV1, li
 
 func renderUnsafeMarkdown(t *testing.T, markdown []byte) string {
 	t.Helper()
-	parser := goldmark.New(
-		goldmark.WithExtensions(extension.GFM),
-		goldmark.WithRendererOptions(goldmarkhtml.WithUnsafe()),
-	)
-	var rendered bytes.Buffer
-	require.NoError(t, parser.Convert(markdown, &rendered))
-	return rendered.String()
+	return string(renderGFMUnsafe(t, markdown))
 }
 
 func renditionMarkdownTopology(t *testing.T, markdown []byte) string {
 	t.Helper()
-	parser := goldmark.New(goldmark.WithExtensions(extension.GFM)).Parser()
-	document := parser.Parse(text.NewReader(markdown))
+	document := parseGFM(markdown)
 	roots := make([]string, 0, document.ChildCount())
 	for child := document.FirstChild(); child != nil; child = child.NextSibling() {
-		if block, ok := child.(*ast.HTMLBlock); ok && strings.TrimSpace(string(block.Lines().Value(markdown))) == "<!-- -->" {
+		if block, ok := child.(*ast.HTMLBlock); ok && strings.TrimSpace(string(block.Value.Bytes(markdown))) == "<!-- -->" {
 			continue
 		}
 		roots = append(roots, renditionMarkdownNodeTopology(child, markdown))
@@ -1891,12 +1880,15 @@ func renditionMarkdownNodeTopology(node ast.Node, source []byte) string {
 		return kind + "[" + strings.Join(children, ",") + "]"
 	case *ast.ListItem:
 		return "item[" + strings.Join(renditionMarkdownChildTopologies(typed, source), ",") + "]"
-	case *ast.Paragraph, *ast.TextBlock:
-		return "paragraph(" + strconv.Quote(string(node.Lines().Value(source))) + ")"
+	case *ast.Paragraph:
+		return "paragraph(" + strconv.Quote(string(text.NewLines(typed.Source()).Bytes(source))) + ")"
 	case *ast.Heading:
-		return "heading(level=" + strconv.Itoa(typed.Level) + "," + strconv.Quote(string(typed.Lines().Value(source))) + ")"
-	case *ast.FencedCodeBlock:
-		return "code(" + strconv.Quote(strings.TrimSuffix(string(typed.Lines().Value(source)), "\n")) + ")"
+		return "heading(level=" + strconv.Itoa(typed.Level) + "," + strconv.Quote(string(text.NewLines(typed.Source()).Bytes(source))) + ")"
+	case *ast.CodeBlock:
+		if typed.CodeBlockKind != ast.CodeBlockKindFenced {
+			return node.Kind().String()
+		}
+		return "code(" + strconv.Quote(strings.TrimSuffix(string(typed.Value.Bytes(source)), "\n")) + ")"
 	case *extensionast.Table:
 		return "table"
 	default:
@@ -1907,7 +1899,7 @@ func renditionMarkdownNodeTopology(node ast.Node, source []byte) string {
 func renditionMarkdownChildTopologies(node ast.Node, source []byte) []string {
 	children := make([]string, 0, node.ChildCount())
 	for child := node.FirstChild(); child != nil; child = child.NextSibling() {
-		if block, ok := child.(*ast.HTMLBlock); ok && strings.TrimSpace(string(block.Lines().Value(source))) == "<!-- -->" {
+		if block, ok := child.(*ast.HTMLBlock); ok && strings.TrimSpace(string(block.Value.Bytes(source))) == "<!-- -->" {
 			continue
 		}
 		children = append(children, renditionMarkdownNodeTopology(child, source))

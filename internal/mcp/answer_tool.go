@@ -13,7 +13,9 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/docbank/internal/answer"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/processing"
 )
 
 // answerContentExcerpt admits only an excerpt from the lexical content lane.
@@ -67,8 +69,16 @@ type answerReceipt struct {
 	Reranking           *api.DocumentSearchRerankingReceipt `json:"reranking,omitempty"`
 	CitedVersions       []answerCitation                    `json:"cited_versions"`
 }
+type answerPageGap struct {
+	ContentVersionID string   `json:"content_version_id"`
+	Pages            [][2]int `json:"pages"`
+}
+
 type answerOutput struct {
 	privateCache
+
+	PagesWithoutText        []answerPageGap `json:"pages_without_text,omitempty"`
+	OmittedPageGapDocuments int             `json:"omitted_page_gap_documents"`
 
 	Status           answer.Status    `json:"status"`
 	CoverageComplete bool             `json:"coverage_complete"`
@@ -85,7 +95,7 @@ type answerOutput struct {
 
 type answerClient interface {
 	documentClient
-	ListDocumentProcessingProfiles(ctx context.Context) ([]api.ProcessingProfileSummary, error)
+	GetPDFPageCoverage(ctx context.Context, fence api.DocumentSourceFence) (api.CoverageReport, error)
 }
 
 type answerReadSession func(context.Context, func(context.Context, answerClient) error) error
@@ -94,15 +104,32 @@ func daemonAnswerSession(lease *daemonLease) answerReadSession {
 	return daemonClientSession(lease, func(c *daemonconn.Connection) answerClient { return daemonDocumentClient{c} })
 }
 
+func (c daemonDocumentClient) GetPDFPageCoverage(ctx context.Context, fence api.DocumentSourceFence) (api.CoverageReport, error) {
+	report, err := readProcessingCoverage(ctx, processing.PDFTextProfileName, fence, func(ctx context.Context, options *apiclient.GetDocumentProcessingCoverageRequestOptions) (*api.CoverageReport, error) {
+		return c.API().GetDocumentProcessingCoverage(ctx, options)
+	})
+	if err != nil {
+		return api.CoverageReport{}, err
+	}
+	return *report, nil
+}
+
 var answerErrorMessages = map[string]string{
 	"processing_unavailable":         "The requested processing profile is unavailable.",
 	"processing_profile_unavailable": "The requested processing profile is unavailable.",
 	"reranking_unavailable":          "The processing profile has no configured reranking provider; ask the operator to configure it.",
 	"reranking_failed":               "Document reranking failed; check the daemon log before retrying.",
 	"stale_index":                    "The selected index needs rebuilding.",
+	"index_unavailable":              "The selected index needs building.",
 }
 
 func selectAnswerSearch(profiles []api.ProcessingProfileSummary, input answerInput) (api.ProcessingProfileSummary, []daemonconn.SearchCandidate, error) {
+	if input.Profile == "" && len(profiles) > 1 {
+		configured := slices.DeleteFunc(slices.Clone(profiles), func(p api.ProcessingProfileSummary) bool { return p.Name == processing.PDFTextProfileName })
+		if len(configured) > 0 {
+			profiles = configured
+		}
+	}
 	if len(profiles) == 0 {
 		return api.ProcessingProfileSummary{}, nil, api.NewError(http.StatusServiceUnavailable, "processing_unavailable", "no processing profiles available")
 	}
@@ -115,12 +142,16 @@ func selectAnswerSearch(profiles []api.ProcessingProfileSummary, input answerInp
 	selected := profiles[0]
 	candidates := daemonconn.AutomaticSearchCandidates(profiles)
 	if input.Profile != "" {
-		selected = api.ProcessingProfileSummary{Name: input.Profile}
+		found := false
 		for _, p := range profiles {
 			if p.Name == input.Profile {
 				selected = p
+				found = true
 				break
 			}
+		}
+		if !found {
+			return selected, nil, api.NewError(http.StatusUnprocessableEntity, "processing_profile_unavailable", "processing profile is not configured")
 		}
 		if input.BindingID != "" {
 			candidates = []daemonconn.SearchCandidate{{Profile: input.Profile, Binding: input.BindingID}}
@@ -150,13 +181,14 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 	hash := sha256.Sum256([]byte(input.Question))
 	out := answerOutput{privateCache: newPrivateCache(), CoverageReasons: []string{}, Passages: []answer.Passage{}, Leads: []answer.Lead{}, Receipt: answerReceipt{QuestionSHA256: hex.EncodeToString(hash[:]), VectorSpaceIDs: []string{}, Degradations: []string{}, CitedVersions: []answerCitation{}}}
 	type response struct {
-		fence     api.DocumentSourceFenceResolution
-		profile   api.ProcessingProfileSummary
-		binding   string
-		report    api.DocumentSearchReport
-		failure   string
-		executed  bool
-		documents []api.DocumentSummary
+		fence        api.DocumentSourceFenceResolution
+		profile      api.ProcessingProfileSummary
+		binding      string
+		report       api.DocumentSearchReport
+		failure      string
+		executed     bool
+		documents    []api.DocumentSummary
+		pageCoverage api.CoverageReport
 	}
 	result, err := documentRead(ctx, session, func(ctx context.Context, c answerClient) (response, error) {
 		filters := input.Filters
@@ -175,37 +207,21 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		if err != nil {
 			return response{}, err
 		}
-		findProfile := func(name string) api.ProcessingProfileSummary {
-			for _, p := range profiles {
-				if p.Name == name {
-					return p
-				}
-			}
-			return selected
-		}
 		run := func(profile, binding, mode string) (api.DocumentSearchReport, error) {
 			return searchResolvedDocuments(ctx, c, api.DocumentSearchRequest{Query: input.Question, Mode: mode, Profile: profile, BindingID: binding, Limit: input.Limit, Rerank: input.Rerank, ContentFirst: true, Fence: api.DocumentSourceFence{VaultUID: fence.Fence.VaultUID, ContentVersionIDs: fence.Fence.ContentVersionIDs}})
 		}
-		var report api.DocumentSearchReport
-		var binding, failure string
-		for _, candidate := range candidates {
-			report, err = run(candidate.Profile, candidate.Binding, "hybrid")
-			if err == nil {
-				selected = findProfile(candidate.Profile)
-				binding = candidate.Binding
-				break
-			}
-			code, _ := daemonconn.ProblemCode(err)
-			if ctx.Err() != nil {
-				return response{}, ctx.Err()
-			}
-			if input.Profile != "" || !daemonconn.BindingSearchFailure(code) {
+		attempt, err := tryProfileSearch(ctx, profiles, selected, candidates, func(code string) bool {
+			return input.Profile == "" && daemonconn.BindingSearchFailure(code)
+		}, func(profile, binding string) (api.DocumentSearchReport, error) {
+			return run(profile, binding, "hybrid")
+		})
+		if err != nil {
+			facts, _ := toolProblemFacts(err)
+			if input.Profile != "" || !daemonconn.BindingSearchFailure(facts.Code) {
 				return response{}, err
 			}
-			if failure == "" {
-				failure = code
-			}
 		}
+		report, selected, binding, failure := attempt.value, attempt.profile, attempt.binding, attempt.failure
 		if binding == "" {
 			report, err = run(selected.Name, "", "lexical")
 			if err != nil {
@@ -216,7 +232,17 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		if err != nil {
 			return response{}, err
 		}
-		return response{fence: fence, profile: selected, binding: binding, report: report, failure: failure, executed: len(fence.Fence.ContentVersionIDs) > 0, documents: docs}, nil
+		var pageCoverage api.CoverageReport
+		if len(fence.Fence.ContentVersionIDs) > 0 {
+			pageCoverage, err = c.GetPDFPageCoverage(ctx, api.DocumentSourceFence{VaultUID: fence.Fence.VaultUID, ContentVersionIDs: fence.Fence.ContentVersionIDs})
+			if err != nil {
+				if canceled := contextCancellation(ctx, err); canceled != nil {
+					return response{}, canceled
+				}
+				pageCoverage.PageCoverageUnavailable = true
+			}
+		}
+		return response{fence: fence, profile: selected, binding: binding, report: report, failure: failure, executed: len(fence.Fence.ContentVersionIDs) > 0, documents: docs, pageCoverage: pageCoverage}, nil
 	})
 	if err != nil {
 		if code, count := stableDomainError(err); code == "scope_too_large" {
@@ -226,6 +252,17 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 			return out, nil, nil
 		}
 		return answerOutput{}, nil, err
+	}
+	for _, gap := range result.pageCoverage.PagesWithoutText {
+		item := answerPageGap{ContentVersionID: gap.ContentVersionID}
+		for _, page := range gap.Pages {
+			if len(item.Pages) > 0 && item.Pages[len(item.Pages)-1][1]+1 == page {
+				item.Pages[len(item.Pages)-1][1] = page
+			} else {
+				item.Pages = append(item.Pages, [2]int{page, page})
+			}
+		}
+		out.PagesWithoutText = append(out.PagesWithoutText, item)
 	}
 	out.Receipt.ObservedScopeCount = result.fence.ObservedScopeCount
 	out.Receipt.VaultID = result.fence.Fence.VaultUID
@@ -260,6 +297,18 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 	}
 	if coverage.State != "complete" {
 		out.CoverageReasons = append(out.CoverageReasons, "embeddings_incomplete")
+	}
+	if len(out.PagesWithoutText) > 0 {
+		out.CoverageComplete = false
+		out.CoverageReasons = append(out.CoverageReasons, "pages_without_text")
+	}
+	if result.pageCoverage.PageCoverageUnavailable {
+		out.CoverageComplete = false
+		out.CoverageReasons = append(out.CoverageReasons, "page_coverage_unavailable")
+	}
+	if result.pageCoverage.PageCoverage == "partial" {
+		out.CoverageComplete = false
+		out.CoverageReasons = append(out.CoverageReasons, "page_coverage_incomplete")
 	}
 	if result.report.Truncated {
 		out.CoverageReasons = append(out.CoverageReasons, "retrieval_truncated")
@@ -350,6 +399,14 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		if envelope <= maxToolResponseBytes-(4<<10) {
 			return out, links, nil
 		}
+		if len(out.PagesWithoutText) > 0 {
+			out.PagesWithoutText = out.PagesWithoutText[:len(out.PagesWithoutText)-1]
+			out.OmittedPageGapDocuments++
+			if !slices.Contains(out.CoverageReasons, "page_coverage_incomplete") {
+				out.CoverageReasons = append(out.CoverageReasons, "page_coverage_incomplete")
+			}
+			continue
+		}
 		if len(links) > 0 {
 			linkLimit = len(links) / 2
 			continue
@@ -370,4 +427,40 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		}
 		return answerOutput{}, nil, fmt.Errorf("%w: answer receipt", errToolResultTooLarge)
 	}
+}
+
+type profileSearchAttempt[T any] struct {
+	value            T
+	profile          api.ProcessingProfileSummary
+	binding, failure string
+}
+
+// tryProfileSearch shares candidate order while callers decide retry and fallback policy.
+func tryProfileSearch[T any](ctx context.Context, profiles []api.ProcessingProfileSummary, selected api.ProcessingProfileSummary, candidates []daemonconn.SearchCandidate, retry func(string) bool, run func(string, string) (T, error)) (profileSearchAttempt[T], error) {
+	attempt := profileSearchAttempt[T]{profile: selected}
+	var err, firstErr error
+	for _, candidate := range candidates {
+		attempt.value, err = run(candidate.Profile, candidate.Binding)
+		if err == nil {
+			for _, profile := range profiles {
+				if profile.Name == candidate.Profile {
+					attempt.profile = profile
+					break
+				}
+			}
+			attempt.binding = candidate.Binding
+			return attempt, nil
+		}
+		if ctx.Err() != nil {
+			return attempt, ctx.Err()
+		}
+		facts, _ := toolProblemFacts(err)
+		if !retry(facts.Code) {
+			return attempt, err
+		}
+		if attempt.failure == "" {
+			attempt.failure, firstErr = facts.Code, err
+		}
+	}
+	return attempt, firstErr
 }

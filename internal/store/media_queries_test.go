@@ -31,9 +31,8 @@ func checkMediaSourcesPageSelectsNewestVisibleOccurrences(t *testing.T, open fun
 			if err != nil {
 				return err
 			}
-			_, err = tx.ExecContext(ctx, `INSERT INTO media_operations VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
-				"operation-"+source, "operator:test", "submit_remote_recording", id, id,
-				string(receipt), "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z")
+			err = insertMediaOperationTx(ctx, tx, metadataMediaOperation{OperationID: "operation-" + source, Principal: "operator:test", Verb: "submit_remote_recording", RequestSHA256: id, SourceID: &id, ReceiptJSON: string(receipt), CreatedAt: "2024-01-01T00:00:00Z", UpdatedAt: "2024-01-01T00:00:00Z"}, s.postgresSchema != "")
+
 			if err != nil {
 				return err
 			}
@@ -130,8 +129,9 @@ func checkMediaSourceVersionSelectsTheExactVisibleRevision(t *testing.T, open fu
 			OperationState: "succeeded", CoverageState: "unprocessed"}
 		raw, err := canonical.Marshal(publication)
 		require.NoError(t, err)
-		_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_operations(operation_id,principal,verb,request_sha256,source_id,receipt_json,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
-			receipt.operationID, "operator:test", "submit_supplied_media", receipt.requestHash, sourceID, string(raw), receipt.createdAt, receipt.createdAt)
+		err = s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+			return insertMediaOperationTx(t.Context(), tx, metadataMediaOperation{OperationID: receipt.operationID, Principal: "operator:test", Verb: "submit_supplied_media", RequestSHA256: receipt.requestHash, SourceID: &sourceID, ReceiptJSON: string(raw), CreatedAt: receipt.createdAt, UpdatedAt: receipt.createdAt}, s.postgresSchema != "")
+		})
 		require.NoError(t, err)
 	}
 
@@ -166,7 +166,9 @@ func checkMediaSourceVersionSelectsTheExactVisibleRevision(t *testing.T, open fu
 			raw, err := canonical.Marshal(receipt)
 			require.NoError(t, err)
 			historical := strings.TrimSuffix(string(raw), "}") + `,"unrelated_historical_field":true}`
-			_, err = s.db.ExecContext(t.Context(), `INSERT INTO media_operations(operation_id,principal,verb,request_sha256,source_id,receipt_json,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, operationID, "operator:test", verb, fakeHash("c3"), sourceID, historical, "2022-01-01T00:00:00Z", "2022-01-01T00:00:00Z")
+			err = s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+				return insertMediaOperationTx(t.Context(), tx, metadataMediaOperation{OperationID: operationID, Principal: "operator:test", Verb: verb, RequestSHA256: fakeHash("c3"), SourceID: &sourceID, ReceiptJSON: historical, CreatedAt: "2022-01-01T00:00:00Z", UpdatedAt: "2022-01-01T00:00:00Z"}, s.postgresSchema != "")
+			})
 			require.NoError(t, err)
 		}
 	}

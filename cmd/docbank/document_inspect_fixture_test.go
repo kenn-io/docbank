@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
@@ -110,7 +111,13 @@ func assertNoProcessingJobs(t *testing.T, root, message string) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, db.Close()) }()
 	var jobs int
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT
-		(SELECT COUNT(*) FROM rendition_jobs) + (SELECT COUNT(*) FROM embedding_jobs)`).Scan(&jobs))
-	require.Zero(t, jobs, message)
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_jobs`).Scan(&jobs))
+	require.Zero(t, jobs+countNonPDFTextRenditionJobs(t, db), message)
+}
+
+func countNonPDFTextRenditionJobs(t *testing.T, db *sql.DB) int {
+	t.Helper()
+	var count int
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_jobs WHERE json_extract(execution_identity_json, '$.authorization.provider_id') IS NOT ?`, document.PDFTextProviderID).Scan(&count))
+	return count
 }

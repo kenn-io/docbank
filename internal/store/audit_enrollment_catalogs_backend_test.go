@@ -10,12 +10,8 @@ import (
 	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
-// Enrollment must validate retained catalogs even when their documents are
-// outside the new scope. Use native publications so nested readers see real rows.
-func checkAuditEnrollmentCatalogsPostgres(t *testing.T) {
-	t.Helper()
-	t.Parallel()
-	for name, seed := range map[string]func(*testing.T) *Store{
+func retainedMetadataCatalogSeeds() map[string]func(*testing.T) *Store {
+	return map[string]func(*testing.T) *Store{
 		"processing": func(t *testing.T) *Store {
 			t.Helper()
 			s := newTestStore(t)
@@ -126,7 +122,15 @@ func checkAuditEnrollmentCatalogsPostgres(t *testing.T) {
 			require.NoError(t, err)
 			return s
 		},
-	} {
+	}
+}
+
+// Enrollment must validate retained catalogs even when their documents are
+// outside the new scope. Use native publications so nested readers see real rows.
+func checkAuditEnrollmentCatalogsPostgres(t *testing.T) {
+	t.Helper()
+	t.Parallel()
+	for name, seed := range retainedMetadataCatalogSeeds() {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			setup, owner := pgtest.NewDatabase(t)
@@ -233,8 +237,10 @@ func checkAuditEnrollmentPhotoReceiptPostgres(t *testing.T) {
 	require.NoError(t, err)
 	afterJSON, err := json.Marshal(receipt.afterState(), json.Deterministic(true))
 	require.NoError(t, err)
+	lookup, err := photoReceiptQueryJSON("authored", string(afterJSON))
+	require.NoError(t, err)
 	_, err = setup.ExecContext(t.Context(), `UPDATE documents.photo_change_receipts
- SET before_json=$1,after_json=$2 WHERE receipt_id=$3`, string(beforeJSON), string(afterJSON), receipt.ReceiptID)
+ SET before_json=$1,after_json=$2,query_json=$3 WHERE receipt_id=$4`, string(beforeJSON), string(afterJSON), lookup, receipt.ReceiptID)
 	require.NoError(t, err)
 
 	_, err = destination.EnableInitialAudit(t.Context(), plan)

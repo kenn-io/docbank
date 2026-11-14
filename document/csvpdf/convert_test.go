@@ -219,7 +219,7 @@ func TestConvertLongCellMapping(t *testing.T) {
 	result, err := Convert(t.Context(), source, policyFor(t, DefaultLimits()))
 	require.NoError(t, err)
 	require.Equal(t, []Span{{1, 1, 1}, {2, 1, 1}}, result.Receipt().Spans)
-	pages, err := media.CountPDFPages(result.PDF())
+	pages, err := media.CountPDFPages(t.Context(), result.PDF())
 	require.NoError(t, err)
 	require.Equal(t, int64(2), pages)
 	lines, err := layout(t.Context(), [][]string{{"first\n\nlast\n", ""}}, DefaultLimits())

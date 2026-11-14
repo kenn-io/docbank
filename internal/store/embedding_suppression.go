@@ -94,7 +94,7 @@ func (s *Store) prepareEmbeddingPurgeTx(
 				return nil, fmt.Errorf("clearing purged embedding failures: %w", err)
 			}
 			if _, err := tx.ExecContext(ctx, `DELETE FROM current_rendition_roots WHERE root_kind=$1 AND root_id IN (
-                SELECT job_id FROM embedding_jobs WHERE content_version_id=$2 AND profile_fingerprint=$3 AND binding_id=$4 AND input_kind=$5)`,
+                SELECT `+storedStringSQL(s.postgresSchema != "", "job_id")+` FROM embedding_jobs WHERE content_version_id=$2 AND profile_fingerprint=$3 AND binding_id=$4 AND input_kind=$5)`,
 				RenditionRootWorkerLease, versionID, fingerprint, binding.Name, binding.InputKind); err != nil {
 				return nil, err
 			}

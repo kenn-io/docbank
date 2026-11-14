@@ -26,11 +26,11 @@ func newRedactionVerifyCommand() *cobra.Command {
 			"  docbank redaction verify preparation.json masks.json review.json redacted.zip --json",
 		Args: cobra.ExactArgs(4),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			request, err := readRedactionInputs(args[0], args[1])
+			request, err := readRedactionInputs(cmd.Context(), args[0], args[1])
 			if err != nil {
 				return err
 			}
-			review, err := readRedactionReview(args[2], request)
+			review, err := readRedactionReview(cmd.Context(), args[2], request)
 			if err != nil {
 				return err
 			}

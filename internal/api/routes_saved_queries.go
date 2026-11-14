@@ -226,7 +226,7 @@ func registerSavedQueryRunRoute(
 		if !in.Body.Photos && in.Body.ReplacesSnapshotID != "" {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", "replacement handles require photos")
 		}
-		coverage, err := workspaceQueryCoverage(d.Cfg, in.Body.Photos, in.Body.Profile)
+		coverage, err := workspaceQueryCoverage(d, in.Body.Photos, in.Body.Profile)
 		if err != nil {
 			return nil, err
 		}

@@ -9,7 +9,9 @@ import (
 	"uuid"
 
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/docbank/internal/loadfile"
 )
 
 func TestPackageRecordKeysSeparateStructuredInputs(t *testing.T) {
@@ -41,6 +43,11 @@ func prepareReceivedPackage(t *testing.T, s *Store, name string) (PackageRequest
 	request.State = "importing"
 	request.IngestID = run.ID()
 	request.ManifestSHA256 = request.ManifestBlobSHA256
+	profile, err := canonical.Marshal(loadfile.Profile{ID: "dat-concordance-v1"})
+	require.NoError(t, err)
+	profileHash := sha256.Sum256(profile)
+	request.ProfileJSON, request.ProfileSHA256 = string(profile), hex.EncodeToString(profileHash[:])
+
 	return request, run, node
 }
 
@@ -71,9 +78,8 @@ func seedReceivedPackage(t *testing.T, s *Store, name string) (Package, Node) {
 	return pkg, node
 }
 
-func TestCommitPackageRecordWithLeaseReplaysExactPayload(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func receivedRecordPublication(t *testing.T, s *Store) (PackageImportJob, PackageRecordRow, []PackageLabelRow, PackageImportReceipt) {
+	t.Helper()
 	pkg, node := seedReceivedPackage(t, s, "alpha")
 	job, err := s.ClaimPackageImportJob(t.Context(), "record-worker", time.Minute)
 	require.NoError(t, err)
@@ -98,29 +104,31 @@ func TestCommitPackageRecordWithLeaseReplaysExactPayload(t *testing.T) {
 	receipt := PackageImportReceipt{ReceiptID: receiptID, PackageID: pkg.PackageID,
 		RecordKey: key, OccurrenceID: occurrence, ContentVersionID: node.CurrentVersionID,
 		State: "committed", ReceiptJSON: []byte(`{}`)}
+	return job, record, labels, receipt
+}
+
+func checkCommitPackageRecordWithLeaseReplaysExactPayload(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	t.Parallel()
+	s := newStore(t)
+	job, record, labels, receipt := receivedRecordPublication(t, s)
 	first, err := s.CommitPackageRecordWithLease(t.Context(), job.ID, job.Epoch, job.Token, record, labels, receipt)
 	require.NoError(t, err)
 	second, err := s.CommitPackageRecordWithLease(t.Context(), job.ID, job.Epoch, job.Token, record, labels, receipt)
 	require.NoError(t, err)
 	require.Equal(t, first, second)
-	_, err = s.db.ExecContext(t.Context(), `INSERT INTO package_labels SELECT * FROM package_labels
-		WHERE package_id=? AND endpoint='begin'`, pkg.PackageID)
-	require.Error(t, err, "document labels must retain a unique identity without a page number")
-	_, err = s.db.ExecContext(t.Context(), `INSERT INTO package_labels(
-		package_id,provenance,label_set,label,occurrence_id,content_version_id,
-		page_state,endpoint) VALUES(?,?,?,?,?,?,?,?)`, pkg.PackageID, "assigned", "LOCAL",
-		"OUR000041", occurrence, node.CurrentVersionID, "unknown", "begin")
-	require.NoError(t, err)
+	assigned := labels[0]
+	assigned.Provenance, assigned.LabelSet, assigned.Label = "assigned", "LOCAL", "OUR000041"
+	require.NoError(t, s.AssignPackageLabels(t.Context(), record.PackageID, record.OccurrenceID, receipt.ContentVersionID, []PackageLabelRow{assigned}))
+	require.NoError(t, s.AssignPackageLabels(t.Context(), record.PackageID, record.OccurrenceID, receipt.ContentVersionID, []PackageLabelRow{assigned}))
+	changedAssignment := assigned
+	changedAssignment.Label = "OUR000042"
+	require.ErrorIs(t, s.AssignPackageLabels(t.Context(), record.PackageID, record.OccurrenceID, receipt.ContentVersionID, []PackageLabelRow{changedAssignment}), ErrPackageConflict)
+
 	third, err := s.CommitPackageRecordWithLease(t.Context(), job.ID, job.Epoch, job.Token, record, labels, receipt)
 	require.NoError(t, err, "an assigned label cannot change a received-record replay")
 	require.Equal(t, first, third)
-	_, err = s.db.ExecContext(t.Context(), `UPDATE packages SET state='complete',completed_at=? WHERE package_id=?`,
-		nowRFC3339(), pkg.PackageID)
-	require.NoError(t, err)
-	afterCompletion, err := s.CommitPackageRecordWithLease(t.Context(), job.ID, job.Epoch, job.Token, record, labels, receipt)
-	require.NoError(t, err)
-	require.Equal(t, first, afterCompletion)
-	read, err := s.PackageRecord(t.Context(), pkg.PackageID, key)
+	read, err := s.PackageRecord(t.Context(), record.PackageID, record.RowID)
 	require.NoError(t, err)
 	require.Equal(t, record, read)
 	changed := record
@@ -229,9 +237,10 @@ func commitReceivedLabel(t *testing.T, s *Store, pkg Package, versionID, label s
 	require.NoError(t, err)
 }
 
-func TestReceivedLabelLookupRequiresScopeWhenSenderReusesIt(t *testing.T) {
+func checkReceivedLabelLookupRequiresScopeWhenSenderReusesIt(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	first, firstNode := seedReceivedPackage(t, s, "alpha")
 	commitReceivedLabel(t, s, first, firstNode.CurrentVersionID, "EXT000001")
 	run, err := s.BeginIngest(t.Context(), "package:loadfile", "beta")
@@ -261,9 +270,10 @@ func TestReceivedLabelLookupRequiresScopeWhenSenderReusesIt(t *testing.T) {
 	require.Equal(t, "unknown", rows[0].PageState)
 }
 
-func TestReceivedLabelLookupTreatsDocumentAndPageEndpointsAsOneOccurrence(t *testing.T) {
+func checkReceivedLabelLookupTreatsDocumentAndPageEndpointsAsOneOccurrence(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	pkg, node := seedReceivedPackage(t, s, "same-occurrence")
 	job, err := s.ClaimPackageImportJob(t.Context(), "record-worker", time.Minute)
 	require.NoError(t, err)
@@ -316,9 +326,10 @@ func TestPackageImportReceiptsAndLabelsSurviveMetadataRestore(t *testing.T) {
 	require.Equal(t, original.Bytes(), replay.Bytes())
 }
 
-func TestPackageRecordRejectsVersionOutsideItsIngest(t *testing.T) {
+func checkPackageRecordRejectsVersionOutsideItsIngest(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	pkg, _ := seedReceivedPackage(t, s, "owned")
 	job, err := s.ClaimPackageImportJob(t.Context(), "record-worker", time.Minute)
 	require.NoError(t, err)

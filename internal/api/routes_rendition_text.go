@@ -11,6 +11,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -26,13 +27,14 @@ type renditionTextObserved struct {
 }
 
 type renditionTextRequest struct {
-	NodeID    int64                  `json:"node_id" minimum:"1"`
-	Revision  int64                  `json:"revision" minimum:"1"`
-	VersionID string                 `json:"version_id" format:"uuid"`
-	BlobHash  string                 `json:"blob_hash" pattern:"^[0-9a-f]{64}$"`
-	Size      int64                  `json:"size" minimum:"0"`
-	Profile   string                 `json:"profile,omitempty" maxLength:"128"`
-	Observed  *renditionTextObserved `json:"observed,omitempty"`
+	NodeID         int64                  `json:"node_id" minimum:"1"`
+	Revision       int64                  `json:"revision" minimum:"1"`
+	VersionID      string                 `json:"version_id" format:"uuid"`
+	BlobHash       string                 `json:"blob_hash" pattern:"^[0-9a-f]{64}$"`
+	Size           int64                  `json:"size" minimum:"0"`
+	Profile        string                 `json:"profile,omitempty" maxLength:"128"`
+	ExactRendition bool                   `json:"exact_rendition,omitempty" doc:"Resolve the exact observed active rendition independently of the current default profile"`
+	Observed       *renditionTextObserved `json:"observed,omitempty"`
 }
 
 type renditionTextSource struct {
@@ -58,13 +60,15 @@ type renditionTextArtifact struct {
 }
 
 type renditionTextReceipt struct {
-	State        string                 `json:"state" enum:"ready,verified_empty,failed,unprocessed,unconfigured,profile_required,historical_unavailable"`
-	Source       renditionTextSource    `json:"source"`
-	Profile      renditionTextProfile   `json:"profile"`
-	GenerationID string                 `json:"generation_id"`
-	AttachmentID string                 `json:"attachment_id"`
-	BuildID      string                 `json:"build_id"`
-	Artifact     *renditionTextArtifact `json:"artifact,omitempty"`
+	State            string                 `json:"state" enum:"ready,verified_empty,failed,unprocessed,unconfigured,profile_required,historical_unavailable"`
+	Source           renditionTextSource    `json:"source"`
+	Profile          renditionTextProfile   `json:"profile"`
+	GenerationID     string                 `json:"generation_id"`
+	AttachmentID     string                 `json:"attachment_id"`
+	BuildID          string                 `json:"build_id"`
+	Artifact         *renditionTextArtifact `json:"artifact,omitempty"`
+	PagesWithoutText []int                  `json:"pages_without_text,omitzero"`
+	PageCoverage     string                 `json:"page_coverage,omitempty" enum:"unavailable"`
 }
 
 func exactRenditionTextSource(ctx context.Context, d Deps, request renditionTextRequest) (store.ContentVersionView, error) {
@@ -128,9 +132,18 @@ func resolveRenditionText(ctx context.Context, d Deps, request renditionTextRequ
 	if err != nil {
 		return renditionTextReceipt{}, err
 	}
-	selection, err := selectCollectionProfile(d.Cfg, request.Profile)
-	if err != nil {
-		return renditionTextReceipt{}, err
+	var selection collectionProfileSelection
+	if request.ExactRendition {
+		if request.Profile != "" || request.Observed == nil || request.Observed.Configuration != "configured" ||
+			request.Observed.ProfileFingerprint == "" || request.Observed.AttachmentID == "" || request.Observed.BuildID == "" {
+			return renditionTextReceipt{}, NewError(http.StatusUnprocessableEntity, "invalid_rendition_selection", "An exact rendition requires an observed profile fingerprint, attachment, and build.")
+		}
+		selection.Coverage = store.CoverageSelection{Configuration: "configured", ProfileFingerprint: request.Observed.ProfileFingerprint}
+	} else {
+		selection, err = selectCollectionProfile(d, request.Profile, true)
+		if err != nil {
+			return renditionTextReceipt{}, err
+		}
 	}
 	profile, binding, coverage, err := renditionTextState(request, selection)
 	if err != nil {
@@ -141,6 +154,17 @@ func resolveRenditionText(ctx context.Context, d Deps, request renditionTextRequ
 		BlobHash: sourceView.Version.BlobHash, Size: sourceView.Version.Size,
 		MediaType: sourceView.Version.MimeType}, Profile: profile,
 		GenerationID: binding.GenerationID, AttachmentID: binding.AttachmentID, BuildID: binding.BuildID}
+	if d.Processing != nil {
+		pages, coverageErr := d.Processing.PDFSourcePagesWithoutText(ctx, request.VersionID)
+		if coverageErr == nil {
+			receipt.PagesWithoutText = pages
+		} else {
+			receipt.PageCoverage = "unavailable"
+		}
+		if ctx.Err() != nil {
+			return renditionTextReceipt{}, ctx.Err()
+		}
+	}
 	if profile.Configuration != "configured" {
 		receipt.State = profile.Configuration
 		return receipt, nil
@@ -265,4 +289,17 @@ func registerRenditionTextRoutes(api huma.API, d Deps) {
 				_, _ = hctx.BodyWriter().Write(body)
 			}}, nil
 		})
+}
+
+// pdfSearchTextCoverage supplies the built-in profile and retained evidence reader.
+func pdfSearchTextCoverage(d Deps) (string, func(context.Context, string) ([]int, error)) {
+	if d.Processing == nil {
+		return "", nil
+	}
+	for _, summary := range d.Processing.Profiles() {
+		if summary.Name == processing.PDFTextProfileName {
+			return summary.Fingerprint, d.Processing.PDFPagesWithoutText
+		}
+	}
+	return "", nil
 }

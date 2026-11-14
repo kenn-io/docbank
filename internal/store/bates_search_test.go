@@ -35,9 +35,10 @@ func seedBatesSearchArtifact(t *testing.T, s *Store) (BatesArtifact, CollectionS
 	return artifact, members[0]
 }
 
-func TestFindBatesArtifactsReturnsCandidatesForExactlyOneSelector(t *testing.T) {
+func checkFindBatesArtifactsReturnsCandidatesForExactlyOneSelector(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	artifact, member := seedBatesSearchArtifact(t, s)
 	person, err := s.CreatePerson(t.Context(), "Synthetic Keeper", "operator")
 	require.NoError(t, err)
@@ -69,9 +70,10 @@ func TestFindBatesArtifactsReturnsCandidatesForExactlyOneSelector(t *testing.T) 
 	require.ErrorIs(t, err, ErrInvalidBatesSelector)
 }
 
-func TestFindBatesArtifactEvidenceContinuesWithoutChangingCandidate(t *testing.T) {
+func checkFindBatesArtifactEvidenceContinuesWithoutChangingCandidate(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	artifact, member := seedBatesSearchArtifact(t, s)
 	for index := range maxBatesCandidateEvidence + 2 {
 		_, err := s.SetCustodian(t.Context(), CustodianRequest{Scope: CustodianScope{Kind: "document",

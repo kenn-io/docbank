@@ -86,16 +86,16 @@ func BenchmarkDuplicateReferencePages(b *testing.B) {
 						for group := range groups {
 							nodes[group] = make([]Node, references)
 							paths[group] = make([]string, references)
-							for copy := range references {
-								name := fmt.Sprintf("group-%03d-copy-%02d.bin", group, copy)
+							for replica := range references {
+								name := fmt.Sprintf("group-%03d-copy-%02d.bin", group, replica)
 								receipt, _, _, err := s.ingestFileTx(ctx, tx, run, parent.ID, name,
 									fmt.Sprintf("%064x", group+1), 1024, "application/octet-stream",
 									"/synthetic/"+name, "", ingestFileOptions{})
 								if err != nil {
 									return err
 								}
-								nodes[group][copy] = receipt.Node
-								paths[group][copy] = prefix + "/" + name
+								nodes[group][replica] = receipt.Node
+								paths[group][replica] = prefix + "/" + name
 							}
 						}
 						return nil

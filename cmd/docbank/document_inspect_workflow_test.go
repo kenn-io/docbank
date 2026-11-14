@@ -104,15 +104,9 @@ func TestDocumentInspectionLimitsAndStaleSelection(t *testing.T) {
 	output, err = runCLI(t, append(args, "--attachment", f.attachments[longName].ID)...)
 	require.NoError(t, err)
 	require.Contains(t, output, "aé界🙂z")
-	for _, command := range [][]string{
-		{"processing", "coverage", f.nodes["portable.txt"].CurrentVersionID, "--profile", "portable"},
-		{"rendition", "window", "/portable.txt", "--version", f.nodes["portable.txt"].CurrentVersionID,
-			"--profile", "portable"},
-	} {
-		output, err = runCLI(t, command...)
-		require.ErrorContains(t, err, "executable profile list")
-		require.Empty(t, output)
-	}
+	output, err = runCLI(t, "processing", "coverage", f.nodes["portable.txt"].CurrentVersionID, "--profile", "portable")
+	require.ErrorContains(t, err, "executable profile list")
+	require.Empty(t, output)
 	_, err = runCLI(t, "rendition", "window", "/missing.txt", "--version",
 		f.nodes["missing.txt"].CurrentVersionID, "--profile", "archive")
 	require.Equal(t, exitNotFound, commandExitCode(err, true))

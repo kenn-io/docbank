@@ -957,6 +957,25 @@ func TestProcessingRoutesRunReadCoverAndSearchOneExactVersion(t *testing.T) {
 	assert.NotContains(t, searchBody, outside.CurrentVersionID)
 }
 
+func TestDocumentSearchRejectsUnknownBinding(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, configureProcessingTestServiceWithEmbedding(t))
+	node := createFileWithContent(t, ts, catalog, "/search.txt", "synthetic search content\n")
+	for _, mode := range []string{"lexical", "auto", "hybrid", "semantic"} {
+		t.Run(mode, func(t *testing.T) {
+			response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, map[string]any{
+				"query": "synthetic", "mode": mode, "profile": "private", "binding_id": "missing",
+				"fence": map[string]any{"vault_uid": catalog.VaultID(),
+					"content_version_ids": []string{node.CurrentVersionID}},
+			})
+			assert.Equal(t, http.StatusNotFound, response.StatusCode, body)
+			var problem api.Error
+			require.NoError(t, json.Unmarshal([]byte(body), &problem))
+			assert.Equal(t, "not_found", problem.Code)
+		})
+	}
+}
+
 func TestDocumentSearchRejectsWhitespaceQuery(t *testing.T) {
 	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
@@ -1953,4 +1972,22 @@ func TestDocumentSearchAllLiveScope(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, report.Results, 1)
 	assert.Equal(t, node.CurrentVersionID, report.Results[0].ContentVersionID)
+}
+
+func TestProcessingProfilesIncludeConfiguredWithoutRuntime(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, func(d *api.Deps) {
+		renditionTextConfig(d)
+		configureLoomManualTestService(t, nil)(d)
+	})
+	response, body := get(t, ts, "/api/v1/processing/profiles", nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NotContains(t, body, `"name":"archive"`)
+	response, body = get(t, ts, "/api/v1/processing/profiles?include_configured=true", nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var profiles []api.ProcessingProfileSummary
+	require.NoError(t, json.Unmarshal([]byte(body), &profiles))
+	require.Equal(t, "archive", profiles[0].Name)
+	require.Len(t, profiles[0].Fingerprint, 64)
+	require.False(t, profiles[0].Rendition)
 }

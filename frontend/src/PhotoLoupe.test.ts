@@ -154,7 +154,7 @@ it("shows grid, fit and large and preserves zoom", async () => {
   expect(preview.mock.calls.filter(([, size]) => size === "large")).toHaveLength(2);
   expect(view.container.querySelector(".photo-viewport")).not.toBe(viewport);
   expect(view.container.querySelector<HTMLElement>(".pan")!.style.transform).toBe(
-    "translate(0px, 0px) scale(1)",
+    "translate(0px) scale(1)",
   );
   await fireEvent.keyDown(screen.getByRole("dialog"), { key: "ArrowRight" });
   expect(props.onmove).toHaveBeenCalledWith(1);
@@ -485,7 +485,7 @@ it("resets a touch swipe before requesting navigation when the current photo rem
       disconnect() {}
     },
   );
-  const onmove = vi.fn(() => expect(pan.style.transform).toBe("translate(0px, 0px) scale(1)"));
+  const onmove = vi.fn(() => expect(pan.style.transform).toBe("translate(0px) scale(1)"));
   const view = render(PhotoLoupeImage, {
     url: "",
     name: "Synthetic photo",

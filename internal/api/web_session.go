@@ -299,11 +299,11 @@ func webSessionRequestAllowed(r *http.Request) bool {
 				return false
 			}
 			for key, entries := range values {
-				if key != "person_id" || len(entries) != 1 {
+				if (key != "person_id" && key != "face_id") || len(entries) != 1 || query.ValidateTextOperand("asset", entries[0]) != nil {
 					return false
 				}
 			}
-			if values.Has("person_id") && query.ValidateTextOperand("asset", values.Get("person_id")) != nil {
+			if values.Has("person_id") && values.Has("face_id") {
 				return false
 			}
 			return r.Method == http.MethodGet && validPhotoPreviewPath(parts[0], parts[2])
@@ -330,7 +330,7 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		return true
 	}
 	if r.URL.RawQuery == "" {
-		if path == "/api/v1/search-exports" {
+		if path == "/api/v1/search-exports" || path == "/api/v1/search-exports/selection" {
 			return method == http.MethodPost
 		}
 		if after, ok := strings.CutPrefix(path, "/api/v1/search-exports/"); ok {
@@ -450,7 +450,8 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	}
 	if method == http.MethodPost && r.URL.RawQuery == "" {
 		switch path {
-		case "/api/v1/processing/plans", "/api/v1/processing/jobs",
+		case "/api/v1/processing/local/plans", "/api/v1/processing/local/setup",
+			"/api/v1/processing/plans", "/api/v1/processing/jobs",
 			"/api/v1/processing/consent/grants", "/api/v1/processing/consent/revocations",
 			"/api/v1/processing/source-fences/resolve", "/api/v1/search", "/api/v1/search/similar":
 			return true
@@ -564,6 +565,9 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		// The master API retains the released unbounded form, but a browser
 		// session may request only the UI's fixed bounded page.
 		return r.URL.RawQuery == "limit=1000&offset=0"
+	}
+	if path == "/api/v1/processing/local/status" {
+		return r.URL.RawQuery == ""
 	}
 	switch path {
 	case "/api/v1/path", "/api/v1/search",
@@ -730,6 +734,23 @@ func validPhotoPreviewPath(assetID, generationID string) bool {
 }
 
 func photoFaceBrowserRequestAllowed(r *http.Request) bool {
+	if r.URL.Path == "/api/v1/people/face-candidates" && r.Method == http.MethodGet {
+		values, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil {
+			return false
+		}
+		for key, entries := range values {
+			if (key != webLimitQuery && key != "offset") || len(entries) != 1 {
+				return false
+			}
+		}
+		return true
+	}
+	if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/people/face-candidates/"); ok {
+		parts := strings.Split(after, "/")
+		return r.Method == http.MethodPost && len(parts) == 2 && parts[1] == "decision" && query.ValidateTextOperand("asset", parts[0]) == nil && r.URL.RawQuery == ""
+	}
+
 	if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/photos/people/"); ok {
 		parts := strings.Split(after, "/")
 		if r.Method != http.MethodGet || len(parts) != 2 || parts[1] != "face-previews" || query.ValidateTextOperand("asset", parts[0]) != nil {
@@ -762,7 +783,7 @@ func photoFaceBrowserRequestAllowed(r *http.Request) bool {
 			return false
 		}
 		for key, entries := range values {
-			if (key != "query" && key != "limit" && key != "cursor" && key != "photo_summary" && key != "recent_first") || len(entries) != 1 {
+			if (key != "query" && key != "limit" && key != "cursor" && key != "photo_summary" && key != "recent_first" && key != "face_id") || len(entries) != 1 {
 				return false
 			}
 		}

@@ -39,7 +39,7 @@ func BenchmarkCollectionsPage(b *testing.B) {
 					}
 					run.record.StartedAt = "2026-01-01T00:00:00.000000000Z"
 					ids[i] = run.ID()
-					if _, err := ensureIngestRunTx(ctx, tx, run); err != nil {
+					if _, err := s.ensureIngestRunTx(ctx, tx, run); err != nil {
 						return err
 					}
 					for _, node := range nodes {

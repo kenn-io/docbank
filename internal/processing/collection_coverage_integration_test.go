@@ -57,7 +57,7 @@ func (p coverageProvider) Render(ctx context.Context, upload document.Authorized
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	if err = pdfapi.Validate(bytes.NewReader(source), nil); err != nil {
+	if err = pdfapi.Validate(ctx, bytes.NewReader(source), nil, nil); err != nil {
 		return document.RenditionResult{}, fmt.Errorf("synthetic provider received invalid PDF: %w", err)
 	}
 	if p.mode == "failed" {
@@ -103,7 +103,7 @@ func TestCollectionCoverageConfiguredPDFWorkerToSearch(t *testing.T) {
 			var encoded bytes.Buffer
 			require.NoError(t, pdf.Output(&encoded))
 			source := encoded.Bytes()
-			require.NoError(t, pdfapi.Validate(bytes.NewReader(source), nil))
+			require.NoError(t, pdfapi.Validate(t.Context(), bytes.NewReader(source), nil, nil))
 			require.NotContains(t, string(source), "renditiononlyneedle")
 			receipt, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(source))
 			require.NoError(t, err)

@@ -533,7 +533,7 @@ func selectedEmailRecipeFingerprint(
 func (s *Store) missingEmailVersionIDsQuery() string {
 	mime := "instr(lower(COALESCE(mime_type,'')),'message/rfc822')>0"
 	if s.postgresSchema != "" {
-		mime = "strpos(lower(COALESCE(mime_type,'')),'message/rfc822')>0"
+		mime = "strpos(lower(encode(COALESCE(mime_type,''),'escape')),'message/rfc822')>0"
 	}
 	return `SELECT version_id FROM content_versions
 		WHERE version_id>$1

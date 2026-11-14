@@ -6,6 +6,7 @@ package mediatest
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"image"
@@ -379,12 +380,12 @@ type zeroReader struct{}
 func (zeroReader) Read(p []byte) (int, error) { clear(p); return len(p), nil }
 
 // EncryptedPDF encrypts a synthetic one-page PDF.
-func EncryptedPDF(userPW, ownerPW string, keyBits int) ([]byte, error) {
-	return EncryptPDF(PDF(), userPW, ownerPW, keyBits)
+func EncryptedPDF(ctx context.Context, userPW, ownerPW string, keyBits int) ([]byte, error) {
+	return EncryptPDF(ctx, PDF(), userPW, ownerPW, keyBits)
 }
 
 // EncryptPDF encrypts the supplied synthetic PDF.
-func EncryptPDF(data []byte, userPW, ownerPW string, keyBits int, permissions ...model.PermissionFlags) ([]byte, error) {
+func EncryptPDF(ctx context.Context, data []byte, userPW, ownerPW string, keyBits int, permissions ...model.PermissionFlags) ([]byte, error) {
 	configuration := model.NewAESConfiguration(userPW, ownerPW, keyBits)
 	if keyBits == 40 {
 		configuration = model.NewRC4Configuration(userPW, ownerPW, keyBits)
@@ -393,7 +394,7 @@ func EncryptPDF(data []byte, userPW, ownerPW string, keyBits int, permissions ..
 		configuration.Permissions = permissions[0]
 	}
 	var output bytes.Buffer
-	if err := api.Encrypt(bytes.NewReader(data), &output, configuration); err != nil {
+	if err := api.Encrypt(ctx, bytes.NewReader(data), &output, configuration); err != nil {
 		return nil, fmt.Errorf("encrypt synthetic PDF: %w", err)
 	}
 	return output.Bytes(), nil

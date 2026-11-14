@@ -91,6 +91,25 @@ func TestRenderPageRangeKeepsOriginalPageNumbers(t *testing.T) {
 	}
 }
 
+func TestRenderPageRangeMapsTablesOnlyWithinSelection(t *testing.T) {
+	fixture := newFixture(t, "pdf", "application/pdf", "range.pdf", []byte("synthetic PDF bytes"))
+	pages := PageRange{First: 51, Last: 51}
+	content := rangeContent([]int64{51}, pageText("selected page", 51))
+	content["tables"] = []any{
+		map[string]any{
+			"prov": []any{map[string]any{"page_no": 51}},
+			"data": map[string]any{"grid": []any{[]any{map[string]any{"text": "selected cell"}}}},
+		},
+	}
+	result, err := renderRange(t, fixture, pages, "success", rangeResponse("# fallback\n", content))
+	require.NoError(t, err)
+	require.Len(t, result.Evidence.Units, 1)
+	assert.Equal(t, int64(51), result.Evidence.Units[0].Locator.Start)
+	assert.Equal(t, int64(51), result.Evidence.Units[0].Locator.End)
+	assert.Equal(t, "selected page\n\n| selected cell |\n| --- |", result.Evidence.Units[0].Text)
+	assertRangeMarker(t, result.Evidence, pages)
+}
+
 func TestRenderPageRangeRejectsContradictorySelection(t *testing.T) {
 	selected := PageRange{First: 51, Last: 52}
 	ignoredRange := make([]int64, 0, 52)
@@ -195,8 +214,8 @@ func renderRange(
 	return client.RenderPageRange(t.Context(), fixture.upload(), fixture.authorization, pages)
 }
 
-func rangeResponse(markdown string, content map[string]any, options ...resultOption) map[string]any {
-	response := doclingResultResponse("range.pdf", markdown, nil, options...)
+func rangeResponse(markdown string, content map[string]any) map[string]any {
+	response := doclingResultResponse("range.pdf", markdown, nil)
 	doc, ok := response["document"].(map[string]any)
 	if !ok {
 		panic("Docling result fixture document must be an object")

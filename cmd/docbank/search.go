@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -10,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -232,14 +234,30 @@ See docs/usage/search.md.`,
 				reportSearch(cmd, c, searchType, empty, searchAgent)
 			}
 		}()
+		var hints []searchHint
+		if empty && strings.TrimSpace(query) != "" {
+			coverage, coverageErr := c.SearchTextCoverage(cmd.Context(), opts)
+			if coverageErr != nil {
+				slog.DebugContext(cmd.Context(), "search text coverage unavailable", "error", coverageErr)
+			}
+			scoped := opts.SourcePresent || opts.PDFFilter != "" || opts.TagID != "" ||
+				opts.MIMEType != "" || opts.UnderNodeID != 0 || opts.ModifiedSince != "" || opts.ModifiedBefore != ""
+			fuzzyRan := opts.Fuzzy && (rep.Fuzzy == nil || rep.Fuzzy.Status != store.FuzzyStatusNotRun)
+			hints = emptySearchHints(query, coverage, automatic.report == nil, scoped, fuzzyRan)
+		}
+		defer func() {
+			if retErr == nil && !searchJSON {
+				retErr = writeSearchHints(cmd, hints)
+			}
+		}()
 		if automatic.report != nil {
-			return writeAutomaticSearch(cmd, query, *automatic.report, rep)
+			return writeAutomaticSearch(cmd, query, *automatic.report, rep, hints)
 		}
 		if err := writeSearchDegradation(cmd, automatic); err != nil {
 			return err
 		}
 		if searchJSON {
-			return writeCLIJSON(cmd.OutOrStdout(), rep)
+			return writeCLIJSON(cmd.OutOrStdout(), lexicalSearchJSON{SearchReport: rep, Hints: hints})
 		}
 		if searchAgent {
 			return writeLexicalSearchAgent(cmd, query, rep, automatic)
@@ -250,7 +268,7 @@ See docs/usage/search.md.`,
 
 func writeSearchReport(cmd *cobra.Command, rep api.SearchReport, tagName, underPath string) error {
 	if rep.Fuzzy != nil && rep.Fuzzy.Status != store.FuzzyStatusComplete {
-		_, err := fmt.Fprintf(cmd.OutOrStdout(), "incomplete fuzzy search (%s: %s); "+
+		_, err := fmt.Fprintf(cmd.OutOrStdout(), "some filename matches may be missing (%s: %s); "+
 			"use a more specific ASCII query or --under; "+
 			"increase --limit if ordinary hits filled the page\n",
 			rep.Fuzzy.Status, strings.Join(rep.Fuzzy.Reasons, ", "))
@@ -329,7 +347,7 @@ func runSimilarSearch(cmd *cobra.Command, c *daemonconn.Connection, selector nod
 	if !slices.Contains(options.ContentVersionIDs, version) {
 		return usageError(errors.New("the selected version must occur in --source-version"))
 	}
-	profiles, err := c.API().ListDocumentProcessingProfiles(cmd.Context())
+	profiles, err := c.API().ListDocumentProcessingProfiles(cmd.Context(), &apiclient.ListDocumentProcessingProfilesRequestOptions{})
 	if err != nil {
 		return err
 	}
@@ -359,21 +377,25 @@ func runSimilarSearch(cmd *cobra.Command, c *daemonconn.Connection, selector nod
 	if options.JSON {
 		return writeCLIJSON(cmd.OutOrStdout(), report)
 	}
+	planCommand := fmt.Sprintf("docbank processing plan id:%d --profile %s", report.Source.NodeID, options.Profile)
 	if options.Agent {
-		return writeSimilarSearchAgent(cmd, report)
+		return writeSimilarSearchAgent(cmd, report, planCommand)
 	}
-	return writeSimilarSearchReport(cmd, report)
+	return writeSimilarSearchReport(cmd, report, planCommand)
 }
 
-func writeSimilarSearchReport(cmd *cobra.Command, report api.DocumentSimilarReport) error {
+func writeSimilarSearchReport(cmd *cobra.Command, report api.DocumentSimilarReport, planCommand string) error {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "similar to: id:%d (version %s)\nbinding: %s\n", report.Source.NodeID, report.Source.ContentVersionID, report.BindingID)
 	if report.State == "unavailable" {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "unavailable: no current embedding for binding %q on version %s\n", report.BindingID, report.Source.ContentVersionID)
+		if _, err := fmt.Fprintln(cmd.OutOrStdout(), "next:", planCommand); err != nil {
+			return fmt.Errorf("writing processing plan command: %w", err)
+		}
 		return nil
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "coverage: %s (%d/%d source documents complete)\n", report.Coverage.State, report.Coverage.CompleteDocuments, report.Coverage.ScopedDocuments)
 	if len(report.Results) == 0 {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no similar documents inside the source fence")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no similar documents among the selected document versions")
 		return nil
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
@@ -400,7 +422,7 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 		return err
 	}
 
-	profiles, err := c.API().ListDocumentProcessingProfiles(cmd.Context())
+	profiles, err := c.API().ListDocumentProcessingProfiles(cmd.Context(), &apiclient.ListDocumentProcessingProfilesRequestOptions{})
 
 	if err != nil {
 		return err
@@ -529,7 +551,7 @@ func writeDocumentSearchReport(cmd *cobra.Command, report api.DocumentSearchRepo
 	if len(report.Results) == 0 && len(folders) == 0 {
 		message := "no matches in the search scope"
 		if fenced {
-			message = "no matches inside the source fence"
+			message = "no matches among the selected document versions"
 		}
 		if _, err := fmt.Fprintln(out, message); err != nil {
 			return fmt.Errorf("writing empty document search result: %w", err)
@@ -622,7 +644,7 @@ func init() {
 	searchCmd.Flags().StringVar(&searchBinding, "binding", "",
 		"embedding binding for semantic or hybrid search")
 	searchCmd.Flags().StringSliceVar(&searchSourceVersions, "source-version", nil,
-		"allowed content-version UUID (repeat for a bounded source fence)")
+		"search only these document version UUIDs (repeatable)")
 	searchCmd.Flags().BoolVar(&searchExplain, "explain", false,
 		"show bounded retrieval stages without raw similarities or vectors")
 	searchCmd.Flags().BoolVar(&searchRerank, "rerank", false,

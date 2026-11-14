@@ -14,6 +14,7 @@ import (
 const (
 	openAPIStringType   = "string"
 	openAPIBinaryFormat = "binary"
+	openAPIUUIDFormat   = "uuid"
 )
 const openAPIQueryLocation = "query"
 const openAPIPathLocation = "path"
@@ -44,7 +45,7 @@ type ProcessingSelector struct {
 	Profile          string `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
 }
 
-// ProcessingProfileSummary is one locally executable deployment profile.
+// ProcessingProfileSummary is one executable or configured deployment profile.
 type ProcessingProfileSummary struct {
 	Name                   string   `json:"name"`
 	Fingerprint            string   `json:"fingerprint" pattern:"^[0-9a-f]{64}$"`
@@ -231,12 +232,20 @@ type CoverageClass struct {
 	Total                     int    `json:"total" minimum:"0"`
 }
 
+type PageTextGap struct {
+	ContentVersionID string `json:"content_version_id" format:"uuid"`
+	Pages            []int  `json:"pages"`
+}
+
 type CoverageReport struct {
-	VaultUID           string          `json:"vault_uid" format:"uuid"`
-	ProfileFingerprint string          `json:"profile_fingerprint" pattern:"^[0-9a-f]{64}$"`
-	State              string          `json:"state"`
-	Renditions         CoverageClass   `json:"renditions"`
-	Embeddings         []CoverageClass `json:"embeddings"`
+	VaultUID                string          `json:"vault_uid" format:"uuid"`
+	ProfileFingerprint      string          `json:"profile_fingerprint" pattern:"^[0-9a-f]{64}$"`
+	State                   string          `json:"state"`
+	Renditions              CoverageClass   `json:"renditions"`
+	Embeddings              []CoverageClass `json:"embeddings"`
+	PagesWithoutText        []PageTextGap   `json:"pages_without_text,omitzero"`
+	PageCoverage            string          `json:"page_coverage,omitempty" enum:"partial"`
+	PageCoverageUnavailable bool            `json:"page_coverage_unavailable,omitzero"`
 }
 
 type DocumentSearchScope struct {
@@ -927,6 +936,17 @@ type SearchHit struct {
 type FuzzyReceipt struct {
 	Status  string   `json:"status" enum:"complete,limited,not_run"`
 	Reasons []string `json:"reasons" enum:"candidate_limit,name_limit,path_limit,query_ineligible,result_limit,time_budget"`
+}
+
+// SearchTextCoverage reports recoverable gaps in the current search scope.
+type SearchTextCoverage struct {
+	NoText                     int      `json:"no_text" minimum:"0"`
+	Families                   []string `json:"families" enum:"pdf,office,other"`
+	Pending                    int      `json:"pending" minimum:"0"`
+	PDFsWithoutText            int      `json:"pdfs_without_text" minimum:"0"`
+	PagesWithoutText           int      `json:"pages_without_text" minimum:"0"`
+	PDFPageCoverageUnavailable int      `json:"pdf_page_coverage_unavailable" minimum:"0"`
+	PDFPageCoveragePartial     bool     `json:"pdf_page_coverage_partial"`
 }
 
 // SearchReport is one bounded search result page.

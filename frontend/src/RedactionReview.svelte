@@ -1,8 +1,12 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import { Button, Modal, SelectDropdown, Spinner, Toggle } from "@kenn-io/kit-ui";
+  import { Disclosure, Button, Modal, SelectDropdown, Spinner, Toggle } from "@kenn-io/kit-ui";
+  import RedactionNumbering from "./RedactionNumbering.svelte";
+  import { RecipientPackageController } from "./recipientPackageController.svelte.js";
+  import type { NumberingInputs } from "./redactionNumbering.js";
   import OriginalPreview from "./OriginalPreview.svelte";
-  import type { PDFReviewBridge, ReaderReviewStatus } from "./pdfReview.js";
+  import type { PDFReviewBridge, ReaderReviewStatus, TextSelectionStatus } from "./pdfReview.js";
+  import { checkMaskBudget, maskBoxes } from "./pdfTextSelection.js";
   import PageCanvas from "./PageCanvas.svelte";
   import { pageBinding } from "./pages.js";
   import { APIError } from "./api-transport.js";
@@ -14,6 +18,7 @@
     type RedactionReview,
     type RedactionPreview,
     type PDFRedactionBox,
+    type PDFRedactionSelector,
   } from "./generated/docbank.js";
   import { randomUUID } from "./crypto.js";
   import { offerPreparedDownload } from "./download.js";
@@ -38,7 +43,11 @@
     onauthfailure,
     active = false,
     onworkspaceclose,
+    onpublished = () => {},
+    onproductions,
   }: {
+    onpublished?: () => void;
+    onproductions?: () => void;
     session: string;
     source: SelectedSource;
     authorizationRevision: number;
@@ -52,7 +61,17 @@
   >("preparing");
   let preparation = $state<RedactionPreparation>();
   let masks = $state<RedactionMask[]>([]);
+  let textGroups = $state<{ ids: string[]; page: number }[]>([]);
+  let textSelection = $state<TextSelectionStatus>({ busy: false, error: "" });
+  let selectionAnnouncement = $state("");
   let review = $state<RedactionReview>();
+  let numberingReviews = $state<{ inputs: NumberingInputs; published: boolean }[]>([]);
+  const packageController = new RecipientPackageController(
+    () => session,
+    (cause) => onauthfailure(cause),
+  );
+  const latestNumbering = $derived(numberingReviews.at(-1));
+  let numberingLocked = $state(false);
   let preview = $state<RedactionPreview>();
   let expansion = $state<RedactionMask>();
   let error = $state("");
@@ -90,21 +109,22 @@
     if (!preparation) return [];
     if (preview && review) return review.resolved.redact_boxes;
     return masks.flatMap((m) =>
-      m.selector.kind === "page"
-        ? (m.selector.pages ?? []).map((n) => {
-            const p = preparation!.map.pages[n - 1]!;
-            return {
-              page: n,
-              frame_sha256: p.frame_sha256,
-              x0: 0,
-              y0: 0,
-              x1: p.width,
-              y1: p.height,
-            };
-          })
-        : (m.selector.boxes ?? []),
+      maskBoxes(preparation!, m.selector).map((box) => ({
+        ...box,
+        outline: m.selector.kind !== "text",
+      })),
     );
   });
+  const maskItems = $derived(
+    masks.flatMap((mask) => {
+      const group = textGroups.find((g) => g.ids.includes(mask.id));
+      return group && group.ids[0] !== mask.id ? [] : [{ mask, group }];
+    }),
+  );
+  const expansionBoxes = $derived(
+    preparation && expansion ? maskBoxes(preparation, expansion.selector) : [],
+  );
+  const expansionKind = $derived(masks.find((m) => m.id === expansion?.id)?.selector.kind);
   const gapPages = $derived([...new Set(preparation?.map.gaps.map((g) => g.box.page) ?? [])]);
   function clearImage() {
     imageController.abort();
@@ -198,32 +218,50 @@
     void showPage();
   }
   function changed() {
+    if (!numberingLocked) numberingReviews = numberingReviews.filter((item) => item.published);
     review = undefined;
     expansion = undefined;
     error = "";
     notice = "";
   }
+  function addMask(selector: PDFRedactionSelector) {
+    if (busy || numberingLocked || preview || !preparation) return;
+    const addition = { id: "00000000-0000-4000-8000-000000000001", selector };
+    try {
+      checkMaskBudget([...masks, addition]);
+      addition.id = randomUUID();
+      changed();
+      masks = [...masks, addition];
+    } catch (cause) {
+      fail(cause);
+    }
+  }
   function addBox(box: PDFRedactionBox) {
-    if (busy || preview || masks.length >= 256) return;
-    changed();
-    masks = [
-      ...masks,
-      {
-        id: randomUUID(),
-        selector: { kind: "rectangle", map_sha256: preparation!.map.sha256, boxes: [box] },
-      },
-    ];
+    addMask({ kind: "rectangle", map_sha256: preparation!.map.sha256, boxes: [box] });
+  }
+  function addSelectedText() {
+    const candidate = bridge?.selectedText();
+    if (!candidate || !preparation || busy || numberingLocked || preview) return;
+    try {
+      // Admit with UUID-sized placeholders before allocating the mask IDs.
+      const additions: RedactionMask[] = candidate.spans.map((span) => ({
+        id: "00000000-0000-4000-8000-000000000001",
+        selector: { kind: "text", map_sha256: preparation!.map.sha256, span: { ...span } },
+      }));
+      checkMaskBudget([...masks, ...additions]);
+      additions.forEach((m) => (m.id = randomUUID()));
+      changed();
+      masks = [...masks, ...additions];
+      textGroups = [...textGroups, { ids: additions.map((m) => m.id), page: candidate.page }];
+      bridge?.clearSelection();
+      selectionAnnouncement = `Text mask ${maskItems.length} added on page ${candidate.page}.`;
+    } catch (cause) {
+      fail(cause);
+    }
   }
   function maskPage(pageNumber: number) {
-    if (busy || preview || !preparation || masks.length >= 256) return;
-    changed();
-    masks = [
-      ...masks,
-      {
-        id: randomUUID(),
-        selector: { kind: "page", map_sha256: preparation.map.sha256, pages: [pageNumber] },
-      },
-    ];
+    if (!preparation) return;
+    addMask({ kind: "page", map_sha256: preparation.map.sha256, pages: [pageNumber] });
   }
   async function revalidate(signal: AbortSignal) {
     const node = await getNode(source.nodeID, { session, signal });
@@ -240,7 +278,15 @@
     title = node.name;
   }
   async function renderPreview() {
-    if (!preparation || !masks.length || busy || dragging || phase === "release-failed") return;
+    if (
+      !preparation ||
+      !masks.length ||
+      busy ||
+      numberingLocked ||
+      dragging ||
+      phase === "release-failed"
+    )
+      return;
     controller.abort();
     controller = new AbortController();
     const signal = controller.signal,
@@ -264,6 +310,16 @@
       creationAttempted = true;
       const result = await createRedactionPreview(session, prep, selectedMasks, resolved, signal);
       if (signal.aborted || disposed) return;
+      if (!numberingReviews.some((item) => item.inputs.review.sha256 === resolved.sha256)) {
+        numberingReviews.push({
+          inputs: structuredClone({
+            preparation: $state.snapshot(prep),
+            masks: selectedMasks,
+            review: resolved,
+          }),
+          published: false,
+        });
+      }
       preview = result;
       phase = "ready";
       tab = "redacted";
@@ -352,8 +408,9 @@
     }
   }
   function savePrivate(kind: "preparation" | "masks" | "review") {
-    if (!review || !preparation) return;
-    const value = kind === "preparation" ? preparation : kind === "masks" ? masks : review;
+    const saved = review && preparation ? { preparation, masks, review } : latestNumbering?.inputs;
+    if (!saved) return;
+    const value = saved[kind];
     const url = URL.createObjectURL(
       new Blob([JSON.stringify(value)], { type: "application/json" }),
     );
@@ -365,13 +422,20 @@
   function endReview() {
     if (!reviewing) return;
     reviewing = false;
+    void packageController.stop();
     generation++;
     controller.abort();
     clearImage();
     clearTimeout(expiry);
     void discardRedactionPreviews({ session, keepalive: true }).catch(() => undefined);
+    bridge?.clearSelection();
     masks = [];
+    textGroups = [];
+    textSelection = { busy: false, error: "" };
+    selectionAnnouncement = "";
     preparation = undefined;
+    numberingReviews = [];
+    numberingLocked = false;
     review = undefined;
     preview = undefined;
     expansion = undefined;
@@ -444,12 +508,18 @@
             preparation,
             boxes,
             gaps: preparation?.map.gaps ?? [],
-            proposed: expansion?.selector.boxes ?? [],
-            drawing: drawing && !busy && !preview && !dialog,
+            proposed: expansionBoxes,
+            drawing: drawing && !busy && !numberingLocked && !preview && !dialog,
             visible: tab === "original",
+            editable: phase === "editing" && !dialog && !preview && !busy && !numberingLocked,
             oncommit: addBox,
             ondrag: (value) => untrack(() => (dragging = value)),
             ondrawing: (value) => untrack(() => (drawing = value)),
+            onselection: (value) =>
+              untrack(() => {
+                textSelection = value;
+                selectionAnnouncement = "";
+              }),
           }
         : undefined}
       onbridge={(value) => (bridge = value)}
@@ -461,8 +531,18 @@
   </div>
   {#if active}
     <div class="redaction-editor">
+      <span class="kit-sr-only" role="status" aria-live="polite">{selectionAnnouncement}</span>
+      {#if textSelection.error}<p class="notice" role="status">{textSelection.error}</p>{/if}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       {#if notice}<p class="notice" role="status">{notice}</p>{/if}
+      {#if !packageController.allocation && packageController.phase === "cleanup-failed"}<div
+          class="package-recovery"
+        >
+          <p class="error" role="alert">{packageController.error}</p>
+          <Button size="sm" onclick={() => void packageController.release()}
+            >Release recipient ZIP</Button
+          >
+        </div>{/if}
       {#if phase === "preparing"}<p role="status"><Spinner size={16} /> Preparing PDF…</p>
         <Button onclick={close}>Cancel preparation</Button>{/if}
       {#if preparation && currentPage}
@@ -533,21 +613,25 @@
               </p>{/if}
           </section>
           <aside aria-label="Masks and coverage">
-            <h3>Masks <span>{masks.length}</span></h3>
+            <h3>Masks <span>{maskItems.length}</span></h3>
             {#if masks.length === 0}<p class="notice">No masks</p>{/if}
             <ol>
-              {#each masks as mask, index (mask.id)}<li>
+              {#each maskItems as { mask, group }, index (mask.id)}<li>
                   <span
-                    >{#if mask.selector.kind === "page"}Whole page {mask.selector.pages?.join(", ")}
+                    >{#if group}Selected text · Page {group.page}
+                    {:else if mask.selector.kind === "page"}Whole page {mask.selector.pages?.join(
+                        ", ",
+                      )}
                     {:else}Rectangle {index + 1} · Page {[
                         ...new Set(mask.selector.boxes?.map((b) => b.page)),
                       ].join(", ")}{/if}</span
                   ><Button
                     size="sm"
-                    disabled={busy || !!preview}
+                    disabled={busy || numberingLocked || !!preview}
                     onclick={() => {
                       changed();
-                      masks = masks.filter((m) => m.id !== mask.id);
+                      masks = masks.filter((m) => !(group?.ids ?? [mask.id]).includes(m.id));
+                      textGroups = textGroups.filter((g) => g !== group);
                     }}>Remove</Button
                   >
                 </li>{/each}
@@ -564,10 +648,14 @@
             {#if expansion}<section class="expansion" aria-label="Proposed mask expansion">
                 <h3>Expand mask?</h3>
                 <p>
-                  The selected region cuts through text. Review the full region before continuing.
+                  {#if expansionKind === "text"}
+                    The safety margin reaches nearby text. Review the added area before continuing.
+                  {:else}
+                    The selected region cuts through text. Review the full region before continuing.
+                  {/if}
                 </p>
                 <div class="gap-pages">
-                  {#each [...new Set(expansion.selector.boxes?.map((b) => b.page))] as n}
+                  {#each [...new Set(expansionBoxes.map((b) => b.page))] as n}
                     <Button size="sm" onclick={() => changePage(n)}>Page {n}</Button>
                   {/each}
                 </div>
@@ -583,8 +671,7 @@
               </section>{/if}
           </aside>
         </div>
-        {#if review}<details>
-            <summary>Private review files</summary>
+        {#if review || latestNumbering}<Disclosure variant="plain" title="Private review files">
             <p>
               Keep these for offline verification. Preparation contains unredacted evidence; do not
               include it with the delivery.
@@ -595,8 +682,27 @@
                   onclick={() => savePrivate(kind as "preparation" | "masks" | "review")}
                   >Save {kind}</Button
                 >{/each}
+              {#if !latestNumbering?.published}<p class="notice">
+                  Save all three before numbering to finish through the CLI if this tab closes.
+                </p>{/if}
             </div>
-          </details>{/if}
+          </Disclosure>{/if}
+        {#each numberingReviews as item (item.inputs.review.sha256)}
+          <RedactionNumbering
+            {session}
+            inputs={item.inputs}
+            {title}
+            {packageController}
+            bind:locked={numberingLocked}
+            {onauthfailure}
+            onpublished={() => {
+              item.published = true;
+              onpublished();
+            }}
+            onnotice={(message) => (notice = message)}
+            {onproductions}
+          />
+        {/each}
         {#if preview}<p class="notice">
             Preview expires {new Date(preview.expires_at).toLocaleTimeString()}. It is removed on
             tab close, reload or daemon restart.
@@ -631,29 +737,40 @@
           <Button disabled={phase === "releasing"} onclick={() => void releaseUnreceivedPreview()}
             >Release preview</Button
           >
-        {:else if preview}<Button disabled={downloading} onclick={() => void back()}
-            >Back to masks</Button
-          ><Button
-            tone="info"
-            surface="solid"
-            disabled={downloading || outputLoading}
-            onclick={() => (dialog = "download")}>Confirm and download ZIP</Button
+        {:else if preview}<Button
+            disabled={downloading || numberingLocked}
+            onclick={() => void back()}>Back to masks</Button
+          ><Button disabled={downloading || outputLoading} onclick={() => (dialog = "download")}
+            >Download unnumbered ZIP</Button
           >
         {:else if preparation}<Toggle
-            disabled={busy || !imageReady || masks.length >= 256}
+            disabled={busy || numberingLocked || !imageReady || masks.length >= 256}
             label="Draw rectangle"
             bind:checked={drawing}
             onchange={() => {
               dragging = false;
               if (drawing) bridge?.focus();
             }}
-          />{#each [page] as pageNumber (pageNumber)}<Button
-              disabled={busy || !imageReady || masks.length >= 256}
+          /><Button
+            disabled={busy ||
+              numberingLocked ||
+              drawing ||
+              !imageReady ||
+              !textSelection.candidate ||
+              textSelection.busy}
+            onclick={addSelectedText}
+            >{textSelection.busy ? "Matching text…" : "Mask selected text"}</Button
+          >{#each [page] as pageNumber (pageNumber)}<Button
+              disabled={busy || numberingLocked || !imageReady || masks.length >= 256}
               onclick={() => maskPage(pageNumber)}>Mask whole page {pageNumber}</Button
             >{/each}<Button
             tone="info"
             surface="solid"
-            disabled={busy || dragging || masks.length === 0}
+            disabled={busy ||
+              numberingLocked ||
+              dragging ||
+              textSelection.busy ||
+              masks.length === 0}
             onclick={() => void renderPreview()}>Preview redaction</Button
           >{/if}
       </div>
@@ -662,6 +779,10 @@
 </div>
 {#if dialog === "discard"}<Modal title="Discard redaction?" onclose={() => (dialog = undefined)}
     ><p>The masks and temporary preview will be removed. The original is unchanged.</p>
+    {#if numberingLocked}<p>
+        Any reserved numbers and retained original remain. Keep the private review files to finish
+        publication through the CLI.
+      </p>{/if}
     {#snippet footer()}<Button onclick={() => (dialog = undefined)}>Keep reviewing</Button><Button
         tone="danger"
         onclick={close}>Discard and close</Button
@@ -670,7 +791,7 @@
 {:else if dialog === "download" && preview}<Modal
     title="Download reviewed PDF?"
     onclose={() => (dialog = undefined)}
-    ><p>{title} · {preview.pages.length} pages · {masks.length} masks</p>
+    ><p>{title} · {preview.pages.length} pages · {maskItems.length} masks</p>
     <p>Downloads this reviewed result. The original is unchanged.</p>
     {#snippet footer()}<Button onclick={() => (dialog = undefined)}>Keep reviewing</Button><Button
         tone="info"
@@ -778,6 +899,11 @@
     font-size: var(--font-size-sm);
     line-height: 1.5;
   }
+  .package-recovery {
+    display: grid;
+    gap: var(--space-2);
+    justify-items: start;
+  }
   .error {
     color: var(--status-error-text);
   }
@@ -804,14 +930,6 @@
     padding: var(--space-4);
     background: var(--bg-inset);
     font-size: var(--font-size-sm);
-  }
-  details {
-    font-size: var(--font-size-sm);
-    border-top: 1px solid var(--border-muted);
-    padding-top: var(--space-3);
-  }
-  details p {
-    margin-block: var(--space-3);
   }
   @media (max-width: 760px) {
     .review-workspace.active {

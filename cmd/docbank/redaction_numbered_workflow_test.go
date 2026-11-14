@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/mcp"
 	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/redactiontest"
@@ -212,6 +213,25 @@ func TestNumberedNativePDFCLI(t *testing.T) {
 	var repeated processing.RedactionArchive
 	require.NoError(t, json.Unmarshal([]byte(out), &repeated))
 	require.Equal(t, rendered, repeated)
+	// Full agent recovery uses only retained bytes and the private review files,
+	// after source deletion and a renderer-free restart.
+	agent := startWorkflowMCP(t, mcp.ServerOptions{AllowPackageWrites: true})
+	agentPath := filepath.Join(f.dir, "agent-checked.pdf")
+	result := agent.call(t, "export_bates_file", map[string]any{
+		"allocation_id": reservation.AllocationID.String(), "destination_path": agentPath, "overwrite": false,
+		"preparation_path": f.preparation, "masks_path": f.masks, "review_path": f.review,
+	})
+	var agentResult struct {
+		Verification string `json:"verification"`
+		State        string `json:"state"`
+	}
+	require.NoError(t, json.Unmarshal(result, &agentResult))
+	require.Equal(t, "masks_text_and_numbers", agentResult.Verification, string(result))
+	require.Equal(t, "published", agentResult.State)
+	agentPDF, err := os.ReadFile(agentPath)
+	require.NoError(t, err)
+	require.Equal(t, files["redacted.pdf"], agentPDF)
+	agent.stop(t)
 	for _, path := range []string{f.preparation, f.masks, f.review} {
 		require.NoError(t, os.Remove(path))
 	}

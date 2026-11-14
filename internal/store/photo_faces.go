@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"go.kenn.io/docbank/document"
 )
@@ -129,27 +130,43 @@ type PersonFacePreviewPage struct {
 
 const rejectedFaceMatchPredicate = `c.reason='face_match' AND c.state='rejected'`
 
+// faceSuggestionDecided matches an owner's dismissal of a face, or rejection of it for person.
+func faceSuggestionDecided(face, version, person string) string {
+	return `EXISTS(SELECT 1 FROM person_match_candidates c JOIN person_candidate_faces rejected ON rejected.candidate_id=c.candidate_id WHERE rejected.face_id=` + face + ` AND rejected.content_version_id=` + version + ` AND ` + rejectedFaceMatchPredicate + ` AND c.occurrence_count=1 AND (c.suggested_person_id IS NULL OR c.suggested_person_id=` + person + `))`
+}
+
 // personFaceCropOrder chooses a ready crop, then its area and stable IDs.
 const personFaceCropOrder = `(g.state='ready' AND g.output_blob_hash IS NOT NULL) DESC,
  face.width*face.height DESC,cv.version_id,face.face_id`
 
-func personFacePreviewsQuery(hidden bool) string {
+// Only the join spelling differs; compute the fixed fragment once.
+var personFacePreviewDisplayPostgres = strings.ReplaceAll(photoBrowseDisplayFrom, "CROSS JOIN", "JOIN")
+
+func (s *Store) personFacePreviewsQuery(hidden bool) string {
+	join := "CROSS JOIN"
+	if s.postgresSchema != "" {
+		join = "JOIN"
+	}
+	display := photoBrowseDisplayFrom
+	if s.postgresSchema != "" {
+		display = personFacePreviewDisplayPostgres
+	}
 	return `WITH linked AS NOT MATERIALIZED (
  SELECT member.asset_id,boxed_face.face_id
  FROM person_document_assertions assertion
- CROSS JOIN content_versions cv ON cv.version_id=assertion.content_version_id
- CROSS JOIN nodes source_node ON source_node.id=cv.node_id
- CROSS JOIN photo_files member ON member.node_id=source_node.id
+ ` + join + ` content_versions cv ON cv.version_id=assertion.content_version_id
+ ` + join + ` nodes source_node ON source_node.id=cv.node_id
+ ` + join + ` photo_files member ON member.node_id=source_node.id
   AND ` + currentPhotoSourcePredicate("member", "source_node", "cv.version_id") + `
  JOIN persons person ON person.person_id=assertion.person_id AND person.state<>'retired'
  LEFT JOIN photo_faces boxed_face ON boxed_face.assertion_id=assertion.assertion_id
   AND boxed_face.content_version_id=assertion.content_version_id
- WHERE assertion.person_id=? AND assertion.role='depicted' AND assertion.action='assert'
+ WHERE assertion.person_id=$1 AND assertion.role='depicted' AND assertion.action='assert'
  ), linked_assets AS MATERIALIZED (
- SELECT asset_id,MAX(face_id IS NOT NULL) has_box FROM linked GROUP BY asset_id
+ SELECT asset_id,MAX(CASE WHEN face_id IS NOT NULL THEN 1 ELSE 0 END) has_box FROM linked GROUP BY asset_id
  ), asset_page AS MATERIALIZED (
  SELECT a.asset_id,COALESCE(pl.sort_key,'') sort_key
- FROM linked_assets CROSS JOIN ` + photoBrowseDisplayFrom + `
+ FROM linked_assets CROSS JOIN ` + display + `
  WHERE a.asset_id=linked_assets.asset_id AND ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(hidden) + `
  ORDER BY linked_assets.has_box DESC,COALESCE(pl.sort_key,'') DESC,a.asset_id ASC LIMIT 3
  ), candidates AS (
@@ -158,13 +175,13 @@ func personFacePreviewsQuery(hidden bool) string {
  CASE WHEN g.state='ready' AND g.output_blob_hash IS NOT NULL THEN 1 ELSE 0 END ready,
  ROW_NUMBER() OVER (PARTITION BY asset_page.asset_id ORDER BY
  (face.width IS NOT NULL) DESC,` + personFaceCropOrder + `) crop_rank
- FROM asset_page CROSS JOIN photo_files member ON member.asset_id=asset_page.asset_id
- CROSS JOIN nodes source_node ON source_node.id=member.node_id
- CROSS JOIN content_versions cv ON cv.node_id=source_node.id AND ` + currentPhotoSourcePredicate("member", "source_node", "cv.version_id") + `
- CROSS JOIN person_document_assertions assertion ON assertion.content_version_id=cv.version_id
-  AND assertion.person_id=?1 AND assertion.role='depicted' AND assertion.action='assert'
+ FROM asset_page ` + join + ` photo_files member ON member.asset_id=asset_page.asset_id
+ ` + join + ` nodes source_node ON source_node.id=member.node_id
+ ` + join + ` content_versions cv ON cv.node_id=source_node.id AND ` + currentPhotoSourcePredicate("member", "source_node", "cv.version_id") + `
+ ` + join + ` person_document_assertions assertion ON assertion.content_version_id=cv.version_id
+  AND assertion.person_id=$1 AND assertion.role='depicted' AND assertion.action='assert'
  LEFT JOIN photo_faces face ON face.assertion_id=assertion.assertion_id AND face.content_version_id=cv.version_id
- LEFT JOIN visual_preview_generations g ON g.content_version_id=cv.version_id AND g.recipe_fingerprint=?2
+ LEFT JOIN visual_preview_generations g ON g.content_version_id=cv.version_id AND g.recipe_fingerprint=$2
  )
  SELECT asset_id,version_id,rotation,x,y,width,height,CASE WHEN ready=1 THEN generation_id ELSE '' END
  FROM candidates WHERE crop_rank=1 ORDER BY sort_key DESC,asset_id ASC`
@@ -180,7 +197,7 @@ func (s *Store) PersonFacePreviews(ctx context.Context, personID, gridRecipe str
 			}
 		}
 		// Bound the asset page before expanding and ranking its crop candidates.
-		rows, err := tx.QueryContext(ctx, personFacePreviewsQuery(hidden), personID, gridRecipe)
+		rows, err := tx.QueryContext(ctx, s.personFacePreviewsQuery(hidden), personID, gridRecipe)
 		if err != nil {
 			return err
 		}
@@ -266,7 +283,7 @@ func assertDepictedPersonTx(ctx context.Context, tx *sql.Tx, versionID, personID
 
 func (s *Store) currentFacePhotoQuery(ctx context.Context, q metadataQuerier, versionID string) error {
 	var current bool
-	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_versions v JOIN nodes n ON n.id=v.node_id WHERE v.version_id=? AND n.current_version_id=v.version_id)`, versionID).Scan(&current); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_versions v JOIN nodes n ON n.id=v.node_id WHERE v.version_id=$1 AND n.current_version_id=v.version_id)`, versionID).Scan(&current); err != nil {
 		return err
 	}
 	if !current {
@@ -287,7 +304,7 @@ func (s *Store) CreatePhotoFace(ctx context.Context, versionID, faceID string, b
 		if err := s.currentFacePhotoQuery(ctx, tx, versionID); err != nil {
 			return err
 		}
-		existing, err := scanPhotoFace(tx.QueryRowContext(ctx, `SELECT `+photoFaceColumns+` FROM photo_faces WHERE face_id=?`, faceID))
+		existing, err := scanPhotoFace(tx.QueryRowContext(ctx, `SELECT `+photoFaceColumns+` FROM photo_faces WHERE face_id=$1`, faceID))
 		if err == nil {
 			if existing.ContentVersionID != versionID || existing.Box != box {
 				return photoFaceExistsError{}
@@ -304,7 +321,7 @@ func (s *Store) CreatePhotoFace(ctx context.Context, versionID, faceID string, b
 			return err
 		}
 		var count int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_faces WHERE content_version_id=?`, versionID).Scan(&count); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_faces WHERE content_version_id=$1`, versionID).Scan(&count); err != nil {
 			return err
 		}
 		if count >= document.MaxPhotoRecordsPerVersion {
@@ -336,8 +353,8 @@ func replayPhotoFaceTx(ctx context.Context, tx *sql.Tx, existing PhotoFace, pers
 		if personID != "" && personID != saved.PersonID {
 			var merged bool
 			if err := tx.QueryRowContext(ctx, `WITH RECURSIVE chain(person_id) AS (
- SELECT ? UNION SELECT m.survivor_person_id FROM person_merges m JOIN chain c ON m.absorbed_person_id=c.person_id
-) SELECT EXISTS(SELECT 1 FROM chain WHERE person_id=?)`, personID, saved.PersonID).Scan(&merged); err != nil {
+ SELECT survivor_person_id FROM person_merges WHERE absorbed_person_id=$1 UNION SELECT m.survivor_person_id FROM person_merges m JOIN chain c ON m.absorbed_person_id=c.person_id
+) SELECT EXISTS(SELECT 1 FROM chain WHERE person_id=$2)`, personID, saved.PersonID).Scan(&merged); err != nil {
 				return PhotoFace{}, nil, err
 			}
 			if !merged {
@@ -367,9 +384,9 @@ func (s *Store) MarkPersonInPhoto(ctx context.Context, versionID, personID, pers
 		}
 		if personName != "" {
 			var name, state string
-			err := tx.QueryRowContext(ctx, `SELECT display_name,state FROM persons WHERE person_id=?`, personID).Scan(&name, &state)
+			err := tx.QueryRowContext(ctx, `SELECT display_name,state FROM persons WHERE person_id=$1`, personID).Scan(&name, &state)
 			if errors.Is(err, sql.ErrNoRows) {
-				_, err = createPersonWithIDTx(ctx, tx, personID, personName, "operator")
+				_, err = s.createPersonWithIDTx(ctx, tx, personID, personName, "operator")
 			} else if err == nil {
 				if state == personStateRetired {
 					return ErrNotFound
@@ -385,7 +402,7 @@ func (s *Store) MarkPersonInPhoto(ctx context.Context, versionID, personID, pers
 		var err error
 		assertion, err = assertDepictedPersonTx(ctx, tx, versionID, personID)
 		if err == nil && !assertion.PhotoMark {
-			_, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET photo_mark=1,revision=revision+1 WHERE assertion_id=?`, assertion.AssertionID)
+			_, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET photo_mark=1,revision=revision+1 WHERE assertion_id=$1`, assertion.AssertionID)
 			if err == nil {
 				assertion.PhotoMark = true
 				assertion.Revision++
@@ -432,7 +449,7 @@ func validFacePhotoNode(role string, node Node) bool {
 
 func photoAssertionCount(ctx context.Context, q metadataQuerier, versionID, existingAssertionID string) (int, error) {
 	var count int
-	err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_document_assertions a WHERE a.content_version_id=? AND a.role='depicted' AND a.assertion_id<>? AND (a.action<>'withdrawn' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=a.assertion_id))`, versionID, existingAssertionID).Scan(&count)
+	err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_document_assertions a WHERE a.content_version_id=$1 AND a.role='depicted' AND a.assertion_id<>$2 AND (a.action<>'withdrawn' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=a.assertion_id))`, versionID, existingAssertionID).Scan(&count)
 	return count, err
 }
 
@@ -442,4 +459,26 @@ func nullableBoolInt(value *bool) *int {
 		return nil
 	}
 	return new(boolInt(*value))
+}
+
+// FacePhotoPreviewSource authorizes the exact current source of a visible face.
+func (s *Store) FacePhotoPreviewSource(ctx context.Context, assetID, versionID, faceID string) error {
+	return s.withReadTx(ctx, func(tx *sql.Tx) error { return s.facePhotoPreviewSourceTx(ctx, tx, assetID, versionID, faceID) })
+}
+func (s *Store) facePhotoPreviewSourceTx(ctx context.Context, tx *sql.Tx, assetID, versionID, faceID string) error {
+	if validateUUIDv4(assetID) != nil || validateUUIDv4(faceID) != nil {
+		return ErrNotFound
+	}
+	if err := s.currentFacePhotoQuery(ctx, tx, versionID); err != nil {
+		return err
+	}
+	var found bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces face JOIN content_versions v ON v.version_id=face.content_version_id JOIN photo_files f ON f.node_id=v.node_id WHERE face.face_id=$1 AND face.content_version_id=$2 AND f.asset_id=$3)`, faceID, versionID, assetID).Scan(&found)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return ErrNotFound
+	}
+	return nil
 }

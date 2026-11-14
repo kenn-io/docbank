@@ -38,7 +38,7 @@ func TestInspectFourGiBGeneratedAudioBoundedMemory(t *testing.T) {
 			runtime.GC()
 			var before, after runtime.MemStats
 			runtime.ReadMemStats(&before)
-			record, err := media.InspectCapability(source, policy)
+			record, err := media.InspectCapability(t.Context(), source, policy)
 			runtime.ReadMemStats(&after)
 			require.NoError(t, err)
 			require.True(t, record.Eligible, record.Reason)
@@ -47,11 +47,11 @@ func TestInspectFourGiBGeneratedAudioBoundedMemory(t *testing.T) {
 			require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(8<<20))
 			t.Logf("inspected %d bytes under 64 MiB Go memory limit; allocated %d bytes", size, after.TotalAlloc-before.TotalAlloc)
 			policy.ExpectedBytes = size + 1
-			_, err = media.InspectCapability(source, policy)
+			_, err = media.InspectCapability(t.Context(), source, policy)
 			require.ErrorContains(t, err, "source byte bounds")
 			policy.ExpectedBytes = size
 			policy.MaxSourceBytes = size - 1
-			_, err = media.InspectCapability(source, policy)
+			_, err = media.InspectCapability(t.Context(), source, policy)
 			require.ErrorContains(t, err, "source byte bounds")
 		})
 	}
@@ -83,10 +83,10 @@ func TestAudioFourGiBPolicyKeepsDocumentBounds(t *testing.T) {
 	policy := inspectionPolicy(raw, "source.wav", "audio/wav")
 	policy.MaxSourceBytes = 4 << 30
 	policy.MaxDurationMS = 24 * 60 * 60 * 1000
-	record, err := media.InspectCapability(bytes.NewReader(raw), policy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(raw), policy)
 	require.NoError(t, err)
 	require.True(t, record.Eligible)
 	policy.Filename, policy.DeclaredMediaType = "source.txt", "text/plain"
-	_, err = media.InspectCapability(bytes.NewReader(raw), policy)
+	_, err = media.InspectCapability(t.Context(), bytes.NewReader(raw), policy)
 	require.ErrorContains(t, err, "source byte bounds")
 }

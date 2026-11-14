@@ -1,4 +1,5 @@
 -- docbank core schema. Idempotent: applied on every Open.
+-- Blank lines separate executable groups; keep each SQL statement within one group.
 
 CREATE TABLE IF NOT EXISTS export_sources (
     id TEXT PRIMARY KEY,

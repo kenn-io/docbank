@@ -111,30 +111,42 @@ func TestHelpParsedOutputModeProperty(t *testing.T) {
 }
 
 func TestHelpMalformedOutputModesProperty(t *testing.T) {
+	t.Cleanup(func() { resetFlags(rootCmd) })
 	hegel.Test(t, func(ht *hegel.T) {
 		jsonBefore := hegel.Draw(ht, hegel.Booleans())
 		agentBefore := hegel.Draw(ht, hegel.Booleans())
 		name := hegel.Draw(ht, hegel.SampledFrom([]string{"json", "agent"}))
 		invalid := "invalid-" + hegel.Draw(ht, hegel.Text())
-		resetFlags(rootCmd)
-		var out, diag bytes.Buffer
-		args := []string{"search", "--json=" + strconv.FormatBool(jsonBefore), "--agent=" + strconv.FormatBool(agentBefore), "--" + name + "=" + invalid}
-		if code := runProcess(args, &out, &diag); code != 2 || out.Len() != 0 {
-			ht.Fatalf("malformed mode changed exit/stdout: %d %q", code, out.String())
+		check := func(command, selectors []string, agentOutput bool) {
+			resetFlags(rootCmd)
+			var out, diag bytes.Buffer
+			args := append(append([]string{}, command...), selectors...)
+			if code := runProcess(args, &out, &diag); code != 2 || out.Len() != 0 {
+				ht.Fatalf("%v: malformed mode changed exit/stdout: %d %q", command, code, out.String())
+			}
+			if jsonBefore {
+				var env processErrorEnvelope
+				if err := json.Unmarshal(diag.Bytes(), &env); err != nil || env.Error.Code != "usage" || env.Error.Exit != 2 {
+					ht.Fatalf("%v: lost parsed JSON selection: %q (%v)", command, diag.String(), err)
+				}
+			} else {
+				hint := "hint:"
+				if agentOutput {
+					hint = "Hint:"
+				}
+				if !strings.HasPrefix(diag.String(), "error: ") || !strings.Contains(diag.String(), "\n"+hint+" ") {
+					ht.Fatalf("%v: lost parsed text selector: %q", command, diag.String())
+				}
+			}
 		}
-		if jsonBefore {
-			var env processErrorEnvelope
-			if err := json.Unmarshal(diag.Bytes(), &env); err != nil || env.Error.Code != "usage" || env.Error.Exit != 2 {
-				ht.Fatalf("lost parsed JSON selection: %q (%v)", diag.String(), err)
-			}
-		} else {
-			hint := "hint:"
-			if agentBefore {
-				hint = "Hint:"
-			}
-			if !strings.HasPrefix(diag.String(), "error: ") || !strings.Contains(diag.String(), "\n"+hint+" ") {
-				ht.Fatalf("lost parsed text selection: %q", diag.String())
-			}
-		}
+		check([]string{"search"}, []string{
+			"--json=" + strconv.FormatBool(jsonBefore),
+			"--agent=" + strconv.FormatBool(agentBefore),
+			"--" + name + "=" + invalid,
+		}, agentBefore)
+		check([]string{"cli", "search", "pack"}, []string{
+			"--json=" + strconv.FormatBool(jsonBefore),
+			"--json=" + invalid,
+		}, false)
 	}, hegel.WithDatabase(t.TempDir()))
 }

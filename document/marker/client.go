@@ -224,8 +224,11 @@ func (client *Client) Render(ctx context.Context, upload document.AuthorizedUplo
 		return document.RenditionResult{}, err
 	}
 	defer clear(source)
-	expectedNaturalUnits, err := client.localUnits(metadata, source)
+	expectedNaturalUnits, err := client.localUnits(operation.Context(), metadata, source)
 	if err != nil {
+		if operationErr := operation.Check(); operationErr != nil {
+			return document.RenditionResult{}, operationErr
+		}
 		return document.RenditionResult{}, err
 	}
 	body := &providerutil.MultipartUpload{
@@ -276,10 +279,13 @@ func (client *Client) Render(ctx context.Context, upload document.AuthorizedUplo
 
 // localUnits proves the natural unit count of PDF and still-image sources
 // before egress so provider output can be checked against it.
-func (client *Client) localUnits(metadata document.AuthorizedUploadMetadata, source []byte) (int, error) {
+func (client *Client) localUnits(ctx context.Context, metadata document.AuthorizedUploadMetadata, source []byte) (int, error) {
 	switch metadata.MediaFamily {
 	case "pdf":
-		pages, err := formatdetect.CountPDFPages(source)
+		pages, err := formatdetect.CountPDFPages(ctx, source)
+		if contextErr := ctx.Err(); err != nil && contextErr != nil {
+			return 0, contextErr
+		}
 		if err != nil || pages <= 0 {
 			return 0, provider.Classified(document.RenditionErrorUnsupportedInput, "Marker PDF page authority is invalid", err)
 		}

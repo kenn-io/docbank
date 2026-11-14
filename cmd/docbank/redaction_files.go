@@ -1,99 +1,37 @@
 package main
 
 import (
-	"encoding/json/v2"
+	"context"
 	"errors"
-	"fmt"
 	"io"
-	"os"
 
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
-	"go.kenn.io/docbank/internal/production"
+	"go.kenn.io/docbank/internal/redactionfiles"
 )
 
-func readRedactionFile(path string, limit int64) ([]byte, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil, usageError(fmt.Errorf("reading %q: %w", path, err))
-	}
-	if !info.Mode().IsRegular() {
-		return nil, usageError(fmt.Errorf("%q must be a regular file", path))
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, usageError(fmt.Errorf("reading %q: %w", path, err))
-	}
-	defer func() { _ = file.Close() }()
-	info, err = file.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() || info.Size() > limit {
-		return nil, usageError(fmt.Errorf("%q must be a regular file of at most %d bytes", path, limit))
-	}
-	data, err := io.ReadAll(io.LimitReader(file, limit+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > limit {
-		return nil, usageError(fmt.Errorf("%q exceeds %d bytes", path, limit))
-	}
-	return data, nil
+func readRedactionFile(ctx context.Context, path string, limit int64) ([]byte, error) {
+	data, err := redactionfiles.ReadFile(ctx, path, limit)
+	return data, redactionInputCLIError(err)
 }
 
-func readRedactionInputs(preparationPath, masksPath string) (processing.RedactionResolveRequest, error) {
-	var result processing.RedactionResolveRequest
-	data, err := readRedactionFile(preparationPath, 16<<20)
-	if err != nil {
-		return result, err
-	}
-	var transport struct {
-		processing.RedactionPreparation
-
-		Schema string `json:"$schema,omitzero"`
-	}
-	if err := json.Unmarshal(data, &transport, json.RejectUnknownMembers(true)); err != nil {
-		return result, usageError(err)
-	}
-	result.Preparation = transport.RedactionPreparation
-	if err := processing.ValidateRedactionPreparation(result.Preparation); err != nil {
-		if errors.Is(err, pdfproduction.ErrVerifierVersion) {
-			return result, redactionCLIError(err)
-		}
-		return result, usageError(err)
-	}
-	if err := production.ValidateNativePreparationDerivation(result.Preparation.NativePreparation); err != nil {
-		return result, usageError(err)
-	}
-	data, err = readRedactionFile(masksPath, processing.MaxRedactionMaskBytes)
-	if err != nil {
-		return result, err
-	}
-	result.Masks, err = processing.DecodeRedactionMasks(data)
-	return result, usageError(err)
+func readRedactionInputs(ctx context.Context, preparationPath, masksPath string) (processing.RedactionResolveRequest, error) {
+	inputs, err := redactionfiles.ReadInputs(ctx, preparationPath, masksPath)
+	return inputs, redactionInputCLIError(err)
 }
 
-func readRedactionReview(path string, request processing.RedactionResolveRequest) (processing.RedactionReview, error) {
-	var transport struct {
-		processing.RedactionReview
+func readRedactionReview(ctx context.Context, path string, request processing.RedactionResolveRequest) (processing.RedactionReview, error) {
+	review, err := redactionfiles.ReadReview(ctx, path, request)
+	return review, redactionInputCLIError(err)
+}
 
-		Schema string `json:"$schema,omitzero"`
+func redactionInputCLIError(err error) error {
+	if errors.Is(err, redactionfiles.ErrInvalidInput) {
+		return usageError(err)
 	}
-	data, err := readRedactionFile(path, 16<<20)
-	if err != nil {
-		return transport.RedactionReview, err
-	}
-	if err := json.Unmarshal(data, &transport, json.RejectUnknownMembers(true)); err != nil {
-		return transport.RedactionReview, usageError(err)
-	}
-	err = processing.ValidateRedactionReview(request.Preparation, request.Masks, transport.RedactionReview)
-	if errors.Is(err, processing.ErrRedactionReviewChanged) || errors.Is(err, pdfproduction.ErrVerifierVersion) {
-		return transport.RedactionReview, redactionCLIError(err)
-	}
-	return transport.RedactionReview, usageError(err)
+	return redactionCLIError(err)
 }
 
 func redactionCLIError(err error) error {

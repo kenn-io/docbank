@@ -45,6 +45,7 @@ func TestLongRunningRequestTimeoutBoundary(t *testing.T) {
 		{http.MethodGet, "/api/v1/bates/exports/candidates", true},
 		{http.MethodGet, "/api/v1/bates/exports/not-an-export/content", true},
 		{http.MethodPost, "/api/v1/processing/plans", false},
+		{http.MethodPost, "/api/v1/processing/local/setup", false},
 		{http.MethodGet, "/api/v1/processing/plans", true},
 	} {
 		t.Run(test.method+test.path, func(t *testing.T) {
