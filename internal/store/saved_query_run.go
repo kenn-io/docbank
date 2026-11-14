@@ -64,7 +64,7 @@ func insertSavedQueryRunTx(
 	if err != nil {
 		return SavedQueryRun{}, err
 	}
-	if rootFingerprint != projection.QueryFingerprint {
+	if rootFingerprint != projection.definitionFingerprint {
 		return SavedQueryRun{}, fmt.Errorf("saved query %s definition changed before run receipt: %w", savedQueryID, ErrStaleRevision)
 	}
 	if err := recheckSavedQueryRunDependencies(ctx, tx, projection.Dependencies); err != nil {
@@ -76,7 +76,7 @@ func insertSavedQueryRunTx(
 	}
 	run := SavedQueryRun{
 		Photos: projection.Photos, RunID: runID, SavedQueryID: savedQueryID, SavedQueryRevision: expectedRevision,
-		QueryFingerprint: projection.QueryFingerprint, SnapshotID: page.SnapshotID,
+		QueryFingerprint: projection.definitionFingerprint, SnapshotID: page.SnapshotID,
 		MemberHash: projection.MemberHash, Total: projection.Total, TotalBytes: projection.TotalBytes,
 		RanAt: page.CreatedAt.UTC(), ExpiresAt: page.ExpiresAt.UTC(),
 	}

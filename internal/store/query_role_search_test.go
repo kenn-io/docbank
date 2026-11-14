@@ -496,7 +496,9 @@ func TestRoleSearchSavedRunPreservesMergedDefinitionReceipt(t *testing.T) {
 	run, page, err := service.RunSaved(ctx, "owner", definition.ID, definition.Revision, SnapshotRequest{Facets: []string{"person_role"}}, nil)
 	require.NoError(t, err)
 	require.Equal(t, definition.Fingerprint, run.QueryFingerprint)
-	require.Equal(t, definition.Fingerprint, page.QueryFingerprint)
+	fingerprint, err := query.Fingerprint(page.Query)
+	require.NoError(t, err)
+	require.Equal(t, fingerprint, page.QueryFingerprint)
 	require.Len(t, page.Rows, 1)
 	require.Len(t, page.Query.Filters.People, 1)
 	require.Len(t, page.Facets, 1)
@@ -504,6 +506,13 @@ func TestRoleSearchSavedRunPreservesMergedDefinitionReceipt(t *testing.T) {
 	require.Equal(t, survivor.PersonID, page.Facets[0].Values[0].Key)
 	require.True(t, page.Facets[0].Values[0].Selected)
 	require.Equal(t, page.Facets[0].Values[0].Key, page.Query.Filters.People[0].PersonID)
+	_, _, err = service.RunSaved(ctx, "owner", definition.ID, definition.Revision+1, SnapshotRequest{}, nil)
+	require.ErrorIs(t, err, ErrStaleRevision)
+	next, _, err := service.RunSaved(ctx, "owner", definition.ID, definition.Revision, SnapshotRequest{}, nil)
+	require.NoError(t, err)
+	require.Equal(t, run.RunID, next.PreviousRunID)
+	require.Equal(t, definition.Fingerprint, next.QueryFingerprint)
+	require.False(t, next.Comparison.DefinitionChanged)
 }
 
 func TestRoleSearchInlineCapacity(t *testing.T) {

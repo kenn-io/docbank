@@ -168,6 +168,20 @@ func TestResolveQueryNormalizesCopyWithoutMutatingInput(t *testing.T) {
 	assert.Equal(t, int64(20), *input.Filters.SizeMax)
 }
 
+func TestResolveQueryDoesNotMutatePeopleFilters(t *testing.T) {
+	input := lexicalQuery("")
+	input.Filters.People = []PersonFilter{{PersonID: tagID, Roles: []string{"sender"}}}
+	resolved, err := ResolveQuery(context.Background(), input, resolverFunc(func(_ context.Context, kind ReferenceKind, key string, byID bool) (Reference, error) {
+		require.Equal(t, ReferencePerson, kind)
+		require.Equal(t, tagID, key)
+		require.True(t, byID)
+		return Reference{Dependency: Dependency{Kind: kind, ID: otherTagID, Revision: 1}}, nil
+	}))
+	require.NoError(t, err)
+	require.Equal(t, tagID, input.Filters.People[0].PersonID)
+	require.Equal(t, otherTagID, resolved.Query.Filters.People[0].PersonID)
+}
+
 func TestResolveQueryUnknownReferencesPositionOnlyExpressionOperands(t *testing.T) {
 	resolver := resolverFunc(func(context.Context, ReferenceKind, string, bool) (Reference, error) {
 		return Reference{}, fmt.Errorf("lookup: %w", ErrUnknownReference)

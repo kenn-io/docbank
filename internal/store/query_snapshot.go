@@ -136,6 +136,8 @@ type SnapshotProjection struct {
 	Rows                []SnapshotRow      `json:"rows"`
 	Facets              []SnapshotFacet    `json:"facets"`
 	SerializedBytes     int64              `json:"-"`
+
+	definitionFingerprint string // Saved definition before person IDs resolve to survivors.
 }
 
 type snapshotMaterializeOptions struct {
@@ -276,7 +278,8 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 		value.Filters.People = compiled.Query.Filters.People
 		projection = SnapshotProjection{
 			PhotoProjection: request.PhotoProjection, PhotoRanking: request.PhotoRanking, Photos: options.Photos, Query: value, Dependencies: slices.Clone(compiled.Dependencies),
-			Coverage: coverage, PageSize: pageSize,
+			definitionFingerprint: definitionFingerprint,
+			Coverage:              coverage, PageSize: pageSize,
 			ObservedAt: options.Now().UTC(), Rows: make([]SnapshotRow, 0), Facets: make([]SnapshotFacet, 0, len(facets)),
 			Generation: SnapshotGeneration{Kind: "native"},
 		}
@@ -287,9 +290,6 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 			projection.QueryFingerprint, err = query.Fingerprint(projection.Query)
 			if err != nil {
 				return err
-			}
-			if definitionFingerprint != "" {
-				projection.QueryFingerprint = definitionFingerprint
 			}
 			execution := compiled
 			if options.PhotoRanking != nil {

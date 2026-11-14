@@ -61,7 +61,7 @@ func BenchmarkSavedQueryRunReceipt(b *testing.B) {
 				}))
 				require.NoError(b, validateSavedQueryRunMetadataState(ctx, s.db, currentMetadataLayout()))
 				b.Run("receipt", func(b *testing.B) {
-					projection := SnapshotProjection{QueryFingerprint: definition.Fingerprint, MemberHash: hash}
+					projection := SnapshotProjection{definitionFingerprint: definition.Fingerprint, MemberHash: hash}
 					page := SnapshotPage{
 						SnapshotID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 						CreatedAt:  at.Add(24 * time.Hour), ExpiresAt: at.Add(25 * time.Hour),
