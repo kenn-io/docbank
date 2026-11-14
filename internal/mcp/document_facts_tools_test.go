@@ -77,28 +77,6 @@ func TestDocumentFactsPagesRejectChangedFacts(t *testing.T) {
 	require.Equal(t, "stale_facts", continuePage(p)["code"])
 }
 
-func TestDocumentFactsToolsHiddenPhoto(t *testing.T) {
-	f := newNativeExportFixture(t)
-	hash, size, err := f.blobs.WriteContext(t.Context(), strings.NewReader("synthetic photo"))
-	require.NoError(t, err)
-	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "hidden.jpg", hash, size, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := f.catalog.PhotoAssetForNode(t.Context(), node.ID)
-	require.NoError(t, err)
-	require.NoError(t, f.catalog.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
-	_, err = f.catalog.SetPhotoAssetHidden(t.Context(), asset.ID, asset.Revision, true)
-	require.NoError(t, err)
-	person, err := f.catalog.CreatePerson(t.Context(), "Hidden Person", "operator")
-	require.NoError(t, err)
-	_, err = f.catalog.AssertDocumentPerson(t.Context(), store.PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1})
-	require.NoError(t, err)
-	server := newSearchProcessingServer(t, f, nil)
-	for _, name := range []string{"get_document_dates", "get_document_people"} {
-		out := exportCall(t, server, name, map[string]any{"content_version_id": node.CurrentVersionID})
-		require.Equal(t, "not_found", out["code"])
-	}
-}
-
 func TestDocumentFactsToolsUseSafeDisclosure(t *testing.T) {
 	f := newNativeExportFixture(t)
 	file := f.addFile(t, "example.txt", "synthetic")

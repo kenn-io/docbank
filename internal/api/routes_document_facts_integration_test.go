@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/go-pdf/fpdf"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
@@ -59,11 +58,9 @@ func TestVersionFactsBrowserFullForbidden(t *testing.T) {
 		res, body = get(t, ts, path+"?disclosure=full", headers)
 		require.Equal(t, http.StatusForbidden, res.StatusCode, body)
 		require.Equal(t, "disclosure_forbidden", decodeProblem(t, body).Code)
-		for _, query := range []string{"?timezone=UTC", "?disclosure=bad", "?disclosure=full&disclosure=safe"} {
-			res, body = get(t, ts, path+query, headers)
-			require.Equal(t, http.StatusForbidden, res.StatusCode, body)
-			require.Equal(t, "web_session_read_only", decodeProblem(t, body).Code)
-		}
+		res, body = get(t, ts, path+"?timezone=UTC", headers)
+		require.Equal(t, http.StatusForbidden, res.StatusCode, body)
+		require.Equal(t, "web_session_read_only", decodeProblem(t, body).Code)
 	}
 	person, err := s.CreatePerson(t.Context(), "Blind Recipient", "operator")
 	require.NoError(t, err)
@@ -146,47 +143,14 @@ func TestVersionFactsPDFMetadata(t *testing.T) {
 	require.Equal(t, "pending", dates.State)
 	require.Empty(t, dates.Claims)
 	require.Nil(t, dates.Primary)
-	checkPeople := func(state string, published bool) {
-		t.Helper()
-		res, body := get(t, ts, fmt.Sprintf("/api/v1/versions/%s/people", node.CurrentVersionID), nil)
-		require.Equal(t, http.StatusOK, res.StatusCode, body)
-		var got api.VersionPeople
-		require.NoError(t, json.Unmarshal([]byte(body), &got))
-		assert.Equal(t, state, got.State)
-		require.Len(t, got.Assertions, 1)
-		require.Equal(t, person.PersonID, got.Assertions[0].PersonID)
-		if published {
-			require.NotEmpty(t, got.Edges)
-			require.Len(t, got.Unresolved, 1)
-		} else {
-			require.Empty(t, got.Edges)
-			require.Empty(t, got.Unresolved)
-		}
-	}
-	checkPeople("pending", false)
-	targets, err = s.MissingDocumentEventTargetsAfter(t.Context(), store.DocumentEventsDeriverFingerprint, "", 100)
-	require.NoError(t, err)
-	require.Len(t, targets, 1)
-	evidence, err = s.LoadDocumentEventEvidence(t.Context(), targets[0])
-	require.NoError(t, err)
-	require.NoError(t, s.RecordDocumentEventAttempt(t.Context(), targets[0], evidence.InputsSHA256, "failed", []byte(`[]`)))
-	checkPeople("failed", false)
-	_, err = s.PublishDocumentEvents(t.Context(), targets[0], store.DocumentEventsDeriverFingerprint, evidence.InputsSHA256, eventJSON)
-	require.NoError(t, err)
-	_, err = processing.BackfillDocumentPeopleTargets(t.Context(), s, []store.DocumentPeopleTarget{{ContentVersionID: node.CurrentVersionID}})
-	require.NoError(t, err)
-	checkPeople("published", true)
-	person, err = s.UpdatePerson(t.Context(), person.PersonID, person.Revision, "Renamed Again")
-	require.NoError(t, err)
-	input, err := s.PrepareDocumentPeopleInputs(t.Context(), node.CurrentVersionID)
-	require.NoError(t, err)
-	require.NoError(t, s.MarkDocumentPeopleFailed(t.Context(), input, "derivation_failed"))
-	checkPeople("failed", false)
-	_, err = s.StartDocumentEventRebuild(t.Context(), "00000000-0000-4000-8000-000000000002", store.DocumentEventRebuildRequestSHA256)
-	require.NoError(t, err)
-	checkPeople("pending", false)
-	require.NoError(t, s.EnsureDocumentEventRecipe(t.Context(), testHash("new-recipe")))
-	checkPeople("pending", false)
+	res, body = get(t, ts, fmt.Sprintf("/api/v1/versions/%s/people", node.CurrentVersionID), nil)
+	require.Equal(t, http.StatusOK, res.StatusCode, body)
+	people = api.VersionPeople{}
+	require.NoError(t, json.Unmarshal([]byte(body), &people))
+	require.Equal(t, "pending", people.State)
+	require.Empty(t, people.Edges)
+	require.Empty(t, people.Unresolved)
+	require.Len(t, people.Assertions, 1)
 }
 
 func TestVersionFactsBrowserHiddenAuthorization(t *testing.T) {

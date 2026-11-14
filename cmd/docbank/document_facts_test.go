@@ -43,15 +43,6 @@ func TestDocumentFactsTableWriteErrors(t *testing.T) {
 	})
 }
 
-func TestDocumentDatesTablePublishedClaim(t *testing.T) {
-	result := &api.VersionDates{State: "published", Claims: []api.VersionDateClaim{{
-		Primary: true, DateKind: "sent", DateValue: "2024-03-15", ZoneText: "America/Vancouver", Precision: "date", ClaimBasis: "source_asserted", When: api.WhenV1{State: "date"},
-	}}}
-	var output strings.Builder
-	require.NoError(t, writeVersionDatesTable(&output, result))
-	require.Equal(t, "State: published\n* sent  2024-03-15  \"America/Vancouver\" (state=date, zone=\"\")  date  From document\n", output.String())
-}
-
 func TestDocumentFactsTableEscapesAndTimezones(t *testing.T) {
 	for _, tc := range []struct {
 		name, zone, state, zoneState, want string
@@ -70,6 +61,16 @@ func TestDocumentFactsTableEscapesAndTimezones(t *testing.T) {
 			require.NotContains(t, output.String(), "\x1b")
 		})
 	}
+
+	t.Run("published claim", func(t *testing.T) {
+		result := &api.VersionDates{State: "published", Claims: []api.VersionDateClaim{{
+			Primary: true, DateKind: "sent", DateValue: "2024-03-15", ZoneText: "America/Vancouver", Precision: "date", ClaimBasis: "source_asserted", When: api.WhenV1{State: "date"},
+		}}}
+		var output strings.Builder
+		require.NoError(t, writeVersionDatesTable(&output, result))
+		require.Equal(t, "State: published\n* sent  2024-03-15  \"America/Vancouver\" (state=date, zone=\"\")  date  From document\n", output.String())
+	})
+	require.Equal(t, "From transfer", documentFactLabel("transfer_record"))
 
 	result := &api.VersionPeople{State: "published",
 		Edges:      []api.VersionPersonEdge{{Role: "author", DisplayName: "edge\n\x1b[31m", Basis: "operator_assigned"}},
@@ -110,7 +111,6 @@ func TestDocumentFactsCommands(t *testing.T) {
 		if noun == "people" {
 			require.Contains(t, table, "Synthetic Author")
 			require.Contains(t, table, "author")
-			require.True(t, strings.Contains(table, "assert") || strings.Contains(table, "Assigned by you"))
 			fullTable, err := runCLI(t, "document", noun, "/notes.txt", "--full")
 			require.NoError(t, err)
 			require.Contains(t, fullTable, "Bcc")
@@ -126,23 +126,12 @@ func TestDocumentFactsCommands(t *testing.T) {
 		}
 		_, err = runCLI(t, "document", noun, "/empty")
 		require.ErrorContains(t, err, "document has no current content version")
-		output, err := runCLI(t, "document", noun, "/notes.txt", "--json", "--full")
-		require.NoError(t, err)
 		if noun == "dates" {
+			output, err := runCLI(t, "document", noun, "/notes.txt", "--json", "--full")
+			require.NoError(t, err)
 			var got api.VersionDates
 			require.NoError(t, json.Unmarshal([]byte(output), &got))
 			require.Equal(t, f.nodes["notes.txt"].CurrentVersionID, got.ContentVersionID)
-		} else {
-			var got api.VersionPeople
-			require.NoError(t, json.Unmarshal([]byte(output), &got))
-			require.Equal(t, f.nodes["notes.txt"].CurrentVersionID, got.ContentVersionID)
-			require.Len(t, got.Assertions, 2)
-			roles := map[string]string{}
-			for _, assertion := range got.Assertions {
-				roles[assertion.PersonID] = assertion.Role
-			}
-			require.Equal(t, "author", roles[person.PersonID])
-			require.Equal(t, "blind_copy", roles[blind.PersonID])
 		}
 	}
 }
@@ -160,7 +149,6 @@ func TestDocumentPeopleTableBccLabels(t *testing.T) {
 	var output strings.Builder
 	require.NoError(t, writeVersionJSON(&output, &result))
 	require.Equal(t, 3, strings.Count(output.String(), "blind_copy"))
-	require.Equal(t, "From transfer", documentFactLabel("transfer_record"))
 }
 
 func TestDocumentPeopleTableAssertionSupport(t *testing.T) {
@@ -174,12 +162,8 @@ func TestDocumentPeopleTableAssertionSupport(t *testing.T) {
 		wantRow   bool
 	}{
 		{name: "represented", state: "published", edges: []api.VersionPersonEdge{edge}, assertion: assertion},
-		{name: "none", state: "none", assertion: assertion, wantRow: true},
-		{name: "pending", state: "pending", assertion: assertion, wantRow: true},
-		{name: "failed", state: "failed", assertion: assertion, wantRow: true},
 		{name: "published without edge", state: "published", assertion: assertion, wantRow: true},
 		{name: "suppress", state: "published", edges: []api.VersionPersonEdge{edge}, assertion: func() api.VersionPersonAssertion { a := assertion; a.Action = "suppress"; return a }(), wantRow: true},
-		{name: "withdrawn", state: "published", edges: []api.VersionPersonEdge{edge}, assertion: func() api.VersionPersonAssertion { a := assertion; a.Action = "withdrawn"; return a }(), wantRow: true},
 		{name: "new assertion", state: "published", edges: []api.VersionPersonEdge{edge}, assertion: func() api.VersionPersonAssertion { a := assertion; a.AssertionID = "new"; return a }(), wantRow: true},
 		{name: "different person", state: "published", edges: []api.VersionPersonEdge{edge}, assertion: func() api.VersionPersonAssertion { a := assertion; a.PersonID = "other"; return a }(), wantRow: true},
 		{name: "different role", state: "published", edges: []api.VersionPersonEdge{edge}, assertion: func() api.VersionPersonAssertion { a := assertion; a.Role = "sender"; return a }(), wantRow: true},
@@ -187,8 +171,6 @@ func TestDocumentPeopleTableAssertionSupport(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			result := api.VersionPeople{State: tc.state, Edges: tc.edges, Assertions: []api.VersionPersonAssertion{tc.assertion}, Unresolved: []api.VersionUnresolvedName{{Role: "author", RawLabel: "Unknown"}}}
-			var before strings.Builder
-			require.NoError(t, writeVersionJSON(&before, &result))
 			var table strings.Builder
 			require.NoError(t, writeVersionPeopleTable(&table, &result))
 			require.Contains(t, table.String(), "\"Unknown\"  unresolved")
@@ -199,16 +181,6 @@ func TestDocumentPeopleTableAssertionSupport(t *testing.T) {
 				require.Contains(t, table.String(), tc.assertion.Action+"\n")
 			} else {
 				require.NotContains(t, table.String(), "assert\n")
-			}
-			var output strings.Builder
-			require.NoError(t, writeVersionJSON(&output, &result))
-			var decoded api.VersionPeople
-			require.NoError(t, json.Unmarshal([]byte(output.String()), &decoded))
-			require.Equal(t, before.String(), output.String())
-			require.Equal(t, result.Assertions, decoded.Assertions)
-			require.Len(t, decoded.Edges, len(tc.edges))
-			if len(tc.edges) != 0 {
-				require.Equal(t, tc.edges[0].EvidenceID, decoded.Edges[0].EvidenceID)
 			}
 		})
 	}

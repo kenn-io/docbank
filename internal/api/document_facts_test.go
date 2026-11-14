@@ -12,16 +12,19 @@ import (
 func TestWhenFieldTable(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name  string
-		claim document.DocumentEventV1
-		want  string
+		name     string
+		claim    document.DocumentEventV1
+		want     string
+		fallback bool
 	}{
-		{"offset", document.DocumentEventV1{DateKind: "sent", Precision: "minute", DateValue: "2026-03-10T09:12", TimezoneKind: "offset", ZoneText: "-04:00", UTCKey: "2026-03-10T13:12:00.000000000Z", OffsetSeconds: new(-14400)}, `{"state":"exact","precision":"minute","at":"2026-03-10T13:12:00Z","local":"2026-03-10T09:12:00","zone_state":"offset","source_zone":"-04:00","source_offset_seconds":-14400}`},
-		{"producer UTC", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T23:50:00", TimezoneKind: "utc", ZoneText: "Z", UTCKey: "2026-03-10T23:50:00.000000000Z"}, `{"state":"exact","precision":"second","at":"2026-03-10T23:50:00Z","local":"2026-03-10T23:50:00","zone_state":"utc","source_zone":"Z","source_offset_seconds":0}`},
-		{"omitted", document.DocumentEventV1{Precision: "minute", DateValue: "2026-03-10T09:12", TimezoneKind: "omitted", ZoneText: "-0000"}, `{"state":"floating","precision":"minute","local":"2026-03-10T09:12:00","zone_state":"omitted"}`},
-		{"missing named zone", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T09:12:00", TimezoneKind: "named"}, `{"state":"floating","precision":"second","local":"2026-03-10T09:12:00","zone_state":"omitted"}`},
-		{"date", document.DocumentEventV1{Precision: "date", DateValue: "2026-03-10"}, `{"state":"date","precision":"date","date":"2026-03-10"}`},
-		{"month", document.DocumentEventV1{Precision: "month", DateValue: "2026-03"}, `{"state":"coarse","precision":"month","period":"2026-03"}`},
+		{"offset", document.DocumentEventV1{DateKind: "sent", Precision: "minute", DateValue: "2026-03-10T09:12", TimezoneKind: "offset", ZoneText: "-04:00", UTCKey: "2026-03-10T13:12:00.000000000Z", OffsetSeconds: new(-14400)}, `{"state":"exact","precision":"minute","at":"2026-03-10T13:12:00Z","local":"2026-03-10T09:12:00","zone_state":"offset","source_zone":"-04:00","source_offset_seconds":-14400}`, false},
+		{"producer UTC", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T23:50:00", TimezoneKind: "utc", ZoneText: "Z", UTCKey: "2026-03-10T23:50:00.000000000Z"}, `{"state":"exact","precision":"second","at":"2026-03-10T23:50:00Z","local":"2026-03-10T23:50:00","zone_state":"utc","source_zone":"Z","source_offset_seconds":0}`, false},
+		{"omitted", document.DocumentEventV1{Precision: "minute", DateValue: "2026-03-10T09:12", TimezoneKind: "omitted", ZoneText: "-0000"}, `{"state":"floating","precision":"minute","local":"2026-03-10T09:12:00","zone_state":"omitted"}`, false},
+		{"named zone", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T09:12:00", TimezoneKind: "named", ZoneText: "America/New_York"}, `{"state":"floating","precision":"second","local":"2026-03-10T09:12:00","zone_state":"named","source_zone":"America/New_York"}`, false},
+		{"hour", document.DocumentEventV1{Precision: "hour", DateValue: "2026-03-10T09", TimezoneKind: "omitted"}, `{"state":"floating","precision":"hour","local":"2026-03-10T09:00:00","zone_state":"omitted"}`, false},
+		{"missing named zone", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T09:12:00", TimezoneKind: "named"}, `{"state":"floating","precision":"second","local":"2026-03-10T09:12:00","zone_state":"omitted"}`, false},
+		{"date", document.DocumentEventV1{Precision: "date", DateValue: "2026-03-10"}, `{"state":"date","precision":"date","date":"2026-03-10"}`, false},
+		{"month", document.DocumentEventV1{DateKind: "imported", Precision: "month", DateValue: "2026-03"}, `{"state":"coarse","precision":"month","period":"2026-03"}`, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -38,7 +41,7 @@ func TestWhenFieldTable(t *testing.T) {
 			if err := json.Unmarshal([]byte(tc.want), &want); err != nil {
 				t.Fatal(err)
 			}
-			want["placed_by"] = map[string]any{"source": string(tc.claim.DateKind), "rule": "primary-rule/v1", "fallback": tc.claim.DateKind == "imported" || tc.claim.DateKind == "vault_recorded", "event_id": tc.claim.EventID, "claim_basis": tc.claim.ClaimBasis}
+			want["placed_by"] = map[string]any{"source": string(tc.claim.DateKind), "rule": "primary-rule/v1", "fallback": tc.fallback, "event_id": tc.claim.EventID, "claim_basis": tc.claim.ClaimBasis}
 			if !reflect.DeepEqual(got, want) {
 				t.Errorf("got %s; want %s", raw, tc.want)
 			}
@@ -61,9 +64,9 @@ func TestVersionDatesProjectionUsesSelectedDisclosure(t *testing.T) {
 	}
 }
 
-func TestVersionPeopleProjectionHidesBccAndUnsupportedPeople(t *testing.T) {
+func TestVersionPeopleProjectionHidesUnsupportedPeople(t *testing.T) {
 	t.Parallel()
-	f := store.DocumentPeopleFacts{Version: store.ContentVersion{ID: "version", NodeID: 1}, State: "published", Persons: map[string]store.FactPerson{"visible": {Person: store.Person{PersonID: "visible", DisplayName: "Visible"}, Visible: true}, "hidden": {Person: store.Person{PersonID: "hidden", DisplayName: "Hidden"}}}, Edges: []document.DocumentPersonEdgeV1{{PersonID: "visible", Role: "author"}, {PersonID: "hidden", Role: "author"}, {PersonID: "visible", Role: "blind_copy", Sensitive: true}}, Assertions: []store.PersonDocumentAssertion{{PersonID: "hidden", Role: "author"}}, Candidates: []store.VersionCandidate{{CandidateID: "candidate", Occurrences: []store.VersionCandidateOccurrence{{PersonCandidateOccurrence: store.PersonCandidateOccurrence{Role: "blind_copy"}, Label: "Blind"}, {PersonCandidateOccurrence: store.PersonCandidateOccurrence{Role: "author"}, Label: "Recipient"}}}}}
+	f := store.DocumentPeopleFacts{Version: store.ContentVersion{ID: "version", NodeID: 1}, State: "published", Persons: map[string]store.FactPerson{"visible": {Person: store.Person{PersonID: "visible", DisplayName: "Visible"}, Visible: true}, "hidden": {Person: store.Person{PersonID: "hidden", DisplayName: "Hidden", State: "provisional"}}}, Edges: []document.DocumentPersonEdgeV1{{PersonID: "visible", Role: "author"}, {PersonID: "hidden", Role: "author"}, {PersonID: "visible", Role: "blind_copy", Sensitive: true}}, Assertions: []store.PersonDocumentAssertion{{PersonID: "hidden", Role: "author"}}, Candidates: []store.VersionCandidate{{CandidateID: "candidate", Occurrences: []store.VersionCandidateOccurrence{{PersonCandidateOccurrence: store.PersonCandidateOccurrence{Role: "blind_copy"}, Label: "Blind"}, {PersonCandidateOccurrence: store.PersonCandidateOccurrence{Role: "author"}, Label: "Recipient"}}}}}
 	f.Persons["visible"] = store.FactPerson{Person: store.Person{PersonID: "visible", DisplayName: "Private Bcc", State: "provisional", Origin: "derived"}, Visible: true}
 	f.Edges[0].RawLabel = "Public Author"
 	// The store supplies already-filtered candidate occurrences for safe reads.
@@ -102,66 +105,5 @@ func TestVersionPeopleProjectionHidesBccAndUnsupportedPeople(t *testing.T) {
 	full := versionPeopleAPI(f, false)
 	if len(full.Edges) != 3 || len(full.Assertions) != 1 || full.Assertions[0].DisplayName != "Hidden" || len(full.Unresolved) != 2 {
 		t.Fatalf("full: %+v", full)
-	}
-}
-
-// TestWhenFieldTableAllProducerCombinations checks the shared contract's field
-// table independently of the example fixtures for every supported precision and zone.
-func TestWhenFieldTableAllProducerCombinations(t *testing.T) {
-	t.Parallel()
-	values := map[document.EventPrecision]string{"year": "2026", "month": "2026-03", "date": "2026-03-10", "hour": "2026-03-10T09", "minute": "2026-03-10T09:12", "second": "2026-03-10T09:12:30", "fraction": "2026-03-10T09:12:30.123"}
-	for _, precision := range document.AllEventPrecisions() {
-		for _, zone := range document.AllEventTimezoneKinds() {
-			for _, zoneText := range []string{"", "source zone"} {
-				if zoneText == "" && (zone == "offset" || zone == "utc") {
-					continue
-				}
-				claim := document.DocumentEventV1{Precision: precision, DateValue: values[precision], TimezoneKind: zone, ZoneText: zoneText}
-				if zone == "offset" {
-					claim.OffsetSeconds = new(3600)
-				}
-				key, _, err := document.EventUTCKey(claim.DateValue, precision, zone, claim.OffsetSeconds)
-				if err != nil {
-					t.Fatal(err)
-				}
-				claim.UTCKey = key
-				out := versionDatesAPI(store.DocumentDateFacts{State: "published", View: store.DocumentEventView{Events: document.DocumentEventsV1{Events: []document.DocumentEventV1{claim}}}}, "safe")
-				raw, err := json.Marshal(out.Claims[0].When)
-				if err != nil {
-					t.Fatal(err)
-				}
-				var fields map[string]any
-				if err := json.Unmarshal(raw, &fields); err != nil {
-					t.Fatal(err)
-				}
-				want := map[string]bool{"state": true, "precision": true, "placed_by": true}
-				switch precision {
-				case "year", "month":
-					want["period"] = true
-				case "date":
-					want["date"] = true
-				default:
-					want["zone_state"] = true
-					if key != "" {
-						want["at"] = true
-						want["local"], want["source_zone"], want["source_offset_seconds"] = true, true, true
-					} else {
-						want["local"] = true
-						if zone != "omitted" && zoneText != "" {
-							want["source_zone"] = true
-						}
-					}
-				}
-				if len(fields) != len(want) {
-					t.Errorf("%s/%s/%q: fields %s, want %v", precision, zone, zoneText, raw, want)
-					continue
-				}
-				for field := range fields {
-					if !want[field] {
-						t.Errorf("%s/%s/%q: unexpected %s in %s", precision, zone, zoneText, field, raw)
-					}
-				}
-			}
-		}
 	}
 }

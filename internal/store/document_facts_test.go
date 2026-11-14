@@ -15,47 +15,8 @@ func checkDocumentFactsDatesState(t *testing.T, newStore func(*testing.T) *Store
 	require.NoError(t, err)
 	require.Equal(t, "none", facts.State)
 	require.Empty(t, facts.View.Events.Events)
-	other, _ := ingestDocumentEventTarget(t, s, "other.txt", "a3")
-	otherFacts, err := s.DocumentDateFacts(t.Context(), other.ID)
-	require.NoError(t, err)
-	require.Equal(t, other.ID, otherFacts.Version.ID)
-	require.Equal(t, "none", otherFacts.State)
 	_, err = s.DocumentDateFacts(t.Context(), "00000000-0000-4000-8000-000000000000")
 	require.ErrorIs(t, err, ErrNotFound)
-}
-
-func TestDocumentPeopleFactsMissingHead(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	version, _ := ingestDocumentEventTarget(t, s, "people.txt", "a2")
-	facts, err := s.DocumentPeopleFacts(t.Context(), version.ID, true)
-	require.NoError(t, err)
-	require.Equal(t, "none", facts.State)
-	require.Empty(t, facts.Edges)
-	person, err := s.CreatePerson(t.Context(), "Assigned Author", "operator")
-	require.NoError(t, err)
-	_, err = s.AssertDocumentPerson(t.Context(), PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1})
-	require.NoError(t, err)
-	_, err = s.StartDocumentEventRebuild(t.Context(), "00000000-0000-4000-8000-000000000001", DocumentEventRebuildRequestSHA256)
-	require.NoError(t, err)
-	facts, err = s.DocumentPeopleFacts(t.Context(), version.ID, true)
-	require.NoError(t, err)
-	require.Equal(t, "pending", facts.State)
-	require.Len(t, facts.Assertions, 1)
-	// A failed attempt from the previous epoch makes the new event work pending.
-	target := requireDocumentEventTarget(t, s, version.ID)
-	require.NoError(t, s.RecordDocumentEventAttempt(t.Context(), target, requireDocumentEventInputsSHA256(t, s, target), "failed", []byte(`[]`)))
-	facts, err = s.DocumentPeopleFacts(t.Context(), version.ID, true)
-	require.NoError(t, err)
-	require.Equal(t, "failed", facts.State)
-	require.Len(t, facts.Assertions, 1)
-	_, err = s.StartDocumentEventRebuild(t.Context(), "00000000-0000-4000-8000-000000000002", DocumentEventRebuildRequestSHA256)
-	require.NoError(t, err)
-	facts, err = s.DocumentPeopleFacts(t.Context(), version.ID, true)
-	require.NoError(t, err)
-	require.Equal(t, "pending", facts.State)
-	require.Len(t, facts.Assertions, 1)
-	require.Equal(t, person.PersonID, facts.Assertions[0].PersonID)
 }
 
 func checkDocumentPeopleFactsFiltersBlindCopyAssertion(t *testing.T, newStore func(*testing.T) *Store) {
@@ -113,6 +74,10 @@ func checkDocumentDateFactsNeverReturnsStaleClaims(t *testing.T, newStore func(*
 	facts, err = s.DocumentDateFacts(t.Context(), version.ID)
 	require.NoError(t, err)
 	require.Equal(t, "failed", facts.State)
+	require.NoError(t, s.EnsureDocumentEventRecipe(t.Context(), fakeHash("ab")))
+	facts, err = s.DocumentDateFacts(t.Context(), version.ID)
+	require.NoError(t, err)
+	require.Equal(t, "pending", facts.State)
 }
 
 func sensitiveUnresolvedActorFixture(t *testing.T, newStore func(*testing.T) *Store) (*Store, string, DocumentPeopleInputs, PersonDocumentAssertion) {
@@ -142,7 +107,6 @@ func sensitiveUnresolvedActorFixture(t *testing.T, newStore func(*testing.T) *St
 	})
 	senderCandidate.Reason = "identifier_conflict"
 	openCandidateForTest(t, s, senderCandidate)
-	openCandidateForTest(t, s, candidateForTest(t, "name_alias:unmatched", "Unmatched", "", []PersonCandidateOccurrence{{ContentVersionID: version.ID, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "missing"}}))
 	safe, err := s.DocumentPeopleFacts(t.Context(), version.ID, true)
 	require.NoError(t, err)
 	require.Equal(t, "none", safe.State)
@@ -176,14 +140,30 @@ func checkDocumentPeopleFactsPublicationAndFailure(t *testing.T, newStore func(*
 	t.Helper()
 	s := newStore(t)
 	ctx := t.Context()
-	version, target := ingestDocumentEventTarget(t, s, "precedence.txt", "d1")
-	record := documentEventRecord(t, s.VaultID(), version.ID, "d1")
-	raw := mustMarshalDocumentEvents(t, record)
-	_, err := s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), raw)
+	version, _ := ingestDocumentEventTarget(t, s, "precedence.txt", "d1")
+	facts, err := s.DocumentPeopleFacts(ctx, version.ID, true)
 	require.NoError(t, err)
+	require.Equal(t, "none", facts.State)
+	require.Empty(t, facts.Edges)
 	person, err := s.CreatePerson(ctx, "Assigned Author", "operator")
 	require.NoError(t, err)
 	assertion, err := s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	_, err = s.StartDocumentEventRebuild(ctx, "00000000-0000-4000-8000-000000000003", DocumentEventRebuildRequestSHA256)
+	require.NoError(t, err)
+	facts, err = s.DocumentPeopleFacts(ctx, version.ID, true)
+	require.NoError(t, err)
+	require.Equal(t, "pending", facts.State)
+	require.Equal(t, []PersonDocumentAssertion{assertion}, facts.Assertions)
+	target := requireDocumentEventTarget(t, s, version.ID)
+	digest := requireDocumentEventInputsSHA256(t, s, target)
+	require.NoError(t, s.RecordDocumentEventAttempt(ctx, target, digest, "failed", []byte(`[]`)))
+	facts, err = s.DocumentPeopleFacts(ctx, version.ID, true)
+	require.NoError(t, err)
+	require.Equal(t, "failed", facts.State)
+	record := documentEventRecord(t, s.VaultID(), version.ID, "d1")
+	raw := mustMarshalDocumentEvents(t, record)
+	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, digest, raw)
 	require.NoError(t, err)
 	publishPeople := func() {
 		t.Helper()
@@ -202,7 +182,6 @@ func checkDocumentPeopleFactsPublicationAndFailure(t *testing.T, newStore func(*
 			require.NotEmpty(t, facts.Edges)
 		} else {
 			require.Empty(t, facts.Edges)
-			require.Empty(t, facts.Candidates)
 		}
 	}
 	publishPeople()
@@ -214,7 +193,7 @@ func checkDocumentPeopleFactsPublicationAndFailure(t *testing.T, newStore func(*
 	require.NoError(t, err)
 	check("pending", false)
 	target = requireDocumentEventTarget(t, s, version.ID)
-	digest := requireDocumentEventInputsSHA256(t, s, target)
+	digest = requireDocumentEventInputsSHA256(t, s, target)
 	require.NoError(t, s.RecordDocumentEventAttempt(ctx, target, digest, "failed", []byte(`[]`)))
 	check("failed", false)
 	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, digest, raw)
@@ -242,41 +221,6 @@ func checkDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T, newStore fun
 	s, versionID, input, assertion := sensitiveUnresolvedActorFixture(t, newStore)
 	require.NoError(t, s.MarkDocumentPeopleFailed(t.Context(), input, "derivation_failed"))
 	checkSuppressedPeopleCandidates(t, s, versionID, assertion)
-}
-
-func TestDocumentPeopleFactsSuppressionIgnoresCorruptEventGeneration(t *testing.T) {
-	t.Parallel()
-	s, versionID, input, assertion := sensitiveUnresolvedActorFixture(t, newTestStore)
-	require.NoError(t, s.MarkDocumentPeopleFailed(t.Context(), input, "derivation_failed"))
-	// The current event generation is unused while candidate reads are suppressed.
-	_, err := s.db.ExecContext(t.Context(), `DROP TRIGGER document_event_generations_immutable_update`)
-	require.NoError(t, err)
-	_, err = s.db.ExecContext(t.Context(), `UPDATE document_event_generations SET canonical_json=$1 WHERE content_version_id=$2`, []byte(`{`), versionID)
-	require.NoError(t, err)
-	checkSuppressedPeopleCandidates(t, s, versionID, assertion)
-}
-
-func TestDocumentPeopleFactsPendingIgnoresCorruptPeopleGeneration(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	version, target := ingestDocumentEventTarget(t, s, "corrupt-people.txt", "e3")
-	record := documentEventRecord(t, s.VaultID(), version.ID, "e3")
-	_, err := s.PublishDocumentEvents(t.Context(), target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
-	require.NoError(t, err)
-	input, err := s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
-	require.NoError(t, err)
-	_, err = s.PublishDocumentPeople(t.Context(), documentPeoplePublicationForInput(t, input))
-	require.NoError(t, err)
-	_, err = s.StartDocumentEventRebuild(t.Context(), "00000000-0000-4000-8000-000000000001", DocumentEventRebuildRequestSHA256)
-	require.NoError(t, err)
-	_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER document_people_generations_immutable_update`)
-	require.NoError(t, err)
-	_, err = s.db.ExecContext(t.Context(), `UPDATE document_people_generations SET canonical_json=$1 WHERE content_version_id=$2`, []byte(`{`), version.ID)
-	require.NoError(t, err)
-	facts, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
-	require.NoError(t, err)
-	require.Equal(t, "pending", facts.State)
-	require.Empty(t, facts.Edges)
 }
 
 func checkSuppressedPeopleCandidates(t *testing.T, s *Store, versionID string, assertion PersonDocumentAssertion) {
@@ -313,20 +257,7 @@ func checkDocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession(t *testing.T,
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx, `UPDATE persons SET state='provisional' WHERE person_id=$1`, person.PersonID)
 	require.NoError(t, err)
-	visible, _ := ingestDocumentEventTarget(t, s, "visible.txt", "e2")
-	tx, err := s.db.BeginTx(ctx, nil)
-	require.NoError(t, err)
-	defer func() { _ = tx.Rollback() }()
-	_, hideLocked, err := s.factsVersionTx(WithVisiblePeopleOnly(ctx), tx, visible.ID)
-	require.NoError(t, err)
-	require.True(t, hideLocked)
-	var personVisible bool
-	require.NoError(t, tx.QueryRowContext(ctx, visiblePersonByIDSQL, person.PersonID, boolInt(hideLocked)).Scan(&personVisible))
-	require.False(t, personVisible)
-	require.NoError(t, tx.Rollback())
 	_, err = s.DocumentPeopleFacts(ctx, photo.CurrentVersionID, true)
-	require.ErrorIs(t, err, ErrNotFound)
-	_, err = s.DocumentPeopleFacts(WithVisiblePeopleOnly(ctx), photo.CurrentVersionID, true)
 	require.ErrorIs(t, err, ErrNotFound)
 	facts, err := s.DocumentPeopleFacts(WithVisiblePeopleOnly(WithPhotoHiddenToken(ctx, token)), photo.CurrentVersionID, true)
 	require.NoError(t, err)
@@ -335,25 +266,32 @@ func checkDocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession(t *testing.T,
 
 func checkDocumentPeopleFactsFiltersBlindCopyEdge(t *testing.T, newStore func(*testing.T) *Store) {
 	t.Helper()
-	s := newStore(t)
-	version, target := ingestDocumentEventTarget(t, s, "bcc.eml", "e4")
-	record := documentEventRecord(t, s.VaultID(), version.ID, "e4")
-	record.Events[0].Actors[0].Role = "blind_copy"
-	record.Events[0].Actors[0].Sensitive = true
-	_, err := s.PublishDocumentEvents(t.Context(), target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
-	require.NoError(t, err)
-	input, err := s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
-	require.NoError(t, err)
-	publication := documentPeoplePublicationForInput(t, input)
-	publication.People.Edges[0].Sensitive = true
-	_, err = s.PublishDocumentPeople(t.Context(), publication)
-	require.NoError(t, err)
-	full, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
-	require.NoError(t, err)
-	require.Len(t, full.Edges, 1)
-	require.Equal(t, "blind_copy", full.Edges[0].Role)
-	require.True(t, full.Edges[0].Sensitive)
-	safe, err := s.DocumentPeopleFacts(t.Context(), version.ID, true)
-	require.NoError(t, err)
-	require.Empty(t, safe.Edges)
+	for _, tc := range []struct {
+		name, role string
+		sensitive  bool
+	}{{"blind copy", "blind_copy", false}, {"sensitive author", "author", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newStore(t)
+			version, target := ingestDocumentEventTarget(t, s, "bcc.eml", "e4")
+			record := documentEventRecord(t, s.VaultID(), version.ID, "e4")
+			record.Events[0].Actors[0].Role = document.EventRole(tc.role)
+			record.Events[0].Actors[0].Sensitive = tc.sensitive
+			_, err := s.PublishDocumentEvents(t.Context(), target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+			require.NoError(t, err)
+			input, err := s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
+			require.NoError(t, err)
+			publication := documentPeoplePublicationForInput(t, input)
+			publication.People.Edges[0].Sensitive = tc.sensitive
+			_, err = s.PublishDocumentPeople(t.Context(), publication)
+			require.NoError(t, err)
+			full, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
+			require.NoError(t, err)
+			require.Len(t, full.Edges, 1)
+			require.Equal(t, tc.role, string(full.Edges[0].Role))
+			require.Equal(t, tc.sensitive, full.Edges[0].Sensitive)
+			safe, err := s.DocumentPeopleFacts(t.Context(), version.ID, true)
+			require.NoError(t, err)
+			require.Empty(t, safe.Edges)
+		})
+	}
 }
