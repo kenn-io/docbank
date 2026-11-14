@@ -387,11 +387,9 @@ docbank document dates <path-or-id> [--json] [--full]
 docbank document people <path-or-id> [--json] [--full]
 ```
 
-Read the current version's date claims or people. The state identifies whether
-results are published, pending, failed, or absent. Dates also show diagnostics.
+Read current date claims or people; dates also show diagnostics.
 Use `--full` to include sensitive claims and `--json` for structured output.
-For a Hidden photo, the facts request returns HTTP 404; these commands do not
-unlock Hidden.
+A locked Hidden photo returns HTTP 404; these commands do not unlock Hidden.
 
 ## docbank document stat
 

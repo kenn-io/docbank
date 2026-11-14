@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"text/tabwriter"
 	"uuid"
 
@@ -96,18 +97,12 @@ func writeVersionPeopleTable(out io.Writer, result *apiclient.VersionPeople) err
 		_, _ = fmt.Fprintf(w, "%s\t%q\t%s\n", documentFactLabel(edge.Role), edge.DisplayName, documentFactLabel(edge.Basis))
 	}
 	for _, assertion := range result.Assertions {
-		represented := false
-		if assertion.Action == "assert" {
-			for _, edge := range result.Edges {
-				if edge.EvidenceKind == "operator_assertion" && edge.EvidenceID == assertion.AssertionID && edge.PersonID == assertion.PersonID && edge.Role == assertion.Role {
-					represented = true
-					break
-				}
-			}
+		if assertion.Action == "assert" && slices.ContainsFunc(result.Edges, func(edge apiclient.VersionPersonEdge) bool {
+			return edge.EvidenceKind == "operator_assertion" && edge.EvidenceID == assertion.AssertionID && edge.PersonID == assertion.PersonID && edge.Role == assertion.Role
+		}) {
+			continue
 		}
-		if !represented {
-			_, _ = fmt.Fprintf(w, "%s\t%q\t%s\n", documentFactLabel(assertion.Role), assertion.DisplayName, assertion.Action)
-		}
+		_, _ = fmt.Fprintf(w, "%s\t%q\t%s\n", documentFactLabel(assertion.Role), assertion.DisplayName, assertion.Action)
 	}
 	for _, unresolved := range result.Unresolved {
 		_, _ = fmt.Fprintf(w, "%s\t%q\tunresolved\n", documentFactLabel(unresolved.Role), unresolved.RawLabel)

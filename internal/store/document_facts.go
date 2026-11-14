@@ -106,43 +106,28 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 	if err != nil {
 		return DocumentPeopleFacts{}, err
 	}
-	facts := DocumentPeopleFacts{Version: version, State: factsStateNone, Edges: []document.DocumentPersonEdgeV1{}, Assertions: []PersonDocumentAssertion{}, Candidates: []VersionCandidate{}, Persons: map[string]FactPerson{}}
+	facts := DocumentPeopleFacts{Version: version, Edges: []document.DocumentPersonEdgeV1{}, Assertions: []PersonDocumentAssertion{}, Candidates: []VersionCandidate{}, Persons: map[string]FactPerson{}}
 	eventState, err := s.freshEventStateInTx(ctx, tx, versionID)
 	if err != nil {
 		return DocumentPeopleFacts{}, err
 	}
-	peopleState := factsStateNone
-	var edges []document.DocumentPersonEdgeV1
+	facts.State = eventState
 	if eventState == "published" {
-		var head DocumentPeopleHead
-		var headErr error
-		edges, head, headErr = documentPeopleForVersionTx(ctx, tx, versionID)
-		if headErr != nil && !errors.Is(headErr, ErrNotFound) {
+		edges, head, headErr := documentPeopleForVersionTx(ctx, tx, versionID)
+		switch {
+		case headErr != nil && !errors.Is(headErr, ErrNotFound):
 			return DocumentPeopleFacts{}, headErr
-		}
-		if headErr != nil {
-			if head.ContentVersionID != "" {
-				peopleState = factsStatePending
+		case headErr != nil && head.ContentVersionID == "":
+			facts.State = factsStateNone
+		case headErr == nil && (head.State == documentPeopleStateFailed || head.State == documentPeopleStateUnavailable):
+			facts.State = factsStateFailed
+		case headErr == nil && head.State == documentPeopleStatePublished && head.GenerationID != "":
+			facts.Edges = edges
+			if safe {
+				facts.Edges = slices.DeleteFunc(facts.Edges, func(e document.DocumentPersonEdgeV1) bool { return e.Sensitive || e.Role == "blind_copy" })
 			}
-		} else {
-			switch {
-			case head.State == documentPeopleStateFailed || head.State == documentPeopleStateUnavailable:
-				peopleState = factsStateFailed
-			case head.State == documentPeopleStatePublished && head.GenerationID != "":
-				peopleState = "published"
-			default:
-				peopleState = factsStatePending
-			}
-		}
-	}
-	facts.State = peopleState
-	if eventState == factsStatePending || eventState == factsStateFailed {
-		facts.State = eventState
-	}
-	if eventState == "published" && peopleState == "published" {
-		facts.Edges = edges
-		if safe {
-			facts.Edges = slices.DeleteFunc(facts.Edges, func(e document.DocumentPersonEdgeV1) bool { return e.Sensitive || e.Role == "blind_copy" })
+		default:
+			facts.State = factsStatePending
 		}
 	}
 	// Assertions are independent operator evidence.
@@ -153,7 +138,7 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 	if safe {
 		facts.Assertions = slices.DeleteFunc(facts.Assertions, func(a PersonDocumentAssertion) bool { return a.Role == "blind_copy" })
 	}
-	if eventState == "published" && (peopleState == "published" || peopleState == factsStateNone) {
+	if eventState == "published" && (facts.State == "published" || facts.State == factsStateNone) {
 		view, err := s.documentEventsForVersionTx(ctx, tx, versionID)
 		if err != nil {
 			return DocumentPeopleFacts{}, err

@@ -13,19 +13,13 @@ uses the revision returned by the preceding read.
 
 ## Read a document's people
 
-Run `docbank document people <path-or-id>` to see the current version's people
-and unresolved names. The API reads a specific version at
-`GET /api/v1/versions/{version_id}/people`; `disclosure=safe` is the default,
-and `disclosure=full` requires an API key. Browser sessions and MCP's
-`get_document_people` use safe disclosure, which omits blind-copy evidence and
-provisional people without visible support.
+Use `docbank document people <path-or-id>` or
+`GET /api/v1/versions/{version_id}/people`. Only API keys can use
+`disclosure=full`; safe reads omit Bcc and unsupported provisional people.
 
-People reads wait for current date evidence. While dates or people are pending
-or failed, the response reports that state and withholds derived people and
-unresolved names. Operator assertions remain visible.
-
-Date and people facts for a Hidden photo return HTTP 404 while Hidden is locked,
-including reads with an API key. An unlocked Hidden session can read those facts.
+People reads wait for current dates. Pending or failed reads withhold derived
+people and unresolved names but retain operator assertions. While Hidden is
+locked, facts return HTTP 404, even with an API key. Unlock Hidden to read them.
 
 ## People in Photos
 
