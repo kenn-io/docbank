@@ -98,7 +98,7 @@ func TestAgentSetupCheckAndPrint(t *testing.T) {
 	code = runProcess([]string{"agent", "setup", "--agent", "codex", "--check"}, &out, &stderr)
 	assert.Equal(t, 1, code)
 	assert.Contains(t, out.String(), codexFeature+" feature")
-	for _, line := range strings.Split(out.String(), "\n") {
+	for line := range strings.SplitSeq(out.String(), "\n") {
 		if strings.Contains(line, codexFeature+" feature") {
 			assert.LessOrEqual(t, len([]rune(line)), 140, line)
 			assert.Contains(t, line, ".codex/config.toml")
