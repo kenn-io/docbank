@@ -344,14 +344,14 @@ func TestWorkerSubmissionKeyBindsRequestFingerprint(t *testing.T) {
 
 func TestWorkerActualGatewayLostReplyAndResume(t *testing.T) {
 	for _, testCase := range []struct {
-		name, status, wantError string
-		pageError, audio        bool
+		name, status                string
+		pageError, audio, wantError bool
 	}{
 		{name: "complete PDF", status: "success"},
 		{name: "partial PDF", status: "partial_success", pageError: true},
-		{name: "partial PDF without omissions", status: "partial_success", wantError: "no page omissions"},
+		{name: "partial PDF without omissions", status: "partial_success", wantError: true},
 		{name: "complete ASR", status: "success", audio: true},
-		{name: "partial ASR", status: "partial_success", audio: true, wantError: "ASR returned partial success"},
+		{name: "partial ASR", status: "partial_success", audio: true, wantError: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
@@ -429,8 +429,10 @@ func TestWorkerActualGatewayLostReplyAndResume(t *testing.T) {
 			require.ErrorIs(t, err, stop)
 			result, err := document.ResumeRendition(t.Context(), client, workerSnapshot(t, f), handle, nil)
 			require.Equal(t, int32(1), backendPosts.Load())
-			if testCase.wantError != "" {
-				require.ErrorContains(t, err, testCase.wantError)
+			if testCase.wantError {
+				providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+				require.True(t, ok, "%v", err)
+				require.Equal(t, document.RenditionErrorMalformedEvidence, providerErr.Code())
 				return
 			}
 			require.NoError(t, err)
@@ -523,7 +525,9 @@ func TestWorkerTaskRejectsInvalidBackendStatus(t *testing.T) {
 			})
 			require.NoError(t, err)
 			_, err = parseTaskForProtocol(body, true)
-			require.ErrorContains(t, err, "worker backend task status is invalid")
+			providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+			require.True(t, ok, "%v", err)
+			require.Equal(t, document.RenditionErrorMalformedEvidence, providerErr.Code())
 		})
 	}
 }
