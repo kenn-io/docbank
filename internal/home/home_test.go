@@ -71,4 +71,16 @@ func TestDirectoryContainment(t *testing.T) {
 	inside, err = PathWithin(root, filepath.Join(parent, "missing", "child"))
 	require.NoError(t, err)
 	assert.False(t, inside)
+	inside, err = PathWithin(root, root)
+	require.NoError(t, err)
+	assert.True(t, inside)
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	for _, path := range []string{alias, filepath.Join(alias, "missing")} {
+		inside, err = PathWithin(root, path)
+		require.NoError(t, err)
+		assert.True(t, inside)
+	}
 }
