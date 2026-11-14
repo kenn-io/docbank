@@ -401,9 +401,11 @@
                   >
                     {#if roles}<span class="value-text"
                         ><span>{valueLabel}</span><span class="roles">{roles}</span></span
-                      >{:else}<span>{valueLabel}</span>{/if}{#if !facet.selectedOnly}<strong
-                        >{value.count}</strong
-                      >{/if}
+                      >{:else}<span
+                        class:collection-label={facet.dimension === "collections"}
+                        title={facet.dimension === "collections" ? valueLabel : undefined}
+                        >{valueLabel}</span
+                      >{/if}{#if !facet.selectedOnly}<strong>{value.count}</strong>{/if}
                   </button>
                 {:else}
                   <span class="informational">{valueLabel} · {value.count} · informational</span>
@@ -458,8 +460,12 @@
     color: var(--text-muted);
     font-size: var(--font-size-xs);
   }
+  section {
+    min-width: 0;
+  }
   .values {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-1);
   }
   button {
@@ -495,6 +501,12 @@
   }
   strong {
     font-variant-numeric: tabular-nums;
+  }
+  .collection-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .value-text {
     display: grid;
