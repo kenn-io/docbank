@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-pdf/fpdf"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
@@ -156,6 +157,8 @@ func TestVersionFactsPDFMetadata(t *testing.T) {
 	require.Equal(t, "published", people.State)
 	require.NotEmpty(t, people.Edges)
 	require.Len(t, people.Assertions, 1)
+	person, err = s.UpdatePerson(t.Context(), person.PersonID, person.Revision, "Renamed Author")
+	require.NoError(t, err)
 	_, err = s.StartDocumentEventRebuild(t.Context(), "00000000-0000-4000-8000-000000000001", store.DocumentEventRebuildRequestSHA256)
 	require.NoError(t, err)
 	res, body = get(t, ts, fmt.Sprintf("/api/v1/versions/%s/dates", node.CurrentVersionID), nil)
@@ -171,7 +174,7 @@ func TestVersionFactsPDFMetadata(t *testing.T) {
 		require.Equal(t, http.StatusOK, res.StatusCode, body)
 		var got api.VersionPeople
 		require.NoError(t, json.Unmarshal([]byte(body), &got))
-		require.Equal(t, state, got.State)
+		assert.Equal(t, state, got.State)
 		require.Len(t, got.Assertions, 1)
 		require.Equal(t, person.PersonID, got.Assertions[0].PersonID)
 		if published {
@@ -195,6 +198,15 @@ func TestVersionFactsPDFMetadata(t *testing.T) {
 	_, err = processing.BackfillDocumentPeopleTargets(t.Context(), s, []store.DocumentPeopleTarget{{ContentVersionID: node.CurrentVersionID}})
 	require.NoError(t, err)
 	checkPeople("published", true)
+	person, err = s.UpdatePerson(t.Context(), person.PersonID, person.Revision, "Renamed Again")
+	require.NoError(t, err)
+	input, err := s.PrepareDocumentPeopleInputs(t.Context(), node.CurrentVersionID)
+	require.NoError(t, err)
+	require.NoError(t, s.MarkDocumentPeopleFailed(t.Context(), input, "derivation_failed"))
+	checkPeople("failed", false)
+	_, err = s.StartDocumentEventRebuild(t.Context(), "00000000-0000-4000-8000-000000000002", store.DocumentEventRebuildRequestSHA256)
+	require.NoError(t, err)
+	checkPeople("pending", false)
 	require.NoError(t, s.EnsureDocumentEventRecipe(t.Context(), testHash("new-recipe")))
 	checkPeople("pending", false)
 }
