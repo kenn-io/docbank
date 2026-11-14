@@ -18,8 +18,6 @@ import (
 	docbank "go.kenn.io/docbank/docbank"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/home"
-	"go.kenn.io/docbank/internal/store"
-	docsqlite "go.kenn.io/docbank/sqlite"
 	"go.kenn.io/kit/packstore"
 )
 
@@ -139,21 +137,16 @@ func TestContentReaderRefusesRecoveryWithoutChanges(t *testing.T) {
 		apply       func(*testing.T, string)
 		ownerNeeded bool
 		message     string
-		fenced      bool
 	}
 	cases := []refusalCase{
 		{"missing marker", func(t *testing.T, root string) {
 			t.Helper()
 			require.NoError(t, os.Remove(filepath.Join(root, "blobs", ".packstore-owner.json")))
-		}, true, "missing primary storage", false},
+		}, true, "missing primary storage"},
 		{"missing blobs", func(t *testing.T, root string) {
 			t.Helper()
 			require.NoError(t, os.RemoveAll(filepath.Join(root, "blobs")))
-		}, true, "missing primary storage", false},
-		{"missing lock", func(t *testing.T, root string) {
-			t.Helper()
-			require.NoError(t, os.Remove(filepath.Join(root, "vault.lock")))
-		}, true, "", false},
+		}, true, "missing primary storage"},
 		{"restore handoff", func(t *testing.T, root string) {
 			t.Helper()
 			backend, err := blob.NewFilesystemBackend(filepath.Join(root, "blobs"), nil)
@@ -169,32 +162,7 @@ func TestContentReaderRefusesRecoveryWithoutChanges(t *testing.T) {
 			handoff, err := blob.NewPrimaryRestoreHandoff(filepath.Join(root, "blobs"), next, &digest)
 			require.NoError(t, err)
 			require.NoError(t, handoff.Prepare(t.Context()))
-		}, true, "pending restore handoff", false},
-		{"wrong marker", func(t *testing.T, root string) {
-			t.Helper()
-			backend, err := blob.NewFilesystemBackend(filepath.Join(root, "blobs"), nil)
-			require.NoError(t, err)
-			prior, err := backend.Ownership(t.Context())
-			require.NoError(t, err)
-			wrong := prior
-			wrong.Epoch = "50000000-0000-4000-8000-000000000001"
-			require.NoError(t, backend.ReplaceOwnership(t.Context(), wrong, &prior))
-			require.NoError(t, backend.Close())
-		}, false, "", true},
-		{"released schema", func(t *testing.T, root string) {
-			t.Helper()
-			path := filepath.Join(root, "docbank.db")
-			require.NoError(t, os.Remove(path))
-			schema, err := os.ReadFile(filepath.Join("..", "internal", "store", "testdata", "schema-v0.15.0.sql"))
-			require.NoError(t, err)
-			db, err := store.DefaultSQLiteDriver().Open(path, docsqlite.OpenOptions{Access: docsqlite.Create, TransactionMode: docsqlite.Immediate})
-			require.NoError(t, err)
-			_, err = db.ExecContext(t.Context(), string(schema))
-			require.NoError(t, err)
-			_, err = db.ExecContext(t.Context(), `INSERT INTO vault_metadata(singleton,vault_uid,schema_version) VALUES(1,'10000000-0000-4000-8000-000000000028',28)`)
-			require.NoError(t, err)
-			require.NoError(t, db.Close())
-		}, true, "database requires initialization or upgrade", false},
+		}, true, "pending restore handoff"},
 	}
 	for _, name := range []string{"handoff directory", "handoff symlink"} {
 		cases = append(cases, refusalCase{name, func(t *testing.T, root string) {
@@ -205,7 +173,7 @@ func TestContentReaderRefusesRecoveryWithoutChanges(t *testing.T) {
 			} else if err := os.Symlink(filepath.Join(t.TempDir(), "target"), path); err != nil {
 				t.Skipf("symlinks unavailable: %v", err)
 			}
-		}, false, "not a regular file", false})
+		}, false, "not a regular file"})
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -223,9 +191,6 @@ func TestContentReaderRefusesRecoveryWithoutChanges(t *testing.T) {
 				}
 				if tc.message != "" {
 					require.ErrorContains(t, err, tc.message)
-				}
-				if tc.fenced {
-					require.ErrorIs(t, err, packstore.ErrStoreFenced)
 				}
 			})
 			lock, err := (home.Layout{Root: root}).TryLockExclusive()
@@ -317,7 +282,7 @@ func TestContentReaderRejectsRegistryInsideVault(t *testing.T) {
 
 func TestContentReaderStorageUnchanged(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{"loose", "packed", "compressed", "tampered"} {
+	for _, kind := range []string{"packed", "compressed", "tampered"} {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()

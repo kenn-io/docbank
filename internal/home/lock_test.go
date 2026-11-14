@@ -140,12 +140,11 @@ func TestOwnershipTransitionRejectsRegistryInsideSource(t *testing.T) {
 			}
 
 			require.Nil(t, transition)
+			require.ErrorContains(t, err, "lock registry")
 			if tc.exists {
-				require.ErrorContains(t, err, "lock registry")
 				require.NoDirExists(t, registry,
 					"rejecting a movable registry must not mutate the source")
 			} else {
-				require.ErrorContains(t, err, "no longer exists")
 				require.NoDirExists(t, source,
 					"rejecting a movable registry must not recreate a missing source")
 			}

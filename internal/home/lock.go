@@ -209,18 +209,18 @@ func (l Layout) TryLockOwnershipTransition() (*OwnershipTransition, error) {
 }
 
 func validateTransitionRootOutsideRegistry(target, registry string) error {
-	if _, err := os.Stat(target); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("vault transition root %s no longer exists", target)
-		}
-		return fmt.Errorf("checking vault transition root: %w", err)
-	}
 	inside, err := PathWithin(target, registry)
 	if err != nil {
 		return err
 	}
 	if inside {
 		return fmt.Errorf("vault transition root %s contains the target-lock registry", target)
+	}
+	if _, err := os.Stat(target); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("vault transition root %s no longer exists", target)
+		}
+		return fmt.Errorf("checking vault transition root: %w", err)
 	}
 	return nil
 }
@@ -916,17 +916,13 @@ func directoryIdentityChain(target string) ([]string, error) {
 }
 
 func targetLockRegistryPath() (string, error) {
-	return targetLockRegistryPathWithBase(targetLockRegistryBase)
-}
-
-func targetLockRegistryPathWithBase(base func() (string, error)) (string, error) {
 	dir := os.Getenv("DOCBANK_LOCK_DIR")
 	if dir != "" && !filepath.IsAbs(dir) {
 		return "", fmt.Errorf("DOCBANK_LOCK_DIR must be absolute: %q", dir)
 	}
 	if dir == "" {
 		var err error
-		dir, err = base()
+		dir, err = targetLockRegistryBase()
 		if err != nil {
 			return "", err
 		}

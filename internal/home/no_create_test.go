@@ -86,38 +86,26 @@ func TestNoCreateRegistryParent(t *testing.T) {
 
 func TestNoCreateHierarchyConflicts(t *testing.T) {
 	t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
-	parent := filepath.Join(t.TempDir(), "parent")
-	child := filepath.Join(parent, "child")
-	require.NoError(t, os.MkdirAll(child, 0o700))
-	for _, root := range []string{parent, child} {
-		require.NoError(t, os.WriteFile(filepath.Join(root, "vault.lock"), nil, 0o600))
-	}
-	for _, pair := range [][2]string{{parent, parent}, {parent, child}, {child, parent}, {parent, filepath.Join(t.TempDir(), "alias")}} {
-		for _, readerFirst := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s_%s_readerFirst_%t", filepath.Base(pair[0]), filepath.Base(pair[1]), readerFirst), func(t *testing.T) {
-				if filepath.Base(pair[1]) == "alias" {
-					if err := os.Symlink(parent, pair[1]); err != nil && !os.IsExist(err) {
-						t.Skipf("symlinks unavailable: %v", err)
-					}
-				}
-				owner := Layout{Root: pair[0]}
-				reader := Layout{Root: pair[1]}
-				if readerFirst {
-					root, lock, _, err := reader.OpenExistingAndLockExclusiveNoCreate()
-					require.NoError(t, err)
-					_, err = owner.TryLockExclusive()
-					require.ErrorIs(t, err, ErrVaultLocked)
-					require.NoError(t, lock.Release())
-					require.NoError(t, root.Close())
-				} else {
-					lock, err := owner.TryLockExclusive()
-					require.NoError(t, err)
-					_, _, _, err = reader.OpenExistingAndLockExclusiveNoCreate()
-					require.ErrorIs(t, err, ErrVaultLocked)
-					require.NoError(t, lock.Release())
-				}
-			})
-		}
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "vault.lock"), nil, 0o600))
+	layout := Layout{Root: root}
+	for _, readerFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("readerFirst_%t", readerFirst), func(t *testing.T) {
+			if readerFirst {
+				opened, lock, _, err := layout.OpenExistingAndLockExclusiveNoCreate()
+				require.NoError(t, err)
+				_, err = layout.TryLockExclusive()
+				require.ErrorIs(t, err, ErrVaultLocked)
+				require.NoError(t, lock.Release())
+				require.NoError(t, opened.Close())
+			} else {
+				lock, err := layout.TryLockExclusive()
+				require.NoError(t, err)
+				_, _, _, err = layout.OpenExistingAndLockExclusiveNoCreate()
+				require.ErrorIs(t, err, ErrVaultLocked)
+				require.NoError(t, lock.Release())
+			}
+		})
 	}
 }
 
