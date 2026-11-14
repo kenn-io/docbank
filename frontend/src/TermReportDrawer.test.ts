@@ -86,8 +86,13 @@ it.each(["", "/archive"])("downloads report CSV and bundles under mount %s", asy
         path.startsWith(`${basePath}/api/v1/search-exports?`))
     )
       return json({ items: [], total: 0 });
-    if (init?.method === "POST" && path === `${basePath}/api/v1/search-exports`)
+    if (
+      init?.method === "POST" &&
+      path === `${basePath}/api/v1/search-exports?people_disclosure=safe`
+    ) {
+      expect(new Headers(init.headers).get("X-Docbank-Web-Session")).toBe("session");
       return json(oldSummary);
+    }
     if (
       init?.method === "POST" &&
       path === `${basePath}/api/v1/search-exports/${oldSummary.id}/download`
@@ -363,7 +368,7 @@ it("loads a prior request, changes its source, and sends a fresh run without old
         total: 1,
       });
     }
-    if (path === "/api/v1/search-exports" && init?.method === "POST") {
+    if (path === "/api/v1/search-exports?people_disclosure=safe" && init?.method === "POST") {
       submitted.push(JSON.parse(String(init.body)));
       return json({ ...oldSummary, id: "b".repeat(48), observed_at: "2026-09-20T13:00:00Z" });
     }

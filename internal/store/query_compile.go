@@ -88,11 +88,13 @@ func (c queryCompiler) compile(
 	c.safePeople, _ = ctx.Value(visiblePersonContextKey{}).(bool)
 	mentionNames := make(map[string][]string)
 	if r, ok := resolver.(queryResolver); ok {
-		state, err := effectiveDocumentEventState(ctx, r.q, DocumentEventsDeriverFingerprint)
-		if err != nil {
-			return CompiledQuery{}, err
+		if !c.photoDisplayMetadata {
+			state, err := effectiveDocumentEventState(ctx, r.q, DocumentEventsDeriverFingerprint)
+			if err != nil {
+				return CompiledQuery{}, err
+			}
+			c.eventState = state
 		}
-		c.eventState = state
 		c.personNames = func(id string) ([]string, error) {
 			if names, ok := mentionNames[id]; ok {
 				return names, nil
