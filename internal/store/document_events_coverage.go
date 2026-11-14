@@ -111,9 +111,7 @@ func countSafeInvalidDateDiagnostics(
 		LEFT JOIN document_event_generations g ON g.generation_id=h.generation_id
 		WHERE n.kind='file' AND a.input_epoch=$1
 		AND a.input_revision=COALESCE(d.revision,0) AND (
-			a.state IN ('failed','unavailable') OR (a.state='indexed'
-			AND h.input_epoch=a.input_epoch AND g.inputs_sha256=a.inputs_sha256
-			AND g.contract_version=$2 AND g.deriver_fingerprint=$3))`,
+			a.state IN ('failed','unavailable') OR (`+documentEventFreshIndexedSQL("$1", "$2", "$3")+`))`,
 		state.InputEpoch, state.ContractVersion, state.DeriverFingerprint)
 	if err != nil {
 		return fmt.Errorf("listing document event diagnostics: %w", err)
