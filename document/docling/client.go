@@ -619,9 +619,10 @@ func parseTask(body []byte) (taskResponse, error) {
 // required convert discriminator; worker IDs additionally have a fixed shape.
 func parseTaskForProtocol(body []byte, worker bool) (taskResponse, error) {
 	var wire struct {
-		ID     string `json:"task_id"`
-		Type   string `json:"task_type"`
-		Status string `json:"task_status"`
+		ID            string `json:"task_id"`
+		Type          string `json:"task_type"`
+		Status        string `json:"task_status"`
+		BackendStatus string `json:"backend_task_status"`
 	}
 	if err := json.Unmarshal(body, &wire); err != nil {
 		return taskResponse{}, provider.Malformed("Docling task response JSON is invalid", err)
@@ -637,6 +638,13 @@ func parseTaskForProtocol(body []byte, worker bool) (taskResponse, error) {
 	}
 	if !officialTaskStatus(wire.Status) {
 		return taskResponse{}, provider.Malformed("Docling task status is invalid", nil)
+	}
+	if worker && wire.BackendStatus != "" {
+		if wire.Status != "success" || (wire.BackendStatus != "success" && wire.BackendStatus != "partial_success") {
+			return taskResponse{}, provider.Malformed("worker backend task status is invalid", nil)
+		}
+		// Gateway success means the result is retained, not that conversion was complete.
+		wire.Status = wire.BackendStatus
 	}
 	return taskResponse{id: wire.ID, status: wire.Status}, nil
 }

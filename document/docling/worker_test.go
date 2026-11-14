@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"go.kenn.io/docbank/internal/conversionworker"
 	"io"
 	"math"
 	"net/http"
@@ -23,6 +22,7 @@ import (
 	"go.kenn.io/docbank/document/internal/providerutil"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/workerprotocol"
+	"go.kenn.io/docbank/internal/conversionworker"
 	"hegel.dev/go/hegel"
 )
 
@@ -37,6 +37,7 @@ type workerServer struct {
 // workerSubmitResponseBody delays delivery until after the executor's response check.
 type workerSubmitResponseBody struct {
 	io.ReadCloser
+
 	closeStarted chan struct{}
 	release      <-chan struct{}
 	closeOnce    sync.Once
@@ -342,67 +343,106 @@ func TestWorkerSubmissionKeyBindsRequestFingerprint(t *testing.T) {
 }
 
 func TestWorkerActualGatewayLostReplyAndResume(t *testing.T) {
-	t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
-	f := workerFixture(t)
-	var backendPosts atomic.Int32
-	backend := httptest.NewServer(http.HandlerFunc(func(out http.ResponseWriter, r *http.Request) {
-		out.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/ready":
-			out.WriteHeader(http.StatusOK)
-		case workerprotocol.SubmitPath:
-			_, err := io.Copy(io.Discard, r.Body)
-			assert.NoError(t, err)
-			backendPosts.Add(1)
-			writeJSON(t, out, doclingTask("backend-task", "pending"))
-		case workerprotocol.PollPath + "backend-task":
-			writeJSON(t, out, doclingTask("backend-task", "success"))
-		case workerprotocol.ResultPath + "backend-task":
-			writeJSON(t, out, workerDocumentResult())
-		default:
-			http.NotFound(out, r)
-		}
-	}))
-	t.Cleanup(backend.Close)
-	options := conversionworker.Options{Directory: filepath.Join(t.TempDir(), "spool"), APIKey: "synthetic-worker-key", BackendURL: backend.URL, BackendKey: "synthetic-backend-key", Client: backend.Client()}
-	gateway, err := conversionworker.Open(t.Context(), options)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, gateway.Close(context.WithoutCancel(t.Context()))) })
-	var loseReply atomic.Bool
-	loseReply.Store(true)
-	origin, transport := inMemoryServer(t, http.HandlerFunc(func(out http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == workerprotocol.SubmitPath && loseReply.Swap(false) {
-			// The real gateway commits input, but the client sees only a server failure.
-			recorder := httptest.NewRecorder()
-			gateway.ServeHTTP(recorder, r)
-			assert.Equal(t, http.StatusAccepted, recorder.Code)
-			out.Header().Set(workerprotocol.ProtocolHeader, workerprotocol.Contract)
-			out.WriteHeader(http.StatusServiceUnavailable)
-			return
-		}
-		gateway.ServeHTTP(out, r)
-	}))
-	client, err := NewWorker(workerProfile(origin, f.descriptor), testSecrets{"worker": "synthetic-worker-key"}, transport)
-	require.NoError(t, err)
-	_, err = document.RenderRendition(t.Context(), client, f.upload(), f.authorization)
-	require.True(t, document.IsRenditionProviderErrorRetryable(err), "%v", err)
-	require.False(t, loseReply.Load(), "the gateway must have accepted before the reply is lost")
-	worked, err := gateway.RunOnce(t.Context())
-	require.NoError(t, err)
-	require.True(t, worked)
-	backend.Close()
-	// Restart the durable spool. Retained lookup/result must not need Docling.
-	require.NoError(t, gateway.Close(t.Context()))
-	gateway, err = conversionworker.Open(t.Context(), options)
-	require.NoError(t, err)
-	var handle document.RenditionResumeHandle
-	stop := errors.New("synthetic publication interruption")
-	_, err = document.RenderRenditionWithResume(t.Context(), client, f.upload(), f.authorization, nil, func(h document.RenditionResumeHandle) error { handle = h; return stop })
-	require.ErrorIs(t, err, stop)
-	result, err := document.ResumeRendition(t.Context(), client, workerSnapshot(t, f), handle, nil)
-	require.NoError(t, err)
-	require.NoError(t, document.ValidateRenditionResult(f.descriptor, f.authorization, result))
-	require.Equal(t, int32(1), backendPosts.Load())
+	for _, testCase := range []struct {
+		name, status, wantError string
+		pageError, audio        bool
+	}{
+		{name: "complete PDF", status: "success"},
+		{name: "partial PDF", status: "partial_success", pageError: true},
+		{name: "partial PDF without omissions", status: "partial_success", wantError: "no page omissions"},
+		{name: "complete ASR", status: "success", audio: true},
+		{name: "partial ASR", status: "partial_success", audio: true, wantError: "ASR returned partial success"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
+			f := workerFixture(t)
+			upload := f.upload
+			backendResult := workerDocumentResult()
+			if testCase.audio {
+				descriptor, err := WorkerASRDescriptor(100_000)
+				require.NoError(t, err)
+				audio := newASRFixture(t, "audio/wav", "asr-spoken.wav", asrSpokenWAV, descriptor)
+				f, upload = audio.fixture, audio.upload
+				backendResult = asrResultResponse("asr-spoken.wav", "1.10.0", 3.06)
+			} else if testCase.pageError {
+				backendResult.(map[string]any)["errors"] = []any{map[string]any{"page_no": 1}}
+			}
+			var backendPosts atomic.Int32
+			backend := httptest.NewServer(http.HandlerFunc(func(out http.ResponseWriter, r *http.Request) {
+				out.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/ready":
+					out.WriteHeader(http.StatusOK)
+				case workerprotocol.SubmitPath:
+					_, err := io.Copy(io.Discard, r.Body)
+					assert.NoError(t, err)
+					backendPosts.Add(1)
+					writeJSON(t, out, doclingTask("backend-task", "pending"))
+				case workerprotocol.PollPath + "backend-task":
+					writeJSON(t, out, doclingTask("backend-task", testCase.status))
+				case workerprotocol.ResultPath + "backend-task":
+					writeJSON(t, out, backendResult)
+				default:
+					http.NotFound(out, r)
+				}
+			}))
+			t.Cleanup(backend.Close)
+			options := conversionworker.Options{Directory: filepath.Join(t.TempDir(), "spool"), APIKey: "synthetic-worker-key", BackendURL: backend.URL, BackendKey: "synthetic-backend-key", Client: backend.Client()}
+			gateway, err := conversionworker.Open(t.Context(), options)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, gateway.Close(context.WithoutCancel(t.Context()))) })
+			var loseReply atomic.Bool
+			loseReply.Store(true)
+			origin, transport := inMemoryServer(t, http.HandlerFunc(func(out http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == workerprotocol.SubmitPath && loseReply.Swap(false) {
+					// The real gateway commits input, but the client sees only a server failure.
+					recorder := httptest.NewRecorder()
+					gateway.ServeHTTP(recorder, r)
+					assert.Equal(t, http.StatusAccepted, recorder.Code)
+					out.Header().Set(workerprotocol.ProtocolHeader, workerprotocol.Contract)
+					out.WriteHeader(http.StatusServiceUnavailable)
+					return
+				}
+				gateway.ServeHTTP(out, r)
+			}))
+			var client document.ResumableRenditionProvider
+			if testCase.audio {
+				client, err = NewWorkerASR(ASRProfile{Profile: workerProfile(origin, f.descriptor), MaxTranscriptChars: 100_000}, testSecrets{"worker": "synthetic-worker-key"}, transport)
+			} else {
+				client, err = NewWorker(workerProfile(origin, f.descriptor), testSecrets{"worker": "synthetic-worker-key"}, transport)
+			}
+			require.NoError(t, err)
+			_, err = document.RenderRendition(t.Context(), client, upload(), f.authorization)
+			require.True(t, document.IsRenditionProviderErrorRetryable(err), "%v", err)
+			require.False(t, loseReply.Load(), "the gateway must have accepted before the reply is lost")
+			worked, err := gateway.RunOnce(t.Context())
+			require.NoError(t, err)
+			require.True(t, worked)
+			backend.Close()
+			// Restart the durable spool. Retained lookup/result must not need Docling.
+			require.NoError(t, gateway.Close(t.Context()))
+			gateway, err = conversionworker.Open(t.Context(), options)
+			require.NoError(t, err)
+			var handle document.RenditionResumeHandle
+			stop := errors.New("synthetic publication interruption")
+			_, err = document.RenderRenditionWithResume(t.Context(), client, upload(), f.authorization, nil, func(h document.RenditionResumeHandle) error { handle = h; return stop })
+			require.ErrorIs(t, err, stop)
+			result, err := document.ResumeRendition(t.Context(), client, workerSnapshot(t, f), handle, nil)
+			require.Equal(t, int32(1), backendPosts.Load())
+			if testCase.wantError != "" {
+				require.ErrorContains(t, err, testCase.wantError)
+				return
+			}
+			require.NoError(t, err)
+			require.NoError(t, document.ValidateRenditionResult(f.descriptor, f.authorization, result))
+			if testCase.status == "partial_success" {
+				require.Equal(t, document.EvidencePartial, result.Evidence.Completeness)
+				require.Contains(t, result.Receipt.Warnings, "partial_success")
+				require.Len(t, result.Evidence.Units[0].Omissions, 1)
+				require.Equal(t, "provider_output", result.Evidence.Units[0].Omissions[0].Field)
+			}
+		})
+	}
 }
 
 func TestWorkerPendingExpiryKeepsHistoricalResume(t *testing.T) {
@@ -467,4 +507,23 @@ func TestWorkerConstructorBoundsCoverIntegerDomain(t *testing.T) {
 			require.Error(ht, err)
 		}
 	})
+}
+
+func TestWorkerTaskRejectsInvalidBackendStatus(t *testing.T) {
+	for _, testCase := range []struct{ status, backend string }{
+		{status: "success", backend: "pending"},
+		{status: "success", backend: "failure"},
+		{status: "success", backend: "unknown"},
+		{status: "pending", backend: "partial_success"},
+	} {
+		t.Run(testCase.status+"/"+testCase.backend, func(t *testing.T) {
+			body, err := json.Marshal(map[string]string{
+				"task_id": strings.Repeat("a", 32), "task_status": testCase.status,
+				"backend_task_status": testCase.backend,
+			})
+			require.NoError(t, err)
+			_, err = parseTaskForProtocol(body, true)
+			require.ErrorContains(t, err, "worker backend task status is invalid")
+		})
+	}
 }
