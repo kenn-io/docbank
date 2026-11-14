@@ -34,8 +34,7 @@ func registerDocumentFactsRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		out := versionDatesAPI(f, in.Disclosure)
-		return &struct{ Body VersionDates }{Body: out}, nil
+		return &struct{ Body VersionDates }{Body: versionDatesAPI(f, in.Disclosure)}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "getVersionPeople", Method: http.MethodGet, Path: "/api/v1/versions/{version_id}/people", Middlewares: huma.Middlewares{rejectFactsUnknownQuery}, Summary: "Read a version's people"}, func(ctx context.Context, in *versionFactsInput) (*struct{ Body VersionPeople }, error) {
 		if browserSessionRequest(ctx) && in.Disclosure == "full" {
@@ -46,8 +45,7 @@ func registerDocumentFactsRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		out := versionPeopleAPI(f, safe)
-		return &struct{ Body VersionPeople }{Body: out}, nil
+		return &struct{ Body VersionPeople }{Body: versionPeopleAPI(f, safe)}, nil
 	})
 }
 

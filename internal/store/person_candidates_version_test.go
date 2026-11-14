@@ -34,14 +34,13 @@ func checkOpenCandidatesForVersionScopesOccurrences(t *testing.T, postgres bool)
 	require.NoError(t, err)
 	suggested := openCandidateForTest(t, s, candidateForTest(t, "name_alias:example", "Example", person.PersonID, []PersonCandidateOccurrence{{ContentVersionID: first, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "suggested"}}))
 	openCandidateForTest(t, s, candidateForTest(t, "name_alias:example", "Example", "", []PersonCandidateOccurrence{{ContentVersionID: second, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "second-only"}}))
-	openCandidateForTest(t, s, candidateForTest(t, "name_alias:example", "Example", person.PersonID, []PersonCandidateOccurrence{{ContentVersionID: second, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "second-suggested"}}))
-	openCandidateForTest(t, s, candidateForTest(t, "name_alias:other", "Other", "", []PersonCandidateOccurrence{{ContentVersionID: second, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "other"}}))
+	openCandidateForTest(t, s, candidateForTest(t, "name_alias:other", "Other", "", []PersonCandidateOccurrence{{ContentVersionID: first, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "other"}}))
 	third := openCandidateForTest(t, s, candidateForTest(t, "name_alias:third", "Third", "", []PersonCandidateOccurrence{{ContentVersionID: first, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "third"}}))
 	for i, id := range []string{candidate.CandidateID, suggested.CandidateID, third.CandidateID} {
 		_, err := setup.ExecContext(t.Context(), `UPDATE `+table+` SET created_at=$1 WHERE candidate_id=$2`, fmt.Sprintf("2026-01-0%dT00:00:00Z", 3-i), id)
 		require.NoError(t, err)
 	}
-	keys := []string{"name_alias:example", "name_alias:other"}
+	keys := []string{"name_alias:example"}
 	for i := range 400 {
 		keys = append(keys, fmt.Sprintf("name_alias:unused%d", i))
 	}

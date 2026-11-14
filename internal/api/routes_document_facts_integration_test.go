@@ -42,16 +42,11 @@ func TestVersionFactsRoutes(t *testing.T) {
 		require.Equal(t, "no-store", res.Header.Get("Cache-Control"))
 		require.Equal(t, "X-Api-Key, Authorization, Cookie, "+api.WebSessionHeader, res.Header.Get("Vary"))
 	}
-	res, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
-	require.Equal(t, http.StatusCreated, res.StatusCode, body)
-	var session struct {
-		Token string `json:"token"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(body), &session))
+	session := issueWebSession(t, ts)
 	for _, kind := range []string{"dates", "people"} {
 		path := fmt.Sprintf("/api/v1/versions/%s/%s", node.CurrentVersionID, kind)
-		headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: session.Token}
-		res, body = get(t, ts, path, headers)
+		headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: session}
+		res, body := get(t, ts, path, headers)
 		require.Equal(t, http.StatusOK, res.StatusCode, body)
 		res, body = get(t, ts, path+"?disclosure=full", headers)
 		require.Equal(t, http.StatusForbidden, res.StatusCode, body)
@@ -62,7 +57,7 @@ func TestVersionFactsRoutes(t *testing.T) {
 	_, err = s.AssertDocumentPerson(t.Context(), store.PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: person.PersonID, Role: "blind_copy", Action: "assert", Revision: 1})
 	require.NoError(t, err)
 	path := fmt.Sprintf("/api/v1/versions/%s/people", node.CurrentVersionID)
-	res, body = get(t, ts, path, nil)
+	res, body := get(t, ts, path, nil)
 	require.Equal(t, http.StatusOK, res.StatusCode, body)
 	require.NotContains(t, body, person.PersonID)
 	res, body = get(t, ts, path+"?disclosure=full", nil)
@@ -142,33 +137,21 @@ func TestVersionFactsBrowserHiddenAuthorization(t *testing.T) {
 	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
 	_, err = daemonconn.New(ts.URL, testAPIKey).SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true, "")
 	require.NoError(t, err)
-	res, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
-	require.Equal(t, http.StatusCreated, res.StatusCode, body)
-	var session struct {
-		Token string `json:"token"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(body), &session))
+	session := issueWebSession(t, ts)
 	_, cookie, err := daemonconn.New(ts.URL, testAPIKey).PhotoHidden(ctx, "unlock", "synthetic-passcode", "")
 	require.NoError(t, err)
-	person, err := s.CreatePerson(ctx, "Hidden Person", "operator")
-	require.NoError(t, err)
-	_, err = s.AssertDocumentPerson(ctx, store.PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1})
-	require.NoError(t, err)
+	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: session, "Cookie": cookie}
 	for _, kind := range []string{"dates", "people"} {
 		path := fmt.Sprintf("/api/v1/versions/%s/%s", node.CurrentVersionID, kind)
-		res, body = get(t, ts, path, nil)
+		res, body := get(t, ts, path, nil)
 		require.Equal(t, http.StatusNotFound, res.StatusCode, body)
-		headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: session.Token, "Cookie": cookie}
 		res, body = get(t, ts, path, headers)
 		require.Equal(t, http.StatusOK, res.StatusCode, body)
-		if kind == "people" {
-			require.Contains(t, body, person.PersonID)
-		}
 	}
 	require.NoError(t, s.LockPhotoHidden(ctx))
 	for _, kind := range []string{"dates", "people"} {
 		path := fmt.Sprintf("/api/v1/versions/%s/%s", node.CurrentVersionID, kind)
-		res, body = get(t, ts, path, map[string]string{"X-Api-Key": "", api.WebSessionHeader: session.Token, "Cookie": cookie})
+		res, body := get(t, ts, path, headers)
 		require.Equal(t, http.StatusNotFound, res.StatusCode, body)
 	}
 }

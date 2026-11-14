@@ -98,13 +98,9 @@ func validateFactsSnapshot(in documentFactsInput, value any) (string, error) {
 		return "", err
 	}
 	if in.Offset > 0 && in.Snapshot != snapshot {
-		return "", staleFactsPage()
+		return "", &searchProfileError{code: "stale_facts", message: "Document facts changed. Restart at offset zero."}
 	}
 	return snapshot, nil
-}
-
-func staleFactsPage() error {
-	return &searchProfileError{code: "stale_facts", message: "Document facts changed. Restart at offset zero."}
 }
 
 func factsSnapshot(value any) (string, error) {
