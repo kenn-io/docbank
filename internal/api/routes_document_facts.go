@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"net/http"
-	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
@@ -14,19 +13,6 @@ import (
 type versionFactsInput struct {
 	VersionID  string `path:"version_id" format:"uuid"`
 	Disclosure string `query:"disclosure" enum:"safe,full" default:"safe"`
-}
-
-func documentFactsCacheMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if path, ok := strings.CutPrefix(r.URL.Path, "/api/v1/versions/"); ok {
-			_, kind, found := strings.Cut(path, "/")
-			if found && (kind == "dates" || kind == "people") {
-				w.Header().Set("Cache-Control", "no-store")
-				w.Header().Set("Vary", "X-Api-Key, Authorization, Cookie, "+WebSessionHeader)
-			}
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 func registerDocumentFactsRoutes(api huma.API, d Deps) {
