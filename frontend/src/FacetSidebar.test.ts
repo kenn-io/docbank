@@ -582,6 +582,7 @@ it("clears every original filter for a merged person", async () => {
       ...originalQuery.filters,
       people: [
         { person_id: jory, roles: ["sender"] },
+        { person_id: jory, roles: ["author"] },
         { person_id: typed, roles: ["author"] },
         { person_id: mara, roles: ["copied"] },
       ],

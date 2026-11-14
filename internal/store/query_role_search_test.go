@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
+	"slices"
 	"strings"
 
 	"go.kenn.io/docbank/document"
@@ -458,18 +459,20 @@ func TestRoleSearchSavedRunPreservesMergedDefinitionReceipt(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: retired.PersonID, Role: "speaker", Action: "assert", Revision: 1})
 	require.NoError(t, err)
-	payload := fmt.Appendf(nil, `{"filters":{"people":[{"person_id":%q,"roles":["speaker"]}]}}`, retired.PersonID)
+	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: retired.PersonID, Role: "author", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	payload := fmt.Appendf(nil, `{"filters":{"people":[{"person_id":%q,"roles":["speaker"]},{"person_id":%q,"roles":["author"]},{"person_id":%q,"roles":["speaker"]}]}}`, retired.PersonID, retired.PersonID, survivor.PersonID)
 	definition, err := s.CreateSavedQuery(ctx, "Merged person", "", SavedQueryKindQuery, payload)
 	require.NoError(t, err)
 	_, err = s.MergePersons(ctx, survivor.PersonID, retired.PersonID, "11111111-1111-4111-8111-111111111111", survivor.Revision, retired.Revision)
 	require.NoError(t, err)
 	publishRoleFixtures(t, s)
-	value := snapshotTestQuery(t, fmt.Sprintf(`{"filters":{"people":[{"person_id":%q,"roles":["speaker"]}]}}`, retired.PersonID))
+	value := snapshotTestQuery(t, string(payload))
 	result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Facets: []string{"person_role"}})
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
-	require.Equal(t, retired.PersonID, result.Query.Filters.People[0].PersonID)
-	require.Equal(t, []string{"speaker"}, result.Rows[0].MatchedRoles)
+	require.Equal(t, value.Filters.People, result.Query.Filters.People)
+	require.Equal(t, []string{"author", "speaker"}, result.Rows[0].MatchedRoles)
 	require.Equal(t, survivor.PersonID, result.Facets[0].Values[0].Key)
 	require.True(t, result.Facets[0].Values[0].Selected)
 	raw, err := json.Marshal(result.Facets[0].Values[0])
@@ -478,7 +481,9 @@ func TestRoleSearchSavedRunPreservesMergedDefinitionReceipt(t *testing.T) {
 		SelectedPersonIDs []string `json:"selected_person_ids"`
 	}
 	require.NoError(t, json.Unmarshal(raw, &facet))
-	require.Equal(t, []string{retired.PersonID}, facet.SelectedPersonIDs)
+	wantIDs := []string{retired.PersonID, survivor.PersonID}
+	slices.Sort(wantIDs)
+	require.Equal(t, wantIDs, facet.SelectedPersonIDs)
 	service := newQuerySnapshotService(s, querySnapshotServiceOptions{})
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	run, page, err := service.RunSaved(ctx, "owner", definition.ID, definition.Revision, SnapshotRequest{Facets: []string{"person_role"}}, nil)
@@ -488,12 +493,13 @@ func TestRoleSearchSavedRunPreservesMergedDefinitionReceipt(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, fingerprint, page.QueryFingerprint)
 	require.Len(t, page.Rows, 1)
-	require.Len(t, page.Query.Filters.People, 1)
+	require.Len(t, page.Query.Filters.People, 3)
 	require.Len(t, page.Facets, 1)
 	require.Len(t, page.Facets[0].Values, 1)
 	require.Equal(t, survivor.PersonID, page.Facets[0].Values[0].Key)
 	require.True(t, page.Facets[0].Values[0].Selected)
-	require.Equal(t, retired.PersonID, page.Query.Filters.People[0].PersonID)
+	require.Equal(t, wantIDs, page.Facets[0].Values[0].SelectedPersonIDs)
+	require.Equal(t, value.Filters.People, page.Query.Filters.People)
 	next, _, err := service.RunSaved(ctx, "owner", definition.ID, definition.Revision, SnapshotRequest{}, nil)
 	require.NoError(t, err)
 	require.Equal(t, definition.Fingerprint, next.QueryFingerprint)

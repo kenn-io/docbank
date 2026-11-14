@@ -631,7 +631,7 @@ it("validates frozen person roles", async () => {
     count: 1,
     selected: true,
     roles: safeRoles,
-    selected_person_ids: [version2],
+    selected_person_ids: [version2, tagID],
   };
   const good = { ...row(2, version2, blob2, 20), matched_roles: ["sender"] };
   const facet = {
@@ -652,7 +652,7 @@ it("validates frozen person roles", async () => {
   );
   expect(receipt.rows[0]!.matched_roles).toEqual(["sender"]);
   expect(receipt.facets[0]!.values[0]!.roles).toEqual(safeRoles);
-  expect(receipt.facets[0]!.values[0]!.selected_person_ids).toEqual([version2]);
+  expect(receipt.facets[0]!.values[0]!.selected_person_ids).toEqual([version2, tagID]);
   fetcher.mockResolvedValueOnce(
     jsonResponse(await page({ rows: [{ ...good, matched_roles: ["bogus"] }], facets: [facet] })),
   );
