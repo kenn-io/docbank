@@ -273,6 +273,7 @@ func TestRoleSearchPeopleFacetRetainsExpressionAndPersonIDs(t *testing.T) {
 	first := seedCurrentRoleSearchEvent(t, s, "keep-one.txt", "f101", nil)
 	second := seedCurrentRoleSearchEvent(t, s, "keep-two.txt", "f102", nil)
 	third := seedCurrentRoleSearchEvent(t, s, "outside.txt", "f103", nil)
+	fourth := seedCurrentRoleSearchEvent(t, s, "keep-three.txt", "f104", nil)
 	anchor, err := s.CreatePerson(ctx, "Facet Anchor", "operator")
 	require.NoError(t, err)
 	selected, err := s.CreatePerson(ctx, "Facet Selected", "operator")
@@ -282,6 +283,7 @@ func TestRoleSearchPeopleFacetRetainsExpressionAndPersonIDs(t *testing.T) {
 	for _, edge := range []struct{ version, person, role string }{
 		{first.ID, anchor.PersonID, "sender"}, {first.ID, other.PersonID, "recipient"},
 		{second.ID, selected.PersonID, "author"}, {third.ID, anchor.PersonID, "sender"},
+		{fourth.ID, anchor.PersonID, "sender"}, {fourth.ID, other.PersonID, "recipient"},
 	} {
 		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: edge.version, PersonID: edge.person, Role: edge.role, Action: "assert", Revision: 1})
 		require.NoError(t, err)
@@ -298,11 +300,11 @@ func TestRoleSearchPeopleFacetRetainsExpressionAndPersonIDs(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, projection.Rows)
 	facet := facetByDimension(t, projection, "person_role")
-	require.EqualValues(t, 1, *facet.Total)
+	require.EqualValues(t, 2, *facet.Total)
 	require.Len(t, facet.Values, 51)
 	require.EqualValues(t, 7, *facet.Other)
-	require.EqualValues(t, 1, facetCounts(facet)[anchor.PersonID])
-	require.EqualValues(t, 1, facetCounts(facet)[other.PersonID])
+	require.EqualValues(t, 2, facetCounts(facet)[anchor.PersonID])
+	require.EqualValues(t, 2, facetCounts(facet)[other.PersonID])
 	last := facet.Values[50]
 	require.Equal(t, selected.PersonID, last.Key)
 	require.True(t, last.Selected)
