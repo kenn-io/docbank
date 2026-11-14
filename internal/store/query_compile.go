@@ -78,7 +78,6 @@ type queryCompiler struct {
 	pdfOnly              bool
 	photoHidden          bool
 	safePeople           bool
-	hideLocked           string
 	personNames          func(string) ([]string, error)
 	eventState           DocumentEventState
 }
@@ -87,7 +86,6 @@ func (c queryCompiler) compile(
 	ctx context.Context, value query.Query, resolver query.Resolver,
 ) (CompiledQuery, error) {
 	c.safePeople, _ = ctx.Value(visiblePersonContextKey{}).(bool)
-	c.hideLocked = "1"
 	mentionNames := make(map[string][]string)
 	if r, ok := resolver.(queryResolver); ok {
 		state, err := effectiveDocumentEventState(ctx, r.q, DocumentEventsDeriverFingerprint)

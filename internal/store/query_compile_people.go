@@ -10,6 +10,7 @@ import (
 )
 
 // currentPhotoSourcePredicate limits face evidence to a live image or RAW member.
+// kind='file' is implied: the nodes CHECK requires a file for a non-null current_version_id.
 func currentPhotoSourcePredicate(file, node, version string) string {
 	return file + `.role IN ('image','raw') AND ` + node + `.trashed_at IS NULL AND ` + node + `.current_version_id=` + version
 }
@@ -30,27 +31,27 @@ func (c queryCompiler) compileRoleGroup(entries []query.PersonFilter) compiledQu
 	return fragment
 }
 
-func currentPersonAssertionFence(safe bool, hideLocked string) string {
+func currentPersonAssertionFence(safe bool) string {
 	fence := `a.action='assert'`
 	if safe {
-		fence += ` AND ` + personVisibleAssertionSQL("a", hideLocked)
+		fence += ` AND ` + personVisibleAssertionSQL("a", "1")
 	}
 	return fence
 }
 
-func currentPersonPublishedFence(safe bool, hideLocked string) string {
+func currentPersonPublishedFence(safe bool) string {
 	fence := `h.state='published' AND h.event_generation_id=eh.generation_id AND h.binding_epoch=ps.binding_epoch AND h.node_revision=n.revision AND h.resolver_fingerprint=? AND ` + documentEventFreshIndexedSQL("ea", "ed", "eh", "eg", "?", "?", "?")
 	if safe {
-		fence += ` AND ` + personVisibleActorSQL("p", hideLocked)
+		fence += ` AND ` + personVisibleActorSQL("p", "1")
 	}
 	return fence
 }
 
 // currentDocumentPersonEdgesSQL is correlated to the current node and version.
 // Its parameters are the resolver fingerprint and current event state.
-func currentDocumentPersonEdgesSQL(version string, safe bool, hideLocked string) string {
-	return `(SELECT COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=a.person_id),a.person_id) AS person_id,a.role FROM person_document_assertions a WHERE a.content_version_id=` + version + ` AND ` + currentPersonAssertionFence(safe, hideLocked) + `
- UNION SELECT COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=p.person_id),p.person_id),p.role FROM document_people p JOIN document_people_heads h ON h.content_version_id=p.content_version_id AND h.generation_id=p.generation_id JOIN document_event_heads eh ON eh.content_version_id=h.content_version_id JOIN document_event_generations eg ON eg.generation_id=eh.generation_id JOIN document_event_attempts ea ON ea.content_version_id=h.content_version_id LEFT JOIN document_event_dirty ed ON ed.content_version_id=h.content_version_id CROSS JOIN document_people_state ps WHERE p.content_version_id=` + version + ` AND ` + currentPersonPublishedFence(safe, hideLocked) + `)`
+func currentDocumentPersonEdgesSQL(version string, safe bool) string {
+	return `(SELECT COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=a.person_id),a.person_id) AS person_id,a.role FROM person_document_assertions a WHERE a.content_version_id=` + version + ` AND ` + currentPersonAssertionFence(safe) + `
+ UNION SELECT COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=p.person_id),p.person_id),p.role FROM document_people p JOIN document_people_heads h ON h.content_version_id=p.content_version_id AND h.generation_id=p.generation_id JOIN document_event_heads eh ON eh.content_version_id=h.content_version_id JOIN document_event_generations eg ON eg.generation_id=eh.generation_id JOIN document_event_attempts ea ON ea.content_version_id=h.content_version_id LEFT JOIN document_event_dirty ed ON ed.content_version_id=h.content_version_id CROSS JOIN document_people_state ps WHERE p.content_version_id=` + version + ` AND ` + currentPersonPublishedFence(safe) + `)`
 }
 
 func (c queryCompiler) compilePersonPredicate(id string) compiledQueryFragment {
@@ -65,16 +66,16 @@ func (c queryCompiler) compilePersonPredicate(id string) compiledQueryFragment {
 }
 
 func freshPeopleHeadSQL(version string) string {
-	return `document_people_heads h JOIN document_event_heads eh ON eh.content_version_id=h.content_version_id JOIN document_event_generations eg ON eg.generation_id=eh.generation_id JOIN document_event_attempts ea ON ea.content_version_id=h.content_version_id LEFT JOIN document_event_dirty ed ON ed.content_version_id=h.content_version_id CROSS JOIN document_people_state ps WHERE h.content_version_id=` + version + ` AND ` + currentPersonPublishedFence(false, "1")
+	return `document_people_heads h JOIN document_event_heads eh ON eh.content_version_id=h.content_version_id JOIN document_event_generations eg ON eg.generation_id=eh.generation_id JOIN document_event_attempts ea ON ea.content_version_id=h.content_version_id LEFT JOIN document_event_dirty ed ON ed.content_version_id=h.content_version_id CROSS JOIN document_people_state ps WHERE h.content_version_id=` + version + ` AND ` + currentPersonPublishedFence(false)
 }
 
 func (c queryCompiler) compileRolePredicate(id string, roles []string) compiledQueryFragment {
 	person := `COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?)`
 	roleList := strings.TrimSuffix(strings.Repeat("?,", len(roles)), ",")
-	assertion := `EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.content_version_id=cv.version_id AND ` + currentPersonAssertionFence(c.safePeople, c.hideLocked) + ` AND COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=a.person_id),a.person_id)=` + person + ` AND a.role IN (` + roleList + `))`
+	assertion := `EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.content_version_id=cv.version_id AND ` + currentPersonAssertionFence(c.safePeople) + ` AND COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=a.person_id),a.person_id)=` + person + ` AND a.role IN (` + roleList + `))`
 	edge := `COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=p.person_id),p.person_id)=` + person + ` AND p.role IN (` + roleList + `)`
 	if c.safePeople {
-		edge += ` AND ` + personVisibleActorSQL("p", c.hideLocked)
+		edge += ` AND ` + personVisibleActorSQL("p", "1")
 	}
 	// One fresh-head scan answers match (1), known absence (0), and unknown (NULL).
 	head := strings.Replace(freshPeopleHeadSQL("cv.version_id"), " WHERE h.content_version_id=", " LEFT JOIN document_people p ON p.content_version_id=h.content_version_id AND p.generation_id=h.generation_id WHERE h.content_version_id=", 1)

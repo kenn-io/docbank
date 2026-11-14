@@ -152,7 +152,7 @@ func annotateMatchedRoles(ctx context.Context, q metadataQuerier, compiled Compi
 		return err
 	}
 	args := []any{string(encoded), document.PersonResolverFingerprint(), compiled.eventState.InputEpoch, compiled.eventState.ContractVersion, compiled.eventState.DeriverFingerprint}
-	found, err := q.QueryContext(ctx, `SELECT n.id,json_extract(e.value,'$.person_id'),json_extract(e.value,'$.role') FROM json_each(?) ids JOIN nodes n ON n.id=ids.value JOIN content_versions cv ON cv.version_id=n.current_version_id JOIN json_each((SELECT json_group_array(json_object('person_id',edge.person_id,'role',edge.role)) FROM `+currentDocumentPersonEdgesSQL("cv.version_id", compiled.safePeople, "1")+` edge)) e`, args...)
+	found, err := q.QueryContext(ctx, `SELECT n.id,json_extract(e.value,'$.person_id'),json_extract(e.value,'$.role') FROM json_each(?) ids JOIN nodes n ON n.id=ids.value JOIN content_versions cv ON cv.version_id=n.current_version_id JOIN json_each((SELECT json_group_array(json_object('person_id',edge.person_id,'role',edge.role)) FROM `+currentDocumentPersonEdgesSQL("cv.version_id", compiled.safePeople)+` edge)) e`, args...)
 	if err != nil {
 		return fmt.Errorf("loading matched roles: %w", err)
 	}
@@ -242,12 +242,11 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
-	hide := "1"
 	args = append(args, document.PersonResolverFingerprint(), scoped.eventState.InputEpoch, scoped.eventState.ContractVersion, scoped.eventState.DeriverFingerprint, document.PersonResolverFingerprint(), scoped.eventState.InputEpoch, scoped.eventState.ContractVersion, scoped.eventState.DeriverFingerprint)
 	statementSQL := `WITH matched_members AS (` + statement + `)
  SELECT m.node_id,COALESCE(p.person_id,''),COALESCE(p.display_name,''),COALESCE(json_extract(e.value,'$.role'),''),EXISTS(SELECT 1 FROM ` + freshPeopleHeadSQL("m.content_version_id") + `)
  FROM matched_members m JOIN nodes n ON n.id=m.node_id
- LEFT JOIN json_each((SELECT json_group_array(json_object('person_id',edge.person_id,'role',edge.role)) FROM ` + currentDocumentPersonEdgesSQL("m.content_version_id", true, hide) + ` edge)) e
+ LEFT JOIN json_each((SELECT json_group_array(json_object('person_id',edge.person_id,'role',edge.role)) FROM ` + currentDocumentPersonEdgesSQL("m.content_version_id", true) + ` edge)) e
  LEFT JOIN persons p ON p.person_id=json_extract(e.value,'$.person_id') AND p.state<>'retired'
  ORDER BY m.node_id,p.person_id,json_extract(e.value,'$.role')`
 	rows, err := q.QueryContext(ctx, statementSQL, args...)
@@ -287,7 +286,7 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
 	selected := map[string]bool{}
 	for _, entry := range compiled.Query.Filters.People {
 		var id, name string
-		err := q.QueryRowContext(ctx, `SELECT person_id,display_name FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=$1),$2) AND `+personVisibleSQL("persons.person_id", 3), entry.PersonID, entry.PersonID, 1, boolInt(hide == "1")).Scan(&id, &name)
+		err := q.QueryRowContext(ctx, `SELECT person_id,display_name FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=$1),$2) AND `+personVisibleSQL("persons.person_id", 3), entry.PersonID, entry.PersonID, 1, 1).Scan(&id, &name)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}

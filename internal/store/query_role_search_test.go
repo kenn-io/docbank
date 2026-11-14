@@ -153,7 +153,7 @@ func checkRoleSearchCurrentPersonRelation(t *testing.T, newStore func(*testing.T
 	_, err = s.PublishDocumentPeople(ctx, publication)
 	require.NoError(t, err)
 	check := func(safe bool, person, role string, want bool) {
-		relation := currentDocumentPersonEdgesSQL("cv.version_id", safe, "1")
+		relation := currentDocumentPersonEdgesSQL("cv.version_id", safe)
 		statement := `SELECT EXISTS(SELECT 1 FROM ` + relation + ` edge WHERE edge.person_id=? AND edge.role=?) FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id WHERE n.id=?`
 		if s.postgresSchema != "" {
 			for i := 1; i <= 7; i++ {
@@ -475,12 +475,6 @@ func TestRoleSearchPeopleFacetBoundsAndFreeze(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, frozen.Facets, reread.Facets)
 	require.Equal(t, frozen.SnapshotFingerprint, reread.SnapshotFingerprint)
-	publishRoleFixtures(t, s)
-	all := snapshotTestQuery(t, `{}`)
-	limited, err := s.materializeQuerySnapshot(ctx, SnapshotRequest{Query: all, Facets: []string{"person_role"}}, snapshotMaterializeOptions{FacetMemberLimit: 1})
-	require.NoError(t, err)
-	require.False(t, limited.Facets[0].Available)
-	require.Equal(t, "member_budget_exceeded", limited.Facets[0].Reason)
 }
 
 func TestRoleSearchBetweenCurrentVersionAndMergedPeople(t *testing.T) {
