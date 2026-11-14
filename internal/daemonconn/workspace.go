@@ -171,7 +171,7 @@ func validateSavedQueryRunResult(result api.SavedQueryRunResult, id string, revi
 	run := result.Run
 	if !validUUIDv4(run.RunID) || run.SavedQueryID != id || run.SavedQueryRevision != revision ||
 		run.SnapshotID != result.Snapshot.SnapshotID || run.MemberHash != result.Snapshot.MemberHash ||
-		run.QueryFingerprint != result.Snapshot.QueryFingerprint || run.Total != result.Snapshot.Total ||
+		!validPrefixedSHA256(run.QueryFingerprint) || run.Total != result.Snapshot.Total ||
 		run.TotalBytes != result.Snapshot.TotalBytes || run.RanAt.IsZero() || run.ExpiresAt.Before(run.RanAt) {
 		return errors.New("saved query run response has inconsistent authority")
 	}

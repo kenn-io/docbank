@@ -244,6 +244,24 @@ export function parseQuery(raw: string): Query {
   return normalized;
 }
 
+// A merged person can resolve to a survivor while preserving requested roles.
+export function resolvesRequestedQuery(response: Query, request: Query): boolean {
+  const withoutPeople = (value: Query) =>
+    canonicalQuery({ ...value, filters: { ...value.filters, people: undefined } });
+  if (withoutPeople(response) !== withoutPeople(request)) return false;
+  const returned = response.filters.people ?? [];
+  const requested = request.filters.people ?? [];
+  if (returned.length > requested.length || (returned.length === 0) !== (requested.length === 0))
+    return false;
+  const rolesKey = (entry: PersonFilter) => entry.roles.join("\0");
+  const requestedRoles = new Set(requested.map(rolesKey));
+  const returnedRoles = new Set(returned.map(rolesKey));
+  return (
+    [...returnedRoles].every((key) => requestedRoles.has(key)) &&
+    [...requestedRoles].every((key) => returnedRoles.has(key))
+  );
+}
+
 export function canonicalQuery(value: Query): string {
   const normalized = normalizeQuery(value);
   const filters: Record<string, unknown> = {};

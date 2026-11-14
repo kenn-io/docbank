@@ -11,9 +11,9 @@ import {
   normalizeCaptureDate,
   parseQuery,
   queryFingerprint as fingerprintQuery,
+  resolvesRequestedQuery,
   type Query,
   personRoles,
-  type PersonFilter,
   type PersonRole,
 } from "./query.js";
 import { snapshotTargetRevision, type SnapshotReceiptOverlay } from "./snapshotOverlays.js";
@@ -535,31 +535,6 @@ function parseFacet(
     ...(missing === undefined ? {} : { missing }),
     ...(other === undefined ? {} : { other }),
   };
-}
-
-function rolesKey(entry: PersonFilter): string {
-  return entry.roles.join("\0");
-}
-
-// The server resolves each requested filters.people person to its current
-// identity, so a merged (retired) ID comes back as the survivor and entries
-// that now name the same person collapse. That is the only difference a
-// receipt may have from its request: everything else matches exactly, every
-// returned role set was requested, and every requested role set survives.
-function resolvesRequestedQuery(response: Query, request: Query): boolean {
-  const withoutPeople = (value: Query) =>
-    canonicalQuery({ ...value, filters: { ...value.filters, people: undefined } });
-  if (withoutPeople(response) !== withoutPeople(request)) return false;
-  const returned = response.filters.people ?? [];
-  const requested = request.filters.people ?? [];
-  if (returned.length > requested.length || (returned.length === 0) !== (requested.length === 0))
-    return false;
-  const requestedRoles = new Set(requested.map(rolesKey));
-  const returnedRoles = new Set(returned.map(rolesKey));
-  return (
-    [...returnedRoles].every((key) => requestedRoles.has(key)) &&
-    [...requestedRoles].every((key) => returnedRoles.has(key))
-  );
 }
 
 function parseQueryEvidence(

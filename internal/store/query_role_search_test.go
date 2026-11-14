@@ -66,7 +66,7 @@ func TestRoleSearchOperandSets(t *testing.T) {
 	require.Equal(t, "email.txt", selected.Rows[0].Name)
 	forbidden := snapshotTestQuery(t, fmt.Sprintf(`{"filters":{"people":[{"person_id":%q,"roles":["blind_copy"]}]}}`, a.PersonID))
 	_, err = s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: forbidden})
-	require.ErrorContains(t, err, "bcc: is not available with safe people disclosure")
+	require.ErrorContains(t, err, "Bcc searches are unavailable here.")
 	q := snapshotTestQuery(t, `{"syntax":"advanced","text":"person:\"Dahlia Blind\""}`)
 	visible, err := s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: q})
 	require.NoError(t, err)
@@ -414,7 +414,7 @@ func TestPublishedBccActorQueryPrivacy(t *testing.T) {
 		}
 		safe, err := s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: value})
 		if operand == "bcc" {
-			require.ErrorContains(t, err, "bcc: is not available with safe people disclosure")
+			require.ErrorContains(t, err, "Bcc searches are unavailable here.")
 		} else {
 			require.NoError(t, err)
 			if operand == "person" {

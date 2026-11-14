@@ -318,7 +318,7 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 		return c.compilePersonPredicate(expression.Dependency.ID), nil
 	case slices.Contains([]string{"author", "from", "to", "cc", "bcc", "custodian", "participant", "organizer", "attendee"}, field):
 		if c.photoDisplayMetadata {
-			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "role operands apply to documents, not photos")
+			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "Search roles in Documents.")
 		}
 		if expression.Dependency == nil {
 			return compiledQueryFragment{}, errors.New("resolved person operand lacks a dependency")
@@ -330,7 +330,7 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 		return c.compileRolePredicate(expression.Dependency.ID, roles), nil
 	case field == "mentions":
 		if c.photoDisplayMetadata {
-			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "role operands apply to documents, not photos")
+			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "Search roles in Documents.")
 		}
 		if expression.Dependency == nil || c.personNames == nil {
 			return compiledQueryFragment{}, errors.New("resolved mention lacks names")
@@ -495,11 +495,11 @@ func (c queryCompiler) compileQueryFilters(filters query.Filters, start, end int
 	var people compiledQueryFragment
 	if len(filters.People) > 0 {
 		if c.photoDisplayMetadata {
-			return compiledQueryFragment{}, compileExpressionError(start, end, "role operands apply to documents, not photos")
+			return compiledQueryFragment{}, compileExpressionError(start, end, "Search roles in Documents.")
 		}
 		for _, entry := range filters.People {
 			if c.safePeople && slices.Contains(entry.Roles, "blind_copy") {
-				return compiledQueryFragment{}, compileExpressionError(start, end, "bcc: is not available with safe people disclosure")
+				return compiledQueryFragment{}, compileExpressionError(start, end, "Bcc searches are unavailable here.")
 			}
 		}
 		var err error
@@ -777,7 +777,7 @@ func compileExpressionError(start, end int, message string) *query.ExpressionErr
 func (c queryCompiler) compileBetween(expression *query.ResolvedExpression) (compiledQueryFragment, error) {
 	syntax := expression.Syntax
 	if c.photoDisplayMetadata {
-		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "role operands apply to documents, not photos")
+		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "Search roles in Documents.")
 	}
 	if len(expression.Children) != 1 || len(expression.Children[0].Children) != 2 {
 		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "between: needs two different people")

@@ -114,7 +114,7 @@ func rolesForOperand(field string, safe bool) ([]string, error) {
 		return []string{"copied"}, nil
 	case "bcc":
 		if safe {
-			return nil, errors.New("bcc: is not available with safe people disclosure")
+			return nil, errors.New("Bcc searches are unavailable here.")
 		}
 		return []string{"blind_copy"}, nil
 	default:

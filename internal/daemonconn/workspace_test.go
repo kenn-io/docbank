@@ -1,6 +1,8 @@
 package daemonconn_test
 
 import (
+	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +15,51 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
+
+func TestWorkspaceClientSavedRunAfterPersonMerge(t *testing.T) {
+	c, s := newClient(t, serverKey)
+	ctx := t.Context()
+	survivor, err := s.CreatePerson(ctx, "Survivor", "operator")
+	require.NoError(t, err)
+	retired, err := s.CreatePerson(ctx, "Retired", "operator")
+	require.NoError(t, err)
+	payload := fmt.Appendf(nil, `{"filters":{"people":[{"person_id":%q,"roles":["sender"]}]}}`, retired.PersonID)
+	saved, err := c.CreateSavedQuery(ctx, api.SavedQueryCreateRequest{Name: "Person filter", Kind: store.SavedQueryKindQuery, Payload: payload})
+	require.NoError(t, err)
+	_, err = s.MergePersons(ctx, survivor.PersonID, retired.PersonID, "11111111-1111-4111-8111-111111111111", survivor.Revision, retired.Revision)
+	require.NoError(t, err)
+	run, err := c.RunSavedQuery(ctx, saved.ID, saved.Revision, api.SavedQueryRunRequest{PageSize: 50})
+	require.NoError(t, err)
+	require.Equal(t, saved.Fingerprint, run.Run.QueryFingerprint)
+	require.NotEqual(t, run.Run.QueryFingerprint, run.Snapshot.QueryFingerprint)
+	require.Equal(t, saved.ID, run.Run.SavedQueryID)
+	require.Equal(t, saved.Revision, run.Run.SavedQueryRevision)
+	for _, tc := range []struct {
+		name   string
+		mutate func(*api.SavedQueryRunResult)
+	}{
+		{"definition fingerprint", func(result *api.SavedQueryRunResult) { result.Run.QueryFingerprint = "invalid" }},
+		{"snapshot fingerprint", func(result *api.SavedQueryRunResult) {
+			result.Snapshot.QueryFingerprint = "sha256:" + strings.Repeat("0", 64)
+		}},
+		{"saved revision", func(result *api.SavedQueryRunResult) { result.Run.SavedQueryRevision++ }},
+		{"snapshot identity", func(result *api.SavedQueryRunResult) { result.Run.SnapshotID = strings.Repeat("0", 32) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			value := run
+			tc.mutate(&value)
+			raw, err := json.Marshal(value)
+			require.NoError(t, err)
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write(raw)
+			}))
+			t.Cleanup(ts.Close)
+			_, err = daemonconn.New(ts.URL, "key").RunSavedQuery(ctx, saved.ID, saved.Revision, api.SavedQueryRunRequest{PageSize: 50})
+			require.Error(t, err)
+		})
+	}
+}
 
 func TestWorkspaceClientRoundTripsExactPagesAndSavedRuns(t *testing.T) {
 	c, s := newClient(t, serverKey)
