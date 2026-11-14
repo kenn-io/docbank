@@ -140,6 +140,42 @@ func checkDocumentDateFactsNeverReturnsStaleClaims(t *testing.T, newStore func(*
 	require.Equal(t, "pending", facts.State)
 }
 
+func checkDocumentPeopleFactsAwaitFirstPeopleHead(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	s := newStore(t)
+	ctx := t.Context()
+	version, target := ingestDocumentEventTarget(t, s, "sender.txt", "d8")
+	person, err := s.CreatePerson(ctx, "Assigned Author", "operator")
+	require.NoError(t, err)
+	assertion, err := s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	record := documentEventRecord(t, s.VaultID(), version.ID, "d8")
+	record.Events[0].Actors = []document.DocumentEventActorV1{{Role: "sender", ActorKey: "email:sender@example.test", Address: "sender@example.test", Claim: "sender@example.test"}}
+	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+	require.NoError(t, err)
+	for _, safe := range []bool{true, false} {
+		facts, err := s.DocumentPeopleFacts(ctx, version.ID, safe)
+		require.NoError(t, err)
+		require.Equal(t, "pending", facts.State)
+		require.Empty(t, facts.Edges)
+		require.Empty(t, facts.Candidates)
+		require.Equal(t, []PersonDocumentAssertion{assertion}, facts.Assertions)
+	}
+	input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
+	require.NoError(t, err)
+	_, err = s.PublishDocumentPeople(ctx, documentPeoplePublicationForInput(t, input))
+	require.NoError(t, err)
+	facts, err := s.DocumentPeopleFacts(ctx, version.ID, false)
+	require.NoError(t, err)
+	require.Equal(t, "published", facts.State)
+	var senderLinked bool
+	for _, edge := range facts.Edges {
+		senderLinked = senderLinked || edge.Role == "sender" && edge.ActorKey == "email:sender@example.test"
+	}
+	require.True(t, senderLinked)
+	require.Empty(t, facts.Candidates)
+}
+
 func checkDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T, newStore func(*testing.T) *Store) {
 	t.Helper()
 	s := newStore(t)
@@ -165,9 +201,14 @@ func checkDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T, newStore fun
 	})
 	senderCandidate.Reason = "identifier_conflict"
 	openCandidateForTest(t, s, senderCandidate)
+	_, err = s.PublishDocumentPeople(t.Context(), DocumentPeoplePublication{
+		People:     document.DocumentPeopleV1{ContractVersion: document.PersonContractV1, ContentVersionID: version.ID, EventGenerationID: input.EventGenerationID, Edges: []document.DocumentPersonEdgeV1{}},
+		Resolution: DocumentPeopleResolution{UnresolvedActors: 3}, InputsSHA256: fakeHash("a4"), ResolverFingerprint: document.PersonResolverFingerprint(), NodeID: input.NodeID, BindingEpoch: input.BindingEpoch, NodeRevision: input.NodeRevision,
+	})
+	require.NoError(t, err)
 	safe, err := s.DocumentPeopleFacts(t.Context(), version.ID, true)
 	require.NoError(t, err)
-	require.Equal(t, "none", safe.State)
+	require.Equal(t, "published", safe.State)
 	var public *VersionCandidate
 	for i := range safe.Candidates {
 		if safe.Candidates[i].ActorKey == "name_alias:public author" {

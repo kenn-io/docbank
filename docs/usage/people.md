@@ -17,7 +17,8 @@ Use `docbank document people <path-or-id>` or
 `GET /api/v1/versions/{version_id}/people`. Only API keys can use
 `disclosure=full`; safe reads omit Bcc and unsupported provisional people.
 
-People reads wait for current dates. Pending or failed reads withhold derived
+People reads stay pending until dates and the first people result are ready.
+Pending or failed reads withhold derived
 people and unresolved names but retain operator assertions. While Hidden is
 locked, a Hidden photo's facts return HTTP 404, even with an API key. Unlock
 Hidden to read them.

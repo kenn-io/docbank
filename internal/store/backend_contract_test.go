@@ -845,6 +845,10 @@ var backendSuites = []backendSuite{
 		{"PersonSplitMissingAssertion", func(t *testing.T) { t.Helper(); checkPersonSplitMissingAssertion(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPersonSplitMissingAssertion(t, newPostgresQueryStore) }},
 		{"MergePersonsPreservesKeyFace", func(t *testing.T) { t.Helper(); checkMergePersonsPreservesKeyFace(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMergePersonsPreservesKeyFace(t, newPostgresQueryStore) }},
 
+		{"DocumentPeopleFactsAwaitFirstPeopleHead", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsAwaitFirstPeopleHead(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFactsAwaitFirstPeopleHead(t, newPostgresQueryStore)
+		}},
 		{"DocumentPeopleFactsSensitiveUnresolvedActor", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsSensitiveUnresolvedActor(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()
 			checkDocumentPeopleFactsSensitiveUnresolvedActor(t, newPostgresQueryStore)
