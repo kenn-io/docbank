@@ -166,12 +166,10 @@ func TestResolveQueryNormalizesCopyWithoutMutatingInput(t *testing.T) {
 	assert.Equal(t, []string{tagID, otherTagID}, resolved.Query.Filters.TagIDs)
 	*resolved.Query.Filters.SizeMax = 10
 	assert.Equal(t, int64(20), *input.Filters.SizeMax)
-}
 
-func TestResolveQueryDoesNotMutatePeopleFilters(t *testing.T) {
-	input := lexicalQuery("")
+	input = lexicalQuery("")
 	input.Filters.People = []PersonFilter{{PersonID: tagID, Roles: []string{"sender"}}}
-	resolved, err := ResolveQuery(context.Background(), input, resolverFunc(func(_ context.Context, kind ReferenceKind, key string, byID bool) (Reference, error) {
+	resolved, err = ResolveQuery(context.Background(), input, resolverFunc(func(_ context.Context, kind ReferenceKind, key string, byID bool) (Reference, error) {
 		require.Equal(t, ReferencePerson, kind)
 		require.Equal(t, tagID, key)
 		require.True(t, byID)

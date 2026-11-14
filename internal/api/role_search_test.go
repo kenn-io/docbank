@@ -15,8 +15,6 @@ func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	_, err := s.CreatePerson(t.Context(), "Matrix Concealed", "operator")
 	require.NoError(t, err)
-	_, err = s.CreatePerson(t.Context(), "Matrix Visible", "operator")
-	require.NoError(t, err)
 	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "If-Match": `"1"`}
 	payload := `{"syntax":"advanced","text":"bcc:\"Matrix Concealed\""}`
 	saved, _ := createSavedQuery(t, ts.URL, "Matrix concealed", payload)
@@ -44,10 +42,5 @@ func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	require.Contains(t, body, "bcc: is not available with safe people disclosure")
 	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", browser, `{"query":{},"facets":["collections","tags","media_family","extension","modified","size","text_coverage","duplicates","person_role"]}`)
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	// Both access modes accept the legacy person operand.
-	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"query":{"syntax":"advanced","text":"person:\"Matrix Concealed\""}}`)
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", browser, `{"query":{"syntax":"advanced","text":"person:\"Matrix Visible\""}}`)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 }

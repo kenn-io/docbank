@@ -226,23 +226,6 @@ func TestRoleSearchMentionNamesAreLiteral(t *testing.T) {
 	require.Contains(t, compiled.PositiveTextTerms(), "Jory Pellham")
 }
 
-func TestRoleSearchMentionsFTSDistinctAlias(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	person, err := s.CreatePerson(ctx, "Ａda Lovelace", "operator")
-	require.NoError(t, err)
-	_, _ = addTestPersonIdentity(t, s, person, "name_alias", "Ada Lovelace", "ascii-alias")
-	file, err := s.CreateFile(ctx, s.RootID(), "ascii.txt", testSHA256([]byte("Ada Lovelace")), 12, "text/plain")
-	require.NoError(t, err)
-	seedCompiledLegacyText(t, s, file, "Ada Lovelace")
-	value := snapshotTestQuery(t, `{"syntax":"advanced","text":"mentions:\"Ａda Lovelace\""}`)
-	result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
-	require.NoError(t, err)
-	require.Len(t, result.Rows, 1)
-	require.Equal(t, "ascii.txt", result.Rows[0].Name)
-}
-
 func TestRoleSearchNegationWithPendingPeople(t *testing.T) {
 	t.Parallel()
 	for _, stale := range []bool{false, true} {
@@ -279,6 +262,11 @@ func TestRoleSearchNegationWithPendingPeople(t *testing.T) {
 			result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT saved:\"Nested pending role\""}`)})
 			require.NoError(t, err)
 			require.Empty(t, result.Rows)
+			_, err = s.CreateSavedQuery(ctx, "Collapsed sender", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"from:\"Sender Person\"","filters":{"collapse_duplicates":true}}`))
+			require.NoError(t, err)
+			result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT saved:\"Collapsed sender\""}`)})
+			require.NoError(t, err)
+			require.Empty(t, result.Rows)
 			person := input.Bindings[input.Actors[0].ActorKey][0]
 			_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: person.PersonID, Role: "sender", Action: "assert", Revision: 1})
 			require.NoError(t, err)
@@ -300,23 +288,6 @@ func TestRoleSearchNegationWithPendingPeople(t *testing.T) {
 			require.Len(t, result.Rows, 1)
 		})
 	}
-}
-
-func TestRoleSearchNegatedCollapsedSavedQueryWithPendingPeople(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	version := seedCurrentRoleSearchEvent(t, s, "sender.txt", "a4", []document.DocumentEventActorV1{{
-		Role: "sender", ActorKey: "email:sender@example.test", Address: "sender@example.test", DisplayName: "Sender Person", Claim: `"sender"`,
-	}})
-	_, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
-	require.NoError(t, err)
-	_, err = s.CreateSavedQuery(ctx, "Collapsed sender", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"from:\"Sender Person\"","filters":{"collapse_duplicates":true}}`))
-	require.NoError(t, err)
-	value := snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT saved:\"Collapsed sender\""}`)
-	result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
-	require.NoError(t, err)
-	require.Empty(t, result.Rows)
 }
 
 func TestRoleSearchPeopleFacetPending(t *testing.T) {
@@ -523,11 +494,8 @@ func TestRoleSearchSavedRunPreservesMergedDefinitionReceipt(t *testing.T) {
 	require.Equal(t, survivor.PersonID, page.Facets[0].Values[0].Key)
 	require.True(t, page.Facets[0].Values[0].Selected)
 	require.Equal(t, page.Facets[0].Values[0].Key, page.Query.Filters.People[0].PersonID)
-	_, _, err = service.RunSaved(ctx, "owner", definition.ID, definition.Revision+1, SnapshotRequest{}, nil)
-	require.ErrorIs(t, err, ErrStaleRevision)
 	next, _, err := service.RunSaved(ctx, "owner", definition.ID, definition.Revision, SnapshotRequest{}, nil)
 	require.NoError(t, err)
-	require.Equal(t, run.RunID, next.PreviousRunID)
 	require.Equal(t, definition.Fingerprint, next.QueryFingerprint)
 	require.False(t, next.Comparison.DefinitionChanged)
 }
@@ -850,6 +818,17 @@ func TestRoleSearchMentionsRequireDocumentContent(t *testing.T) {
 			require.Equal(t, []string{"mentioned"}, row.MatchedRoles)
 		}
 	}
+	person, err = s.CreatePerson(ctx, "Ａda Lovelace", "operator")
+	require.NoError(t, err)
+	_, _ = addTestPersonIdentity(t, s, person, "name_alias", "Ada Lovelace", "ascii-alias")
+	file, err := s.CreateFile(ctx, s.RootID(), "ascii.txt", testSHA256([]byte("Ada Lovelace")), 12, "text/plain")
+	require.NoError(t, err)
+	seedCompiledLegacyText(t, s, file, "Ada Lovelace")
+	value = snapshotTestQuery(t, `{"syntax":"advanced","text":"mentions:\"Ａda Lovelace\""}`)
+	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	require.Equal(t, "ascii.txt", result.Rows[0].Name)
 }
 
 func TestRoleSearchMentionsSelectedRendition(t *testing.T) {

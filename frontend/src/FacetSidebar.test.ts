@@ -577,7 +577,12 @@ it("narrows by a person with the roles the People group shows and keeps typed en
     },
   };
   const view = render(FacetSidebar, {
-    facets: [peopleFacet(peopleValues)],
+    facets: [
+      peopleFacet([
+        ...peopleValues,
+        { key: typed, label: "Typed Person", count: 0, selected: true, roles: ["custodian"] },
+      ]),
+    ],
     query,
     onchange,
   });

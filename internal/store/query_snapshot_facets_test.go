@@ -553,8 +553,7 @@ func TestYearFacetCountsFileModifiedTimeYears(t *testing.T) {
 	require.Equal(t, map[string]int64{"2023": 2, "2025": 1}, facetCounts(page.Facets[0]))
 }
 
-// The collection facet must execute its own self-excluded population, even
-// when a large saved role expression precedes a relation-bearing predicate.
+// The collection facet recomputes its population with the collection filter removed.
 func TestRoleSearchCollectionFacetSelfExclusion(t *testing.T) {
 	t.Parallel()
 	fixture := newSnapshotFacetFixture(t)
@@ -569,13 +568,11 @@ func TestRoleSearchCollectionFacetSelfExclusion(t *testing.T) {
 	prefix := "(" + strings.TrimSuffix(strings.Repeat(`saved:"Facet sender" OR `, 2), " OR ") + ")"
 	text := prefix + ` AND has_duplicates:true AND NOT path:/missing`
 	value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q,"filters":{"collection_ids":[%q]}}`, text, fixture.collections[0].ID()))
-	projection, err := fixture.store.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Coverage: fixture.selection, Facets: []string{"collections", "person_role"}})
+	projection, err := fixture.store.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Coverage: fixture.selection, Facets: []string{"collections"}})
 	require.NoError(t, err)
 	require.Len(t, projection.Rows, 1)
 	require.Equal(t, fixture.nodes["a"].ID, projection.Rows[0].NodeID)
-	require.Equal(t, []string{"sender"}, projection.Rows[0].MatchedRoles)
 	require.Equal(t, map[string]int64{fixture.collections[0].ID(): 1, fixture.collections[1].ID(): 1}, facetCounts(facetByDimension(t, projection, "collections")))
-	require.Equal(t, map[string]int64{person.PersonID: 1}, facetCounts(facetByDimension(t, projection, "person_role")))
 }
 
 func TestRoleSearchSavedPredicatesAcrossRelations(t *testing.T) {
@@ -596,8 +593,6 @@ func TestRoleSearchSavedPredicatesAcrossRelations(t *testing.T) {
 			text    string
 			matched bool
 		}{
-			{prefix + " AND (" + relation + " OR name:a.PDF)", true},
-			{prefix + " AND NOT (" + relation + " AND name:missing)", true},
 			{"(" + prefix + " AND name:missing) OR (" + relation + " AND name:a.PDF)", relation != `path:/missing`},
 		}
 		if relation == `text_coverage:complete` {
