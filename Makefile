@@ -147,8 +147,14 @@ photo-tabs-browser-test: frontend
 	go build -tags "$(BUILD_TAGS)" -o bin/docbank-tabs$(if $(filter Windows_NT,$(OS)),.exe) ./cmd/docbank
 	DOCBANK_PLAYWRIGHT_SUITE=photo-tabs DOCBANK_SCREENSHOT_BINARY="$(CURDIR)/bin/docbank-tabs$(if $(filter Windows_NT,$(OS)),.exe)" DOCBANK_PHOTOS_SCREENSHOT_DIR="$${DOCBANK_PHOTOS_SCREENSHOT_DIR:-$(CURDIR)/bin/photo-tabs-proof}" node frontend/node_modules/@playwright/test/cli.js test photo-tabs.screenshot.ts --config frontend/screenshots/playwright.config.ts --project chromium
 
+# With DOCS_SCREENSHOTS_OUTPUT set, capture the published docs-assets set into
+# $(DOCS_SCREENSHOTS_OUTPUT)/assets using only Docker on the host.
 docs-screenshots:
+ifdef DOCS_SCREENSHOTS_OUTPUT
+	bash frontend/screenshots/run-in-docker.sh "$(DOCS_SCREENSHOTS_OUTPUT)"
+else
 	cd frontend && npm run screenshots
+endif
 
 fmt:
 	go fmt ./...
