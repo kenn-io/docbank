@@ -616,9 +616,10 @@ of the primary claim, or `date_precision:day` to select date-only claims.
 The precision values are `exact`, `day`, and `coarse`; exact includes floating
 wall times, while coarse includes month and year claims. Constraints in one
 AND group apply to the same claim. OR branches and NOT operands each have
-separate scopes. Multiple date kinds in a group are alternatives. Date range
-endpoints must yield representable instant bounds; otherwise the API returns
-HTTP 400 `invalid_date` without clamping the range.
+separate scopes. Multiple date kinds in a group are alternatives, including
+those in `filters.document_date.kinds` and repeated `date_kind:` operands.
+Date range endpoints must yield representable instant bounds; otherwise the API
+returns HTTP 400 `invalid_date` without clamping the range.
 
 Exact instants are compared in the query's `timezone`; floating times and
 all-day dates use their written civil dates. Month and year claims match any

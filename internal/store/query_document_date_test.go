@@ -43,6 +43,25 @@ func TestDocumentDateScopeMatchesOneVisibleClaim(t *testing.T) {
 	require.Equal(t, []int64{node.ID}, compiledFixtureIDs(t, s.db, compiled, ""))
 	compiled = compileFixtureQuery(t, s, "date_kind:authored date:2020-03-04 date_precision:coarse", query.Filters{})
 	require.Empty(t, compiledFixtureIDs(t, s.db, compiled, ""))
+	// All kinds in the AND scope are alternatives, whether selected in the
+	// structured filter or written in the expression. A range still has to
+	// match one visible claim of a selected kind.
+	filter := query.Filters{DocumentDate: &query.DocumentDateFilter{
+		From: "2020-03-04", To: "2020-03-04", Kinds: []string{"created"},
+	}}
+	compiled = compileFixtureQuery(t, s, "date:2020-03-04", filter)
+	require.Empty(t, compiledFixtureIDs(t, s.db, compiled, ""))
+	for _, text := range []string{
+		"date_kind:authored date:2020-03-04",
+		"date_kind:created date_kind:authored date:2020-03-04",
+		"date_kind:authored date_kind:authored date:2020-03-04",
+	} {
+		compiled = compileFixtureQuery(t, s, text, filter)
+		require.Equal(t, []int64{node.ID}, compiledFixtureIDs(t, s.db, compiled, ""))
+	}
+	filter.DocumentDate.Kinds = []string{"created", "authored"}
+	compiled = compileFixtureQuery(t, s, "date:2020-03-04", filter)
+	require.Equal(t, []int64{node.ID}, compiledFixtureIDs(t, s.db, compiled, ""))
 	compiled = compileFixtureQuery(t, s, "date_kind:modified date:2020-03-04 date:2020-03-05", query.Filters{})
 	require.Empty(t, compiledFixtureIDs(t, s.db, compiled, ""))
 	compiled = compileFixtureQuery(t, s, "date_kind:modified date:2020-03-04..2020-03-07 date:2020-03-05", query.Filters{})
