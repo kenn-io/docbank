@@ -555,7 +555,7 @@ func TestYearFacetCountsFileModifiedTimeYears(t *testing.T) {
 
 // The collection facet must execute its own self-excluded population, even
 // when a large saved role expression precedes a relation-bearing predicate.
-func TestPreparedRolePopulationCollectionFacetSelfExclusion(t *testing.T) {
+func TestRoleSearchCollectionFacetSelfExclusion(t *testing.T) {
 	t.Parallel()
 	fixture := newSnapshotFacetFixture(t)
 	ctx := t.Context()
@@ -582,27 +582,7 @@ func TestPreparedRolePopulationCollectionFacetSelfExclusion(t *testing.T) {
 	require.Equal(t, "member_budget_exceeded", limited.Facets[0].Reason)
 }
 
-func TestRepeatedNestedSavedRoleWithCoverageAndCollapse(t *testing.T) {
-	t.Parallel()
-	fixture := newSnapshotFacetFixture(t)
-	ctx := t.Context()
-	person, err := fixture.store.CreatePerson(ctx, "Prepared Sender", "operator")
-	require.NoError(t, err)
-	_, err = fixture.store.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: fixture.nodes["a"].CurrentVersionID, PersonID: person.PersonID, Role: "sender", Action: "assert", Revision: 1})
-	require.NoError(t, err)
-	_, err = fixture.store.CreateSavedQuery(ctx, "Prepared inner", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"from:\"Prepared Sender\"","filters":{"collapse_duplicates":true}}`))
-	require.NoError(t, err)
-	_, err = fixture.store.CreateSavedQuery(ctx, "Prepared outer", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"saved:\"Prepared inner\""}`))
-	require.NoError(t, err)
-	value := snapshotTestQuery(t, `{"syntax":"advanced","text":"(saved:\"Prepared outer\" OR saved:\"Prepared outer\") AND (text_coverage:complete OR name:a.PDF)","filters":{"collapse_duplicates":true}}`)
-	result, err := fixture.store.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Coverage: fixture.selection})
-	require.NoError(t, err)
-	require.Len(t, result.Rows, 1)
-	require.Equal(t, fixture.nodes["a"].ID, result.Rows[0].NodeID)
-	require.Equal(t, []string{"sender"}, result.Rows[0].MatchedRoles)
-}
-
-func TestPreparedSavedRolePredicatesAcrossRelations(t *testing.T) {
+func TestRoleSearchSavedPredicatesAcrossRelations(t *testing.T) {
 	t.Parallel()
 	fixture := newSnapshotFacetFixture(t)
 	ctx := t.Context()
@@ -616,14 +596,21 @@ func TestPreparedSavedRolePredicatesAcrossRelations(t *testing.T) {
 	require.NoError(t, err)
 	prefix := `(saved:"Prepared outer")`
 	for _, relation := range []string{`path:/missing`, `collection:Second`, `text_coverage:complete`, `has_duplicates:true`} {
-		for _, tc := range []struct {
+		cases := []struct {
 			text    string
 			matched bool
 		}{
 			{prefix + " AND (" + relation + " OR name:a.PDF)", true},
 			{prefix + " AND NOT (" + relation + " AND name:missing)", true},
 			{"(" + prefix + " AND name:missing) OR (" + relation + " AND name:a.PDF)", relation != `path:/missing`},
-		} {
+		}
+		if relation == `text_coverage:complete` {
+			cases = append(cases, struct {
+				text    string
+				matched bool
+			}{`(saved:"Prepared outer" OR saved:"Prepared outer") AND (text_coverage:complete OR name:a.PDF)`, true})
+		}
+		for _, tc := range cases {
 			value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q,"filters":{"collapse_duplicates":true}}`, tc.text))
 			result, err := fixture.store.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Coverage: fixture.selection})
 			require.NoError(t, err, tc.text)

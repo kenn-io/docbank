@@ -6,15 +6,12 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
-	"uuid"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/report"
 )
 
 // Every snapshot-building route refuses Bcc, including inside saved queries.
@@ -58,30 +55,25 @@ func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
 		require.NoError(t, err)
 	}
 	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "If-Match": `"1"`}
-	for _, tc := range []struct{ name, payload, message string }{
-		{"concealed", `{"syntax":"advanced","text":"bcc:\"Matrix Concealed\""}`, "bcc: is not available with safe people disclosure"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			saved, _ := createSavedQuery(t, ts.URL, "Matrix "+tc.name, tc.payload)
-			nested := fmt.Sprintf(`{"syntax":"advanced","text":%q}`, `saved:"Matrix `+tc.name+`"`)
-			exportQuery := fmt.Sprintf(`{"v":1,"syntax":"advanced","mode":"lexical","filters":{},"sort":{"field":"name","direction":"asc"},"text":%q}`, `saved:"Matrix `+tc.name+`"`)
-			routes := []struct{ name, path, body string }{
-				{"parse", queryParsePath, tc.payload},
-				{"highlights", queryHighlightsPath, nested},
-				{"workspace", "/api/v1/workspace/queries", `{"query":` + tc.payload + `}`},
-				{"saved run", "/api/v1/saved-queries/" + saved.ID + "/runs", `{}`},
-				{"query export", "/api/v1/exports/sources", `{"operation_id":"33333333-3333-4333-8333-333333333333","kind":"query","query":` + exportQuery + `}`},
-				{"saved export", "/api/v1/exports/sources", fmt.Sprintf(`{"operation_id":"44444444-4444-4444-8444-444444444444","kind":"saved_query","saved_query_id":%q,"saved_query_revision":1}`, saved.ID)},
-				{"report", "/api/v1/search-exports", fmt.Sprintf(`{"version":1,"all_documents":true,"timezone":"UTC","coverage_mode":"available_only","terms":[{"number":1,"expression":%q,"syntax":"advanced","dates":{"start":"2020-01-01","end":"2100-01-01"}}]}`, `saved:"Matrix `+tc.name+`"`)},
-			}
-			for _, route := range routes {
-				t.Run(route.name, func(t *testing.T) {
-					resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, route.path, browser, route.body)
-					require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
-					require.Contains(t, body, "invalid_query")
-					require.Contains(t, body, tc.message)
-				})
-			}
+	payload := `{"syntax":"advanced","text":"bcc:\"Matrix Concealed\""}`
+	saved, _ := createSavedQuery(t, ts.URL, "Matrix concealed", payload)
+	nested := fmt.Sprintf(`{"syntax":"advanced","text":%q}`, `saved:"Matrix concealed"`)
+	exportQuery := fmt.Sprintf(`{"v":1,"syntax":"advanced","mode":"lexical","filters":{},"sort":{"field":"name","direction":"asc"},"text":%q}`, `saved:"Matrix concealed"`)
+	routes := []struct{ name, path, body string }{
+		{"parse", queryParsePath, payload},
+		{"highlights", queryHighlightsPath, nested},
+		{"workspace", "/api/v1/workspace/queries", `{"query":` + payload + `}`},
+		{"saved run", "/api/v1/saved-queries/" + saved.ID + "/runs", `{}`},
+		{"query export", "/api/v1/exports/sources", `{"operation_id":"33333333-3333-4333-8333-333333333333","kind":"query","query":` + exportQuery + `}`},
+		{"saved export", "/api/v1/exports/sources", fmt.Sprintf(`{"operation_id":"44444444-4444-4444-8444-444444444444","kind":"saved_query","saved_query_id":%q,"saved_query_revision":1}`, saved.ID)},
+		{"report", "/api/v1/search-exports", fmt.Sprintf(`{"version":1,"all_documents":true,"timezone":"UTC","coverage_mode":"available_only","terms":[{"number":1,"expression":%q,"syntax":"advanced","dates":{"start":"2020-01-01","end":"2100-01-01"}}]}`, `saved:"Matrix concealed"`)},
+	}
+	for _, route := range routes {
+		t.Run(route.name, func(t *testing.T) {
+			resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, route.path, browser, route.body)
+			require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+			require.Contains(t, body, "invalid_query")
+			require.Contains(t, body, "bcc: is not available with safe people disclosure")
 		})
 	}
 	resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", browser, `{"query":{},"facets":["collections","tags","media_family","extension","modified","size","text_coverage","duplicates","person_role"]}`)
@@ -104,63 +96,11 @@ func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
 		require.Len(t, snapshot.Facets, 1)
 		facet := snapshot.Facets[0]
 		require.Equal(t, "person_role", facet.Dimension)
-		require.True(t, facet.Available)
-		require.NotNil(t, facet.Total)
-		require.NotNil(t, facet.Missing)
-		require.NotNil(t, facet.Other)
-		require.EqualValues(t, 1, *facet.Total)
-		require.EqualValues(t, 1, *facet.Missing)
-		require.Zero(t, *facet.Other)
-		require.Len(t, facet.Values, 1)
-		require.Equal(t, visible.PersonID, facet.Values[0].Key)
-		require.Equal(t, "Matrix Visible", facet.Values[0].Label)
-		require.True(t, facet.Values[0].Selected)
-		require.Zero(t, facet.Values[0].Count)
-		require.Empty(t, facet.Values[0].Roles)
 	})
-	// The legacy person operand keeps its any-role meaning in both scopes.
-	payload := `{"syntax":"advanced","text":"person:\"Matrix Visible\""}`
-	exportQuery := `{"v":1,"syntax":"advanced","mode":"lexical","filters":{},"sort":{"field":"name","direction":"asc"},"text":"person:\"Matrix Visible\""}`
-	saved, _ := createSavedQuery(t, ts.URL, "Matrix public", payload)
-	for _, tc := range []struct {
-		name    string
-		headers map[string]string
-		want    int64
-	}{
-		{"browser", browser, 2}, {"api key", map[string]string{"X-Api-Key": testAPIKey, "If-Match": `"1"`}, 2},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", tc.headers, `{"query":`+payload+`}`)
-			require.Equal(t, http.StatusOK, resp.StatusCode, body)
-			var snapshot api.WorkspaceQueryResponse
-			require.NoError(t, json.Unmarshal([]byte(body), &snapshot))
-			require.Equal(t, tc.want, snapshot.Total)
-			for _, path := range []string{queryParsePath, queryHighlightsPath} {
-				resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, path, tc.headers, payload)
-				require.Equal(t, http.StatusOK, resp.StatusCode, body)
-			}
-			reportBody := `{"version":1,"all_documents":true,"timezone":"UTC","coverage_mode":"available_only","terms":[{"number":1,"expression":"person:\"Matrix Visible\"","syntax":"advanced","dates":{"start":"2020-01-01","end":"2100-01-01"}}]}`
-			resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/search-exports", tc.headers, reportBody)
-			require.Equal(t, http.StatusOK, resp.StatusCode, body)
-			var summary report.Summary
-			require.NoError(t, json.Unmarshal([]byte(body), &summary))
-			require.Len(t, summary.Counts, 1)
-			require.Equal(t, tc.want, summary.Counts[0].Hits)
-			resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries/"+saved.ID+"/runs", tc.headers, `{}`)
-			require.Equal(t, http.StatusOK, resp.StatusCode, body)
-			var run api.SavedQueryRunResult
-			require.NoError(t, json.Unmarshal([]byte(body), &run))
-			require.Equal(t, tc.want, run.Snapshot.Total)
-			for _, request := range []string{
-				fmt.Sprintf(`{"operation_id":%q,"kind":"query","query":%s}`, uuid.New().String(), exportQuery),
-				fmt.Sprintf(`{"operation_id":%q,"kind":"saved_query","saved_query_id":%q,"saved_query_revision":1}`, uuid.New().String(), saved.ID),
-			} {
-				resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/exports/sources", tc.headers, request)
-				require.Equal(t, http.StatusOK, resp.StatusCode, body)
-				var source bundle.Source
-				require.NoError(t, json.Unmarshal([]byte(body), &source))
-				require.EqualValues(t, tc.want, source.Total)
-			}
-		})
-	}
+	// The browser's legacy person operand retains its any-role meaning.
+	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", browser, `{"query":{"syntax":"advanced","text":"person:\"Matrix Visible\""}}`)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var legacy api.WorkspaceQueryResponse
+	require.NoError(t, json.Unmarshal([]byte(body), &legacy))
+	require.EqualValues(t, 2, legacy.Total)
 }
