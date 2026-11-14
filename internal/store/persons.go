@@ -251,8 +251,8 @@ func personVisibleAssertionSQL(alias, hideLocked string) string {
 	return alias + `.role<>'blind_copy' AND (` + hideLocked + `=0 OR ` + personVersionVisibleSQL(alias+".content_version_id") + `)`
 }
 
-func personVisibleActorSQL(alias, hideLocked string) string {
-	return alias + `.sensitive=0 AND (` + hideLocked + `=0 OR ` + personVersionVisibleSQL(alias+".content_version_id") + `)`
+func personVisibleActorSQL(hideLocked string) string {
+	return `p.sensitive=0 AND (` + hideLocked + `=0 OR ` + personVersionVisibleSQL("p.content_version_id") + `)`
 }
 
 func personDerivedExactIdentitySQL(alias string) string {
@@ -272,7 +272,7 @@ func personVisibleSQL(person string, first int) string {
 		SELECT 1 FROM person_document_assertions a
 		WHERE a.person_id=` + person + ` AND ` + personVisibleAssertionSQL("a", locked) + `) OR EXISTS(
 		SELECT 1 FROM document_people p WHERE p.person_id=` + person + `
-		AND ` + personVisibleActorSQL("p", locked) + `))`
+		AND ` + personVisibleActorSQL(locked) + `))`
 }
 
 // Materialize the bounded matches before reading their visible identity labels.
@@ -643,7 +643,7 @@ var visiblePersonByIDSQL = `SELECT EXISTS(SELECT 1 FROM persons WHERE person_id=
  OR EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=$1
 	AND ` + personVisibleAssertionSQL("a", "$2") + `)
  OR EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=$1
-	AND ` + personVisibleActorSQL("p", "$2") + `)))`
+	AND ` + personVisibleActorSQL("$2") + `)))`
 
 // fenceVisiblePeopleTx reports a person concealed from a browser write as not
 // found, so a person that Hidden locking or sensitivity conceals from the list

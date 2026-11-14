@@ -42,7 +42,7 @@ func currentPersonAssertionFence(safe bool) string {
 func currentPersonPublishedFence(safe bool) string {
 	fence := `h.state='published' AND h.event_generation_id=eh.generation_id AND h.binding_epoch=ps.binding_epoch AND h.node_revision=n.revision AND h.resolver_fingerprint=? AND ` + documentEventFreshIndexedSQL("ea", "ed", "eh", "eg", "?", "?", "?")
 	if safe {
-		fence += ` AND ` + personVisibleActorSQL("p", "1")
+		fence += ` AND ` + personVisibleActorSQL("1")
 	}
 	return fence
 }
@@ -75,7 +75,7 @@ func (c queryCompiler) compileRolePredicate(id string, roles []string) compiledQ
 	assertion := `EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.content_version_id=cv.version_id AND ` + currentPersonAssertionFence(c.safePeople) + ` AND COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=a.person_id),a.person_id)=` + person + ` AND a.role IN (` + roleList + `))`
 	edge := `COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=p.person_id),p.person_id)=` + person + ` AND p.role IN (` + roleList + `)`
 	if c.safePeople {
-		edge += ` AND ` + personVisibleActorSQL("p", "1")
+		edge += ` AND ` + personVisibleActorSQL("1")
 	}
 	// One fresh-head scan answers match (1), known absence (0), and unknown (NULL).
 	head := strings.Replace(freshPeopleHeadSQL("cv.version_id"), " WHERE h.content_version_id=", " LEFT JOIN document_people p ON p.content_version_id=h.content_version_id AND p.generation_id=h.generation_id WHERE h.content_version_id=", 1)
