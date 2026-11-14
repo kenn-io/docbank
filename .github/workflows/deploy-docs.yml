@@ -27,7 +27,7 @@ jobs:
         with:
           node-version: "26.13.0"
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.52.0
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.53.1
 
       - name: Install pinned Vercel CLI
         run: kit-retry 3 5 npm install --global vercel@65.8.0
