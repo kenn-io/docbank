@@ -169,9 +169,14 @@ func TestMCPReportUsesSafeRoleEvidence(t *testing.T) {
 	require.NoError(t, err)
 	_, err = f.catalog.CreateSavedQuery(t.Context(), "Hidden role", "", store.SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"to:\"Hidden Person\""}`))
 	require.NoError(t, err)
+	_, err = f.catalog.CreateSavedQuery(t.Context(), "Hidden filter", "", store.SavedQueryKindQuery, fmt.Appendf(nil, `{"filters":{"people":[{"person_id":%q,"roles":["blind_copy"]}]}}`, hidden.PersonID))
+	require.NoError(t, err)
 	request := report.Request{Version: 1, Timezone: "UTC", CoverageMode: "available_only", SelectedDocuments: &report.SelectedDocuments{Documents: []report.Identity{{NodeID: member.NodeID, VersionID: member.VersionID, SHA256: member.SHA256}}}, Terms: []report.Term{{Number: 1, Expression: `bcc:"Hidden Person"`, Syntax: "advanced", Dates: report.DateRange{Start: "2020-01-01", End: "2100-01-01"}}}}
 	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{AllowReportWrites: true}, f.lease)
 	output := exportCall(t, server, "create_report", map[string]any{"request": request})
+	require.Equal(t, "invalid_query", output["code"])
+	request.Terms[0].Expression = `saved:"Hidden filter"`
+	output = exportCall(t, server, "create_report", map[string]any{"request": request})
 	require.Equal(t, "invalid_query", output["code"])
 	for _, expression := range []string{`to:"Hidden Person"`, `saved:"Hidden role"`} {
 		request.Terms[0].Expression = expression
