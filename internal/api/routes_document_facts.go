@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
@@ -13,6 +14,15 @@ import (
 type versionFactsInput struct {
 	VersionID  string `path:"version_id" format:"uuid"`
 	Disclosure string `query:"disclosure" enum:"safe,full" default:"safe"`
+}
+
+func versionFactsPath(path string) (string, bool) {
+	rest, ok := strings.CutPrefix(path, "/api/v1/versions/")
+	if !ok {
+		return "", false
+	}
+	id, kind, ok := strings.Cut(rest, "/")
+	return id, ok && (kind == "dates" || kind == "people")
 }
 
 func registerDocumentFactsRoutes(api huma.API, d Deps) {
