@@ -78,6 +78,7 @@ type queryCompiler struct {
 	pdfOnly              bool
 	photoHidden          bool
 	safePeople           bool
+	refuseBcc            bool
 	personNames          func(string) ([]string, error)
 	eventState           DocumentEventState
 }
@@ -86,6 +87,7 @@ func (c queryCompiler) compile(
 	ctx context.Context, value query.Query, resolver query.Resolver,
 ) (CompiledQuery, error) {
 	c.safePeople, _ = ctx.Value(safeRoleSearchKey{}).(bool)
+	c.refuseBcc, _ = ctx.Value(refuseBccSearchKey{}).(bool)
 	mentionNames := make(map[string][]string)
 	if r, ok := resolver.(queryResolver); ok {
 		if !c.photoDisplayMetadata {
@@ -323,7 +325,7 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 		if expression.Dependency == nil {
 			return compiledQueryFragment{}, errors.New("resolved person operand lacks a dependency")
 		}
-		roles, err := rolesForOperand(field, c.safePeople)
+		roles, err := rolesForOperand(field, c.safePeople || (c.refuseBcc && field == "bcc"))
 		if err != nil {
 			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, err.Error())
 		}

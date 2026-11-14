@@ -380,6 +380,13 @@ func TestPublishedBccActorQueryPrivacy(t *testing.T) {
 		if operand != "person" {
 			require.Equal(t, []string{"blind_copy"}, result.Rows[0].MatchedRoles)
 		}
+		refused, err := s.MaterializeQuerySnapshot(WithBccSearchRefused(ctx), SnapshotRequest{Query: value})
+		if operand == "bcc" {
+			require.ErrorContains(t, err, "bcc searches are unavailable here")
+		} else {
+			require.NoError(t, err)
+			require.Len(t, refused.Rows, 1)
+		}
 		safe, err := s.MaterializeQuerySnapshot(WithSafeRoleSearch(ctx), SnapshotRequest{Query: value})
 		if operand == "bcc" {
 			require.ErrorContains(t, err, "bcc searches are unavailable here")

@@ -87,6 +87,7 @@ func TestMCPReportRequestBoundary(t *testing.T) {
 	var calls atomic.Int32
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
+		assert.Equal(t, "1", r.Header.Get("X-Docbank-Refuse-Bcc"))
 		var request report.Request
 		assert.NoError(t, json.UnmarshalRead(r.Body, &request))
 		assert.Equal(t, "strict", request.CoverageMode)
@@ -153,10 +154,44 @@ func TestMCPReportRequestBoundary(t *testing.T) {
 		}))
 		require.EqualValues(t, jsonrpc.CodeInvalidParams, decodeWireError(t, raw).Code)
 	}
+	for _, expression := range []string{`bcc:"Hidden Person"`, `name:letter OR NOT bcc:"Hidden Person"`} {
+		args := reportArguments()
+		args["terms"] = []report.Term{{Number: 1, Expression: expression, Syntax: "advanced", Dates: report.DateRange{Start: "2024-01-01", End: "2024-12-31"}}}
+		raw := exchangeRaw(t, server, requestFor("tools/call", map[string]any{
+			"name": "create_report", "arguments": map[string]any{"request": args},
+		}))
+		wireError := decodeWireError(t, raw)
+		require.EqualValues(t, jsonrpc.CodeInvalidParams, wireError.Code)
+		require.Equal(t, "Bcc searches are unavailable here.", wireError.Message)
+	}
 	require.Zero(t, calls.Load())
-	output := exportCall(t, server, "create_report", map[string]any{"request": reportArguments()})
+	args := reportArguments()
+	args["terms"] = []report.Term{{Number: 1, Expression: `from:"Sender Person"`, Syntax: "advanced", Dates: report.DateRange{Start: "2024-01-01", End: "2024-12-31"}}}
+	output := exportCall(t, server, "create_report", map[string]any{"request": args})
 	require.Equal(t, "report_selection_changed", output["code"])
 	require.EqualValues(t, 1, calls.Load())
+}
+
+func TestMCPReportRefusesSavedBcc(t *testing.T) {
+	f := newNativeExportFixture(t)
+	member := f.addFile(t, "letter.txt", "synthetic letter")
+	_, err := f.catalog.CreatePerson(t.Context(), "Hidden Person", "operator")
+	require.NoError(t, err)
+	_, err = f.catalog.CreatePerson(t.Context(), "Sender Person", "operator")
+	require.NoError(t, err)
+	_, err = f.catalog.CreateSavedQuery(t.Context(), "Hidden role", "", store.SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"bcc:\"Hidden Person\""}`))
+	require.NoError(t, err)
+	_, err = f.catalog.CreateSavedQuery(t.Context(), "Nested hidden", "", store.SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"saved:\"Hidden role\""}`))
+	require.NoError(t, err)
+	request := report.Request{Version: 1, Timezone: "UTC", CoverageMode: "available_only", SelectedDocuments: &report.SelectedDocuments{Documents: []report.Identity{{NodeID: member.NodeID, VersionID: member.VersionID, SHA256: member.SHA256}}}, Terms: []report.Term{{Number: 1, Expression: `saved:"Nested hidden"`, Syntax: "advanced", Dates: report.DateRange{Start: "2020-01-01", End: "2100-01-01"}}}}
+	_, err = f.connection.CreateTermReport(t.Context(), request)
+	require.NoError(t, err)
+	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{AllowReportWrites: true}, f.lease)
+	output := exportCall(t, server, "create_report", map[string]any{"request": request})
+	require.Equal(t, "invalid_query", output["code"])
+	request.Terms[0].Expression = `from:"Sender Person"`
+	output = exportCall(t, server, "create_report", map[string]any{"request": request})
+	require.Contains(t, output, "report_id")
 }
 
 func TestMCPReportWriteDoesNotReplay(t *testing.T) {

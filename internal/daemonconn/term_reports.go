@@ -10,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/report"
@@ -52,11 +53,27 @@ func validateTermReportSummary(summary report.Summary) error {
 }
 
 func (c *Connection) CreateTermReport(ctx context.Context, request report.Request) (report.Summary, error) {
+	return c.createTermReport(ctx, request, nil)
+}
+
+// CreateTermReportWithoutBcc refuses bcc operands, including in saved queries.
+func (c *Connection) CreateTermReportWithoutBcc(ctx context.Context, request report.Request) (report.Summary, error) {
+	return c.createTermReport(ctx, request, func(_ context.Context, req *http.Request) error {
+		req.Header.Set(api.RefuseBccHeader, "1")
+		return nil
+	})
+}
+
+func (c *Connection) createTermReport(ctx context.Context, request report.Request, edit runtime.RequestEditorFn) (report.Summary, error) {
 	request, err := report.NormalizeRequest(request)
 	if err != nil {
 		return report.Summary{}, err
 	}
-	response, err := c.API().CreateTermReport(ctx, &apiclient.CreateTermReportRequestOptions{Body: &request})
+	var editors []runtime.RequestEditorFn
+	if edit != nil {
+		editors = append(editors, edit)
+	}
+	response, err := c.API().CreateTermReport(ctx, &apiclient.CreateTermReportRequestOptions{Body: &request}, editors...)
 	if err != nil {
 		return report.Summary{}, err
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/report"
 )
 
@@ -188,12 +189,33 @@ func (r *reportTools) create(ctx context.Context, raw []byte) (reportReceiptOutp
 	if err != nil {
 		return reportReceiptOutput{}, invalidToolArgumentsError()
 	}
+	for _, term := range request.Terms {
+		expression, err := query.ParseExpression(term.Expression, term.Syntax)
+		if err != nil {
+			return reportReceiptOutput{}, invalidToolArgumentsError()
+		}
+		if reportContainsBcc(expression) {
+			return reportReceiptOutput{}, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: "Bcc searches are unavailable here."}
+		}
+	}
 	summary, err := daemonProcessingStart(ctx, r.lease, func(
 		c *daemonconn.Connection,
 	) (report.Summary, error) {
-		return c.CreateTermReport(ctx, request)
+		return c.CreateTermReportWithoutBcc(ctx, request)
 	})
 	return reportReceipt(summary), err
+}
+
+func reportContainsBcc(expression *query.Expression) bool {
+	if expression.Field == "bcc" {
+		return true
+	}
+	for _, child := range expression.Children {
+		if reportContainsBcc(child) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *reportTools) revise(ctx context.Context, raw []byte) (reportReceiptOutput, error) {

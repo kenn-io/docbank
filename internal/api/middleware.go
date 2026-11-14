@@ -20,9 +20,13 @@ import (
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/httpboundary"
+	"go.kenn.io/docbank/internal/store"
 )
 
 const requestTimeout = 60 * time.Second
+
+// RefuseBccHeader narrows a report request to queries without bcc operands.
+const RefuseBccHeader = "X-Docbank-Refuse-Bcc"
 
 type responseControllerContextKey struct{}
 
@@ -288,6 +292,9 @@ func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry,
 		if subtle.ConstantTimeCompare([]byte(got), []byte(key)) == 1 {
 			ctx := context.WithValue(r.Context(), authenticationContextKey{}, "master")
 			ctx = context.WithValue(ctx, workspaceSnapshotOwnerContextKey{}, masterOwner)
+			if r.Method == http.MethodPost && r.URL.Path == "/api/v1/search-exports" && r.Header.Get(RefuseBccHeader) == "1" {
+				ctx = store.WithBccSearchRefused(ctx)
+			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
