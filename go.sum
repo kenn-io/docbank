@@ -360,8 +360,8 @@ github.com/yusufpapurcu/wmi v1.2.4 h1:zFUKzehAFReQwLys1b/iSMl+JQGSCSjtVqQn9bBrPo
 github.com/yusufpapurcu/wmi v1.2.4/go.mod h1:SBZ9tNy3G9/m5Oi98Zks0QjeHVDvuK0qfxQmPyzfmi0=
 go.kenn.io/kata v0.22.0 h1:u+PZquTVfswx0SWPQCC8ilpcg33PIWSyh56IhMNvR6E=
 go.kenn.io/kata v0.22.0/go.mod h1:OnxbDnAz4/O7ZkUW9n59xdpDSPvQPqlFoHUTg3HV/y4=
-go.kenn.io/kit v0.52.1-0.20261112172830-31ed8eb6bcd4 h1:5tuzOke6Gsb/TiJmV8iLTAeqbQilFIXKnHU2/Pg4lqc=
-go.kenn.io/kit v0.52.1-0.20261112172830-31ed8eb6bcd4/go.mod h1:PZ/4Ybn+VM+KQXnyAYLD8TTIfEbssd+8YbLgdqvrcVU=
+go.kenn.io/kit v0.53.0 h1:CbBK28C/4ESbw9bwVQ7HJp6EGQiDI+DLSvUOSvWlqdU=
+go.kenn.io/kit v0.53.0/go.mod h1:PZ/4Ybn+VM+KQXnyAYLD8TTIfEbssd+8YbLgdqvrcVU=
 go.mongodb.org/mongo-driver/v2 v2.9.2 h1:OCAdjI37pC/SVxucz/9CM8zD4jCdegtsY5QcKzYFCgE=
 go.mongodb.org/mongo-driver/v2 v2.9.2/go.mod h1:SHKN0IWkKmEVGHLjXnni6s4wPKX4v86FTgOeJJFuXcA=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
