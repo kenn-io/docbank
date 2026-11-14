@@ -369,7 +369,7 @@
       };
       const summary = await api.createTermReport(
         request,
-        { people_disclosure: "safe" },
+        undefined,
         { session: currentSession },
       );
       if (epoch !== generation || currentSession !== session) return;
