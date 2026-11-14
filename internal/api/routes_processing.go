@@ -931,6 +931,6 @@ func searchFilterOptions(filters *DocumentSourceFenceFilters) store.SearchOption
 		return store.SearchOptions{}
 	}
 	return store.SearchOptions{SourcePresent: filters.SourcePresent, TagID: filters.TagID,
-		MIMEType: filters.MIMEType, UnderNodeID: filters.UnderNodeID,
+		MIMEType: filters.MIMEType, UnderNodeID: filters.UnderNodeID, UnderPath: filters.UnderPath,
 		ModifiedSince: filters.ModifiedSince, ModifiedBefore: filters.ModifiedBefore}
 }

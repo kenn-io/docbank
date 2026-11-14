@@ -197,15 +197,9 @@ See docs/usage/search.md.`,
 		}
 		var underPath string
 		if searchUnder != "" {
-			directory, resolveErr := underSelector.resolve(cmd.Context(), c)
-			if resolveErr != nil {
-				return resolveErr
-			}
-			if directory.Kind != "dir" {
-				return fmt.Errorf("search scope %q: %w", searchUnder, store.ErrNotDir)
-			}
-			opts.UnderNodeID = directory.ID
-			underPath = directory.Path
+			opts.UnderNodeID = underSelector.id
+			opts.UnderPath = underSelector.path
+			underPath = underSelector.path
 		}
 		query := strings.Join(args, " ")
 		var automatic automaticSearchOutcome
@@ -236,12 +230,18 @@ See docs/usage/search.md.`,
 		}()
 		var hints []searchHint
 		if empty && strings.TrimSpace(query) != "" {
-			coverage, coverageErr := c.SearchTextCoverage(cmd.Context(), opts)
+			coverageOpts := opts
+			if coverageOpts.UnderPath != "" {
+				// Keep diagnostics on the directory selected by the search receipt.
+				coverageOpts.UnderPath = ""
+				coverageOpts.UnderNodeID = rep.UnderNodeID
+			}
+			coverage, coverageErr := c.SearchTextCoverage(cmd.Context(), coverageOpts)
 			if coverageErr != nil {
 				slog.DebugContext(cmd.Context(), "search text coverage unavailable", "error", coverageErr)
 			}
 			scoped := opts.SourcePresent || opts.PDFFilter != "" || opts.TagID != "" ||
-				opts.MIMEType != "" || opts.UnderNodeID != 0 || opts.ModifiedSince != "" || opts.ModifiedBefore != ""
+				opts.MIMEType != "" || opts.UnderNodeID != 0 || opts.UnderPath != "" || opts.ModifiedSince != "" || opts.ModifiedBefore != ""
 			fuzzyRan := opts.Fuzzy && (rep.Fuzzy == nil || rep.Fuzzy.Status != store.FuzzyStatusNotRun)
 			hints = emptySearchHints(query, coverage, automatic.report == nil, scoped, fuzzyRan)
 		}
@@ -286,6 +286,8 @@ func writeSearchReport(cmd *cobra.Command, rep api.SearchReport, tagName, underP
 		}
 		if underPath != "" {
 			filters = append(filters, fmt.Sprintf("directory %q", underPath))
+		} else if rep.UnderNodeID != 0 {
+			filters = append(filters, "directory ID "+formatNodeSelector(rep.UnderNodeID))
 		}
 		if rep.ModifiedSince != "" {
 			filters = append(filters, fmt.Sprintf("modified since %q", rep.ModifiedSince))

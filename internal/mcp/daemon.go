@@ -11,6 +11,7 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/store"
 )
 
 const daemonAcquisitionTimeout = 45 * time.Second
@@ -313,6 +314,9 @@ func daemonAcquisitionError(err error) error {
 
 func sanitizedDaemonError(message, cause error) error {
 	facts, _ := daemonconn.ExtractProblemFacts(cause)
+	if errors.Is(cause, store.ErrInvalidSearchScope) {
+		facts = daemonconn.ProblemFacts{Code: "validation", MappedError: store.ErrInvalidSearchScope}
+	}
 	// Answer profile selection can fail locally within a daemon read. Retain
 	// only its stable codes, never the native error or its provider details.
 	if native, ok := errors.AsType[*api.Error](cause); ok {

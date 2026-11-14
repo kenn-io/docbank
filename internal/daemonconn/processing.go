@@ -107,8 +107,8 @@ func validateDocumentSourceFenceRequest(
 	if filters.TagID != "" && !validUUIDv4(filters.TagID) {
 		return api.DocumentSourceFenceResolveRequest{}, errors.New("tag ID is invalid")
 	}
-	if filters.UnderNodeID < 0 {
-		return api.DocumentSourceFenceResolveRequest{}, errors.New("directory node ID must be positive")
+	if err := store.ValidateSearchDirectoryScope(filters.UnderNodeID, filters.UnderPath); err != nil {
+		return api.DocumentSourceFenceResolveRequest{}, err
 	}
 	var err error
 	filters.MIMEType, err = store.NormalizeSearchMIMEType(filters.MIMEType)

@@ -68,6 +68,7 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 		{name: "no query encoder", profiles: []api.ProcessingProfileSummary{{Name: "text", EmbeddingBindings: []string{"doc"}}}, limit: 50},
 		{name: "tag", profiles: profiles, limit: 50, opts: daemonconn.SearchOptions{TagID: processingTestVersionID}, skipped: true},
 		{name: "mime", profiles: profiles, limit: 50, opts: daemonconn.SearchOptions{MIMEType: "text/plain"}, skipped: true},
+		{name: "directory path", profiles: profiles, limit: 50, opts: daemonconn.SearchOptions{UnderPath: "/cases"}, skipped: true},
 		{name: "directory", profiles: profiles, limit: 50, opts: daemonconn.SearchOptions{UnderNodeID: 42}, skipped: true},
 		{name: "since", profiles: profiles, limit: 50, opts: daemonconn.SearchOptions{ModifiedSince: "2026-01-01T00:00:00Z"}, skipped: true},
 		{name: "before", profiles: profiles, limit: 50, opts: daemonconn.SearchOptions{ModifiedBefore: "2026-01-01T00:00:00Z"}, skipped: true},

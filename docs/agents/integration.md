@@ -289,9 +289,14 @@ Use these filters to narrow the same ranking:
 - **`mime_type`:** send a valid base media type without parameters. The daemon
   returns its normalized spelling. `text/plain` includes stored charset
   parameters, but excludes directories and non-current versions.
-- **`under_node_id`:** resolve a live directory and send its ID. Results
-  include descendants, excluding the selected directory. Keep the echoed ID,
-  because the directory's path can change.
+- **`under_path` or `under_node_id`:** send an absolute virtual directory path
+  or its stable ID, never both. The daemon resolves the path and pins the
+  directory for the request. Results include descendants, excluding the
+  selected directory. Path requests echo the authored `under_path` and resolved
+  `under_node_id`; keep the ID because the directory's path can change.
+  Paths are case-exact and at most 16,384 UTF-8 bytes. An empty path fails
+  validation; a file returns `not_dir`, and a missing or trashed folder returns
+  `not_found`.
 - **`modified_since`:** include nodes at or after this modification time.
 - **`modified_before`:** include nodes strictly before this modification time.
 

@@ -341,7 +341,8 @@ func validToolSemantics(name string, arguments map[string]any) bool {
 		if !ok {
 			return arguments["filters"] == nil
 		}
-		return validOptionalRFC3339Nano(filters, "modified_since") &&
+		return stringBytesWithin(filters, "under_path", store.MaxSearchUnderPathBytes) &&
+			validOptionalRFC3339Nano(filters, "modified_since") &&
 			validOptionalRFC3339Nano(filters, "modified_before")
 	default:
 		return true
@@ -466,8 +467,12 @@ func stableDomainError(err error) (string, int) {
 	switch {
 	case errors.As(err, &scope):
 		return "scope_too_large", scope.ObservedScopeCount
+	case errors.Is(err, store.ErrInvalidSearchScope):
+		return "validation", 0
 	case errors.Is(err, store.ErrNotFound):
 		return "not_found", 0
+	case errors.Is(err, store.ErrNotDir):
+		return "not_dir", 0
 	case errors.Is(err, store.ErrProcessingSourceFenceStaleVersion):
 		return "stale_version", 0
 	case errors.Is(err, daemonconn.ErrProcessingPlanChanged):
@@ -551,6 +556,8 @@ func stableDomainError(err error) (string, int) {
 		return facts.Code, 0
 	case "not_found":
 		return "not_found", 0
+	case "not_dir":
+		return "not_dir", 0
 	case "download_selection_stale":
 		return facts.Code, 0
 	case "stale_version":
@@ -720,6 +727,8 @@ func domainErrorMessage(code string) string {
 		return "The snapshot is missing a required representation for this export profile."
 	case "not_found":
 		return "The requested Docbank identity was not found."
+	case "not_dir":
+		return "The requested node is not a directory."
 	case "stale_version":
 		return "The requested content version is no longer current and live."
 	case "plan_changed":

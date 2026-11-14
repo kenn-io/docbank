@@ -959,6 +959,7 @@ type SearchReport struct {
 	TagID          string        `json:"tag_id,omitzero"`
 	MIMEType       string        `json:"mime_type,omitzero"`
 	UnderNodeID    int64         `json:"under_node_id,omitzero"`
+	UnderPath      string        `json:"under_path,omitzero"`
 	ModifiedSince  string        `json:"modified_since,omitzero"`
 	ModifiedBefore string        `json:"modified_before,omitzero"`
 }

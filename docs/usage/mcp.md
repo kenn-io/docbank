@@ -268,9 +268,9 @@ metadata, and cache fields; a larger catalog requires a reviewed budget edit.
 | `get_vault_info` | Returns the stable vault ID and aggregate live, trash, version, and blob counts. It never returns the host vault path. |
 | `list_changes` | Returns up to 500 retained events with `cursor`, `kind`, `node_id`, and `revision`. Pass the saved `next_cursor` to resume; call again while `has_more` is true. |
 | `list_documents` | Lists current, live files. `path_prefix` defaults to `/` and is capped at 16,384 Unicode characters and 16 KiB of UTF-8. Sorts are `path`, `name`, `modified_at`, `size`, and `media_type`, in `asc` or `desc` order. Page size defaults to 50 and is capped at 250. |
-| `answer_question` | Searches for evidence with a question and returns passages, leads, coverage, and a receipt. Optional filters narrow the scope; profile, binding, reranking, and output limits can be selected explicitly. |
-| `search_documents` | Requires a 1–8,192-character query and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters selecting every matching live file without a 4,096-file cap. The optional profile name is 1–128 characters. Omitting it uses the same profile and binding retries as `answer_question`. Results include the profile used. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters and require an explicit profile. Optional `rerank` is a boolean that requests the profile's configured reranker. |
-| `find_conflicts` | Requires a processing profile and uses the query, limit, and source selectors from `search_documents`. Retrieval is lexical only, with at most 20 hits. Compares money, percentages, and durations in whole source sentences and returns source dates and evidence IDs. |
+| `answer_question` | Searches for evidence with a question and returns passages, leads, coverage, and a receipt. Optional filters, including a daemon-resolved `under_path`, narrow the scope; profile, binding, reranking, and output limits can be selected explicitly. |
+| `search_documents` | Requires a 1–8,192-character query and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters, including `under_path`, selecting every matching live file without a 4,096-file cap. The optional profile name is 1–128 characters. Omitting it uses the same profile and binding retries as `answer_question`. Results include the profile used. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters and require an explicit profile. Optional `rerank` is a boolean that requests the profile's configured reranker. |
+| `find_conflicts` | Requires a processing profile and uses the query, limit, and source selectors (including `under_path`) from `search_documents`. Retrieval is lexical only, with at most 20 hits. Compares money, percentages, and durations in whole source sentences and returns source dates and evidence IDs. |
 | `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity is rejected. |
 | `get_original_download_url` | Returns a single-use URL for an exact original selection, without the 32 MiB read limit. The URL expires after two minutes. [Download originals](#download-originals). |
 | `read_document_content` | Reads original bytes from a selected immutable version as base64. Requires the vault ID from `get_vault_info` and the node, version, SHA-256 and size from `list_document_versions`. Originals are limited to 32 MiB; byte windows default to 64 KiB and are capped at 256 KiB. Returns offset, next offset and EOF. Verify the assembled size and SHA-256 before using the bytes. No export job or local file is created. |
@@ -348,9 +348,15 @@ applied before pagination and retrieval.
 
 `search_documents` with filters searches every matching live file without a
 4,096-file cap. Filters may select a tag UUID, a MIME type of at most 255
-characters, a positive ancestor node ID, and RFC 3339 `modified_since` or
+characters, an absolute folder `under_path` of at most 16,384 UTF-8 bytes or
+a positive ancestor `under_node_id`, and RFC 3339 `modified_since` or
 `modified_before` bounds of at most 64 characters each. Explicit version lists
 resolve to an exact source fence of up to 4,096 current, live versions.
+`under_path` also scopes `answer_question` and `find_conflicts`. The daemon
+resolves it with the same Unicode normalization and case-exact lookup as
+document paths. A file returns `not_dir`; a missing or trashed folder returns
+`not_found`. Sending both directory selectors fails validation before any
+provider call.
 Only version-list searches return `fence`, `fence_fingerprint`, and
 `observed_scope_count`. Version-list searches always return `vault_id`; filter
 searches return it only with hits. Every search returns requested and actual
