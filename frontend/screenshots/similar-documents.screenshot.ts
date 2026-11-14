@@ -324,13 +324,16 @@ trust_boundary = "local_process"
       await expect
         .poll(() => tmux(["capture-pane", "-p", "-t", "similar"]), { timeout: 20_000 })
         .toContain("Profile: ");
-      await expect(async () => {
-        const pane = await tmux(["capture-pane", "-p", "-t", "similar"]);
-        if (!pane.includes("Profile: private_text")) {
-          await tmux(["send-keys", "-t", "similar", "]"]);
-        }
-        expect(pane).toContain("Profile: private_text");
-      }).toPass({ timeout: 20_000, intervals: [500] });
+      // Press ] once per profile and wait for the label to move, so a slow
+      // profile load cannot make extra presses cycle past the target.
+      const profile = async () =>
+        /Profile: (\S+)/.exec(await tmux(["capture-pane", "-p", "-t", "similar"]))?.[1];
+      for (let step = 0; step < 5 && (await profile()) !== "private_text"; step++) {
+        const current = await profile();
+        await tmux(["send-keys", "-t", "similar", "]"]);
+        await expect.poll(profile, { timeout: 20_000 }).not.toBe(current);
+      }
+      expect(await profile()).toBe("private_text");
       await tmux(["send-keys", "-t", "similar", "S"]);
       await expect
         .poll(() => tmux(["capture-pane", "-p", "-t", "similar"]), { timeout: 20_000 })
