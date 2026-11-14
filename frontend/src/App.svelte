@@ -140,7 +140,7 @@
   import { parseNodeVersionLink, resolveNodeVersionLink } from "./nodeVersionLink.js";
   import { APIError, isCurrentSessionError, mutationsInFlight } from "./api-transport.js";
   import { changeNodeTag, documentSearch, liveNodeTags } from "./receipts.js";
-  import { takeFragmentSession, type BrowserSession } from "./browser-session.js";
+  import { rememberSession, takeFragmentSession, type BrowserSession } from "./browser-session.js";
   import { getSignInStatus, signIn, tabSession } from "./web-login.js";
   import { startTelemetryReporting } from "./app-opened.js";
   import { startSessionReporting } from "./session-duration.js";
@@ -1601,6 +1601,7 @@
   });
 
   function activateBrowserSession(session: BrowserSession, keyLogin = false): void {
+    rememberSession(keyLogin ? null : session);
     disposeBrowserSession?.();
     webSession = session.token;
     hasProductions = false;
@@ -1930,6 +1931,7 @@
   }
 
   function resetLocalSessionUI(): void {
+    rememberSession(null);
     readerRequest++;
     reader = undefined;
     clearToasts();
