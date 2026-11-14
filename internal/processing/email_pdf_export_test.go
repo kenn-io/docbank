@@ -27,7 +27,12 @@ import (
 // a newly selected renderer; a missing receipt cannot become an original role.
 func TestExportEmailPDFPinsRetainedReceiptAndArchive(t *testing.T) {
 	t.Parallel()
-	f := newEmailPipelineFixture(t)
+	checkExportEmailPDFPinsRetainedReceiptAndArchive(t, newEmailPipelineFixture)
+}
+
+func checkExportEmailPDFPinsRetainedReceiptAndArchive(t *testing.T, newFixture func(*testing.T) emailPipelineFixture) {
+	t.Helper()
+	f := newFixture(t)
 	target := f.add(t, "synthetic.eml", emailPipelineSource, "message/rfc822")
 	view, err := EnsureEmailTarget(t.Context(), f.catalog, f.blobs, f.spool, target)
 	require.NoError(t, err)
@@ -209,7 +214,12 @@ func repackEmailExportManifest(t *testing.T, source io.ReaderAt, size int64, man
 // Changing that recipe after sealing must not select newly rendered bytes.
 func TestExportEmailPDFRecipeAcrossDistinctMessages(t *testing.T) {
 	t.Parallel()
-	f := newEmailPipelineFixture(t)
+	checkExportEmailPDFRecipeAcrossDistinctMessages(t, newEmailPipelineFixture)
+}
+
+func checkExportEmailPDFRecipeAcrossDistinctMessages(t *testing.T, newFixture func(*testing.T) emailPipelineFixture) {
+	t.Helper()
+	f := newFixture(t)
 	pdf := fpdf.New("P", "mm", "A4", "")
 	pdf.AddPage()
 	pdf.SetFont("Helvetica", "", 12)

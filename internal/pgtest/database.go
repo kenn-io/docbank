@@ -18,26 +18,26 @@ import (
 // CI supplies a disposable cluster; local runs explicitly configure one.
 // Every test owns a separate database, so it can exercise real role grants and
 // failed DDL.
-func NewDatabase(t *testing.T) (*sql.DB, string) {
-	t.Helper()
+func NewDatabase(tb testing.TB) (*sql.DB, string) {
+	tb.Helper()
 	dsn := os.Getenv("DOCBANK_TEST_POSTGRES_DSN")
 	if dsn == "" {
-		t.Skip("set DOCBANK_TEST_POSTGRES_DSN to run PostgreSQL tests")
+		tb.Skip("set DOCBANK_TEST_POSTGRES_DSN to run PostgreSQL tests")
 	}
 	c, err := pgx.ParseConfig(dsn)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	admin := stdlib.OpenDB(*c)
-	t.Cleanup(func() { require.NoError(t, admin.Close()) })
+	tb.Cleanup(func() { require.NoError(tb, admin.Close()) })
 	name := fmt.Sprintf("db_%x", uuid.New())
-	_, err = admin.ExecContext(t.Context(), "CREATE DATABASE "+pgx.Identifier{name}.Sanitize())
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		// t.Context is already canceled when cleanup runs.
-		_, err := admin.ExecContext(context.WithoutCancel(t.Context()), "DROP DATABASE "+pgx.Identifier{name}.Sanitize()+" WITH (FORCE)")
-		require.NoError(t, err)
+	_, err = admin.ExecContext(tb.Context(), "CREATE DATABASE "+pgx.Identifier{name}.Sanitize())
+	require.NoError(tb, err)
+	tb.Cleanup(func() {
+		// tb.Context is already canceled when cleanup runs.
+		_, err := admin.ExecContext(context.WithoutCancel(tb.Context()), "DROP DATABASE "+pgx.Identifier{name}.Sanitize()+" WITH (FORCE)")
+		require.NoError(tb, err)
 	})
 	c.Database = name
 	db := stdlib.OpenDB(*c)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	tb.Cleanup(func() { require.NoError(tb, db.Close()) })
 	return db, c.User
 }
