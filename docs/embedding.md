@@ -732,6 +732,44 @@ split between raw and compressed object counts. Applications can therefore
 schedule packing from physical storage growth without walking loose objects.
 The report does not make packing automatic.
 
+## Read an existing vault without owning it
+
+Use `OpenContentReader` to read verified originals from an existing, checkpointed
+SQLite vault without initializing, migrating, recovering, or changing its files:
+
+```go
+reader, err := docbank.OpenContentReader(ctx, docbank.ContentReaderConfig{Root: root})
+if err != nil {
+    return err
+}
+defer reader.Close()
+content, err := reader.OpenContent(ctx, "/sessions/example.jsonl")
+if err != nil {
+    return err
+}
+defer content.Reader.Close()
+// Read to EOF or call content.Reader.Verify before trusting the bytes.
+```
+
+`reader.ID()` returns the vault identity. The reader holds the same exclusive
+hierarchy lock as an owner and returns `ErrVaultLocked` when the tree is busy.
+`ErrVaultNeedsOwner` means an owner must initialize, upgrade, or recover the
+vault first, including when SQLite sidecars or a restore handoff are present.
+Sidecars are checked before the schema, so a sidecar also takes precedence over a newer schema.
+Newer, unsupported, or unreadable schemas, invalid identity, wrong ownership markers,
+and non-regular database or handoff files retain their own errors. The existing
+`vault.lock` must be writable. The lock registry (`DOCBANK_LOCK_DIR` when set)
+must be writable and outside the vault; a registry inside it is a configuration
+error. Docbank creates the registry directory and its lock files as needed. When
+checking a current-schema database, Docbank creates a temporary
+`docbank-current-schema-*.db` file in the registry. The default registry is
+`.local/state/docbank/target-locks` in the account home. Docbank deletes the file
+before `OpenContentReader` returns, but a crash during the check can leave it
+there. SQLite may use temporary files of its own. Only the
+primary blob store is attached; content available only on a secondary store
+returns `ErrContentUnavailable`. Close every stream before closing the reader;
+reader close waits for all streams to close.
+
 ## Identify a vault and verify reads
 
 `vault.ID()` returns the archive's UUID. JSONL backup and restore preserve
@@ -1186,6 +1224,8 @@ SQLite implementations.
 Do not point a daemon and an embedded application at the same root. `New` holds
 the same exclusive hierarchy lock as the daemon for the entire vault lifetime
 and fails if the requested root overlaps another active vault or restore target.
+
+`OpenContentReader` also holds this exclusive lock until `Close` returns. Close the reader after reading.
 
 The standalone CLI remains daemon-first and never opens storage directly.
 Embedding is a distinct application ownership mode, not a second privileged path

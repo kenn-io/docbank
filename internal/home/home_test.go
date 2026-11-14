@@ -47,3 +47,40 @@ func TestEnsureCreatesLayout(t *testing.T) {
 	// Idempotent.
 	require.NoError(t, l.Ensure())
 }
+
+func TestDirectoryContainment(t *testing.T) {
+	t.Parallel()
+	parent := t.TempDir()
+	root := filepath.Join(parent, "vault")
+	child := filepath.Join(root, "child")
+	require.NoError(t, os.MkdirAll(child, 0o700))
+	layout := Layout{Root: root}
+
+	inside, err := layout.ContainsDirectory(child)
+	require.NoError(t, err)
+	assert.True(t, inside)
+	inside, err = layout.ContainsDirectory(parent)
+	require.NoError(t, err)
+	assert.False(t, inside)
+	_, err = layout.ContainsDirectory(filepath.Join(root, "missing"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+
+	inside, err = PathWithin(root, filepath.Join(root, "missing", "child"))
+	require.NoError(t, err)
+	assert.True(t, inside)
+	inside, err = PathWithin(root, filepath.Join(parent, "missing", "child"))
+	require.NoError(t, err)
+	assert.False(t, inside)
+	inside, err = PathWithin(root, root)
+	require.NoError(t, err)
+	assert.True(t, inside)
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	for _, path := range []string{alias, filepath.Join(alias, "missing")} {
+		inside, err = PathWithin(root, path)
+		require.NoError(t, err)
+		assert.True(t, inside)
+	}
+}
