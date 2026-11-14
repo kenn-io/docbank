@@ -1046,6 +1046,7 @@ All paths below start with `/api/v1/search-exports` and require authentication.
 | Method and suffix | Request and response |
 | --- | --- |
 | `POST /` | Version 1 request, up to 8 MiB; returns a summary with state `complete` or `needs_review`. Counts and downloads are withheld in `needs_review`. |
+| `POST /selection` | Read-only comparison of exact document identities in one snapshot. Returns each selected identity with status `current`, `changed`, `trashed`, or `missing`, and current identity, path, and version dates when available. The request uses `{"documents":[...]}` and the same selection limits as report creation. Results are ordered by node ID. |
 | `GET /` | `offset` (0–100) and `limit` (1–50, default 20); returns `items` containing reusable `request` and `summary`, and `total`. Lists vault history, including expired receipts. |
 | `GET /{id}` | Returns the caller's live frozen summary. |
 | `DELETE /{id}` | API-key release of an owned live handle; returns 204 without a body. ID must be 48 lowercase hexadecimal characters. |
@@ -1057,11 +1058,17 @@ All paths below start with `/api/v1/search-exports` and require authentication.
 
 Create accepts all-document, collection, or exact current-document scope. The
 selected identities are admitted together in the same read observation as the
-report. Stale selection returns `409 report_selection_changed`. Malformed
+report. Stale selection returns `409 report_selection_changed`. Use `/selection` to compare the full set before choosing replacements. Malformed
 selection or a wrong hash for a current version returns
 `422 invalid_report_request`. Selected-member overflow returns `413 report_limit`,
 while collection-count overflow still returns 422. See the guide for null/empty
 semantics and identity requirements.
+
+The selection comparison accepts up to 8 MiB. An empty, malformed, or duplicate
+selection returns `422 invalid_report_request`; more than 50,000 identities
+returns `413 report_limit`. Comparison checks the full identity, so a wrong
+hash on the current version is `changed` here, although report creation rejects
+that hash as an invalid request.
 
 History pages are also limited to 16 MiB. Advance `offset` by the number of
 returned items when the byte limit shortens a page. Source deletion does not
@@ -1285,8 +1292,13 @@ configured-backup, verified-download, map-tile, and usage-event workflows.
 They are not another general API credential. Browser file bytes use the
 hidden `/api/daemon/web-upload` WebSocket instead. The page verifies a
 challenge proof over the upload secret before sending bytes, binds the socket
-to one session, and never reconnects it. An ordinary browser token is
-forbidden from `POST /api/v1/uploads`.
+to one session, and verifies a fresh proof when replacing it. The daemon checks
+for an existing matching upload before receiving bytes on an unconfirmed file
+retry. During stored-content verification, `verification_progress` messages
+carry the request ID and the increasing `verified_size` read from storage.
+Each message renews the browser's 60-second inactivity deadline; a stalled
+check ends without sending file bytes. An ordinary browser token is forbidden
+from `POST /api/v1/uploads`.
 
 Photo folders use `plan_photo_import` and `begin_photo_group` on `/api/daemon/web-upload`, with server grouping and hash verification before each group commits. The plan declares `expected_hash` as an empty string for files the browser has not hashed. When such a file's size equals an eligible earlier browser photo's, the server replies `photo_import_hashes_needed` with those `indexes`, and the browser resends the plan with only those hashes. Other files hash with their group, and the server pins each hash at its first attempt. The plan returns an `import_id` owned by that connection; each group must reference it and match the planned paths and sizes. The selection shares one ingest run. An optional `source_id` UUID in the plan is retained separately from the connection's plan ID and appears in browser provenance paths; omitting it creates a new source. Browser source IDs preserve provenance and grouping. Browser photo imports create files and deduplicate identical content; reusing a source ID and path with changed bytes creates or resolves to a separate node and preserves the existing node's content, revision, and current version. The browser saves the source ID, destination, picker kind, and a versioned SHA-256 digest over the sorted complete manifest of paths, sizes, and modified times through authenticated `/api/daemon/photo-import-checkpoint` routes before uploading. The vault keeps one private version-2 JSONL checkpoint per browser profile outside database, audit, and backup records. A persistent HttpOnly, SameSite=Strict cookie scoped to `docbank.localhost` locates it across fresh random daemon origins; the cookie carries no authorization. A header round trip confirms cookie persistence before saving or uploading. `GET /api/daemon/photo-import-checkpoint/header` reads only the bounded identity record, `GET /api/daemon/photo-import-checkpoint` reads the selection digest and picker kind, and `PUT /api/daemon/photo-import-checkpoint` compares the expected source and revision before atomic replacement or clearing. Both PUT fields are required and nullable: `expected: null` creates a checkpoint, and `next: null` clears it. Checkpoint requests allow 64 KiB; the upload plan allows at most 32,768 files in an 8 MiB declaration. Successful writes refresh the 365-day profile cookie. Clearing removes the checkpoint file. Minting a new profile cookie removes matching checkpoints and atomic temporary files older than 366 days. Host and Origin must match the current browser origin. Resume verifies the full selection and reuses that source ID on a fresh connection. A new selection gets a new source ID. Checkpoint replacement detects a competing tab, and confirmed completion clears it. Receipts include the ambiguity reason when pairing needs manual review; daemon-host path imports still require the master key. Control messages are limited by their `type`: 8 MiB for `plan_photo_import`, about 2.1 MiB for `begin_photo_group`, and 4 KiB for every other message. The server closes the socket with status 1009 when a message is over its limit.
 

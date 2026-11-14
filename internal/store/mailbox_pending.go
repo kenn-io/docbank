@@ -10,14 +10,14 @@ import (
 // Its checkpoint advances only with the final message or rejection receipt.
 func (s *Store) StartMailboxOccurrence(ctx context.Context, id, claim string, o MailboxOccurrence) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		j, err := claimedMailboxJob(ctx, tx, id, claim)
+		j, err := claimedMailboxJob(ctx, tx, id, claim, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
 		if o.JobID != id || o.Ordinal != j.Checkpoint+1 || o.Location.ContainerID != j.ContainerID || j.Checkpoint-j.SegmentStart >= MailboxSegmentMessages {
 			return ErrMailboxConflict
 		}
-		prior, err := mailboxOccurrences(ctx, tx, id, j.Checkpoint, 1)
+		prior, err := mailboxOccurrences(ctx, tx, id, j.Checkpoint, 1, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
@@ -26,23 +26,23 @@ func (s *Store) StartMailboxOccurrence(ctx context.Context, id, claim string, o 
 			if p.Ordinal != o.Ordinal || p.Location.RawSHA256 != o.Location.RawSHA256 || p.Location.Start != o.Location.Start || p.Location.End != o.Location.End || p.Location.EntrySHA256 != o.Location.EntrySHA256 {
 				return ErrMailboxConflict
 			}
-			if _, err = tx.ExecContext(ctx, `DELETE FROM mailbox_occurrences WHERE job_id=? AND ordinal=?`, id, o.Ordinal); err != nil {
+			if _, err = tx.ExecContext(ctx, `DELETE FROM mailbox_occurrences WHERE job_id=$1 AND ordinal=$2`, storedString(s.postgresSchema != "", id), o.Ordinal); err != nil {
 				return err
 			}
 		}
 		o.Outcome = mailboxOccurrencePending
 		o.Reason = ""
 		o.ReceiptID = ""
-		if err = insertMailboxOccurrence(ctx, tx, o); err != nil {
+		if err = insertMailboxOccurrence(ctx, tx, o, s.postgresSchema != ""); err != nil {
 			return err
 		}
 		j.Pending = 1
 		j.Canceled = 0
-		return saveMailboxJob(ctx, tx, j, false)
+		return saveMailboxJob(ctx, tx, j, false, s.postgresSchema != "")
 	})
 }
-func setMailboxPendingOutcome(ctx context.Context, tx *sql.Tx, j *MailboxJob, outcome string) error {
-	pending, err := mailboxOccurrences(ctx, tx, j.ID, j.Checkpoint, 1)
+func setMailboxPendingOutcome(ctx context.Context, tx *sql.Tx, j *MailboxJob, outcome string, postgres bool) error {
+	pending, err := mailboxOccurrences(ctx, tx, j.ID, j.Checkpoint, 1, postgres)
 	if err != nil {
 		return err
 	}
@@ -60,7 +60,7 @@ func setMailboxPendingOutcome(ctx context.Context, tx *sql.Tx, j *MailboxJob, ou
 	if err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE mailbox_occurrences SET occurrence_json=? WHERE job_id=? AND ordinal=?`, b, j.ID, o.Ordinal); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE mailbox_occurrences SET occurrence_json=$1 WHERE job_id=$2 AND ordinal=$3`, b, storedString(postgres, j.ID), o.Ordinal); err != nil {
 		return err
 	}
 	if outcome == mailboxOccurrencePending {

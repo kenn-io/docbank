@@ -16,9 +16,24 @@ Instructions for autonomous coding agents working in this repository.
   its database. An explicitly configured but unavailable server fails the test.
   Store query tests use `pgschema.Setup` and a separate runtime role; do not
   maintain a second copy of the catalog DDL in fixtures.
+  Share runtime grants through `internal/pgstoretest`; Store and backup tests
+  open the same validation-only runtime path.
   Do not start a container per test or repeat unrelated SQLite suites in the
   PostgreSQL lane. Follow the existing main-pinned PR dispatcher and cache
   ownership; branch changes to `ci.yml` only take effect for PRs after merge.
+- Preserve accepted UTF-8 strings, including NUL, across backends. PostgreSQL
+  `TEXT` cannot hold NUL: use `BYTEA` for unrestricted names and evidence,
+  `db:"column,bytes"` in the metadata codec, and explicit native bind conversion.
+  Keep SQLite acceptance and canonical metadata bytes unchanged; qualify native
+  reads, comparisons and writes along with restore. Use boolean presence flags
+  for optional byte filters, and bind each byte-valued cursor component explicitly.
+- Keep opaque JSON evidence unchanged. PostgreSQL JSONB operators can reject a
+  record because an unrelated string contains NUL. Derive the fields SQL needs
+  in Go in the native write transaction, and rebuild them through import and
+  fixture copying. Keep their indexes and query predicates aligned.
+- Metadata-transfer tests populate every custom import hook with native records.
+  Assert expected derived rows exist before comparing backend projections;
+  equality between empty lists does not qualify their recovery.
 - Go 1.27+ (go.mod is authoritative). Go 1.26 value-form `new(v)` and Go
   1.27 generic methods, promoted struct-literal fields, and assignment-context
   inference are in use; verify against the toolchain before treating unfamiliar
@@ -309,6 +324,9 @@ release, from a breaking change to `feat` to `fix`.
   the existing `database/sql` store boundary, explicit schema and schema-owner
   settings, setup-only DDL and validation-only runtime opening. Reuse existing
   query, search and fixture facilities before adding another abstraction.
+  Logical PostgreSQL import uses the schema owner and a pristine target. Never
+  grant runtime credentials identity writes for restore; verify physical bytes
+  before publishing a restored vault.
   PostgreSQL schemas remain disposable until the first deployment whose data
   must survive upgrades. Until then, edit canonical DDL directly. Setup records
   the embedded SQL's SHA-256 fingerprint; setup and runtime validation refuse a

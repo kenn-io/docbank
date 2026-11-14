@@ -110,7 +110,7 @@ func (s *Store) publishVisualPreview(
 			preview.ContractVersion, recipeFingerprint, canonical, checksum, preview.State,
 			previewOutputHash(preview), previewOutputSize(preview), previewOutputMediaType(preview),
 			previewOutputWidth(preview), previewOutputHeight(preview), previewFailureCode(preview),
-			previewFailureDetail(preview), generation.CreatedAt)
+			previewFailureDetail(preview, s.postgresSchema != ""), generation.CreatedAt)
 		if execErr != nil {
 			return fmt.Errorf("recording visual preview generation: %w", execErr)
 		}
@@ -314,11 +314,11 @@ func previewFailureCode(value document.VisualPreviewV1) any {
 	return value.Failure.Code
 }
 
-func previewFailureDetail(value document.VisualPreviewV1) any {
+func previewFailureDetail(value document.VisualPreviewV1, postgres bool) any {
 	if value.Failure == nil {
 		return nil
 	}
-	return value.Failure.Detail
+	return storedString(postgres, value.Failure.Detail)
 }
 
 // ContentVersionVisualPreviewByRecipe reads the exact generation and source in one snapshot.
@@ -422,7 +422,7 @@ func (s *Store) PhotoVisualPreviewTargetEligible(
  AND v.size=$3 AND COALESCE(v.mime_type,'')=$4 AND NOT EXISTS (
  SELECT 1 FROM visual_preview_generations g WHERE g.content_version_id=v.version_id AND g.recipe_fingerprint=$5)
  AND `+liveIncludedPhotoPreviewPredicate("v", recipeFingerprint)+`)`,
-		target.VersionID, target.SourceSHA256, target.Size, target.MediaType, recipeFingerprint).Scan(&eligible)
+		target.VersionID, target.SourceSHA256, target.Size, storedString(s.postgresSchema != "", target.MediaType), recipeFingerprint).Scan(&eligible)
 	if err != nil {
 		return false, fmt.Errorf("checking photo visual preview eligibility for version %q: %w", target.VersionID, err)
 	}

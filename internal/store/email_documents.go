@@ -285,16 +285,23 @@ func (s *Store) RemoveEmailDocumentPublication(ctx context.Context, operationID,
 		if retained {
 			return ErrMailboxConflict
 		}
-		d := metadataJSONDialect{s.postgresSchema != ""}
-		payload := "canonical_json"
-		if d.postgres {
-			payload = "convert_from(canonical_json,'UTF8')"
-		}
-		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM export_documents WHERE `+d.text(payload, "attachment_inventory.operation_id")+`=$1)`, operationID).Scan(&retained); err != nil {
+		if err = queryRows(ctx, tx, `SELECT canonical_json FROM export_documents`, nil, func(rows *sql.Rows) error {
+			var raw []byte
+			if err := rows.Scan(&raw); err != nil {
+				return err
+			}
+			var reference struct {
+				Inventory *bundle.AttachmentInventory `json:"attachment_inventory"`
+			}
+			if err := json.Unmarshal(raw, &reference); err != nil {
+				return fmt.Errorf("reading export attachment reference: %w", err)
+			}
+			if reference.Inventory != nil && reference.Inventory.OperationID == operationID {
+				return bundle.ErrRetained
+			}
+			return nil
+		}); err != nil {
 			return err
-		}
-		if retained {
-			return bundle.ErrRetained
 		}
 		_, err = tx.ExecContext(ctx, `DELETE FROM email_document_publications WHERE operation_id=$1`, operationID)
 		return err

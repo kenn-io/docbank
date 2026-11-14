@@ -25,14 +25,14 @@ func TestReportCoverageOutputShowsAvailableOnlyLimits(t *testing.T) {
 		RowCoverage: []report.Coverage{{Scoped: 10, Searchable: 7, MissingText: 2}},
 	}
 	require.NoError(t, writeReportCoverage(&output, summary))
-	require.Contains(t, output.String(), "coverage: 10 scoped, 8 searchable, 2 missing text, 1 incomplete families, 3 fallback dates")
-	require.Contains(t, output.String(), "counts exclude unavailable text or family evidence")
-	require.Contains(t, output.String(), "term 7 coverage: 7 searchable")
+	require.Contains(t, output.String(), "documents in date ranges: 10; searchable: 8; missing text: 2; incomplete related-file information: 1; dates from import or recorded time: 3")
+	require.Contains(t, output.String(), "counts exclude unavailable text and related-file information")
+	require.Contains(t, output.String(), "term 7: 7 searchable")
 	require.Contains(t, output.String(), "warning: synthetic coverage warning")
 	output.Reset()
 	require.NoError(t, writeReportCoverage(&output, report.Summary{State: "needs_review", UnresolvedDates: 2}))
-	require.Contains(t, output.String(), "coverage pending date review")
-	require.NotContains(t, output.String(), "0 scoped")
+	require.Contains(t, output.String(), "Review the document dates before the report can show counts")
+	require.NotContains(t, output.String(), "documents in date ranges: 0")
 }
 
 func TestReportCLIUsesDaemonThenVerifiesPacketOffline(t *testing.T) {

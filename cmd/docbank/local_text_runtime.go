@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/url"
 	"os"
@@ -46,14 +47,38 @@ func saveLocalText(root string, choice config.LocalTextConfig) error {
 	return atomicfile.WriteFile(filepath.Join(root, "local-text.json"), data)
 }
 
-func localTextSave(root string, restartPending *atomic.Bool, save func(string, config.LocalTextConfig) error) func(string, string) error {
+func localTextSave(root string, restartPending *atomic.Bool, save func(string, config.LocalTextConfig) error, logger *slog.Logger) func(string, string) error {
 	return func(name, mode string) error {
 		err := save(root, config.LocalTextConfig{Profile: name, Server: mode})
+		if err == nil {
+			if markerErr := embedlocal.RecordChoice(); markerErr != nil {
+				logger.Warn("record shared search by meaning choice", "error", markerErr)
+			}
+		}
 		if err == nil || errors.Is(err, atomicfile.ErrPublished) {
 			restartPending.Store(true)
 		}
 		return err
 	}
+}
+
+func inheritedLocalText(profiles map[string]processing.ProfileConfig) (config.LocalTextConfig, error) {
+	choice := config.LocalTextConfig{}
+	for _, profile := range profiles {
+		for _, binding := range profile.Profile.Embeddings {
+			if provider := profile.EmbeddingProviders[binding.Name]; provider != nil && binding.InputKind != document.EmbeddingInputImage && provider.Descriptor().SupportsTextQuery {
+				return choice, nil
+			}
+		}
+	}
+	recorded, err := embedlocal.ChoiceRecorded()
+	if err != nil {
+		return choice, fmt.Errorf("read shared search by meaning choice: %w", err)
+	}
+	if !recorded {
+		return choice, nil
+	}
+	return config.LocalTextConfig{Profile: config.LocalTextProfile, Server: "local"}, nil
 }
 
 // localTextCandidate moves one compatible recipe, or supplies the plaintext fallback.
@@ -142,11 +167,31 @@ func projectLocalTextProfile(cfg config.Config, profiles map[string]processing.P
 	return cfg, nil
 }
 
-func localTextStatus(ctx context.Context, profiles map[string]processing.ProfileConfig, service *processing.Service, restartPending bool) (api.LocalTextStatus, error) {
+func runLocalText(ctx context.Context, setup *processing.LocalTextSetup, inherited bool, ready *atomic.Bool, logger *slog.Logger) error {
+	if inherited {
+		active, err := setup.InitializeInherited(ctx)
+		if err != nil || !active {
+			return err
+		}
+		ready.Store(true)
+	}
+	return setup.Backfill(ctx, logger)
+}
+
+func localTextStatus(ctx context.Context, profiles map[string]processing.ProfileConfig, service *processing.Service, restartPending, inherited, inheritedReady bool) (api.LocalTextStatus, error) {
 	status := api.LocalTextStatus{RestartRequired: restartPending}
 	for _, profile := range service.Profiles() {
 		if len(profile.QueryEmbeddingBindings) == 0 {
 			continue
+		}
+		if inherited && profile.Name == config.LocalTextProfile {
+			active, err := service.ProfileConsentActive(ctx, profile.Name)
+			if err != nil {
+				return status, err
+			}
+			if !active || !inheritedReady {
+				continue
+			}
 		}
 		binding := profiles[profile.Name].EmbeddingDisclosures[profile.QueryEmbeddingBindings[0]]
 		status.Active, status.Provider = true, "configured"

@@ -182,11 +182,11 @@ func (s *Store) StageEmbeddingSet(ctx context.Context, record EmbeddingSetRecord
 		return err
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return stageEmbeddingSetTx(ctx, tx, record)
+		return stageEmbeddingSetTx(ctx, tx, record, s.postgresSchema != "")
 	})
 }
 
-func stageEmbeddingSetTx(ctx context.Context, tx *sql.Tx, record EmbeddingSetRecord) error {
+func stageEmbeddingSetTx(ctx context.Context, tx *sql.Tx, record EmbeddingSetRecord, postgres bool) error {
 	if err := validateEmbeddingSetFencesTx(ctx, tx, record); err != nil {
 		return err
 	}
@@ -202,13 +202,13 @@ func stageEmbeddingSetTx(ctx context.Context, tx *sql.Tx, record EmbeddingSetRec
 	record.VectorSet.Payload = nil
 	record.InputGeneration.GenerationJSON = nil
 	record.InputGeneration.EvidenceJSON = nil
-	if err := insertVectorSpaceTx(ctx, tx, record.VectorSpace); err != nil {
+	if err := insertVectorSpaceTx(ctx, tx, record.VectorSpace, postgres); err != nil {
 		return err
 	}
-	if err := insertInputGenerationTx(ctx, tx, record.InputGeneration); err != nil {
+	if err := insertInputGenerationTx(ctx, tx, record.InputGeneration, postgres); err != nil {
 		return err
 	}
-	if err := insertVectorSetTx(ctx, tx, record.VectorSet); err != nil {
+	if err := insertVectorSetTx(ctx, tx, record.VectorSet, postgres); err != nil {
 		return err
 	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO embedding_sets(
@@ -1101,7 +1101,7 @@ func validateEmbeddingBindingAuthority(record EmbeddingSetRecord, binding docume
 	return nil
 }
 
-func insertVectorSpaceTx(ctx context.Context, tx *sql.Tx, record EmbeddingVectorSpaceRecord) error {
+func insertVectorSpaceTx(ctx context.Context, tx *sql.Tx, record EmbeddingVectorSpaceRecord, postgres bool) error {
 	descriptorJSON, err := encodeCanonicalEmbeddingDescriptor(record.Descriptor)
 	if err != nil {
 		return fmt.Errorf("encoding E1 descriptor: %w", err)
@@ -1112,9 +1112,9 @@ func insertVectorSpaceTx(ctx context.Context, tx *sql.Tx, record EmbeddingVector
 		descriptor_fingerprint,compatibility_id,dimensions,metric,normalization,
 		scalar_encoding,document_formatter,query_formatter,model_input_fingerprint
 	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT DO NOTHING`, record.ID, record.ContractVersion, descriptorJSON,
-		record.ProviderDescriptor, record.ProviderRevision, record.DescriptorFingerprint,
-		record.CompatibilityID, record.Dimensions, record.Metric, record.Normalization,
-		record.ScalarEncoding, record.DocumentFormatter, record.QueryFormatter,
+		storedString(postgres, record.ProviderDescriptor), storedString(postgres, record.ProviderRevision), record.DescriptorFingerprint,
+		storedString(postgres, record.CompatibilityID), record.Dimensions, record.Metric, record.Normalization,
+		record.ScalarEncoding, storedString(postgres, record.DocumentFormatter), storedString(postgres, record.QueryFormatter),
 		record.ModelInputFingerprint)
 	if err != nil {
 		return fmt.Errorf("inserting embedding vector space: %w", err)
@@ -1130,7 +1130,7 @@ func insertVectorSpaceTx(ctx context.Context, tx *sql.Tx, record EmbeddingVector
 	return nil
 }
 
-func insertInputGenerationTx(ctx context.Context, tx *sql.Tx, record EmbeddingInputGenerationRecord) error {
+func insertInputGenerationTx(ctx context.Context, tx *sql.Tx, record EmbeddingInputGenerationRecord, postgres bool) error {
 	var attachment any
 	if record.AttachmentID != "" {
 		attachment = record.AttachmentID
@@ -1159,14 +1159,14 @@ func insertInputGenerationTx(ctx context.Context, tx *sql.Tx, record EmbeddingIn
 	for order, input := range record.Inputs {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO embedding_generation_inputs(
 			generation_id,input_id,input_order,rendered_checksum) VALUES($1,$2,$3,$4)`,
-			record.ID, input.ID, order, input.RenderedChecksum); err != nil {
+			record.ID, storedString(postgres, input.ID), order, input.RenderedChecksum); err != nil {
 			return fmt.Errorf("inserting embedding input: %w", err)
 		}
 	}
 	return nil
 }
 
-func insertVectorSetTx(ctx context.Context, tx *sql.Tx, record EmbeddingVectorSetRecord) error {
+func insertVectorSetTx(ctx context.Context, tx *sql.Tx, record EmbeddingVectorSetRecord, postgres bool) error {
 	result, err := tx.ExecContext(ctx, `INSERT INTO embedding_vector_sets(
 		vector_set_id,contract_version,vector_space_id,payload_blob_hash,payload_size,payload_checksum,
 		manifest_checksum,row_count,dimensions) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`, record.ID,
@@ -1186,7 +1186,7 @@ func insertVectorSetTx(ctx context.Context, tx *sql.Tx, record EmbeddingVectorSe
 	for order, row := range record.rows {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO embedding_vector_rows(
 			vector_set_id,row_id,row_order,input_id,dimensions,checksum) VALUES($1,$2,$3,$4,$5,$6)`,
-			record.ID, row.RowID, order, row.InputID, row.Dimensions, row.Checksum); err != nil {
+			record.ID, storedString(postgres, row.RowID), order, storedString(postgres, row.InputID), row.Dimensions, row.Checksum); err != nil {
 			return fmt.Errorf("inserting embedding vector row: %w", err)
 		}
 	}
@@ -1626,7 +1626,7 @@ func (s *Store) StageEmbeddingSetWithLease(ctx context.Context, record Embedding
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if err := requireEmbeddingWorkerLeaseTx(ctx, tx, rootID, fencingToken,
-			record.InputGeneration.ID, at); err != nil {
+			record.InputGeneration.ID, at, s.postgresSchema != ""); err != nil {
 			return err
 		}
 		// Retrying publication may stage the same content again. Its first
@@ -1639,7 +1639,7 @@ func (s *Store) StageEmbeddingSetWithLease(ctx context.Context, record Embedding
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		return stageEmbeddingSetTx(ctx, tx, record)
+		return stageEmbeddingSetTx(ctx, tx, record, s.postgresSchema != "")
 	})
 }
 
@@ -1665,7 +1665,7 @@ func (s *Store) PublishEmbeddingHeadWithLease(ctx context.Context, record Embedd
 	var authorization ProviderOperationAuthorization
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		authorization, err = publishEmbeddingHeadWithLeaseTx(ctx, tx, s.vaultID, record, consent, prior, rootID, fencingToken, at)
+		authorization, err = publishEmbeddingHeadWithLeaseTx(ctx, tx, s.vaultID, record, consent, prior, rootID, fencingToken, at, s.postgresSchema != "")
 		return err
 	})
 	return authorization, err
@@ -1673,17 +1673,17 @@ func (s *Store) PublishEmbeddingHeadWithLease(ctx context.Context, record Embedd
 
 func publishEmbeddingHeadWithLeaseTx(ctx context.Context, tx *sql.Tx, vaultID string, record EmbeddingHeadRecord,
 	consent ProviderOperationAuthorizationRequest, prior ProviderOperationAuthorization,
-	rootID string, fencingToken int64, at time.Time,
+	rootID string, fencingToken int64, at time.Time, postgres bool,
 ) (ProviderOperationAuthorization, error) {
 	set, err := loadEmbeddingSetTx(ctx, tx, record.SetID)
 	if err != nil {
 		return ProviderOperationAuthorization{}, err
 	}
-	if err := requireEmbeddingWorkerLeaseTx(ctx, tx, rootID, fencingToken, set.InputGeneration.ID, at); err != nil {
+	if err := requireEmbeddingWorkerLeaseTx(ctx, tx, rootID, fencingToken, set.InputGeneration.ID, at, postgres); err != nil {
 		return ProviderOperationAuthorization{}, err
 	}
 	consent.PriorAuthorization = &prior
-	authorization, err := authorizeProviderOperationTx(ctx, tx, vaultID, consent, at.UTC())
+	authorization, err := authorizeProviderOperationTx(ctx, tx, vaultID, consent, at.UTC(), postgres)
 	if err != nil {
 		return ProviderOperationAuthorization{}, err
 	}
@@ -1691,7 +1691,7 @@ func publishEmbeddingHeadWithLeaseTx(ctx context.Context, tx *sql.Tx, vaultID st
 }
 
 func requireEmbeddingWorkerLeaseTx(ctx context.Context, tx *sql.Tx, rootID string,
-	fencingToken int64, generationID string, at time.Time,
+	fencingToken int64, generationID string, at time.Time, postgres bool,
 ) error {
 	if rootID == "" || fencingToken <= 0 || generationID == "" || at.IsZero() {
 		return ErrCurrentRenditionRootFenced
@@ -1699,7 +1699,7 @@ func requireEmbeddingWorkerLeaseTx(ctx context.Context, tx *sql.Tx, rootID strin
 	var expiresAt string
 	err := tx.QueryRowContext(ctx, `SELECT expires_at FROM current_rendition_roots
 		WHERE root_id=$1 AND root_kind=$2 AND target_kind=$3 AND target_id=$4
-		  AND fencing_token=$5 AND active=1`, rootID, RenditionRootWorkerLease,
+		  AND fencing_token=$5 AND active=1`, storedString(postgres, rootID), RenditionRootWorkerLease,
 		RenditionRootEmbeddingGeneration, generationID, fencingToken).Scan(&expiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrCurrentRenditionRootFenced

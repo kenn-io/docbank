@@ -200,7 +200,7 @@ func (s *Store) retainPersonCandidate(ctx context.Context, tx *sql.Tx, candidate
 		candidate_id,actor_key,display_name,suggested_person_id,reason,evidence_json,evidence_sha256,
 		occurrence_count,revision,state,decided_person_id,created_at,decided_at
 	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,'open',NULL,$9,NULL) ON CONFLICT `+conflict+` DO NOTHING`,
-		candidate.CandidateID, candidate.ActorKey, candidate.DisplayName,
+		candidate.CandidateID, candidate.ActorKey, storedString(s.postgresSchema != "", candidate.DisplayName),
 		nullableString(candidate.SuggestedPersonID), candidate.Reason, candidate.Evidence,
 		candidate.EvidenceSHA256, candidate.OccurrenceCount, candidate.CreatedAt)
 	if err != nil {
@@ -430,7 +430,7 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, reader RenditionBlobR
 			if decision.DisplayName != "" {
 				name = decision.DisplayName
 			}
-			personID, err = createCandidatePersonTx(ctx, tx, name)
+			personID, err = s.createCandidatePersonTx(ctx, tx, name)
 		}
 		if err == nil && personID != "" {
 			err = materializeCandidateAssertionsTx(ctx, tx, personID, occurrences)
@@ -515,7 +515,7 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 				return ErrStaleRevision
 			}
 			result, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action=$1,note=$2,photo_mark=$3,revision=revision+1 WHERE assertion_id=$4 AND revision=$5`,
-				assertion.Action, assertion.Note, boolInt(assertion.PhotoMark), existing.AssertionID, existing.Revision)
+				assertion.Action, storedString(s.postgresSchema != "", assertion.Note), boolInt(assertion.PhotoMark), existing.AssertionID, existing.Revision)
 			if err != nil {
 				return err
 			}
@@ -543,7 +543,7 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 			assertion.RecordedAt = nowRFC3339()
 			_, err = tx.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision) VALUES($1,$2,$3,$4,$5,$6,$7,1)`,
 				assertion.AssertionID, assertion.ContentVersionID, assertion.PersonID, assertion.Role,
-				assertion.Action, assertion.Note, assertion.RecordedAt)
+				assertion.Action, storedString(s.postgresSchema != "", assertion.Note), assertion.RecordedAt)
 			if err != nil {
 				return err
 			}
@@ -623,8 +623,8 @@ func resolveActiveCandidatePersonTx(ctx context.Context, tx *sql.Tx, personID st
 	return resolved, nil
 }
 
-func createCandidatePersonTx(ctx context.Context, tx *sql.Tx, displayName string) (string, error) {
-	person, err := createPersonTx(ctx, tx, displayName, "operator")
+func (s *Store) createCandidatePersonTx(ctx context.Context, tx *sql.Tx, displayName string) (string, error) {
+	person, err := s.createPersonTx(ctx, tx, displayName, "operator")
 	return person.PersonID, err
 }
 

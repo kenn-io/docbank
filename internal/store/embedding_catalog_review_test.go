@@ -18,7 +18,7 @@ func checkEmbeddingCatalogHeadsAndFailuresAreProfileScoped(t *testing.T, open fu
 	s, versionID, firstProfile, _ := seedEmbeddingCatalog(t, open(t))
 	secondProfile := embeddingCatalogProfileVariant(t)
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return ensureProcessingProfileTx(t.Context(), tx, secondProfile)
+		return ensureProcessingProfileTx(t.Context(), tx, secondProfile, s.postgresSchema != "")
 	}))
 
 	first := embeddingSetFixture(t.Context(), s, versionID, firstProfile.Fingerprint,

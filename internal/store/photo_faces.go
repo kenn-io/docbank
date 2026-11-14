@@ -386,7 +386,7 @@ func (s *Store) MarkPersonInPhoto(ctx context.Context, versionID, personID, pers
 			var name, state string
 			err := tx.QueryRowContext(ctx, `SELECT display_name,state FROM persons WHERE person_id=$1`, personID).Scan(&name, &state)
 			if errors.Is(err, sql.ErrNoRows) {
-				_, err = createPersonWithIDTx(ctx, tx, personID, personName, "operator")
+				_, err = s.createPersonWithIDTx(ctx, tx, personID, personName, "operator")
 			} else if err == nil {
 				if state == personStateRetired {
 					return ErrNotFound

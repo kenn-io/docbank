@@ -39,6 +39,8 @@ Cancellation before apply and failed server startup leave the saved choice uncha
 
 In the web app, open **System → Search by meaning**, review the download size, and choose **Turn on** to approve setup. Setup starts the server and saves the indexing choice for this vault and new imports. Run `docbank daemon restart`, then reopen the web app to start indexing and search by meaning. The tab keeps the restart instruction until the daemon restarts.
 
+A successful built-in setup in the web app or CLI records the choice for other Kenn apps on this computer. If another app recorded that choice, Docbank installs any missing shared files and starts indexing at its next launch without saving a vault setup. If setup fails, use **Turn on** to try again. Existing configured providers keep their settings.
+
 For other processing, configure a profile and its referenced rendition, embedding, and retrieval profiles, then select a name listed by `processing profiles`.
 
 Preview the current version before sending a document or query to any provider:

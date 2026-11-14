@@ -463,7 +463,7 @@ func checkCandidateAuthorityPreventsMetadataImport(t *testing.T, newStore func(*
 		ContentVersionID: "00000000-0000-4000-8000-000000000001", Role: "author", EvidenceKind: "source_metadata", EvidenceID: "pruned-claim",
 	}}))
 	err := s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return requirePristineMetadataTarget(t.Context(), tx)
+		return requirePristineMetadataTarget(t.Context(), tx, false)
 	})
 	require.ErrorContains(t, err, "not pristine")
 }

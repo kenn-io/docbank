@@ -14,6 +14,7 @@ func TestTermReportBrowserAllowlistRequiresExactRoutes(t *testing.T) {
 	id := strings.Repeat("a", 48)
 	for _, item := range []struct{ method, path string }{
 		{http.MethodPost, "/api/v1/search-exports"},
+		{http.MethodPost, "/api/v1/search-exports/selection"},
 		{http.MethodGet, "/api/v1/search-exports/" + id},
 		{http.MethodPost, "/api/v1/search-exports/" + id + "/dates"},
 		{http.MethodPost, "/api/v1/search-exports/" + id + "/revisions"},
@@ -26,6 +27,7 @@ func TestTermReportBrowserAllowlistRequiresExactRoutes(t *testing.T) {
 	require.True(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search-exports?offset=20&limit=20", nil)))
 	require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search-exports?other=1", nil)))
 	for _, item := range []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/search-exports/selection"},
 		{http.MethodGet, "/api/v1/search-exports/" + id + "/csv"},
 		{http.MethodGet, "/api/v1/search-exports/" + id + "/bundle"},
 		{http.MethodPost, "/api/v1/search-exports/" + strings.Repeat("z", 48) + "/dates"},

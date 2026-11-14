@@ -353,10 +353,7 @@
           {/if}
         </Card>
       {:else}
-        <EmptyState
-          title="Select an event"
-          description="Choose a timeline entry to inspect its complete stable identities and before/after state."
-        >
+        <EmptyState title="Select an event" description="Choose an event to see what changed.">
           {#snippet icon()}<ShieldCheckIcon size="22" />{/snippet}
         </EmptyState>
       {/if}

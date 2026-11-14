@@ -80,11 +80,13 @@ test("reports selected versions and preserves historical downloads", async ({ pa
     await expect(drawer).toBeVisible();
     await drawer.getByRole("textbox", { name: "Expression for term 1" }).fill("alpha");
     await drawer.getByText("Options", { exact: true }).click();
-    await drawer.getByRole("combobox", { name: /^Coverage policy/ }).click();
+    await drawer.getByRole("combobox", { name: /^Missing information/ }).click();
     await page.getByRole("option", { name: "Count available text", exact: true }).click();
     await drawer.getByRole("button", { name: "Create report" }).click();
     await expect(drawer.getByText(/^Counts ready/).first()).toBeVisible();
-    await expect(drawer.getByText(/2 scoped · 2 searchable · 0 missing text/)).toBeVisible();
+    await expect(
+      drawer.getByText(/2 in date ranges · 2 searchable · 0 missing text/),
+    ).toBeVisible();
     await expect(drawer.getByRole("button", { name: "Download evidence ZIP" })).toBeVisible();
     await drawer.getByRole("button", { name: "Download evidence ZIP" }).scrollIntoViewIfNeeded();
 
@@ -95,7 +97,9 @@ test("reports selected versions and preserves historical downloads", async ({ pa
     await drawer.getByRole("checkbox").first().check();
     await drawer.getByRole("button", { name: "Create report" }).click();
     await expect(drawer.getByRole("button", { name: "Use as draft" })).toHaveCount(2);
-    await expect(drawer.getByText(/1 scoped · 1 searchable · 0 missing text/)).toBeVisible();
+    await expect(
+      drawer.getByText(/1 in date ranges · 1 searchable · 0 missing text/),
+    ).toBeVisible();
     await expect(drawer.getByText("1 import").first()).toBeVisible();
     await drawer.getByText("Recent reports", { exact: true }).scrollIntoViewIfNeeded();
     await page.screenshot({
@@ -110,7 +114,7 @@ test("reports selected versions and preserves historical downloads", async ({ pa
     await drawer.getByText("Options", { exact: true }).click();
     await expect(drawer.getByText("Selected documents (1)", { exact: true })).toBeVisible();
     await drawer.getByRole("textbox", { name: "Expression for term 1" }).fill("alpha");
-    await drawer.getByRole("combobox", { name: /^Coverage policy/ }).click();
+    await drawer.getByRole("combobox", { name: /^Missing information/ }).click();
     await page.getByRole("option", { name: "Count available text", exact: true }).click();
     await page.screenshot({
       path: path.join(screenshots!, "selected-report-draft.png"),

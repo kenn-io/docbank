@@ -1,4 +1,6 @@
 <script lang="ts">
+  import UploadChannelNotice from "./UploadChannelNotice.svelte";
+  import type { UploadConnectionState } from "./uploadReconnect.js";
   import { onMount, onDestroy } from "svelte";
   import MailIcon from "@lucide/svelte/icons/mail";
   import { Button, Chip, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
@@ -20,6 +22,9 @@
 
   interface Props {
     session: string;
+    disabledReason?: string;
+    connectionState?: UploadConnectionState;
+    onreconnect?: () => void;
     channel: MailboxChannel;
     directory: Node;
     onclose: () => void;
@@ -27,8 +32,18 @@
     onauthfailure: (cause: unknown) => void;
     onexport?: (collectionID: string, total: number) => void;
   }
-  let { session, channel, directory, onclose, oncomplete, onauthfailure, onexport }: Props =
-    $props();
+  let {
+    session,
+    channel,
+    directory,
+    onclose,
+    oncomplete,
+    onauthfailure,
+    onexport,
+    disabledReason = "",
+    connectionState = "fatal",
+    onreconnect = () => {},
+  }: Props = $props();
   let file = $state<File | null>(null),
     dialect = $state("mboxrd"),
     busy = $state(false),
@@ -106,7 +121,7 @@
     error = "";
   }
   async function upload(): Promise<void> {
-    if (!file || busy) return;
+    if (!file || busy || disabledReason) return;
     busy = true;
     error = "";
     controller = new AbortController();
@@ -210,11 +225,16 @@
   }
 </script>
 
+{#snippet channelFooter()}
+  <UploadChannelNotice state={connectionState} message={disabledReason} size="md" {onreconnect} />
+{/snippet}
+
 <DrawerShell
   title={`Import mailbox to ${directory.path ?? "current folder"}`}
   ariaLabel="Import mailbox archive"
   closeLabel="Close mailbox import"
   {onclose}
+  footer={disabledReason ? channelFooter : undefined}
 >
   <div class="tool-body">
     <section class="tool-section" aria-label="Mailbox source">
@@ -225,7 +245,7 @@
             accept=".mbox,.zip"
             label="Choose MBOX or Takeout ZIP"
             {file}
-            disabled={busy}
+            disabled={busy || Boolean(disabledReason)}
             icon={MailIcon}
             onchange={choose}
           />
@@ -257,7 +277,11 @@
               ><Spinner size={14} />
               {stage} · {formatBytes(processed)} of {formatBytes(total)}</span
             ><Button onclick={() => void cancel()}>Cancel upload</Button>{/if}
-          <Button tone="info" surface="solid" disabled={busy || !file} onclick={() => void upload()}
+          <Button
+            tone="info"
+            surface="solid"
+            disabled={busy || !file || Boolean(disabledReason)}
+            onclick={() => void upload()}
             >{container ? "Refresh preview" : "Upload and preview"}</Button
           >
         </div>
@@ -276,7 +300,9 @@
             Some messages exceed the import limits and will be reported as rejected.
           </p>{/if}
         <div class="tool-actions">
-          <Button disabled={busy} onclick={() => void upload()}>Refresh preview</Button>
+          <Button disabled={busy || Boolean(disabledReason)} onclick={() => void upload()}
+            >Refresh preview</Button
+          >
           <Button tone="info" surface="solid" disabled={busy} onclick={() => void start()}
             >Import messages</Button
           >

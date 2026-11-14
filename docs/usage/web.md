@@ -592,10 +592,12 @@ with a random secret issued through the ownership-pinned CLI handoff. File
 bytes never use an ordinary reconnectable browser HTTP request.
 
 The channel is bound to one browser session and one daemon lifetime. If it
-breaks, the page permanently disables upload rather than reconnecting to
-whatever process now owns the loopback port. Run `docbank web` again to obtain
-a newly proved channel. The daemon independently computes the hash and size
-and grants node/blob authority only when both match. The browser compares that
+breaks, Docbank retries the connection and verifies a fresh proof before
+enabling uploads. Choose **Reconnect** if automatic retries fail. An upload
+whose result is unconfirmed is never resent automatically. When you retry one,
+the daemon checks for the stored result before receiving file bytes. The daemon
+independently computes the hash and size and grants node/blob authority only
+when both match. The browser compares that
 receipt again before reporting **Added** or **Already present**, then refreshes
 the destination by ID.
 
@@ -851,7 +853,7 @@ pinning are not browser workflows.
 
 ## Browse tags and search text
 
-Open **System → Search by meaning** to enable text search by meaning. Review the download size, choose **Turn on** to approve setup, then run `docbank daemon restart` when prompted and reopen the web app. Indexing starts after the restart and covers existing documents and new imports. The search-results hint opens this tab when search by meaning is off.
+Open **System → Search by meaning** to enable text search by meaning. Review the download size, choose **Turn on** to approve setup, then run `docbank daemon restart` when prompted and reopen the web app. Indexing starts after the restart and covers existing documents and new imports. The search-results hint opens this tab when search by meaning is off. A successful built-in Turn on records the choice for other Kenn apps on this computer. If another app recorded it, Docbank installs any missing shared files and starts indexing at its next launch. If setup fails, use **Turn on** to try again. Configured providers keep their settings.
 
 Enter a word or phrase in the search box and press Enter. Results can match a
 live document name or verified extracted text. The results heading shows the
@@ -1231,12 +1233,12 @@ accepts that credential for the following operations:
 Use the bookmark button to [manage saved queries and highlights](#saved-queries-and-highlights)
 or **Advanced** to [validate and run a complete query](#edit-a-complete-query).
 
-Upload uses a separate WebSocket: a connection that never reconnects during the
-session. The browser must prove it holds the upload secret before sending any
-file bytes. Upload can create only file nodes beneath the live
-directory selected in the browser. Folder uploads also create the subfolders they
-need through `POST /api/v1/nodes`, which makes directories only. The daemon independently checks the
-caller-declared hash and size, as it does for other remote writers.
+Upload uses a separate WebSocket. The daemon proves its identity to the browser
+before file bytes are sent, including after a connection is replaced. Upload
+can create only file nodes beneath the live directory selected in the browser.
+Folder uploads also create the subfolders they need through `POST /api/v1/nodes`,
+which makes directories only. The daemon independently checks the caller-declared
+hash and size, as it does for other remote writers.
 
 These permissions do not allow emptying trash, document mutations other than
 the revision-checked tag workflows above, audit enrollment, backup creation,
@@ -1293,7 +1295,7 @@ and WebP images up to 32 MiB. Animated WebP images may animate in the browser. P
 or larger sources offer verified download without a page preview. Other
 document, image, audio, video, and archive formats use verified download.
 
-If a page reports that its browser session or upload channel expired, ended,
-or was rejected, run `docbank web` again. Neither credential nor the upload
-channel survives daemon restart, and the previous random `.localhost` origin
-is not reused.
+If a page reports that its browser session expired or was rejected, run
+`docbank web` again, or sign in again if you use a key. Neither credential nor
+the upload channel survives daemon restart, and the previous random `.localhost`
+origin is not reused.

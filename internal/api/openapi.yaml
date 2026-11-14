@@ -20073,6 +20073,13 @@ components:
     SelectedDocuments:
       additionalProperties: false
       properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SelectedDocuments.json
+          format: uri
+          readOnly: true
+          type: string
         documents:
           items:
             $ref: "#/components/schemas/Identity"
@@ -21528,6 +21535,31 @@ components:
         - total
       type: object
       x-go-type: store.TermReportHistoryPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    TermReportSelectionItem:
+      additionalProperties: false
+      properties:
+        current:
+          $ref: "#/components/schemas/Identity"
+        modified:
+          type: string
+        name:
+          type: string
+        path:
+          type: string
+        selected:
+          $ref: "#/components/schemas/Identity"
+        selected_recorded:
+          type: string
+        status:
+          type: string
+      required:
+        - selected
+        - status
+      type: object
+      x-go-type: store.TermReportSelectionItem
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
@@ -32573,6 +32605,31 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Prepare a frozen search export
+  /api/v1/search-exports/selection:
+    post:
+      operationId: refreshTermReportSelection
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SelectedDocuments"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/TermReportSelectionItem"
+                type: array
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Compare selected document versions
   /api/v1/search-exports/{id}:
     delete:
       operationId: releaseTermReport

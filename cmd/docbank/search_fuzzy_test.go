@@ -56,10 +56,10 @@ func TestSearchFuzzyEmptyLimitedOutput(t *testing.T) {
 		require.NoError(t, writeSearchReport(cmd, report, "", ""))
 		require.Contains(t, out.String(), "no matches")
 		if receipt != nil && receipt.Status != "complete" {
-			require.Contains(t, out.String(), "incomplete")
+			require.Contains(t, out.String(), "some filename matches may be missing")
 			require.Contains(t, out.String(), "--under")
 		} else {
-			require.NotContains(t, out.String(), "incomplete")
+			require.NotContains(t, out.String(), "some filename matches may be missing")
 		}
 	}
 }

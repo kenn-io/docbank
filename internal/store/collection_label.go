@@ -31,15 +31,15 @@ func normalizeOptionalCollectionLabel(label *string) (string, bool, error) {
 }
 
 func collectionLabelTx(
-	ctx context.Context, q rowQuerier, ingestID string,
+	ctx context.Context, q rowQuerier, ingestID string, postgres bool,
 ) (CollectionLabel, bool, error) {
 	var startedAt string
 	var label, updatedAt, retained sql.NullString
 	var revision sql.NullInt64
-	err := q.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
+	err := q.QueryRowContext(ctx, `WITH `+collectionMembershipSQL(postgres)+`
 		SELECT i.started_at, l.label, l.revision, l.updated_at, l.ingest_id
 		FROM ingests i LEFT JOIN collection_labels l ON l.ingest_id=i.id
-		WHERE i.id=$1 AND LOWER(i.source_kind) NOT LIKE 'embedded:%'
+		WHERE i.id=$1 AND NOT (`+(provenanceSQLDialect{postgres: postgres}).embedded("i.source_kind")+`)
 		  AND (l.ingest_id IS NOT NULL OR EXISTS(
 			SELECT 1 FROM collection_members cm WHERE cm.ingest_id=i.id
 		  ))`, ingestID).Scan(&startedAt, &label, &revision, &updatedAt, &retained)
@@ -65,7 +65,7 @@ func (s *Store) CollectionLabel(ctx context.Context, id string) (CollectionLabel
 	if err := validateUUIDv4(id); err != nil {
 		return CollectionLabel{}, fmt.Errorf("collection %q: %w", id, ErrNotFound)
 	}
-	label, _, err := collectionLabelTx(ctx, s.db, id)
+	label, _, err := collectionLabelTx(ctx, s.db, id, s.postgresSchema != "")
 	return label, err
 }
 
@@ -87,7 +87,7 @@ func (s *Store) SetCollectionLabel(
 	}
 	var result CollectionLabel
 	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		current, retained, err := collectionLabelTx(ctx, tx, id)
+		current, retained, err := collectionLabelTx(ctx, tx, id, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
@@ -115,7 +115,7 @@ func (s *Store) SetCollectionLabel(
 			}
 			return fmt.Errorf("updating collection label %q: %w", id, err)
 		}
-		result, _, err = collectionLabelTx(ctx, tx, id)
+		result, _, err = collectionLabelTx(ctx, tx, id, s.postgresSchema != "")
 		return err
 	})
 	if err != nil {

@@ -14136,6 +14136,53 @@ func (c *Client) CreateTermReport(ctx context.Context, options *CreateTermReport
 	return responseParser(ctx, resp)
 }
 
+// RefreshTermReportSelection Compare selected document versions
+func (c *Client) RefreshTermReportSelection(ctx context.Context, options *RefreshTermReportSelectionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RefreshTermReportSelectionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/search-exports/selection",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RefreshTermReportSelectionResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RefreshTermReportSelectionResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RefreshTermReportSelectionResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RefreshTermReportSelectionErrorResponse](resp, "RefreshTermReportSelectionErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search-exports/selection")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ReleaseTermReport Release a live report handle
 func (c *Client) ReleaseTermReport(ctx context.Context, options *ReleaseTermReportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
 	var err error
@@ -25809,6 +25856,34 @@ func (o *CreateTermReportRequestOptions) GetHeader() (map[string]string, error) 
 	return nil, nil
 }
 
+// RefreshTermReportSelectionRequestOptions is the options needed to make a request to RefreshTermReportSelection.
+type RefreshTermReportSelectionRequestOptions struct {
+	Body *RefreshTermReportSelectionBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RefreshTermReportSelectionRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *RefreshTermReportSelectionRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RefreshTermReportSelectionRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *RefreshTermReportSelectionRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ReleaseTermReportRequestOptions is the options needed to make a request to ReleaseTermReport.
 type ReleaseTermReportRequestOptions struct {
 	PathParams *ReleaseTermReportPath
@@ -28803,6 +28878,8 @@ type SearchDocumentsBody = DocumentSearchRequest
 
 type CreateTermReportBody = Request
 
+type RefreshTermReportSelectionBody = SelectedDocuments
+
 type GetTermReportDatesBody = DatePageRequest
 
 type IssueTermReportDownloadBody = IssueTermReportDownloadRequest
@@ -30658,6 +30735,10 @@ type ListTermReportHistoryErrorResponse = Error
 type CreateTermReportResponse = report.Summary
 
 type CreateTermReportErrorResponse = Error
+
+type RefreshTermReportSelectionResponse []TermReportSelectionItem
+
+type RefreshTermReportSelectionErrorResponse = Error
 
 type ReleaseTermReportErrorResponse = Error
 
@@ -32596,6 +32677,8 @@ type Term = report.Term
 type TermReportHistory = store.TermReportHistory
 
 type TermReportHistoryPage = store.TermReportHistoryPage
+
+type TermReportSelectionItem = store.TermReportSelectionItem
 
 type TextCitation = document.TextCitation
 

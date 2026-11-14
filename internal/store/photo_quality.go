@@ -83,7 +83,7 @@ func (s *Store) publishPhotoQuality(
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		args := append([]any{fingerprints.Evaluator, state}, scores...)
-		args = append(args, string(encoded), inputs, target.VersionID, target.SourceSHA256, target.Size, target.MediaType, inputs)
+		args = append(args, string(encoded), inputs, target.VersionID, target.SourceSHA256, target.Size, storedString(s.postgresSchema != "", target.MediaType), inputs)
 		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_quality_signals
  WHERE content_version_id=$1 AND evaluator_fingerprint!=$2`, target.VersionID, fingerprints.Evaluator); err != nil {
 			return fmt.Errorf("replacing stale photo quality signals: %w", err)

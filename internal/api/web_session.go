@@ -330,7 +330,7 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		return true
 	}
 	if r.URL.RawQuery == "" {
-		if path == "/api/v1/search-exports" {
+		if path == "/api/v1/search-exports" || path == "/api/v1/search-exports/selection" {
 			return method == http.MethodPost
 		}
 		if after, ok := strings.CutPrefix(path, "/api/v1/search-exports/"); ok {

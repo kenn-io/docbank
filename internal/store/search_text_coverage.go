@@ -62,12 +62,13 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
 		 JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
 		  AND a.content_version_id=h.content_version_id AND a.profile_fingerprint=h.profile_fingerprint
 		 JOIN rendition_lexical_generation_builds gb ON gb.build_id=a.build_id
-		 WHERE h.content_version_id=cv.version_id AND gb.generation_id=? AND `+renditionHasSearchableTextSQL("a.build_id")+`) serving,
+		 WHERE h.content_version_id=cv.version_id AND gb.generation_id=? AND `+renditionHasSearchableTextSQL("a.build_id", false)+`) serving,
 		 CASE WHEN ? AND lower(trim(cv.mime_type)) LIKE 'application/pdf%'
 		 AND NOT EXISTS(SELECT 1 FROM rendition_heads h WHERE h.content_version_id=cv.version_id AND h.profile_fingerprint=?)
 		 AND NOT EXISTS(SELECT 1 FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id WHERE w.content_version_id=cv.version_id AND w.profile_fingerprint=? AND (w.state='rejected' OR j.state IN ('failed','operator_required')))
 		 THEN cv.version_id ELSE '' END pdf_unqueued,
 		 cv.size source_size
+
 		 `+scope+`)
 		 SELECT mime_type,native,pending,extracted,serving,pdf_evidence,pdf_waiting,pdf_unqueued,MAX(source_size),COUNT(*) FROM coverage
 		 GROUP BY mime_type,native,pending,extracted,serving,pdf_evidence,pdf_waiting,pdf_unqueued

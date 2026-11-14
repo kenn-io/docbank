@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { hmac } from "@noble/hashes/hmac.js";
-import { sha256 } from "@noble/hashes/sha2.js";
+import { DaemonSocket } from "./upload-test-fixtures.js";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
 import type { UploadReceipt } from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
@@ -26,152 +25,132 @@ function oversizedPhotoFiles(): File[] {
   });
 }
 
-function daemonProof(nonce: string): string {
-  const proofBytes = hmac(
-    sha256,
-    new Uint8Array(32).fill(1),
-    utf8ToBytes(`docbank-web-upload-v1\u0000${testToken}\u0000${nonce}`),
-  );
-  let proof = "";
-  for (const byte of proofBytes) proof += String.fromCharCode(byte);
-  return btoa(proof).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
-}
-
-class DaemonSocket extends EventTarget {
-  readyState: number = WebSocket.OPEN;
-  bufferedAmount = 0;
-  binaryType = "blob";
-  closed = false;
-  authenticate = true;
-  ready = true;
-  cancelAcknowledgment = true;
-  onbegin: (() => void) | undefined;
-  onend: (() => void) | undefined;
-  oncancel: (() => void) | undefined;
-  onbinary: (() => void) | undefined;
-  packageContainerID = "";
-  requestID = "";
-  photoMembers = 0;
-  // Indexes the daemon asks to have hashed before it plans, once per socket.
-  needHashes: number[] = [];
-  // Further requests the daemon makes after those hashes arrive, one per declaration.
-  followUps: number[][] = [];
-  frames: (string | ArrayBuffer)[] = [];
-
-  constructor() {
-    super();
-    queueMicrotask(() => this.dispatchEvent(new Event("open")));
-  }
-
-  send(data: string | ArrayBuffer): void {
-    this.frames.push(data);
-    if (typeof data !== "string") {
-      this.onbinary?.();
-      return;
-    }
-    const message = JSON.parse(data) as {
-      type: string;
-      nonce?: string;
-      request_id?: string;
-      container_id?: string;
-      hashes?: unknown[];
-      files?: { expected_hash: string }[];
-    };
-    if (message.type === "authenticate" && this.authenticate) {
-      this.emit({ type: "authenticated", proof: daemonProof(message.nonce ?? "") });
-    } else if (message.type === "plan_photo_import") {
-      if (this.needHashes.length && !message.files?.[this.needHashes[0]!]?.expected_hash) {
-        this.emit({
-          type: "photo_import_hashes_needed",
-          request_id: message.request_id,
-          indexes: this.needHashes,
-        });
-        return;
-      }
-      const followUp = this.followUps.shift();
-      if (followUp) {
-        this.emit({
-          type: "photo_import_hashes_needed",
-          request_id: message.request_id,
-          indexes: followUp,
-        });
-        return;
-      }
-      this.emit({
-        type: "photo_import_plan",
-        request_id: message.request_id,
-        import_id: "import-1",
-        groups: [[0, 1], [2]],
-        unsupported: [3],
-        skip_reasons: { 3: "Unsupported type" },
-      });
-    } else if (message.type === "begin_photo_group") {
-      this.requestID = message.request_id ?? "";
-      this.photoMembers = message.hashes?.length ?? 0;
-      this.emit({ type: "ready", request_id: this.requestID });
-    } else if (message.type === "begin") {
-      this.packageContainerID = message.container_id ?? "";
-      this.requestID = message.request_id ?? "";
-      this.onbegin?.();
-      if (this.ready) {
-        this.emit({ type: "ready", request_id: message.request_id });
-      }
-    } else if (message.type === "end") {
-      this.onend?.();
-      if (this.photoMembers) {
-        this.photoMembers--;
-        this.emit(
-          this.photoMembers
-            ? { type: "ready", request_id: this.requestID }
-            : {
-                type: "photo_group_receipt",
-                request_id: this.requestID,
-                photo_group_receipt: { status: "added", asset_id: "photo-1" },
-              },
-        );
-      } else if (this.packageContainerID) {
-        this.emit({
-          type: "package_container_receipt",
-          request_id: this.requestID,
-          container_id: this.packageContainerID,
-        });
-      }
-    } else if (message.type === "cancel") {
-      this.oncancel?.();
-      if (this.cancelAcknowledgment) {
-        this.emit({
-          type: "error",
-          request_id: message.request_id,
-          status: 499,
-          code: "canceled",
-        });
-      }
-    }
-  }
-
-  close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    this.readyState = WebSocket.CLOSED;
-    this.dispatchEvent(new Event("close"));
-  }
-
-  emit(message: object): void {
-    queueMicrotask(() =>
-      this.dispatchEvent(
-        new MessageEvent("message", {
-          data: JSON.stringify(message),
-        }),
-      ),
-    );
-  }
-}
-
 afterEach(() => {
   vi.useRealTimers();
 });
 
 describe("verified browser upload", () => {
+  it("waits for a slow stored-content check while bytes advance", async () => {
+    const socket = new DaemonSocket();
+    socket.ready = false;
+    const channel = new VerifiedUploadChannel(
+      { token: testToken, uploadSecret: testUploadSecret },
+      () => socket as unknown as WebSocket,
+    );
+    await channel.connect();
+    vi.useFakeTimers();
+    const hash = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    const upload = channel.uploadFile(
+      2,
+      new File(["abc"], "report.txt"),
+      hash,
+      new AbortController().signal,
+      () => {},
+      true,
+    );
+    for (const verified_size of [1, 2]) {
+      await vi.advanceTimersByTimeAsync(40_000);
+      socket.emit({ type: "verification_progress", request_id: socket.requestID, verified_size });
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    await vi.advanceTimersByTimeAsync(40_000);
+    socket.emit({
+      type: "receipt",
+      request_id: socket.requestID,
+      receipt: {
+        status: "skipped",
+        computed_hash: hash,
+        computed_size: 3,
+        node: { parent_id: 2, name: "report.txt", blob_hash: hash, size: 3 },
+      },
+    });
+    expect((await upload).status).toBe("skipped");
+    expect(socket.frames.some((frame) => typeof frame !== "string")).toBe(false);
+  });
+
+  it("ends a stored-content check after progress stops", async () => {
+    const socket = new DaemonSocket();
+    socket.ready = false;
+    const channel = new VerifiedUploadChannel(
+      { token: testToken, uploadSecret: testUploadSecret },
+      () => socket as unknown as WebSocket,
+    );
+    await channel.connect();
+    vi.useFakeTimers();
+    const upload = channel.uploadFile(
+      2,
+      new File(["abc"], "report.txt"),
+      "a".repeat(64),
+      new AbortController().signal,
+      () => {},
+      true,
+    );
+    const failure = expect(upload).rejects.toBeInstanceOf(UploadChannelError);
+    socket.emit({ type: "verification_progress", request_id: socket.requestID, verified_size: 1 });
+    await vi.advanceTimersByTimeAsync(60_000);
+    await failure;
+    expect(socket.closed).toBe(true);
+    expect(socket.frames.some((frame) => typeof frame !== "string")).toBe(false);
+  });
+
+  it("rejects repeated verification progress", async () => {
+    const socket = new DaemonSocket();
+    socket.ready = false;
+    const channel = new VerifiedUploadChannel(
+      { token: testToken, uploadSecret: testUploadSecret },
+      () => socket as unknown as WebSocket,
+    );
+    await channel.connect();
+    const upload = channel.uploadFile(
+      2,
+      new File(["abc"], "report.txt"),
+      "a".repeat(64),
+      new AbortController().signal,
+      () => {},
+      true,
+    );
+    const failure = expect(upload).rejects.toBeInstanceOf(UploadChannelError);
+    socket.emit({ type: "verification_progress", request_id: socket.requestID, verified_size: 1 });
+    await Promise.resolve();
+    await Promise.resolve();
+    socket.emit({ type: "verification_progress", request_id: socket.requestID, verified_size: 1 });
+    await failure;
+    expect(socket.closed).toBe(true);
+  });
+
+  it("accepts a stored receipt before sending retry bytes", async () => {
+    const socket = new DaemonSocket();
+    socket.ready = false;
+    const hash = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    socket.onbegin = () =>
+      socket.emit({
+        type: "receipt",
+        request_id: socket.requestID,
+        receipt: {
+          status: "skipped",
+          computed_hash: hash,
+          computed_size: 3,
+          node: { parent_id: 2, name: "renamed.txt", blob_hash: hash, size: 3 },
+        },
+      });
+    const channel = new VerifiedUploadChannel(
+      { token: testToken, uploadSecret: testUploadSecret },
+      () => socket as unknown as WebSocket,
+    );
+    await channel.connect();
+    const receipt = await channel.uploadFile(
+      2,
+      new File(["abc"], "report.txt"),
+      hash,
+      new AbortController().signal,
+      () => {},
+      true,
+    );
+    expect(receipt.status).toBe("skipped");
+    expect(socket.frames.some((frame) => typeof frame !== "string")).toBe(false);
+    expect(JSON.parse(socket.frames[1] as string).check_existing).toBe(true);
+  });
+
   it("streams package bytes through the daemon-owned socket", async () => {
     const socket = new DaemonSocket();
     const channel = new VerifiedUploadChannel(
@@ -586,6 +565,30 @@ it("hashes only the files the daemon asks for before it plans", async () => {
     ["", plan.hashes!.get(files[1]), "", ""],
   ]);
   expect(declarations[1].request_id).toBe(declarations[0].request_id);
+  channel.close();
+});
+
+it("reuses a selected file hash when planning on a new channel", async () => {
+  const { socket, channel } = await photoChannel();
+  const files = photoSelectionFiles();
+  const read = vi.spyOn(files[1], "slice");
+  const hash = "a".repeat(64);
+  socket.needHashes = [1];
+  await channel.planPhotoImport(
+    files,
+    "/photos",
+    "20000000-0000-4000-8000-000000000001",
+    new AbortController().signal,
+    vi.fn(),
+    new Map([[files[1], hash]]),
+  );
+  const declarations = socket.frames
+    .filter((frame): frame is string => typeof frame === "string")
+    .map((frame) => JSON.parse(frame))
+    .filter((frame) => frame.type === "plan_photo_import");
+  expect(declarations).toHaveLength(1);
+  expect(declarations[0].files[1].expected_hash).toBe(hash);
+  expect(read).not.toHaveBeenCalled();
   channel.close();
 });
 

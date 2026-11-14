@@ -203,7 +203,7 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 					continue
 				}
 				consent, found, err := embeddingReconcileConsentTx(ctx, tx, s.vaultID, profile.Fingerprint,
-					binding.DisclosureFingerprint, binding.InputKind, request.At.UTC(), &result.ConsentExpiresAt)
+					binding.DisclosureFingerprint, binding.InputKind, request.At.UTC(), &result.ConsentExpiresAt, s.postgresSchema != "")
 				if err != nil {
 					return err
 				}
@@ -310,7 +310,7 @@ func exactEmbeddingHeadExistsTx(ctx context.Context, tx *sql.Tx, versionID, prof
 }
 
 func embeddingReconcileConsentTx(ctx context.Context, tx *sql.Tx, vaultID, profile, disclosure string,
-	inputKind document.EmbeddingInputKind, at time.Time, expiry *time.Time,
+	inputKind document.EmbeddingInputKind, at time.Time, expiry *time.Time, postgres bool,
 ) (ProviderOperationAuthorizationRequest, bool, error) {
 	inputs, _ := json.Marshal([]string{string(inputKind)})
 	retained, _ := json.Marshal([]string{"embedding_vector_set"})
@@ -340,7 +340,7 @@ func embeddingReconcileConsentTx(ctx context.Context, tx *sql.Tx, vaultID, profi
 		return ProviderOperationAuthorizationRequest{}, false, err
 	}
 	for _, candidate := range candidates {
-		if authorization, err := authorizeProviderOperationTx(ctx, tx, vaultID, candidate, at); err == nil {
+		if authorization, err := authorizeProviderOperationTx(ctx, tx, vaultID, candidate, at, postgres); err == nil {
 			if value := authorization.expiresAt; !value.IsZero() && (expiry.IsZero() || value.Before(*expiry)) {
 				*expiry = value
 			}
@@ -450,7 +450,7 @@ func (s *Store) discoverImageEmbeddingJobs(ctx context.Context, request Embeddin
 				if _, rejected := request.ImageRejections[key]; rejected {
 					continue
 				}
-				consent, found, err := embeddingReconcileConsentTx(ctx, tx, s.vaultID, profile.Fingerprint, binding.DisclosureFingerprint, binding.InputKind, request.At, consentExpiry)
+				consent, found, err := embeddingReconcileConsentTx(ctx, tx, s.vaultID, profile.Fingerprint, binding.DisclosureFingerprint, binding.InputKind, request.At, consentExpiry, s.postgresSchema != "")
 				if err != nil {
 					return err
 				}

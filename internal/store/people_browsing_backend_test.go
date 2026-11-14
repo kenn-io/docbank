@@ -82,14 +82,14 @@ func checkPeopleBrowseNameIndexPostgres(t *testing.T) {
 	// A populated catalog lets PostgreSQL choose a plan without disabling scans.
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		for i := range 2000 {
-			if _, err := createPersonTx(ctx, tx, fmt.Sprintf("Person %04d", i), "operator"); err != nil {
+			if _, err := s.createPersonTx(ctx, tx, fmt.Sprintf("Person %04d", i), "operator"); err != nil {
 				return err
 			}
 		}
 		return nil
 	}))
 	// Planning must also work before autovacuum has collected statistics.
-	rows, err := s.db.QueryContext(ctx, "EXPLAIN (COSTS OFF) "+peopleNamePageSQL("", 1), "", "", 24, 0, 0)
+	rows, err := s.db.QueryContext(ctx, "EXPLAIN (COSTS OFF) "+s.peopleNamePageSQL("", 1), []byte(""), "", 24, 0, 0)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
 	var plan []string
