@@ -813,8 +813,12 @@ var personCandidateVisibleSQL = `NOT EXISTS(SELECT 1 FROM person_candidate_faces
 // VersionCandidate contains only the occurrences belonging to the requested version.
 type VersionCandidate struct {
 	CandidateID, ActorKey string
-	Occurrences           []PersonCandidateOccurrence
-	OccurrenceLabels      map[PersonCandidateOccurrence]string
+	Occurrences           []VersionCandidateOccurrence
+}
+
+type VersionCandidateOccurrence struct {
+	PersonCandidateOccurrence
+	Label string
 }
 
 func (s *Store) openCandidatesForVersion(ctx context.Context, q metadataQuerier, versionID string, actorKeys []string) ([]VersionCandidate, error) {
@@ -871,7 +875,7 @@ func (s *Store) openCandidatesForVersion(ctx context.Context, q metadataQuerier,
 				}
 				for _, occurrence := range occurrences {
 					if occurrence.ContentVersionID == versionID {
-						c.Occurrences = append(c.Occurrences, occurrence)
+						c.Occurrences = append(c.Occurrences, VersionCandidateOccurrence{PersonCandidateOccurrence: occurrence})
 					}
 				}
 				if len(c.Occurrences) > 0 {

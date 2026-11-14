@@ -107,8 +107,7 @@ func versionPeopleAPI(f store.DocumentPeopleFacts, safe bool, webURL string) Ver
 	}
 	for _, c := range f.Candidates {
 		for _, o := range c.Occurrences {
-			label := c.OccurrenceLabels[o]
-			out.Unresolved = append(out.Unresolved, VersionUnresolvedName{RawLabel: label, Role: o.Role, CandidateID: c.CandidateID, EvidenceKind: o.EvidenceKind})
+			out.Unresolved = append(out.Unresolved, VersionUnresolvedName{RawLabel: o.Label, Role: o.Role, CandidateID: c.CandidateID, EvidenceKind: o.EvidenceKind})
 		}
 	}
 	return out

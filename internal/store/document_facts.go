@@ -33,23 +33,28 @@ func (s *Store) DocumentDateFacts(ctx context.Context, versionID string) (Docume
 	if err != nil {
 		return DocumentDateFacts{}, err
 	}
-	state, view, err := s.freshEventsInTx(ctx, tx, versionID)
+	state, err := s.freshEventStateInTx(ctx, tx, versionID)
 	if err != nil {
 		return DocumentDateFacts{}, err
 	}
-	facts := DocumentDateFacts{Version: version, State: state, View: view}
+	facts := DocumentDateFacts{Version: version, State: state}
+	if state == "published" {
+		facts.View, err = s.documentEventsForVersionTx(ctx, tx, versionID)
+		if err != nil {
+			return DocumentDateFacts{}, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return DocumentDateFacts{}, err
 	}
 	return facts, nil
 }
 
-// freshEventsInTx checks the current input epoch and decodes the head in the
-// caller's snapshot. A retained head is not fresh while its inputs rebuild.
-func (s *Store) freshEventsInTx(ctx context.Context, tx *sql.Tx, versionID string) (string, DocumentEventView, error) {
+// freshEventStateInTx checks the current input epoch in the caller's snapshot.
+func (s *Store) freshEventStateInTx(ctx context.Context, tx *sql.Tx, versionID string) (string, error) {
 	state, err := effectiveDocumentEventState(ctx, tx, DocumentEventsDeriverFingerprint)
 	if err != nil {
-		return "", DocumentEventView{}, err
+		return "", err
 	}
 	// SQLite binds $n parameters in first-appearance order; keep it aligned with PostgreSQL.
 	var attempt, head, fresh, failed bool
@@ -61,19 +66,18 @@ func (s *Store) freshEventsInTx(ctx context.Context, tx *sql.Tx, versionID strin
  LEFT JOIN document_event_heads h ON h.content_version_id=cv.version_id
  LEFT JOIN document_event_generations g ON g.generation_id=h.generation_id WHERE cv.version_id=$4`, state.InputEpoch, state.ContractVersion, state.DeriverFingerprint, versionID).Scan(&attempt, &head, &fresh, &failed)
 	if err != nil {
-		return "", DocumentEventView{}, fmt.Errorf("reading date state: %w", err)
+		return "", fmt.Errorf("reading date state: %w", err)
 	}
 	if fresh {
-		view, err := s.documentEventsForVersionTx(ctx, tx, versionID)
-		return "published", view, err
+		return "published", nil
 	}
 	if failed {
-		return factsStateFailed, DocumentEventView{}, nil
+		return factsStateFailed, nil
 	}
 	if !attempt && !head && state.InputEpoch <= 1 {
-		return factsStateNone, DocumentEventView{}, nil
+		return factsStateNone, nil
 	}
-	return factsStatePending, DocumentEventView{}, nil
+	return factsStatePending, nil
 }
 
 // DocumentPeopleFacts is an attribution snapshot with version-scoped evidence.
@@ -103,28 +107,48 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 		return DocumentPeopleFacts{}, err
 	}
 	facts := DocumentPeopleFacts{Version: version, State: factsStateNone, Edges: []document.DocumentPersonEdgeV1{}, Assertions: []PersonDocumentAssertion{}, Candidates: []VersionCandidate{}, Persons: map[string]FactPerson{}}
-	edges, head, err := documentPeopleForVersionTx(ctx, tx, versionID)
-	if err != nil && !errors.Is(err, ErrNotFound) {
+	eventState, err := s.freshEventStateInTx(ctx, tx, versionID)
+	if err != nil {
 		return DocumentPeopleFacts{}, err
 	}
-	if err != nil {
-		if head.ContentVersionID != "" {
-			facts.State = factsStatePending
+	peopleState := factsStateNone
+	var edges []document.DocumentPersonEdgeV1
+	if eventState != factsStatePending && eventState != factsStateFailed {
+		var head DocumentPeopleHead
+		var headErr error
+		if eventState == factsStateNone {
+			head, headErr = documentPeopleHeadTx(ctx, tx, versionID)
+		} else {
+			edges, head, headErr = documentPeopleForVersionTx(ctx, tx, versionID)
 		}
-	} else {
-		switch {
-		case head.State == documentPeopleStateFailed || head.State == documentPeopleStateUnavailable:
-			facts.State = factsStateFailed
-		case head.State == documentPeopleStatePublished && head.GenerationID != "":
-			facts.State = "published"
-			facts.Edges = edges
-			if safe {
-				facts.Edges = slices.DeleteFunc(facts.Edges, func(e document.DocumentPersonEdgeV1) bool {
-					return e.Sensitive || e.Role == "blind_copy"
-				})
+		if headErr != nil && !errors.Is(headErr, ErrNotFound) {
+			return DocumentPeopleFacts{}, headErr
+		}
+		if headErr != nil {
+			if head.ContentVersionID != "" {
+				peopleState = factsStatePending
 			}
-		default:
-			facts.State = factsStatePending
+		} else {
+			switch {
+			case head.State == documentPeopleStateFailed || head.State == documentPeopleStateUnavailable:
+				peopleState = factsStateFailed
+			case head.State == documentPeopleStatePublished && head.GenerationID != "":
+				peopleState = "published"
+			default:
+				peopleState = factsStatePending
+			}
+		}
+	}
+	facts.State = peopleState
+	if eventState == factsStatePending || eventState == factsStateFailed {
+		facts.State = eventState
+	} else if eventState == factsStateNone && peopleState == "published" {
+		facts.State = factsStatePending
+	}
+	if eventState == "published" && peopleState == "published" {
+		facts.Edges = edges
+		if safe {
+			facts.Edges = slices.DeleteFunc(facts.Edges, func(e document.DocumentPersonEdgeV1) bool { return e.Sensitive || e.Role == "blind_copy" })
 		}
 	}
 	// Assertions are independent operator evidence.
@@ -135,69 +159,51 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 	if safe {
 		facts.Assertions = slices.DeleteFunc(facts.Assertions, func(a PersonDocumentAssertion) bool { return a.Role == "blind_copy" })
 	}
-	var events []document.DocumentEventV1
-	if facts.State != factsStatePending && facts.State != factsStateFailed {
-		eventState, eventView, err := s.freshEventsInTx(ctx, tx, versionID)
+	if eventState == "published" && (peopleState == "published" || peopleState == factsStateNone) {
+		view, err := s.documentEventsForVersionTx(ctx, tx, versionID)
 		if err != nil {
 			return DocumentPeopleFacts{}, err
 		}
-		if facts.State == "published" && eventState != "published" {
-			facts.State = eventState
-			if eventState == factsStateNone {
-				facts.State = factsStatePending
-			}
-			facts.Edges = []document.DocumentPersonEdgeV1{}
-		} else if facts.State == factsStateNone && (eventState == factsStatePending || eventState == factsStateFailed) {
-			facts.State = eventState
+		// Candidates omit sensitivity, so match occurrences to current event actors.
+		type actorOccurrence struct {
+			actorKey   string
+			occurrence PersonCandidateOccurrence
 		}
-		events = eventView.Events.Events
+		type occurrenceEvidence struct {
+			label     string
+			sensitive bool
+		}
+		evidence := make(map[actorOccurrence]occurrenceEvidence)
 		var actorKeys []string
-		for _, event := range events {
+		for _, event := range view.Events.Events {
 			for _, actor := range event.Actors {
 				actorKeys = append(actorKeys, actor.ActorKey)
+				kind, id := actor.EvidenceKind, actor.EvidenceID
+				if kind == "" {
+					kind, id = event.EvidenceKind, event.EvidenceID
+				}
+				key := actorOccurrence{actor.ActorKey, PersonCandidateOccurrence{ContentVersionID: versionID, Role: string(actor.Role), EvidenceKind: string(kind), EvidenceID: id}}
+				prior := evidence[key]
+				evidence[key] = occurrenceEvidence{label: (DocumentPeopleActor{DisplayName: actor.DisplayName, Address: actor.Address, ActorKey: actor.ActorKey}).DisplayLabel(), sensitive: prior.sensitive || event.Sensitive || actor.Sensitive}
 			}
 		}
 		facts.Candidates, err = s.openCandidatesForVersion(ctx, tx, versionID, actorKeys)
 		if err != nil {
 			return DocumentPeopleFacts{}, err
 		}
-	}
-	// Candidates omit sensitivity. Match each occurrence to the current event
-	// generation and fail closed when its authoritative evidence is absent.
-	type actorOccurrence struct {
-		actorKey   string
-		occurrence PersonCandidateOccurrence
-	}
-	type occurrenceEvidence struct {
-		label     string
-		sensitive bool
-	}
-	evidence := make(map[actorOccurrence]occurrenceEvidence)
-	for _, event := range events {
-		for _, actor := range event.Actors {
-			kind, id := actor.EvidenceKind, actor.EvidenceID
-			if kind == "" {
-				kind, id = event.EvidenceKind, event.EvidenceID
+		for i := range facts.Candidates {
+			c := &facts.Candidates[i]
+			kept := c.Occurrences[:0]
+			for _, o := range c.Occurrences {
+				match, found := evidence[actorOccurrence{c.ActorKey, o.PersonCandidateOccurrence}]
+				if !found || safe && (o.Role == "blind_copy" || match.sensitive) {
+					continue
+				}
+				o.Label = match.label
+				kept = append(kept, o)
 			}
-			key := actorOccurrence{actor.ActorKey, PersonCandidateOccurrence{ContentVersionID: versionID, Role: string(actor.Role), EvidenceKind: string(kind), EvidenceID: id}}
-			prior := evidence[key]
-			evidence[key] = occurrenceEvidence{label: (DocumentPeopleActor{DisplayName: actor.DisplayName, Address: actor.Address, ActorKey: actor.ActorKey}).DisplayLabel(), sensitive: prior.sensitive || event.Sensitive || actor.Sensitive}
+			c.Occurrences = kept
 		}
-	}
-	for i := range facts.Candidates {
-		c := &facts.Candidates[i]
-		c.OccurrenceLabels = make(map[PersonCandidateOccurrence]string)
-		c.Occurrences = slices.DeleteFunc(c.Occurrences, func(o PersonCandidateOccurrence) bool {
-			if safe && o.Role == "blind_copy" {
-				return true
-			}
-			match, found := evidence[actorOccurrence{c.ActorKey, o}]
-			if !found || safe && match.sensitive {
-				return true
-			}
-			c.OccurrenceLabels[o] = match.label
-			return false
-		})
 	}
 	ids := map[string]bool{}
 	for _, e := range facts.Edges {

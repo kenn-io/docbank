@@ -115,42 +115,6 @@ func checkDocumentDateFactsNeverReturnsStaleClaims(t *testing.T, newStore func(*
 	require.Equal(t, "failed", facts.State)
 }
 
-func checkDocumentPeopleFactsPublicationAndFailure(t *testing.T, newStore func(*testing.T) *Store) {
-	t.Helper()
-	s := newStore(t)
-	version, target := ingestDocumentEventTarget(t, s, "people-published.txt", "c4")
-	record := documentEventRecord(t, s.VaultID(), version.ID, "c4")
-	raw := mustMarshalDocumentEvents(t, record)
-	_, err := s.PublishDocumentEvents(t.Context(), target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), raw)
-	require.NoError(t, err)
-	input, err := s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
-	require.NoError(t, err)
-	_, err = s.PublishDocumentPeople(t.Context(), documentPeoplePublicationForInput(t, input))
-	require.NoError(t, err)
-	facts, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
-	require.NoError(t, err)
-	require.Equal(t, "published", facts.State)
-	require.NotEmpty(t, facts.Edges)
-	_, err = s.db.ExecContext(t.Context(), `UPDATE document_people_heads SET resolver_fingerprint=$1 WHERE content_version_id=$2`, "old-resolver", version.ID)
-	require.NoError(t, err)
-	edges, _, err := s.DocumentPeopleForVersion(t.Context(), version.ID)
-	require.ErrorIs(t, err, ErrNotFound)
-	require.Empty(t, edges)
-	facts, err = s.DocumentPeopleFacts(t.Context(), version.ID, false)
-	require.NoError(t, err)
-	require.Equal(t, "pending", facts.State)
-	require.Empty(t, facts.Edges)
-	s = newStore(t)
-	failedVersion := seedDocumentPeopleEvent(t, s, "people-failed.txt", "c5", nil)
-	failedInput, err := s.PrepareDocumentPeopleInputs(t.Context(), failedVersion.ID)
-	require.NoError(t, err)
-	require.NoError(t, s.MarkDocumentPeopleFailed(t.Context(), failedInput, "derivation_failed"))
-	facts, err = s.DocumentPeopleFacts(t.Context(), failedVersion.ID, false)
-	require.NoError(t, err)
-	require.Equal(t, "failed", facts.State)
-	require.Empty(t, facts.Edges)
-}
-
 func sensitiveUnresolvedActorFixture(t *testing.T, newStore func(*testing.T) *Store) (*Store, string, DocumentPeopleInputs, PersonDocumentAssertion) {
 	t.Helper()
 	s := newStore(t)
@@ -181,11 +145,12 @@ func sensitiveUnresolvedActorFixture(t *testing.T, newStore func(*testing.T) *St
 	openCandidateForTest(t, s, candidateForTest(t, "name_alias:unmatched", "Unmatched", "", []PersonCandidateOccurrence{{ContentVersionID: version.ID, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "missing"}}))
 	safe, err := s.DocumentPeopleFacts(t.Context(), version.ID, true)
 	require.NoError(t, err)
+	require.Equal(t, "none", safe.State)
 	foundSender := false
 	for _, c := range safe.Candidates {
 		if c.ActorKey == "email:sender@example.test" {
 			require.Len(t, c.Occurrences, 1)
-			require.Equal(t, "sender@example.test", c.OccurrenceLabels[c.Occurrences[0]])
+			require.Equal(t, "sender@example.test", c.Occurrences[0].Label)
 			foundSender = true
 		} else {
 			require.Empty(t, c.Occurrences)
@@ -199,12 +164,77 @@ func sensitiveUnresolvedActorFixture(t *testing.T, newStore func(*testing.T) *St
 		if c.ActorKey == "email:sender@example.test" {
 			for _, o := range c.Occurrences {
 				if o.Role == "sender" {
-					require.Equal(t, "sender@example.test", c.OccurrenceLabels[o])
+					require.Equal(t, "sender@example.test", o.Label)
 				}
 			}
 		}
 	}
 	return s, version.ID, input, assertion
+}
+
+func checkDocumentPeopleFactsPublicationAndFailure(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	s := newStore(t)
+	ctx := t.Context()
+	version, target := ingestDocumentEventTarget(t, s, "precedence.txt", "d1")
+	record := documentEventRecord(t, s.VaultID(), version.ID, "d1")
+	raw := mustMarshalDocumentEvents(t, record)
+	_, err := s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), raw)
+	require.NoError(t, err)
+	person, err := s.CreatePerson(ctx, "Assigned Author", "operator")
+	require.NoError(t, err)
+	assertion, err := s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	publishPeople := func() {
+		t.Helper()
+		input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
+		require.NoError(t, err)
+		_, err = s.PublishDocumentPeople(ctx, documentPeoplePublicationForInput(t, input))
+		require.NoError(t, err)
+	}
+	check := func(state string, edges bool) {
+		t.Helper()
+		facts, err := s.DocumentPeopleFacts(ctx, version.ID, false)
+		require.NoError(t, err)
+		require.Equal(t, state, facts.State)
+		require.Equal(t, []PersonDocumentAssertion{assertion}, facts.Assertions)
+		if edges {
+			require.NotEmpty(t, facts.Edges)
+		} else {
+			require.Empty(t, facts.Edges)
+			require.Empty(t, facts.Candidates)
+		}
+	}
+	publishPeople()
+	check("published", true)
+	person, err = s.UpdatePerson(ctx, person.PersonID, person.Revision, "Renamed")
+	require.NoError(t, err)
+	check("pending", false)
+	_, err = s.StartDocumentEventRebuild(ctx, "00000000-0000-4000-8000-000000000001", DocumentEventRebuildRequestSHA256)
+	require.NoError(t, err)
+	check("pending", false)
+	target = requireDocumentEventTarget(t, s, version.ID)
+	digest := requireDocumentEventInputsSHA256(t, s, target)
+	require.NoError(t, s.RecordDocumentEventAttempt(ctx, target, digest, "failed", []byte(`[]`)))
+	check("failed", false)
+	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, digest, raw)
+	require.NoError(t, err)
+	publishPeople()
+	check("published", true)
+	person, err = s.UpdatePerson(ctx, person.PersonID, person.Revision, "Renamed Again")
+	require.NoError(t, err)
+	input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.MarkDocumentPeopleFailed(ctx, input, "derivation_failed"))
+	check("failed", false)
+	_, err = s.StartDocumentEventRebuild(ctx, "00000000-0000-4000-8000-000000000002", DocumentEventRebuildRequestSHA256)
+	require.NoError(t, err)
+	check("pending", false)
+	target = requireDocumentEventTarget(t, s, version.ID)
+	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), raw)
+	require.NoError(t, err)
+	publishPeople()
+	check("published", true)
 }
 
 func checkDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T, newStore func(*testing.T) *Store) {
@@ -224,6 +254,29 @@ func TestDocumentPeopleFactsSuppressionIgnoresCorruptEventGeneration(t *testing.
 	_, err = s.db.ExecContext(t.Context(), `UPDATE document_event_generations SET canonical_json=$1 WHERE content_version_id=$2`, []byte(`{`), versionID)
 	require.NoError(t, err)
 	checkSuppressedPeopleCandidates(t, s, versionID, assertion)
+}
+
+func TestDocumentPeopleFactsPendingIgnoresCorruptPeopleGeneration(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	version, target := ingestDocumentEventTarget(t, s, "corrupt-people.txt", "e3")
+	record := documentEventRecord(t, s.VaultID(), version.ID, "e3")
+	_, err := s.PublishDocumentEvents(t.Context(), target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+	require.NoError(t, err)
+	input, err := s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
+	require.NoError(t, err)
+	_, err = s.PublishDocumentPeople(t.Context(), documentPeoplePublicationForInput(t, input))
+	require.NoError(t, err)
+	_, err = s.StartDocumentEventRebuild(t.Context(), "00000000-0000-4000-8000-000000000001", DocumentEventRebuildRequestSHA256)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER document_people_generations_immutable_update`)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE document_people_generations SET canonical_json=$1 WHERE content_version_id=$2`, []byte(`{`), version.ID)
+	require.NoError(t, err)
+	facts, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
+	require.NoError(t, err)
+	require.Equal(t, "pending", facts.State)
+	require.Empty(t, facts.Edges)
 }
 
 func checkSuppressedPeopleCandidates(t *testing.T, s *Store, versionID string, assertion PersonDocumentAssertion) {
