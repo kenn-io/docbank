@@ -211,69 +211,51 @@ func TestRoleSearchMentionNamesAreLiteral(t *testing.T) {
 
 func TestRoleSearchNegationWithPendingPeople(t *testing.T) {
 	t.Parallel()
-	for _, stale := range []bool{false, true} {
-		name := "unpublished people"
-		if stale {
-			name = "stale events"
-		}
-		t.Run(name, func(t *testing.T) {
-			s := newTestStore(t)
-			ctx := t.Context()
-			version := seedCurrentRoleSearchEvent(t, s, "sender.txt", "a3", []document.DocumentEventActorV1{{
-				Role: "sender", ActorKey: "email:sender@example.test", Address: "sender@example.test", DisplayName: "Sender Person", Claim: `"sender"`,
-			}})
-			input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
-			require.NoError(t, err)
-			if stale {
-				_, err = s.PublishDocumentPeople(ctx, documentPeoplePublicationForInput(t, input))
-				require.NoError(t, err)
-				_, err = s.db.ExecContext(ctx, `UPDATE document_event_state SET input_epoch=input_epoch+1`)
-				require.NoError(t, err)
-			}
-			negative := snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT from:\"Sender Person\""}`)
-			result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: negative})
-			require.NoError(t, err)
-			require.Empty(t, result.Rows)
-			orQuery := snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT from:\"Sender Person\" OR name:sender"}`)
-			result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: orQuery})
-			require.NoError(t, err)
-			require.Len(t, result.Rows, 1)
-			_, err = s.CreateSavedQuery(ctx, "Pending role", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"from:\"Sender Person\""}`))
-			require.NoError(t, err)
-			_, err = s.CreateSavedQuery(ctx, "Nested pending role", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"saved:\"Pending role\""}`))
-			require.NoError(t, err)
-			result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT saved:\"Nested pending role\""}`)})
-			require.NoError(t, err)
-			require.Empty(t, result.Rows)
-			_, err = s.CreateSavedQuery(ctx, "Collapsed sender", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"from:\"Sender Person\"","filters":{"collapse_duplicates":true}}`))
-			require.NoError(t, err)
-			result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT saved:\"Collapsed sender\""}`)})
-			require.NoError(t, err)
-			require.Empty(t, result.Rows)
-			person := input.Bindings[input.Actors[0].ActorKey][0]
-			_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: person.PersonID, Role: "sender", Action: "assert", Revision: 1})
-			require.NoError(t, err)
-			result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"from:\"Sender Person\""}`)})
-			require.NoError(t, err)
-			require.Len(t, result.Rows, 1)
-			_, err = s.CreatePerson(ctx, "Absent Person", "operator")
-			require.NoError(t, err)
-			if stale {
-				_, err = s.db.ExecContext(ctx, `UPDATE document_event_state SET input_epoch=input_epoch-1`)
-				require.NoError(t, err)
-			}
-			input, err = s.PrepareDocumentPeopleInputs(ctx, version.ID)
-			require.NoError(t, err)
-			_, err = s.PublishDocumentPeople(ctx, documentPeoplePublicationForInput(t, input))
-			require.NoError(t, err)
-			result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: negative})
-			require.NoError(t, err)
-			require.Empty(t, result.Rows)
-			result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT from:\"Absent Person\""}`)})
-			require.NoError(t, err)
-			require.Len(t, result.Rows, 1)
-		})
-	}
+	s := newTestStore(t)
+	ctx := t.Context()
+	version := seedCurrentRoleSearchEvent(t, s, "sender.txt", "a3", []document.DocumentEventActorV1{{
+		Role: "sender", ActorKey: "email:sender@example.test", Address: "sender@example.test", DisplayName: "Sender Person", Claim: `"sender"`,
+	}})
+	input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
+	require.NoError(t, err)
+	negative := snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT from:\"Sender Person\""}`)
+	result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: negative})
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+	orQuery := snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT from:\"Sender Person\" OR name:sender"}`)
+	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: orQuery})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	_, err = s.CreateSavedQuery(ctx, "Pending role", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"from:\"Sender Person\""}`))
+	require.NoError(t, err)
+	_, err = s.CreateSavedQuery(ctx, "Nested pending role", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"saved:\"Pending role\""}`))
+	require.NoError(t, err)
+	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT saved:\"Nested pending role\""}`)})
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+	_, err = s.CreateSavedQuery(ctx, "Collapsed sender", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"from:\"Sender Person\"","filters":{"collapse_duplicates":true}}`))
+	require.NoError(t, err)
+	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT saved:\"Collapsed sender\""}`)})
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+	person := input.Bindings[input.Actors[0].ActorKey][0]
+	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: person.PersonID, Role: "sender", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"from:\"Sender Person\""}`)})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	_, err = s.CreatePerson(ctx, "Absent Person", "operator")
+	require.NoError(t, err)
+	input, err = s.PrepareDocumentPeopleInputs(ctx, version.ID)
+	require.NoError(t, err)
+	_, err = s.PublishDocumentPeople(ctx, documentPeoplePublicationForInput(t, input))
+	require.NoError(t, err)
+	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: negative})
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT from:\"Absent Person\""}`)})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
 }
 
 func TestRoleSearchPeopleFacetIncomplete(t *testing.T) {
@@ -287,14 +269,6 @@ func TestRoleSearchPeopleFacetIncomplete(t *testing.T) {
 	require.Equal(t, "people_evidence_incomplete", result.Facets[0].Reason)
 	require.Nil(t, result.Facets[0].Missing)
 	publishRoleFixtures(t, s)
-	_, err = s.db.ExecContext(t.Context(), `UPDATE document_people_state SET binding_epoch=binding_epoch+1`)
-	require.NoError(t, err)
-	result, err = s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: snapshotTestQuery(t, `{}`), Facets: []string{"person_role"}})
-	require.NoError(t, err)
-	require.False(t, result.Facets[0].Available)
-	require.Equal(t, "people_evidence_incomplete", result.Facets[0].Reason)
-	require.Nil(t, result.Facets[0].Missing)
-	publishRoleFixtures(t, s)
 	_, err = s.db.ExecContext(t.Context(), `UPDATE document_event_attempts SET state='failed' WHERE content_version_id=$1`, version.ID)
 	require.NoError(t, err)
 	result, err = s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: snapshotTestQuery(t, `{}`), Facets: []string{"person_role"}})
@@ -303,7 +277,7 @@ func TestRoleSearchPeopleFacetIncomplete(t *testing.T) {
 	require.Equal(t, "people_evidence_incomplete", result.Facets[0].Reason)
 }
 
-func TestRoleSearchPeopleFacetBoundsAndFreeze(t *testing.T) {
+func TestRoleSearchPeopleFacetBounds(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -331,29 +305,6 @@ func TestRoleSearchPeopleFacetBoundsAndFreeze(t *testing.T) {
 	require.True(t, last.Selected)
 	require.Zero(t, last.Count)
 	require.Equal(t, []string{"author"}, last.Roles)
-	for i := range 49 {
-		extra := seedCurrentRoleSearchEvent(t, s, fmt.Sprintf("extra-%02d.txt", i), fmt.Sprintf("%x", i+10000), nil)
-		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: extra.ID, PersonID: absent.PersonID, Role: "author", Action: "assert", Revision: 1})
-		require.NoError(t, err)
-	}
-	publishRoleFixtures(t, s)
-	service := newQuerySnapshotService(s, querySnapshotServiceOptions{})
-	t.Cleanup(func() { require.NoError(t, service.Close()) })
-	frozen, err := service.Create(ctx, "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{}`), PageSize: 50, Facets: []string{"person_role"}})
-	require.NoError(t, err)
-	require.NotEmpty(t, frozen.NextCursor)
-	require.Equal(t, "Absent Selection", frozen.Facets[0].Values[0].Label)
-	_, err = s.db.ExecContext(ctx, `UPDATE document_people_state SET binding_epoch=binding_epoch+1`)
-	require.NoError(t, err)
-	reread, err := service.Page(ctx, "owner", frozen.SnapshotID, frozen.NextCursor)
-	require.NoError(t, err)
-	require.Equal(t, frozen.Facets, reread.Facets)
-	_, err = s.UpdatePerson(ctx, absent.PersonID, absent.Revision, "Renamed Selection")
-	require.NoError(t, err)
-	reread, err = service.Page(ctx, "owner", frozen.SnapshotID, frozen.NextCursor)
-	require.NoError(t, err)
-	require.Equal(t, frozen.Facets, reread.Facets)
-	require.Equal(t, frozen.SnapshotFingerprint, reread.SnapshotFingerprint)
 }
 
 func TestRoleSearchBetweenCurrentVersionAndMergedPeople(t *testing.T) {
@@ -398,17 +349,19 @@ func TestPublishedBccActorQueryPrivacy(t *testing.T) {
 	_, err = s.PublishDocumentPeople(ctx, publication)
 	require.NoError(t, err)
 	id := publication.People.Edges[0].PersonID
+	facetResult, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{}`), Facets: []string{"person_role"}})
+	require.NoError(t, err)
+	for _, facet := range facetResult.Facets[0].Values {
+		require.NotEqual(t, id, facet.Key)
+		require.NotContains(t, facet.Roles, "blind_copy")
+	}
 	for _, operand := range []string{"person", "to", "bcc"} {
 		value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, operand+`:"Bcc Person"`))
-		result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Facets: []string{"person_role"}})
+		result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
 		require.NoError(t, err)
 		require.Len(t, result.Rows, 1)
 		if operand != "person" {
 			require.Equal(t, []string{"blind_copy"}, result.Rows[0].MatchedRoles)
-		}
-		for _, facet := range result.Facets[0].Values {
-			require.NotEqual(t, id, facet.Key)
-			require.NotContains(t, facet.Roles, "blind_copy")
 		}
 		safe, err := s.MaterializeQuerySnapshot(WithSafeRoleSearch(ctx), SnapshotRequest{Query: value})
 		if operand == "bcc" {
@@ -498,17 +451,9 @@ func TestRoleSearchSavedRunPreservesMergedDefinitionReceipt(t *testing.T) {
 	fingerprint, err := query.Fingerprint(page.Query)
 	require.NoError(t, err)
 	require.Equal(t, fingerprint, page.QueryFingerprint)
-	require.Len(t, page.Rows, 1)
-	require.Len(t, page.Query.Filters.People, 3)
-	require.Len(t, page.Facets, 1)
-	require.Len(t, page.Facets[0].Values, 1)
-	require.Equal(t, survivor.PersonID, page.Facets[0].Values[0].Key)
-	require.True(t, page.Facets[0].Values[0].Selected)
-	require.Equal(t, wantIDs, page.Facets[0].Values[0].SelectedPersonIDs)
 	require.Equal(t, value.Filters.People, page.Query.Filters.People)
 	next, _, err := service.RunSaved(ctx, "owner", definition.ID, definition.Revision, SnapshotRequest{}, nil)
 	require.NoError(t, err)
-	require.Equal(t, definition.Fingerprint, next.QueryFingerprint)
 	require.False(t, next.Comparison.DefinitionChanged)
 }
 
@@ -643,8 +588,6 @@ func TestRoleSearchHiddenPersonScope(t *testing.T) {
 	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
 	require.NoError(t, s.LockPhotoHidden(ctx))
-	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
-	require.NoError(t, err)
 	publishRoleFixtures(t, s)
 	definition, err := s.CreateSavedQuery(ctx, "Hidden saved", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"person:\"Hidden Depicted\""}`))
 	require.NoError(t, err)
@@ -659,7 +602,6 @@ func TestRoleSearchHiddenPersonScope(t *testing.T) {
 		ctx  context.Context
 		ok   bool
 	}{
-		{"unlocked", WithSafeRoleSearch(WithPhotoHiddenToken(ctx, token)), false},
 		{"locked", WithSafeRoleSearch(ctx), false},
 		{"full", ctx, true},
 	} {

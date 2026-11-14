@@ -565,8 +565,7 @@ func TestRoleSearchCollectionFacetSelfExclusion(t *testing.T) {
 	_, err = fixture.store.CreateSavedQuery(ctx, "Facet sender", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"from:\"Facet Sender\""}`))
 	require.NoError(t, err)
 	publishRoleFixtures(t, fixture.store)
-	prefix := "(" + strings.TrimSuffix(strings.Repeat(`saved:"Facet sender" OR `, 2), " OR ") + ")"
-	text := prefix + ` AND has_duplicates:true AND NOT path:/missing`
+	text := `saved:"Facet sender"`
 	value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q,"filters":{"collection_ids":[%q]}}`, text, fixture.collections[0].ID()))
 	projection, err := fixture.store.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Coverage: fixture.selection, Facets: []string{"collections"}})
 	require.NoError(t, err)

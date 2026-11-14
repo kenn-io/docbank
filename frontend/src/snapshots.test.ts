@@ -623,7 +623,7 @@ it("retains photo ranking status on snapshot continuation pages", async () => {
   expect(fetcher.mock.calls[0]?.[0]).toBe(`/api/v1/workspace/queries/${snapshotID}/pages`);
 });
 
-it("rejects an invalid role in a frozen row", async () => {
+it("parses people evidence and rejects an invalid matched role", async () => {
   const safeRoles = personRoles.filter((role) => role !== "blind_copy");
   const person = {
     key: tagID,
