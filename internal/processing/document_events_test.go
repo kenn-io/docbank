@@ -583,8 +583,47 @@ func TestCalendarZoneGapAndOverlap(t *testing.T) {
 	field.Namespace = "calendar"
 	event, err := metadataDateEvent(field)
 	require.NoError(t, err)
-	require.Equal(t, document.EventTimezoneKind("named"), event.TimezoneKind)
-	require.Empty(t, event.UTCKey)
+	require.Equal(t, document.EventTimezoneKind("utc"), event.TimezoneKind)
+	require.Equal(t, "UTC", event.ZoneText)
+	require.Nil(t, event.OffsetSeconds)
+	require.Equal(t, "2026-03-29T01:30:00.000000000Z", event.UTCKey)
+}
+
+func TestCalendarUTCClaimsPreservePrecisionAndEvidence(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, source, raw, kind, utc string }{
+		{"UTC parameter", "DTSTART;TZID=UTC", "20260329T013000", "utc", "2026-03-29T01:30:00.000000000Z"},
+		{"quoted UTC parameter", `DTSTART;TZID="UTC"`, "20260329T013000", "utc", "2026-03-29T01:30:00.000000000Z"},
+		{"UTC date stays a date", "DTSTART;VALUE=DATE;TZID=UTC", "20260329", "named", ""},
+		{"unknown parameter floats", "DTSTART;TZID=Example/Unknown", "20260329T013000", "named", ""},
+		{"abbreviation floats", "DTSTART;TZID=EST", "20260329T013000", "named", ""},
+		{"missing parameter floats", "DTSTART", "20260329T013000", "omitted", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			field := stringField("calendar.event.e000001.start.raw", tc.source, false, tc.raw)
+			field.Namespace = "calendar"
+			input := canonicalDocumentEventInput(t, []document.SourceMetadataFieldV1{field})
+			input.Target.MIMEType = "text/calendar"
+			record, _, err := DeriveDocumentEvents(input)
+			require.NoError(t, err)
+			var found bool
+			for _, event := range record.Events {
+				if event.DateKind != "started" {
+					continue
+				}
+				found = true
+				require.Equal(t, document.EventTimezoneKind(tc.kind), event.TimezoneKind)
+				require.Equal(t, tc.utc, event.UTCKey)
+				require.Equal(t, tc.raw, event.RawValue)
+				require.Equal(t, tc.source, event.SourceKindRaw)
+			}
+			require.True(t, found, "missing calendar claim")
+			encoded, _, err := document.MarshalDocumentEventsV1(record)
+			require.NoError(t, err)
+			_, _, err = document.DecodeDocumentEventsV1(encoded)
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestCalendarExtractionPreservesComponentsForInclusiveDates(t *testing.T) {

@@ -220,7 +220,9 @@ not include these keys; the timeline rebuild derives them from retained
 sources after restore or upgrade.
 
 Calendar IANA zones resolve overlaps to the earlier instant and gaps to the
-first instant after the gap. Email RFC 5322 zone names use their fixed offsets;
+first instant after the gap. A calendar `TZID=UTC` date-time is also exact and
+keeps `UTC` as its source zone text. Date-only values remain dates. Email RFC
+5322 zone names use their fixed offsets;
 unknown names and `-0000` remain floating. The stored instant is validated
 without resolving it again, so changing time-zone data does not invalidate a
 retained generation. The event derivation recipe advances when these rules

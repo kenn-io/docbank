@@ -60,7 +60,7 @@ func metadataDateEvent(field document.SourceMetadataFieldV1) (document.DocumentE
 				event.UTCKey = ""
 				zone := strings.TrimSpace(event.ZoneText)
 				loc, loadErr := query.LoadZone(zone)
-				if strings.Contains(zone, "/") && loadErr == nil && event.Precision != "date" && event.Precision != "month" && event.Precision != "year" {
+				if loadErr == nil && event.Precision != "date" && event.Precision != "month" && event.Precision != "year" {
 					instant, parseErr := document.EventLocalInstant(event.DateValue, event.Precision, loc)
 					if parseErr != nil {
 						return document.DocumentEventV1{}, fmt.Errorf("parse calendar date-time: %w", parseErr)
@@ -68,6 +68,10 @@ func metadataDateEvent(field document.SourceMetadataFieldV1) (document.DocumentE
 					_, offset := instant.Zone()
 					event.TimezoneKind = "iana"
 					event.OffsetSeconds = &offset
+					if zone == "UTC" {
+						event.TimezoneKind = "utc"
+						event.OffsetSeconds = nil
+					}
 					event.UTCKey, err = document.EventInstantUTCKey(instant)
 					if err != nil {
 						return document.DocumentEventV1{}, err
