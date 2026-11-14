@@ -1272,7 +1272,8 @@ type VerifyReport struct {
 // Job is the observable state of one daemon-owned background task. Names are
 // stable within a daemon run; durable storage operations follow their retention.
 type Job struct {
-	Processing *WatchProcessingStatus `json:"processing,omitzero"`
+	Processing       *WatchProcessingStatus  `json:"processing,omitzero" doc:"Status for the watch's single profile, when configured."`
+	ProcessingRoutes []WatchProcessingStatus `json:"processing_routes,omitzero" doc:"Status for each configured media-family route. A watch uses either processing or processing_routes."`
 
 	Tags              []string         `json:"tags,omitempty" doc:"Existing tag names applied to files imported by this watch."`
 	TagError          string           `json:"tag_error,omitempty" doc:"Why configured watch tags are unavailable."`
@@ -1332,6 +1333,7 @@ type JobList struct {
 }
 
 type WatchProcessingStatus struct {
+	MediaFamily  string `json:"media_family,omitzero"`
 	Profile      string `json:"profile"`
 	ConsentState string `json:"consent_state,omitzero" enum:"active,required,expired,revoked"`
 	Error        string `json:"error,omitzero"`
@@ -1341,7 +1343,8 @@ type WatchProcessingStatus struct {
 // state for one local watched source. Source is intentionally machine-local;
 // Destination is a path in the Docbank virtual tree.
 type WatchedInbox struct {
-	Processing *WatchProcessingStatus `json:"processing,omitzero"`
+	Processing       *WatchProcessingStatus  `json:"processing,omitzero" doc:"Status for the watch's single profile, when configured."`
+	ProcessingRoutes []WatchProcessingStatus `json:"processing_routes,omitzero" doc:"Status for each configured media-family route. A watch uses either processing or processing_routes."`
 
 	Tags            []string `json:"tags" doc:"Existing tag names applied to files imported by this watch."`
 	TagError        string   `json:"tag_error,omitempty" doc:"Why configured watch tags are unavailable."`

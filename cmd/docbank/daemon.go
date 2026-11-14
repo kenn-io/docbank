@@ -9,12 +9,14 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -365,9 +367,16 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	}
 
 	for _, watch := range cfg.Watches {
-		if watch.Profile != "" {
-			if _, ok := processingProfiles[watch.Profile]; !ok {
-				return fmt.Errorf("watch %q profile %q has no executable runtime", watch.Name, watch.Profile)
+		names := []string{watch.Profile}
+		for _, family := range slices.Sorted(maps.Keys(watch.Profiles)) {
+			names = append(names, watch.Profiles[family])
+		}
+		for _, name := range names {
+			if name == "" {
+				continue
+			}
+			if _, ok := processingProfiles[name]; !ok {
+				return fmt.Errorf("watch %q profile %q has no executable runtime", watch.Name, name)
 			}
 		}
 	}
@@ -643,11 +652,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		if err != nil {
 			return fmt.Errorf("configuring watch %q: %w", watchConfig.Name, err)
 		}
-		if watchConfig.Profile != "" {
-			watcher.AfterImport = func(ctx context.Context, node store.Node) error {
-				return processingService.AdmitImportedRendition(ctx, node, watchConfig.Profile)
-			}
-		}
+		watcher.AfterImport = watchImportAdmission(watchConfig, processingService.AdmitImportedRendition)
 		if err := jobSupervisor.StartWorker("watch:"+watchConfig.Name, watcher.Run); err != nil {
 			return fmt.Errorf("starting watch %q: %w", watchConfig.Name, err)
 		}
@@ -1469,4 +1474,14 @@ func localTextIdle(ctx context.Context, tracker *api.ActivityTracker, timeout ti
 		return false
 	}
 	return tracker.IdleFor() >= timeout
+}
+
+func watchImportAdmission(watch config.WatchConfig, admit func(context.Context, store.Node, string) error) func(context.Context, store.Node) error {
+	return func(ctx context.Context, node store.Node) error {
+		name := watch.ProcessingProfileFor(node.MimeType, node.Name)
+		if name == "" {
+			return nil
+		}
+		return admit(ctx, node, name)
+	}
 }

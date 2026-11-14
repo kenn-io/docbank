@@ -450,7 +450,7 @@ func normalizeFilters(value Filters) (Filters, error) {
 	if value.ExcludeTagIDs, err = normalizeSet(value.ExcludeTagIDs, MaxIDValues, validUUIDv4, "exclude_tag_ids"); err != nil {
 		return Filters{}, err
 	}
-	if value.MediaFamilies, err = normalizeSet(value.MediaFamilies, 13, validMediaFamily, "media_families"); err != nil {
+	if value.MediaFamilies, err = normalizeSet(value.MediaFamilies, 13, ValidMediaFamily, "media_families"); err != nil {
 		return Filters{}, err
 	}
 	if value.MIMETypes, err = normalizeSet(value.MIMETypes, MaxIDValues, validConcreteMIME, "mime_types"); err != nil {
@@ -550,7 +550,8 @@ func validMIMEToken(value string, allowWildcard bool) bool {
 	return true
 }
 
-func validMediaFamily(value string) bool {
+// ValidMediaFamily reports whether value is a supported search media family.
+func ValidMediaFamily(value string) bool {
 	return oneOf(value, "email", "document", "spreadsheet", "presentation", "image", "audio_video",
 		"text", "source_code", "web", "calendar", "archive", "cad", "unknown")
 }
