@@ -23,7 +23,7 @@ it("adds a matched excerpt only when given one", () => {
   expect(withExcerpt.container.querySelector(".excerpt")?.textContent).toBe("net 30 terms");
 });
 
-it("shows the frozen matched roles as chips beside the name", () => {
+it("shows frozen people evidence as chips beside the name", () => {
   const view = render(ResultName, {
     name: "board-memo.eml",
     folder: "/synthetic",

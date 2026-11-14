@@ -258,7 +258,7 @@ While people evidence is pending, a version matches neither a role search nor it
 
 Structured queries can use `"people":[{"person_id":"00000000-0000-4000-8000-000000000001","roles":["sender","organizer"]}]` inside `filters`. Each entry is required, while its roles are alternatives. The People facet uses safe evidence for every caller and ignores only root `filters.people` entries when counting. Result roles, facet names and counts are frozen with the snapshot; later renames or republishing do not change it. PostgreSQL search is not yet qualified.
 
-In the web app, frozen results show the matched roles as chips beside each name, such as `Sender`, `Cc` or `Mentioned`. The **People** filter group lists up to 20 people with their counts and roles. Selecting a person adds a `filters.people` entry with the roles shown; selecting them again removes only that person's entries.
+In the web app, frozen results show chips beside each name for roles named in positive query operands or people filters that those people hold on the document, such as `Sender` or `Cc`. A chip can appear even when its query branch did not select the result. `Mentioned` marks text that contains a name from a positive `mentions:` operand. The **People** filter group lists up to 20 people with their counts and roles. Selecting a person adds a `filters.people` entry with the roles shown; selecting them again removes only that person's entries.
 
 ## Can I search with filters alone?
 

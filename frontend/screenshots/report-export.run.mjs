@@ -40,7 +40,7 @@ try {
         mode,
       ),
       PLAYWRIGHT_JSON_OUTPUT_FILE: report,
-      // P07 role search: matched-role chips and the People facet (#1453).
+      // P07 role search: role chips and the People facet (#1453).
       DOCBANK_ROLE_SEARCH_PROOF: "branch",
     };
     try {

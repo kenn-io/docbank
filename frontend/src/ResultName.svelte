@@ -5,9 +5,8 @@
 
   // A result's name with the folder it lives in as one muted line beneath, so a
   // long path never wraps or repeats the name. The folder keeps its end, which
-  // is the part that tells siblings apart. Roles are the frozen reasons a
-  // person operand matched, shown as chips beside the name, or beneath it when
-  // both do not fit.
+  // is the part that tells siblings apart. Chips show frozen roles held by
+  // positively named people and text mentions, beside or beneath the name.
   let {
     name,
     folder = "",

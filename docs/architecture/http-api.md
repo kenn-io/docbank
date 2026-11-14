@@ -976,11 +976,12 @@ node/content-version membership observed at creation. It also carries exact
 content replacements, or dependency changes do not rewrite an existing
 snapshot. Create another snapshot to observe them.
 
-Document rows can include `matched_roles`, the sorted, distinct roles that
-contributed to a true positive query match within the caller's evidence scope.
-`mentioned` marks a display-name or alias phrase found in document text. With
-duplicate collapse, only actual matching members contribute roles to the result's
-chips.
+Document rows can include `matched_roles`, the sorted, distinct roles named by
+positive query operands or people filters that the named people hold on the
+document within the caller's evidence scope. A role can appear even when its
+query branch did not select the row. `mentioned` marks a display-name or alias
+phrase from a positive `mentions:` operand found in document text. With duplicate
+collapse, matching members contribute roles to the result's chips.
 
 `POST /workspace/queries/{id}/pages` accepts only the required `cursor`. Send
 the returned `next_cursor` or `previous_cursor` unchanged. It is bound to the
