@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { snapshotEnvelope } from "./snapshot-test-fixtures.js";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { parseQuery, personRoles, queryFingerprint, type Query } from "./query.js";
+import { parseQuery, queryFingerprint, type Query } from "./query.js";
 import {
   captureSnapshotTargets,
   createSnapshot,
@@ -624,7 +624,19 @@ it("retains photo ranking status on snapshot continuation pages", async () => {
 });
 
 it("parses people evidence and rejects an invalid matched role", async () => {
-  const safeRoles = personRoles.filter((role) => role !== "blind_copy");
+  const safeRoles = [
+    "author",
+    "last_saved_by",
+    "custodian",
+    "sender",
+    "recipient",
+    "copied",
+    "organizer",
+    "attendee",
+    "participant",
+    "speaker",
+    "depicted",
+  ];
   const person = {
     key: tagID,
     label: "Synthetic",

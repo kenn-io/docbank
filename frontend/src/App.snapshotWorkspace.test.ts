@@ -408,6 +408,7 @@ it("keeps rapid runs bound to the accepted frozen snapshot while live observatio
   });
   expect(workspaceBodies.at(-1)).toMatchObject({
     page_size: 100,
+    facets: expect.arrayContaining(["person_role"]),
   });
 
   expect(creates).toBe(2);
