@@ -380,6 +380,79 @@ merge and split operation IDs make retries replayable. When you omit one, the
 CLI generates it and prints it to stderr before the request. A split needs at
 least one identity, assertion, assignment, or external UID.
 
+## docbank cards check
+
+```text
+docbank cards check [--root /answer-cards] [--deep] [--json]
+```
+
+Reports answer cards in the selected folder and its descendants. Files with
+other media types or without the card marker are reported as `not_a_card`.
+Malformed cards are `invalid`. An approved card whose content has changed is
+`draft`; a card whose source is no longer current is `stale`. `--deep` also
+resolves each quotation and reports citation issues separately from the card
+state, including for drafts and latched stale cards. Read or
+transport failures stop the report. The command does not modify cards.
+Discovery is limited to 2,000 files and 32 MiB of downloaded card candidates.
+Oversized text candidates are reported as invalid without reading their marker.
+
+A card is a UTF-8 Markdown or plain-text file of at most 64 KiB, with YAML
+frontmatter and an answer body. Set `docbank_answer_card: 1`, `question`, an
+optional `alternates` list, and a `citations` list. Each citation contains all
+fields of a [saved text citation](usage/mcp.md#saved-text-citations), plus
+`quote` containing the exact resolved text. Questions and alternates are 1–300
+characters and must contain a letter or digit; a card can have up to 20 alternates, 1–16 citations, and an answer
+of 1–4,000 characters. Citations must belong to the current vault. The state
+may be `draft`, `approved`, or `stale`; omitted state means draft.
+
+For an approved card, set `state: approved` and `approved_hash` to the lowercase
+hex SHA-256 of the UTF-8 RFC 8785 canonical JSON encoding of an object with
+`question`, `alternates`, `answer`, and `citations`. Use the parsed question and
+citations unchanged and preserve citation order. Omitted alternates become `[]`;
+otherwise remove duplicates using NFKC normalization, Unicode case folding,
+replacing non-letters and non-digits with spaces, and collapsing whitespace,
+keeping the first original spelling and excluding matches to the question.
+The answer uses LF in place of CRLF and has trailing Unicode whitespace removed.
+All citation fields, including `quote`, are included. Lifecycle fields such as
+`state`, `approved_hash`, `approved_at`, and `stale` are excluded. This command
+only checks cards; it does not write approvals.
+
+For example, this synthetic card has the digest shown in `approved_hash`:
+
+```yaml
+---
+docbank_answer_card: 1
+question: When is renewal?
+citations:
+  - version: 1
+    vault_uid: 00000000-0000-4000-8000-000000000001
+    node_id: 42
+    content_version_id: 00000000-0000-4000-8000-000000000002
+    content_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    rendition_attachment_id: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    build_id: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    rendition_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    start: 0
+    end: 4
+    quote: test
+state: approved
+approved_hash: dcf778b275b6d0c709404658c5df8b39be5acee2c4254c5f3706cd48d3aa368c
+---
+Test answer.
+```
+
+The exact bytes hashed for this example are the following JSON, with no trailing
+newline:
+
+```json
+{"alternates":[],"answer":"Test answer.","citations":[{"build_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","content_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","content_version_id":"00000000-0000-4000-8000-000000000002","end":4,"node_id":42,"quote":"test","rendition_attachment_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","rendition_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","start":0,"vault_uid":"00000000-0000-4000-8000-000000000001","version":1}],"question":"When is renewal?"}
+```
+
+Approval fields are a writer-trust convention: anyone who can edit a card can
+forge them. A report observes source state while it runs, not as an atomic
+snapshot. It does not durably record observed staleness. Card text is indexed
+like ordinary documents and is not independent evidence for its own answer.
+
 ## docbank document stat
 
 ```
