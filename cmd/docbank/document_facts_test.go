@@ -12,32 +12,24 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-type factsFailAtWriter struct {
-	at    int
-	calls int
-	err   error
-}
-
-func (w *factsFailAtWriter) Write(p []byte) (int, error) {
-	w.calls++
-	if w.calls == w.at {
-		return 0, w.err
-	}
-	return len(p), nil
-}
-
 func TestDocumentFactsTableWriteErrors(t *testing.T) {
 	want := errors.New("write failed")
+	w := reportTestWriter(func([]byte) (int, error) { return 0, want })
 	t.Run("people state", func(t *testing.T) {
-		w := &factsFailAtWriter{at: 1, err: want}
 		require.ErrorIs(t, writeVersionPeopleTable(w, &api.VersionPeople{State: "none"}), want)
 	})
 	t.Run("dates state", func(t *testing.T) {
-		w := &factsFailAtWriter{at: 1, err: want}
 		require.ErrorIs(t, writeVersionDatesTable(w, &api.VersionDates{State: "none"}), want)
 	})
 	t.Run("dates diagnostic", func(t *testing.T) {
-		w := &factsFailAtWriter{at: 2, err: want}
+		calls := 0
+		w := reportTestWriter(func(p []byte) (int, error) {
+			calls++
+			if calls == 2 {
+				return 0, want
+			}
+			return len(p), nil
+		})
 		result := &api.VersionDates{State: "failed", Diagnostics: []api.FactDiagnostic{{Detail: "synthetic failure"}}}
 		require.ErrorIs(t, writeVersionDatesTable(w, result), want)
 	})
