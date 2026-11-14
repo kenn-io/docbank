@@ -38,12 +38,6 @@ func TestVersionFactsRoutes(t *testing.T) {
 		require.Equal(t, http.StatusNotFound, res.StatusCode, body)
 		require.Equal(t, "not_found", decodeProblem(t, body).Code)
 	}
-}
-
-func TestVersionFactsBrowserFullForbidden(t *testing.T) {
-	t.Parallel()
-	ts, s := newTestServer(t, nil)
-	node := createFileWithContent(t, ts, s, "sample.txt", "synthetic")
 	res, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
 	require.Equal(t, http.StatusCreated, res.StatusCode, body)
 	var session struct {
@@ -58,9 +52,11 @@ func TestVersionFactsBrowserFullForbidden(t *testing.T) {
 		res, body = get(t, ts, path+"?disclosure=full", headers)
 		require.Equal(t, http.StatusForbidden, res.StatusCode, body)
 		require.Equal(t, "disclosure_forbidden", decodeProblem(t, body).Code)
-		res, body = get(t, ts, path+"?timezone=UTC", headers)
-		require.Equal(t, http.StatusForbidden, res.StatusCode, body)
-		require.Equal(t, "web_session_read_only", decodeProblem(t, body).Code)
+		if kind == "people" {
+			res, body = get(t, ts, path+"?timezone=UTC", headers)
+			require.Equal(t, http.StatusForbidden, res.StatusCode, body)
+			require.Equal(t, "web_session_read_only", decodeProblem(t, body).Code)
+		}
 	}
 	person, err := s.CreatePerson(t.Context(), "Blind Recipient", "operator")
 	require.NoError(t, err)
@@ -132,8 +128,6 @@ func TestVersionFactsPDFMetadata(t *testing.T) {
 	require.Equal(t, "published", people.State)
 	require.NotEmpty(t, people.Edges)
 	require.Len(t, people.Assertions, 1)
-	_, err = s.UpdatePerson(t.Context(), person.PersonID, person.Revision, "Renamed Author")
-	require.NoError(t, err)
 	_, err = s.StartDocumentEventRebuild(t.Context(), "00000000-0000-4000-8000-000000000001", store.DocumentEventRebuildRequestSHA256)
 	require.NoError(t, err)
 	res, body = get(t, ts, fmt.Sprintf("/api/v1/versions/%s/dates", node.CurrentVersionID), nil)

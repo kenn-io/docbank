@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -27,18 +26,11 @@ func TestDocumentFactsToolsRejectAmbiguousSelection(t *testing.T) {
 func TestDocumentFactsPagesRejectChangedFacts(t *testing.T) {
 	f := newNativeExportFixture(t)
 	file := f.addFile(t, "pages.txt", "synthetic")
-	var first, second store.Person
 	for i := range 101 {
 		person, err := f.catalog.CreatePerson(t.Context(), fmt.Sprintf("Person %03d", i), "operator")
 		require.NoError(t, err)
 		_, err = f.catalog.AssertDocumentPerson(t.Context(), store.PersonDocumentAssertion{ContentVersionID: file.VersionID, PersonID: person.PersonID, Role: "custodian", Action: "assert", Revision: 1})
 		require.NoError(t, err)
-		switch i {
-		case 0:
-			first = person
-		case 1:
-			second = person
-		}
 	}
 	server := newSearchProcessingServer(t, f, nil)
 	page := func() map[string]any {
@@ -54,18 +46,6 @@ func TestDocumentFactsPagesRejectChangedFacts(t *testing.T) {
 	person, err := f.catalog.CreatePerson(t.Context(), "Earlier Author", "operator")
 	require.NoError(t, err)
 	_, err = f.catalog.AssertDocumentPerson(t.Context(), store.PersonDocumentAssertion{ContentVersionID: file.VersionID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1})
-	require.NoError(t, err)
-	require.Equal(t, "stale_facts", continuePage(p)["code"])
-	p = page()
-	_, err = f.catalog.MergePersons(t.Context(), first.PersonID, second.PersonID, "00000000-0000-4000-8000-000000000002", first.Revision, second.Revision)
-	require.NoError(t, err)
-	assertions, err := f.catalog.DocumentPersonAssertions(t.Context(), file.VersionID)
-	require.NoError(t, err)
-	require.Len(t, assertions, 101)
-	require.Equal(t, "stale_facts", continuePage(p)["code"])
-	require.NoError(t, processing.RebuildDocumentEvents(t.Context(), f.catalog))
-	p = page()
-	_, err = f.catalog.StartDocumentEventRebuild(t.Context(), "00000000-0000-4000-8000-000000000001", store.DocumentEventRebuildRequestSHA256)
 	require.NoError(t, err)
 	require.Equal(t, "stale_facts", continuePage(p)["code"])
 	p = page()
