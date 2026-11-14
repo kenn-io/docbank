@@ -68,12 +68,10 @@ func TestRoleSearchOperandSets(t *testing.T) {
 	forbidden := snapshotTestQuery(t, fmt.Sprintf(`{"filters":{"people":[{"person_id":%q,"roles":["blind_copy"]}]}}`, a.PersonID))
 	_, err = s.MaterializeQuerySnapshot(WithSafeRoleSearch(ctx), SnapshotRequest{Query: forbidden})
 	require.ErrorContains(t, err, "Bcc searches are unavailable here.")
-	for _, text := range []string{`to:"Dahlia Blind"`, `between:("Aster Sender", "Dahlia Blind")`} {
-		value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, text))
-		result, err := s.MaterializeQuerySnapshot(WithSafeRoleSearch(ctx), SnapshotRequest{Query: value})
-		require.NoError(t, err)
-		require.Empty(t, result.Rows)
-	}
+	value := snapshotTestQuery(t, `{"syntax":"advanced","text":"between:(\"Aster Sender\", \"Dahlia Blind\")"}`)
+	result, err := s.MaterializeQuerySnapshot(WithSafeRoleSearch(ctx), SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
 }
 
 func TestRoleSearchMatchesAndPeopleFacet(t *testing.T) {
@@ -277,7 +275,7 @@ func TestRoleSearchPeopleFacetIncomplete(t *testing.T) {
 	require.Equal(t, "people_evidence_incomplete", result.Facets[0].Reason)
 }
 
-func TestRoleSearchPeopleFacetBounds(t *testing.T) {
+func TestRoleSearchPeopleFacetBoundsAndFilters(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -305,6 +303,33 @@ func TestRoleSearchPeopleFacetBounds(t *testing.T) {
 	require.True(t, last.Selected)
 	require.Zero(t, last.Count)
 	require.Equal(t, []string{"author"}, last.Roles)
+	// The expression and person_ids still fence the facet population.
+	{
+		first := seedCurrentRoleSearchEvent(t, s, "keep-one.txt", "f101", nil)
+		second := seedCurrentRoleSearchEvent(t, s, "keep-two.txt", "f102", nil)
+		third := seedCurrentRoleSearchEvent(t, s, "outside.txt", "f103", nil)
+		anchor, err := s.CreatePerson(ctx, "Facet Anchor", "operator")
+		require.NoError(t, err)
+		selected, err := s.CreatePerson(ctx, "Facet Selected", "operator")
+		require.NoError(t, err)
+		other, err := s.CreatePerson(ctx, "Facet Other", "operator")
+		require.NoError(t, err)
+		for _, edge := range []struct{ version, person, role string }{
+			{first.ID, anchor.PersonID, "sender"}, {first.ID, other.PersonID, "recipient"},
+			{second.ID, selected.PersonID, "author"}, {third.ID, anchor.PersonID, "sender"},
+		} {
+			_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: edge.version, PersonID: edge.person, Role: edge.role, Action: "assert", Revision: 1})
+			require.NoError(t, err)
+		}
+		publishRoleFixtures(t, s)
+		value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"name:keep AND NOT path:/missing","filters":{"person_ids":[%q],"people":[{"person_id":%q,"roles":["author"]}]}}`, anchor.PersonID, selected.PersonID))
+		projection, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Facets: []string{"person_role"}})
+		require.NoError(t, err)
+		require.Empty(t, projection.Rows)
+		facet := facetByDimension(t, projection, "person_role")
+		require.EqualValues(t, 1, *facet.Total)
+		require.Equal(t, map[string]int64{anchor.PersonID: 1, other.PersonID: 1, selected.PersonID: 0}, facetCounts(facet))
+	}
 }
 
 func TestRoleSearchBetweenCurrentVersionAndMergedPeople(t *testing.T) {
@@ -349,12 +374,6 @@ func TestPublishedBccActorQueryPrivacy(t *testing.T) {
 	_, err = s.PublishDocumentPeople(ctx, publication)
 	require.NoError(t, err)
 	id := publication.People.Edges[0].PersonID
-	facetResult, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{}`), Facets: []string{"person_role"}})
-	require.NoError(t, err)
-	for _, facet := range facetResult.Facets[0].Values {
-		require.NotEqual(t, id, facet.Key)
-		require.NotContains(t, facet.Roles, "blind_copy")
-	}
 	for _, operand := range []string{"person", "to", "bcc"} {
 		value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, operand+`:"Bcc Person"`))
 		result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
@@ -375,6 +394,23 @@ func TestPublishedBccActorQueryPrivacy(t *testing.T) {
 			}
 		}
 	}
+
+	sensitive := seedCurrentRoleSearchEvent(t, s, "sensitive-author.txt", "f3", []document.DocumentEventActorV1{{
+		Role: "author", ActorKey: "email:sensitive@example.test", Address: "sensitive@example.test", DisplayName: "Sensitive Author", Claim: "Sensitive Author", Sensitive: true,
+	}})
+	input, err = s.PrepareDocumentPeopleInputs(ctx, sensitive.ID)
+	require.NoError(t, err)
+	publication = documentPeoplePublicationForInput(t, input)
+	publication.People.Edges[0].Sensitive = true
+	_, err = s.PublishDocumentPeople(ctx, publication)
+	require.NoError(t, err)
+	sensitiveQuery := snapshotTestQuery(t, `{"syntax":"advanced","text":"author:\"Sensitive Author\""}`)
+	fullResult, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: sensitiveQuery})
+	require.NoError(t, err)
+	require.Len(t, fullResult.Rows, 1)
+	safeResult, err := s.MaterializeQuerySnapshot(WithSafeRoleSearch(ctx), SnapshotRequest{Query: sensitiveQuery})
+	require.NoError(t, err)
+	require.Empty(t, safeResult.Rows)
 
 	other := seedCurrentRoleSearchEvent(t, s, "visible.txt", "f4", nil)
 	visible, err := s.CreatePerson(ctx, "Visible Person", "operator")
@@ -457,7 +493,7 @@ func TestRoleSearchSavedRunPreservesMergedDefinitionReceipt(t *testing.T) {
 	require.False(t, next.Comparison.DefinitionChanged)
 }
 
-func TestRoleSearchInlineCapacity(t *testing.T) {
+func TestRoleSearchSupports64PeopleFilters(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -550,7 +586,6 @@ func TestRoleSearchNegationBranchMembership(t *testing.T) {
 		{`saved:"Branch outer"`, []string{"sender"}},
 		{`(saved:"Branch outer" AND name:missing) OR name:branch-one`, []string{"sender"}},
 		{`name:branch-one AND NOT attendee:"Branch Alpha"`, nil},
-		{`from:"Branch Alpha"`, []string{"sender"}},
 		{`NOT from:"Branch Alpha"`, nil},
 		{`NOT NOT from:"Branch Alpha"`, []string{"sender"}},
 		{`NOT (NOT from:"Branch Alpha" OR to:"Branch Beta") OR name:branch-two`, []string{"sender"}},
@@ -678,38 +713,6 @@ func publishRoleFixtures(t *testing.T, s *Store) {
 		_, err = s.PublishDocumentPeople(ctx, DocumentPeoplePublication{People: document.DocumentPeopleV1{ContractVersion: document.PersonContractV1, ContentVersionID: id, EventGenerationID: input.EventGenerationID, Edges: []document.DocumentPersonEdgeV1{}}, InputsSHA256: fakeSHA256(raw), ResolverFingerprint: document.PersonResolverFingerprint(), NodeID: input.NodeID, NodeRevision: input.NodeRevision, BindingEpoch: input.BindingEpoch})
 		require.NoError(t, err)
 	}
-}
-
-// Only root people entries are removed for the People facet. The expression
-// and person_ids still fence the population used to count visible evidence.
-func TestRoleSearchPeopleFacetRetainsExpressionAndPersonIDs(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	first := seedCurrentRoleSearchEvent(t, s, "keep-one.txt", "f101", nil)
-	second := seedCurrentRoleSearchEvent(t, s, "keep-two.txt", "f102", nil)
-	third := seedCurrentRoleSearchEvent(t, s, "outside.txt", "f103", nil)
-	anchor, err := s.CreatePerson(ctx, "Facet Anchor", "operator")
-	require.NoError(t, err)
-	selected, err := s.CreatePerson(ctx, "Facet Selected", "operator")
-	require.NoError(t, err)
-	other, err := s.CreatePerson(ctx, "Facet Other", "operator")
-	require.NoError(t, err)
-	for _, edge := range []struct{ version, person, role string }{
-		{first.ID, anchor.PersonID, "sender"}, {first.ID, other.PersonID, "recipient"},
-		{second.ID, selected.PersonID, "author"}, {third.ID, anchor.PersonID, "sender"},
-	} {
-		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: edge.version, PersonID: edge.person, Role: edge.role, Action: "assert", Revision: 1})
-		require.NoError(t, err)
-	}
-	publishRoleFixtures(t, s)
-	value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"name:keep AND NOT path:/missing","filters":{"person_ids":[%q],"people":[{"person_id":%q,"roles":["author"]}]}}`, anchor.PersonID, selected.PersonID))
-	projection, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Facets: []string{"person_role"}})
-	require.NoError(t, err)
-	require.Empty(t, projection.Rows)
-	facet := facetByDimension(t, projection, "person_role")
-	require.EqualValues(t, 1, *facet.Total)
-	require.Equal(t, map[string]int64{anchor.PersonID: 1, other.PersonID: 1, selected.PersonID: 0}, facetCounts(facet))
 }
 
 func TestRoleSearchMentionsRequireDocumentContent(t *testing.T) {

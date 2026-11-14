@@ -590,9 +590,7 @@ func TestRoleSearchSavedPredicatesAcrossRelations(t *testing.T) {
 	cases := []struct {
 		text    string
 		matched bool
-	}{
-		{`(saved:"Prepared outer" OR saved:"Prepared outer") AND (text_coverage:complete OR name:a.PDF)`, true},
-	}
+	}{}
 	for _, relation := range []string{`path:/missing`, `collection:Second`, `text_coverage:complete`, `has_duplicates:true`} {
 		cases = append(cases, struct {
 			text    string

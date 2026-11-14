@@ -58,7 +58,7 @@ func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
 		require.Len(t, page.Rows, 1)
 		require.Equal(t, "letter.txt", page.Rows[0].Name)
 	})
-	t.Run("person role facet", func(t *testing.T) {
+	t.Run("people evidence wire fields", func(t *testing.T) {
 		visible, err := s.CreatePerson(t.Context(), "Matrix Sender", "operator")
 		require.NoError(t, err)
 		_, err = s.AssertDocumentPerson(t.Context(), store.PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: visible.PersonID, Role: "sender", Action: "assert", Revision: 1})
@@ -85,16 +85,16 @@ func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
 		digest := sha256.Sum256(raw)
 		_, err = s.PublishDocumentPeople(ctx, store.DocumentPeoplePublication{People: document.DocumentPeopleV1{ContractVersion: document.PersonContractV1, ContentVersionID: node.CurrentVersionID, EventGenerationID: input.EventGenerationID, Edges: []document.DocumentPersonEdgeV1{}}, InputsSHA256: hex.EncodeToString(digest[:]), ResolverFingerprint: document.PersonResolverFingerprint(), NodeID: input.NodeID, NodeRevision: input.NodeRevision, BindingEpoch: input.BindingEpoch})
 		require.NoError(t, err)
-		request := fmt.Sprintf(`{"query":{"syntax":"advanced","text":"from:\"Matrix Sender\"","filters":{"people":[{"person_id":%q,"roles":["sender"]},{"person_id":%q,"roles":["author"]}]}},"facets":["collections","tags","media_family","extension","modified","size","text_coverage","duplicates","person_role"]}`, visible.PersonID, visible.PersonID)
+		request := fmt.Sprintf(`{"query":{"syntax":"advanced","text":"from:\"Matrix Sender\"","filters":{"people":[{"person_id":%q,"roles":["sender"]},{"person_id":%q,"roles":["author"]}]}},"facets":["person_role"]}`, visible.PersonID, visible.PersonID)
 		resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", browser, request)
 		require.Equal(t, http.StatusOK, resp.StatusCode, body)
 		var page api.WorkspaceQueryResponse
 		require.NoError(t, json.Unmarshal([]byte(body), &page))
 		require.Len(t, page.Rows, 1)
 		require.Equal(t, []string{"author", "sender"}, page.Rows[0].MatchedRoles)
-		require.Len(t, page.Facets, 9)
-		require.Len(t, page.Facets[8].Values, 1)
-		require.Equal(t, []string{"author", "sender"}, page.Facets[8].Values[0].Roles)
-		require.Equal(t, []string{visible.PersonID}, page.Facets[8].Values[0].SelectedPersonIDs)
+		require.Len(t, page.Facets, 1)
+		require.Len(t, page.Facets[0].Values, 1)
+		require.Equal(t, []string{"author", "sender"}, page.Facets[0].Values[0].Roles)
+		require.Equal(t, []string{visible.PersonID}, page.Facets[0].Values[0].SelectedPersonIDs)
 	})
 }

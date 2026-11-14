@@ -599,7 +599,14 @@ it("narrows and clears people while keeping other filters", async () => {
           roles: ["author", "sender"],
           selected_person_ids: [jory, mara],
         },
-        { key: typed, label: "Other Person", count: 1, selected: true, roles: ["author"] },
+        {
+          key: typed,
+          label: "Other Person",
+          count: 1,
+          selected: true,
+          roles: ["author"],
+          selected_person_ids: [typed],
+        },
       ]),
     ],
     query,
@@ -636,7 +643,14 @@ it("narrows and clears people while keeping other filters", async () => {
     facets: [
       peopleFacet([
         ...peopleValues,
-        { key: typed, label: "Typed Person", count: 0, selected: true, roles: ["custodian"] },
+        {
+          key: typed,
+          label: "Typed Person",
+          count: 0,
+          selected: true,
+          roles: ["custodian"],
+          selected_person_ids: [typed],
+        },
       ]),
     ],
     query: unmergedQuery,
