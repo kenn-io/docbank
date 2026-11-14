@@ -34,7 +34,7 @@ func catalogInstructions(options ServerOptions) string {
 		instructions += " start_processing requires a reviewed plan and prior operator consent."
 	}
 	if options.AllowPackageWrites {
-		instructions += " Package writes can preflight local sources, import packages, assign or resolve custodians, and publish or export Bates PDFs. Bates reservation does not stamp or publish files."
+		instructions += " Package writes can preflight local sources, import packages, assign or resolve custodians, and publish or export Bates PDFs. Bates reservation does not stamp or publish files. Reviewed PDF publication requires an operator-created allocation; MCP cannot grant original-retention consent."
 	}
 	if options.AllowPhotoEdits {
 		instructions += " Photo edits change one asset at an expected revision."
@@ -158,6 +158,16 @@ var publishBatesExportToolDefinition = toolDefinition{
 	schemas:     publishBatesExportSchemas, write: true, idempotent: true,
 }
 
+var publishNumberedPDFToolDefinition = toolDefinition{
+	name: "publish_numbered_pdf", title: "Publish numbered PDF",
+	description: "Publish one reviewed PDF into an operator-created numbered allocation. " +
+		"Supply the three saved review paths and the review object SHA-256. " +
+		"The operator must reserve through the browser or CLI first; this tool cannot consent " +
+		"to retention or allocate numbers. Repeat the identical allocation and review after " +
+		"an uncertain reply; download through export_bates_file with the saved review for full checking.",
+	schemas: publishNumberedPDFSchemas, write: true, idempotent: true,
+}
+
 var exportBatesFileToolDefinition = toolDefinition{
 	name: "export_bates_file", title: "Export Bates file",
 	description: "Write a retained Bates PDF to a local path. " +
@@ -191,7 +201,7 @@ func toolCatalog(options ServerOptions) []*sdkmcp.Tool {
 	if options.AllowPackageWrites {
 		definitions = append(definitions, preflightLoadFilePackageToolDefinition, packageImportToolDefinition,
 			resolvePackageCustodianToolDefinition, assignPackageCustodianToolDefinition,
-			ensureBatesNamespaceToolDefinition, reserveBatesRangeToolDefinition, publishBatesExportToolDefinition,
+			ensureBatesNamespaceToolDefinition, reserveBatesRangeToolDefinition, publishBatesExportToolDefinition, publishNumberedPDFToolDefinition,
 			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition)
 	}
 	if options.AllowPhotoEdits {
@@ -253,7 +263,7 @@ func registerToolCatalog(
 		case resolvePackageCustodianToolDefinition.name, assignPackageCustodianToolDefinition.name:
 			handler = packageCustodianWriteToolHandler(lease, tool.Name, output, logger)
 		case ensureBatesNamespaceToolDefinition.name, reserveBatesRangeToolDefinition.name,
-			publishBatesExportToolDefinition.name, exportBatesFileToolDefinition.name:
+			publishBatesExportToolDefinition.name, publishNumberedPDFToolDefinition.name, exportBatesFileToolDefinition.name:
 			handler = batesWriteToolHandler(lease, tool.Name, output, logger)
 		case exportLoadFilePackageToolDefinition.name:
 			handler = packageExportToolHandler(lease, output, logger)
@@ -417,6 +427,9 @@ type searchProfileError struct{ code, message string }
 func (e *searchProfileError) Error() string { return e.message }
 
 func domainToolError(err error) (*sdkmcp.CallToolResult, bool) {
+	if publication, ok := errors.AsType[*numberedPublicationError](err); ok {
+		return toolErrorResult(toolErrorOutput{Code: publication.code, Message: numberedPublicationMessages[publication.code]})
+	}
 	if guidance, ok := errors.AsType[*searchProfileError](err); ok {
 		return toolErrorResult(toolErrorOutput{Code: guidance.code, Message: guidance.message})
 	}
@@ -458,6 +471,9 @@ func toolProblemFacts(err error) (daemonconn.ProblemFacts, bool) {
 func stableDomainError(err error) (string, int) {
 	if err == nil {
 		return "", 0
+	}
+	if publication, ok := errors.AsType[*numberedPublicationError](err); ok {
+		return publication.code, 0
 	}
 	if full, ok := errors.AsType[*reviewedBatesError](err); ok {
 		return full.code, 0
