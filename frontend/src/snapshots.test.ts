@@ -658,7 +658,7 @@ it("retains photo ranking status on snapshot continuation pages", async () => {
   expect(fetcher.mock.calls[0]?.[0]).toBe(`/api/v1/workspace/queries/${snapshotID}/pages`);
 });
 
-it("validates frozen person roles and the People facet", async () => {
+it("validates frozen person roles", async () => {
   const safeRoles = personRoles.filter((role) => role !== "blind_copy");
   const person = { key: tagID, label: "Synthetic", count: 1, selected: false, roles: safeRoles };
   const good = { ...row(2, version2, blob2, 20), matched_roles: ["sender"] };

@@ -588,30 +588,28 @@ func TestRoleSearchSavedPredicatesAcrossRelations(t *testing.T) {
 	_, err = fixture.store.CreateSavedQuery(ctx, "Prepared outer", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"saved:\"Prepared inner\""}`))
 	require.NoError(t, err)
 	prefix := `(saved:"Prepared outer")`
+	cases := []struct {
+		text    string
+		matched bool
+	}{
+		{`(saved:"Prepared outer" OR saved:"Prepared outer") AND (text_coverage:complete OR name:a.PDF)`, true},
+	}
 	for _, relation := range []string{`path:/missing`, `collection:Second`, `text_coverage:complete`, `has_duplicates:true`} {
-		cases := []struct {
+		cases = append(cases, struct {
 			text    string
 			matched bool
-		}{
-			{"(" + prefix + " AND name:missing) OR (" + relation + " AND name:a.PDF)", relation != `path:/missing`},
+		}{"(" + prefix + " AND name:missing) OR (" + relation + " AND name:a.PDF)", relation != `path:/missing`})
+	}
+	for _, tc := range cases {
+		value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q,"filters":{"collapse_duplicates":true}}`, tc.text))
+		result, err := fixture.store.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Coverage: fixture.selection})
+		require.NoError(t, err, tc.text)
+		if !tc.matched {
+			require.Empty(t, result.Rows, tc.text)
+			continue
 		}
-		if relation == `text_coverage:complete` {
-			cases = append(cases, struct {
-				text    string
-				matched bool
-			}{`(saved:"Prepared outer" OR saved:"Prepared outer") AND (text_coverage:complete OR name:a.PDF)`, true})
-		}
-		for _, tc := range cases {
-			value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q,"filters":{"collapse_duplicates":true}}`, tc.text))
-			result, err := fixture.store.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Coverage: fixture.selection})
-			require.NoError(t, err, tc.text)
-			if !tc.matched {
-				require.Empty(t, result.Rows, tc.text)
-				continue
-			}
-			require.Len(t, result.Rows, 1, tc.text)
-			require.Equal(t, fixture.nodes["a"].ID, result.Rows[0].NodeID, tc.text)
-			require.Equal(t, []string{"sender"}, result.Rows[0].MatchedRoles, tc.text)
-		}
+		require.Len(t, result.Rows, 1, tc.text)
+		require.Equal(t, fixture.nodes["a"].ID, result.Rows[0].NodeID, tc.text)
+		require.Equal(t, []string{"sender"}, result.Rows[0].MatchedRoles, tc.text)
 	}
 }

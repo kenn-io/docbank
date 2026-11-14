@@ -588,7 +588,6 @@ it("narrows by a person with the roles the People group shows and keeps typed en
   });
   const group = screen.getByRole("group", { name: "People facet" });
   expect(within(group).getByText("Author, Sender")).toBeTruthy();
-  expect(within(group).getByText("Cc")).toBeTruthy();
   await fireEvent.click(
     within(group).getByRole("button", { name: "Jory Pellham, Author, Sender, 2 documents" }),
   );

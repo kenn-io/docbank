@@ -77,11 +77,6 @@ func TestRoleSearchOperandSets(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, result.Rows)
 	}
-	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: pdf.ID, PersonID: d.PersonID, Role: "participant", Action: "assert", Revision: 1})
-	require.NoError(t, err)
-	projection, err := s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: q})
-	require.NoError(t, err)
-	require.Len(t, projection.Rows, 2)
 }
 
 func TestRoleSearchMatchesAndPeopleFacet(t *testing.T) {

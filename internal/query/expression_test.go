@@ -151,6 +151,7 @@ func TestParseExpressionAdvancedRecognizesExactFieldNames(t *testing.T) {
 		"name", "path", "tag", "collection", "saved", "mime", "extension",
 		"media_family", "modified_after", "modified_before", "size_min", "size_max",
 		"text_coverage", "has_duplicates",
+		"author", "from", "to", "cc", "bcc", "custodian", "participant", "organizer", "attendee", "mentions",
 	}
 	for _, field := range fields {
 		t.Run(field, func(t *testing.T) {
@@ -306,15 +307,6 @@ func assertExpressionSpans(t *testing.T, expr *Expression, textLen int) {
 }
 
 func TestRoleSearchGrammar(t *testing.T) {
-	for _, field := range []string{"author", "from", "to", "cc", "bcc", "custodian", "participant", "organizer", "attendee", "mentions"} {
-		t.Run(field, func(t *testing.T) {
-			expr, err := ParseExpression(field+`:"Jory Pellham"`, "advanced")
-			require.NoError(t, err)
-			assert.Equal(t, field, expr.Field)
-			require.Len(t, expr.Children, 1)
-			assert.Equal(t, "Jory Pellham", expr.Children[0].Value)
-		})
-	}
 	for _, input := range []string{`between:("Mara Okonkwo-Fell", "Ines Albarrán")`, `between:("A" "B")`, `between:(aaa,bbb)`} {
 		expr, err := ParseExpression(input, "advanced")
 		require.NoError(t, err, input)

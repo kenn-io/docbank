@@ -41,6 +41,8 @@ func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
 	resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, reportRoute.path+"?people_disclosure=safe", map[string]string{"X-Api-Key": testAPIKey}, reportRoute.body)
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	require.Contains(t, body, "bcc: is not available with safe people disclosure")
-	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", browser, `{"query":{},"facets":["collections","tags","media_family","extension","modified","size","text_coverage","duplicates","person_role"]}`)
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	t.Run("person role facet", func(t *testing.T) {
+		resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", browser, `{"query":{},"facets":["collections","tags","media_family","extension","modified","size","text_coverage","duplicates","person_role"]}`)
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	})
 }
