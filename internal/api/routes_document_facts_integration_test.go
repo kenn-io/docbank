@@ -132,7 +132,7 @@ func TestVersionFactsPDFMetadata(t *testing.T) {
 	require.Equal(t, "published", people.State)
 	require.NotEmpty(t, people.Edges)
 	require.Len(t, people.Assertions, 1)
-	person, err = s.UpdatePerson(t.Context(), person.PersonID, person.Revision, "Renamed Author")
+	_, err = s.UpdatePerson(t.Context(), person.PersonID, person.Revision, "Renamed Author")
 	require.NoError(t, err)
 	_, err = s.StartDocumentEventRebuild(t.Context(), "00000000-0000-4000-8000-000000000001", store.DocumentEventRebuildRequestSHA256)
 	require.NoError(t, err)
