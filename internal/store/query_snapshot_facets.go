@@ -343,7 +343,7 @@ func finishSnapshotFacet(
 			observation.labels[value] = value
 		}
 	}
-	values, other := finalizeSnapshotFacetValues(observation.counts, observation.labels, selected, len(fixed) != 0, 50)
+	values, other := finalizeSnapshotFacetValues(observation.counts, observation.labels, selected, len(fixed) != 0)
 	visible := make(map[string]bool, len(values))
 	for _, value := range values {
 		visible[value.Key] = true
@@ -555,7 +555,7 @@ func fillSelectedSnapshotFacetLabels(
 }
 
 func finalizeSnapshotFacetValues(
-	counts map[string]int64, labels map[string]string, selected map[string]bool, fixed bool, limit int,
+	counts map[string]int64, labels map[string]string, selected map[string]bool, fixed bool,
 ) ([]SnapshotFacetValue, int64) {
 	observed := make([]SnapshotFacetValue, 0, len(counts))
 	for key, count := range counts {
@@ -567,6 +567,7 @@ func finalizeSnapshotFacetValues(
 		}
 		return strings.Compare(left.Key, right.Key)
 	})
+	limit := 50
 	if fixed || len(observed) < limit {
 		limit = len(observed)
 	}

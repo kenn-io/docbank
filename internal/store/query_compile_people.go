@@ -11,16 +11,10 @@ import (
 )
 
 type safeRoleSearchKey struct{}
-type refuseBccSearchKey struct{}
 
 // WithSafeRoleSearch excludes blind-copy and sensitive role evidence.
 func WithSafeRoleSearch(ctx context.Context) context.Context {
 	return context.WithValue(ctx, safeRoleSearchKey{}, true)
-}
-
-// WithBccSearchRefused rejects the bcc operand without changing other role searches.
-func WithBccSearchRefused(ctx context.Context) context.Context {
-	return context.WithValue(ctx, refuseBccSearchKey{}, true)
 }
 
 // currentPhotoSourcePredicate limits face evidence to a live image or RAW member.

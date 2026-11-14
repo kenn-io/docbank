@@ -304,7 +304,7 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
 		selectedIDs[id] = append(selectedIDs[id], entry.PersonID)
 		observation.labels[id] = name
 	}
-	out, other := finalizeSnapshotFacetValues(observation.counts, observation.labels, selected, false, 20)
+	out, other := finalizeSnapshotFacetValues(observation.counts, observation.labels, selected, false)
 	for i := range out {
 		// Normalized people entries are sorted by person ID.
 		out[i].SelectedPersonIDs = slices.Compact(selectedIDs[out[i].Key])

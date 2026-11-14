@@ -252,7 +252,7 @@ Advanced QueryV1 expressions can select what a person did on a current document 
 
 For example, `from:"Mara Okonkwo-Fell"`, `custodian:"Mara Okonkwo-Fell"`, and `between:("Mara Okonkwo-Fell", "Ines Albarrán")` are ordinary queries that can be saved and exported. `between:` accepts exactly two distinct people, separated by a comma or whitespace; invalid pairs report `between: needs two different people`. `mentions:` searches all distinct names as literal phrases and labels a matched result `Mentioned`.
 
-Browser searches refuse `bcc:` and structured `blind_copy` role filters. Their other role searches omit Bcc evidence. MCP reports refuse `bcc:`, including inside saved queries. API-key searches and other MCP role searches retain full evidence. `person:` retains its any-role meaning.
+Browser searches refuse `bcc:` and structured `blind_copy` role filters. Their other role searches omit Bcc evidence. MCP reports refuse `bcc:`, including inside saved queries, and their other role searches omit Bcc evidence. API-key searches retain full evidence. `person:` retains its any-role meaning.
 
 While people evidence is incomplete, a version matches neither a role search nor its `NOT` unless an operator assertion establishes the role; an independent `OR` branch can still match it. Use the document event coverage report to inspect pending and failed work.
 
@@ -260,7 +260,7 @@ The People facet is unavailable while any document in its population has incompl
 
 Structured queries can use `"people":[{"person_id":"00000000-0000-4000-8000-000000000001","roles":["sender","organizer"]}]` inside `filters`. Each entry is required, while its roles are alternatives. The People facet uses safe evidence for every caller and ignores only root `filters.people` entries when counting. Result roles, facet names and counts are frozen with the snapshot; later renames or republishing do not change it. PostgreSQL search is not yet qualified.
 
-In the web app, frozen results show chips beside each name for roles named in positive query operands or people filters that those people hold on the document, such as `Sender` or `Cc`. A chip can appear even when its query branch did not select the result. `Mentioned` marks text that contains a name from a positive `mentions:` operand. The **People** filter group lists up to 20 people with their counts and roles. Selecting a person adds a `filters.people` entry with the roles shown; selecting them again removes only that person's entries.
+In the web app, frozen results show chips beside each name for roles named in positive query operands or people filters that those people hold on the document, such as `Sender` or `Cc`. A chip can appear even when its query branch did not select the result. `Mentioned` marks text that contains a name from a positive `mentions:` operand. The **People** filter group lists up to 50 people with their counts and roles. Selecting a person adds a `filters.people` entry with the roles shown; selecting them again removes only that person's entries.
 
 ## Can I search with filters alone?
 

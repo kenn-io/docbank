@@ -498,7 +498,7 @@ func TestQuerySnapshotFacetTopFiftyAppendsSelectedValues(t *testing.T) {
 		labels[key] = key
 	}
 	selected := map[string]bool{"t": true}
-	values, other := finalizeSnapshotFacetValues(counts, labels, selected, false, 50)
+	values, other := finalizeSnapshotFacetValues(counts, labels, selected, false)
 	require.Len(t, values, 51)
 	assert.Equal(t, int64(1), other)
 	assert.True(t, values[len(values)-1].Selected)
@@ -572,41 +572,4 @@ func TestRoleSearchCollectionFacetSelfExclusion(t *testing.T) {
 	require.Len(t, projection.Rows, 1)
 	require.Equal(t, fixture.nodes["a"].ID, projection.Rows[0].NodeID)
 	require.Equal(t, map[string]int64{fixture.collections[0].ID(): 1, fixture.collections[1].ID(): 1}, facetCounts(facetByDimension(t, projection, "collections")))
-}
-
-func TestRoleSearchSavedPredicatesAcrossRelations(t *testing.T) {
-	t.Parallel()
-	fixture := newSnapshotFacetFixture(t)
-	ctx := t.Context()
-	person, err := fixture.store.CreatePerson(ctx, "Prepared Sender", "operator")
-	require.NoError(t, err)
-	_, err = fixture.store.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: fixture.nodes["a"].CurrentVersionID, PersonID: person.PersonID, Role: "sender", Action: "assert", Revision: 1})
-	require.NoError(t, err)
-	_, err = fixture.store.CreateSavedQuery(ctx, "Prepared inner", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"from:\"Prepared Sender\"","filters":{"collapse_duplicates":true}}`))
-	require.NoError(t, err)
-	_, err = fixture.store.CreateSavedQuery(ctx, "Prepared outer", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"saved:\"Prepared inner\""}`))
-	require.NoError(t, err)
-	prefix := `(saved:"Prepared outer")`
-	cases := []struct {
-		text    string
-		matched bool
-	}{}
-	for _, relation := range []string{`path:/missing`, `collection:Second`, `text_coverage:complete`, `has_duplicates:true`} {
-		cases = append(cases, struct {
-			text    string
-			matched bool
-		}{"(" + prefix + " AND name:missing) OR (" + relation + " AND name:a.PDF)", relation != `path:/missing`})
-	}
-	for _, tc := range cases {
-		value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q,"filters":{"collapse_duplicates":true}}`, tc.text))
-		result, err := fixture.store.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Coverage: fixture.selection})
-		require.NoError(t, err, tc.text)
-		if !tc.matched {
-			require.Empty(t, result.Rows, tc.text)
-			continue
-		}
-		require.Len(t, result.Rows, 1, tc.text)
-		require.Equal(t, fixture.nodes["a"].ID, result.Rows[0].NodeID, tc.text)
-		require.Equal(t, []string{"sender"}, result.Rows[0].MatchedRoles, tc.text)
-	}
 }

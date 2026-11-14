@@ -56,10 +56,10 @@ func (c *Connection) CreateTermReport(ctx context.Context, request report.Reques
 	return c.createTermReport(ctx, request, nil)
 }
 
-// CreateTermReportWithoutBcc refuses bcc operands, including in saved queries.
-func (c *Connection) CreateTermReportWithoutBcc(ctx context.Context, request report.Request) (report.Summary, error) {
+// CreateTermReportSafeRoles limits a report to safe role evidence.
+func (c *Connection) CreateTermReportSafeRoles(ctx context.Context, request report.Request) (report.Summary, error) {
 	return c.createTermReport(ctx, request, func(_ context.Context, req *http.Request) error {
-		req.Header.Set(api.RefuseBccHeader, "1")
+		req.Header.Set(api.SafeRoleSearchHeader, "1")
 		return nil
 	})
 }
