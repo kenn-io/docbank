@@ -258,7 +258,6 @@ func TestContentReaderStorageUnchanged(t *testing.T) {
 			}
 			if kind == "temp inside vault" {
 				tmp := filepath.Join(root, "tmp")
-				require.NoError(t, os.Mkdir(tmp, 0o700))
 				for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
 					t.Setenv(key, tmp)
 				}
@@ -275,7 +274,8 @@ func TestContentReaderStorageUnchanged(t *testing.T) {
 			if kind == "tampered" {
 				content, err := reader.OpenContent(t.Context(), "/source")
 				require.NoError(t, err)
-				_, _ = io.ReadAll(content.Reader)
+				_, err = io.ReadAll(content.Reader)
+				require.Error(t, err)
 				_ = content.Reader.Close()
 			} else {
 				assertReaderContent(t, reader, "/source", data)
