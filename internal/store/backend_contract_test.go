@@ -2231,7 +2231,7 @@ var backendSuites = []backendSuite{
 	{name: "processing-publication", postgres: "unqualified", scope: "Email PDF rendering and media provider execution remain unqualified; retained-state cleanup is covered above."},
 	{name: "photo-editing", postgres: "unqualified", scope: "Query-driven photo review remains unqualified. Explicit decisions use photo-review; people edits use people-curation; query selection stays with search."},
 	{name: "search", postgres: "unqualified", scope: "Lexical/vector search and query execution remain unqualified; matching metadata columns do not establish ranking or index parity."},
-	{name: "transfer-and-recovery", postgres: "unqualified", scope: "Physical backup/restore remain unqualified; metadata-export and metadata-import cover native logical transfer between fresh metadata backends."},
+	{name: "transfer-and-recovery", postgres: "native backup capture and SQLite recovery", scope: "internal/backupapp tests qualify repository capture, loose/packed bytes, audited and photo recovery, source loss and missing-byte failure. PostgreSQL-target restore remains unqualified; metadata-export and metadata-import cover native logical transfer."},
 	{name: "organization", postgres: "native operations", scope: "Tags, audited bulk edits and saved definitions; excludes query execution and delivery.", scenarios: []backendScenario{
 		{"BatchTagsMixedChangesNoOpsAndCallerOrder", func(t *testing.T) {
 			t.Helper()
@@ -2331,7 +2331,7 @@ var backendSuites = []backendSuite{
 		}},
 	}},
 	{name: "organization-and-delivery", postgres: "unqualified", scope: "Query-selected albums remain unqualified; exports covers native explicit-source plans and jobs; sealed-delivery covers snapshots, package identity and Bates; received-packages covers native intake and completion; people-curation covers custodians."},
-	{name: "public-vault", postgres: "unqualified", scope: "Daemon and embedded vault opening still use SQLite; there is no public PostgreSQL opener."},
+	{name: "public-vault", postgres: "unqualified", scope: "Internal Store opening validates runtime credentials and pins the pool schema. Daemon and embedded Vault opening still use SQLite; there is no public PostgreSQL opener."},
 }
 
 func TestBackendContractsSQLite(t *testing.T) {
