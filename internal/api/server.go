@@ -300,6 +300,7 @@ func NewServer(d Deps) *Server {
 
 	h := photoHiddenMiddleware(http.Handler(mux))
 	h = authMiddleware(h, d.Cfg.Server.APIKey, s.webSessions, s.masterOwner)
+	h = documentFactsCacheMiddleware(h)
 	h = webHostMiddleware(h, s.webSessions.login)
 	h = loopbackMiddleware(h)
 	h = timeoutMiddleware(h)

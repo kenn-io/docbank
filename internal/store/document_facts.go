@@ -112,6 +112,11 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 		return DocumentPeopleFacts{}, err
 	}
 	facts.State = eventState
+	type actorOccurrence struct {
+		actorKey   string
+		occurrence PersonCandidateOccurrence
+	}
+	resolved := make(map[actorOccurrence]bool)
 	if eventState == "published" {
 		edges, head, headErr := documentPeopleForVersionTx(ctx, tx, versionID)
 		switch {
@@ -122,6 +127,9 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 		case headErr == nil && (head.State == documentPeopleStateFailed || head.State == documentPeopleStateUnavailable):
 			facts.State = factsStateFailed
 		case headErr == nil && head.State == documentPeopleStatePublished && head.GenerationID != "":
+			for _, edge := range edges {
+				resolved[actorOccurrence{edge.ActorKey, PersonCandidateOccurrence{ContentVersionID: versionID, Role: edge.Role, EvidenceKind: edge.EvidenceKind, EvidenceID: edge.EvidenceID}}] = true
+			}
 			facts.Edges = edges
 			if safe {
 				facts.Edges = slices.DeleteFunc(facts.Edges, func(e document.DocumentPersonEdgeV1) bool { return e.Sensitive || e.Role == "blind_copy" })
@@ -144,10 +152,6 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 			return DocumentPeopleFacts{}, err
 		}
 		// Candidates omit sensitivity, so match occurrences to current event actors.
-		type actorOccurrence struct {
-			actorKey   string
-			occurrence PersonCandidateOccurrence
-		}
 		type occurrenceEvidence struct {
 			label     string
 			sensitive bool
@@ -174,8 +178,9 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 			c := &facts.Candidates[i]
 			kept := c.Occurrences[:0]
 			for _, o := range c.Occurrences {
-				match, found := evidence[actorOccurrence{c.ActorKey, o.PersonCandidateOccurrence}]
-				if !found || safe && (o.Role == "blind_copy" || match.sensitive) {
+				key := actorOccurrence{c.ActorKey, o.PersonCandidateOccurrence}
+				match, found := evidence[key]
+				if !found || resolved[key] || safe && (o.Role == "blind_copy" || match.sensitive) {
 					continue
 				}
 				o.Label = match.label

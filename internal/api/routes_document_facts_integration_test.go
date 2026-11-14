@@ -27,16 +27,26 @@ func TestVersionFactsRoutes(t *testing.T) {
 		for _, query := range []string{"", "?disclosure=full"} {
 			res, body := get(t, ts, path+query, nil)
 			require.Equal(t, http.StatusOK, res.StatusCode, body)
+			require.Equal(t, "no-store", res.Header.Get("Cache-Control"))
+			require.Equal(t, "X-Api-Key, Authorization, Cookie, "+api.WebSessionHeader, res.Header.Get("Vary"))
 			var result map[string]any
 			require.NoError(t, json.Unmarshal([]byte(body), &result))
 			require.Equal(t, node.CurrentVersionID, result["content_version_id"])
 		}
 		res, body := get(t, ts, path+"?timezone=UTC", nil)
 		require.Equal(t, http.StatusBadRequest, res.StatusCode, body)
+		require.Equal(t, "no-store", res.Header.Get("Cache-Control"))
+		require.Equal(t, "X-Api-Key, Authorization, Cookie, "+api.WebSessionHeader, res.Header.Get("Vary"))
 		require.Equal(t, "unknown_parameter", decodeProblem(t, body).Code)
 		res, body = get(t, ts, "/api/v1/versions/00000000-0000-4000-8000-000000000000/"+kind, nil)
 		require.Equal(t, http.StatusNotFound, res.StatusCode, body)
 		require.Equal(t, "not_found", decodeProblem(t, body).Code)
+		require.Equal(t, "no-store", res.Header.Get("Cache-Control"))
+		require.Equal(t, "X-Api-Key, Authorization, Cookie, "+api.WebSessionHeader, res.Header.Get("Vary"))
+		res, body = get(t, ts, path, map[string]string{"X-Api-Key": "invalid"})
+		require.Equal(t, http.StatusUnauthorized, res.StatusCode, body)
+		require.Equal(t, "no-store", res.Header.Get("Cache-Control"))
+		require.Equal(t, "X-Api-Key, Authorization, Cookie, "+api.WebSessionHeader, res.Header.Get("Vary"))
 	}
 	res, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
 	require.Equal(t, http.StatusCreated, res.StatusCode, body)
@@ -51,6 +61,8 @@ func TestVersionFactsRoutes(t *testing.T) {
 		require.Equal(t, http.StatusOK, res.StatusCode, body)
 		res, body = get(t, ts, path+"?disclosure=full", headers)
 		require.Equal(t, http.StatusForbidden, res.StatusCode, body)
+		require.Equal(t, "no-store", res.Header.Get("Cache-Control"))
+		require.Equal(t, "X-Api-Key, Authorization, Cookie, "+api.WebSessionHeader, res.Header.Get("Vary"))
 		require.Equal(t, "disclosure_forbidden", decodeProblem(t, body).Code)
 		if kind == "people" {
 			res, body = get(t, ts, path+"?timezone=UTC", headers)
@@ -176,9 +188,13 @@ func TestVersionFactsBrowserHiddenAuthorization(t *testing.T) {
 		path := fmt.Sprintf("/api/v1/versions/%s/%s", node.CurrentVersionID, kind)
 		res, body = get(t, ts, path, nil)
 		require.Equal(t, http.StatusNotFound, res.StatusCode, body)
+		require.Equal(t, "no-store", res.Header.Get("Cache-Control"))
+		require.Equal(t, "X-Api-Key, Authorization, Cookie, "+api.WebSessionHeader, res.Header.Get("Vary"))
 		headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: session.Token, "Cookie": cookie}
 		res, body = get(t, ts, path, headers)
 		require.Equal(t, http.StatusOK, res.StatusCode, body)
+		require.Equal(t, "no-store", res.Header.Get("Cache-Control"))
+		require.Equal(t, "X-Api-Key, Authorization, Cookie, "+api.WebSessionHeader, res.Header.Get("Vary"))
 		if kind == "people" {
 			require.Contains(t, body, person.PersonID)
 		}
