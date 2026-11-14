@@ -11,6 +11,7 @@ import (
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 
 	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/processing"
 )
 
 // API uses generated operations with this daemon's ownership-proven connection.
@@ -24,9 +25,9 @@ func (c *Connection) apiWithResponse(response **http.Response) *apiclient.Client
 	return apiclient.NewClient(apiTransport{connection: c, response: response})
 }
 
-// apiWithResponseLimit changes only this operation's bounded problem decoder.
-func (c *Connection) apiWithResponseLimit(response **http.Response, limit int64) *apiclient.Client {
-	return apiclient.NewClient(apiTransport{connection: c, response: response, errorLimit: limit})
+// redactionAPI uses the native-redaction bound for problem responses.
+func (c *Connection) redactionAPI(response **http.Response) *apiclient.Client {
+	return apiclient.NewClient(apiTransport{connection: c, response: response, errorLimit: processing.MaxRedactionResponseBytes})
 }
 
 // apiTransport is the generator's transport hook. Route, parameter and body

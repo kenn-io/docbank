@@ -4,16 +4,23 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 	"uuid"
 
 	"github.com/BurntSushi/toml"
 	"github.com/go-pdf/fpdf"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/document/redaction"
@@ -58,6 +65,7 @@ func TestNumberedNativePDFCLI(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOCBANK_HOME", root)
 	configuration := map[string]any{"page_runtime": redactiontest.PageProfile(t),
+		"server": map[string]string{"api_key": "synthetic-numbered-key"},
 		"backup": map[string]string{"repo": filepath.Join(t.TempDir(), "backup")}}
 	writeConfig := func() {
 		var out bytes.Buffer
@@ -177,6 +185,67 @@ func TestNumberedNativePDFCLI(t *testing.T) {
 	var afterTrash processing.NumberedReservation
 	require.NoError(t, json.Unmarshal([]byte(out), &afterTrash))
 	require.Equal(t, reservation, afterTrash)
+	// Drop the real daemon's first success after it commits. Only an explicit
+	// retry may publish again, including for a pending historical allocation.
+	savedReview, err := os.ReadFile(f.review)
+	require.NoError(t, err)
+	var selected processing.RedactionReview
+	require.NoError(t, json.Unmarshal(savedReview, &selected))
+	publicationArgs := map[string]any{"allocation_id": reservation.AllocationID.String(),
+		"review_sha256": selected.SHA256, "preparation_path": f.preparation,
+		"masks_path": f.masks, "review_path": f.review}
+	runtimeRecord := waitForDaemon(t, root)
+	publicationTarget, err := url.Parse("http://" + runtimeRecord.Address)
+	require.NoError(t, err)
+	var posts atomic.Int32
+	proxy := &httputil.ReverseProxy{
+		Rewrite: func(r *httputil.ProxyRequest) { r.SetURL(publicationTarget); r.Out.Host = publicationTarget.Host },
+		ModifyResponse: func(r *http.Response) error {
+			if r.Request.URL.Path == "/api/v1/redaction/publications" && posts.Load() == 1 && r.StatusCode == http.StatusOK {
+				_, err := io.Copy(io.Discard, r.Body)
+				assert.NoError(t, err)
+				assert.NoError(t, r.Body.Close())
+				return errors.New("injected lost publication reply")
+			}
+			return nil
+		},
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
+			hijacker, ok := w.(http.Hijacker)
+			if !assert.True(t, ok) {
+				return
+			}
+			connection, _, err := hijacker.Hijack()
+			if assert.NoError(t, err) {
+				assert.NoError(t, connection.Close())
+			}
+		},
+	}
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/redaction/publications" {
+			posts.Add(1)
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	defer relay.Close()
+	connection := daemonconn.New(relay.URL, "synthetic-numbered-key")
+	defer func() { require.NoError(t, connection.Close()) }()
+	publisher := startWorkflowMCPServer(t, mcp.NewServerWithConnection(connection, mcp.ServerOptions{AllowPackageWrites: true}))
+	lost := publisher.call(t, "publish_numbered_pdf", publicationArgs)
+	var failure struct {
+		Code string `json:"code"`
+	}
+	require.NoError(t, json.Unmarshal(lost, &failure))
+	require.Equal(t, "bates_outcome_unknown", failure.Code)
+	require.Equal(t, int32(1), posts.Load())
+	var retained api.BatesExport
+	require.NoError(t, json.Unmarshal(publisher.call(t, "get_bates_export", map[string]any{"allocation_id": reservation.AllocationID.String()}), &retained))
+	var published api.BatesExport
+	require.NoError(t, json.Unmarshal(publisher.call(t, "publish_numbered_pdf", publicationArgs), &published))
+	require.Equal(t, retained, published)
+	require.Equal(t, int32(2), posts.Load())
+	require.Equal(t, "QUAL000001", published.Pages[0].Label)
+	publisher.stop(t)
+
 	archive := filepath.Join(f.dir, "delivery.zip")
 	render := []string{"redaction", "render", f.preparation, f.masks, f.review, archive,
 		"--allocation", reservation.AllocationID.String(), "--json"}
@@ -216,6 +285,9 @@ func TestNumberedNativePDFCLI(t *testing.T) {
 	// Full agent recovery uses only retained bytes and the private review files,
 	// after source deletion and a renderer-free restart.
 	agent := startWorkflowMCP(t, mcp.ServerOptions{AllowPackageWrites: true})
+	var replayed api.BatesExport
+	require.NoError(t, json.Unmarshal(agent.call(t, "publish_numbered_pdf", publicationArgs), &replayed))
+	require.Equal(t, published, replayed)
 	agentPath := filepath.Join(f.dir, "agent-checked.pdf")
 	result := agent.call(t, "export_bates_file", map[string]any{
 		"allocation_id": reservation.AllocationID.String(), "destination_path": agentPath, "overwrite": false,

@@ -13,6 +13,7 @@ import (
 )
 
 const (
+	allocationIDField         = "allocation_id"
 	jsonSchemaDraft           = "https://json-schema.org/draft/2020-12/schema"
 	packageIDField            = "package_id"
 	versionField              = "content_version_id"
@@ -380,7 +381,7 @@ func batesPlanOutputSchema() schema {
 
 func batesAllocationProperties() schema {
 	return schema{
-		"allocation_id": uuidSchema(), "namespace_id": uuidSchema(), "snapshot_id": uuidSchema(),
+		allocationIDField: uuidSchema(), "namespace_id": uuidSchema(), "snapshot_id": uuidSchema(),
 		"recipe_sha256": sha256Schema(), "request_sha256": sha256Schema(), schemaStateField: enumSchema("reserved", "committed"),
 		"start_sequence": integerSchema(1, 0), "end_sequence": integerSchema(1, 0),
 		"labels": arraySchema(batesPageLabelSchema(), maxBatesLabels), schemaCreatedAtField: dateTimeSchema(),
@@ -389,7 +390,7 @@ func batesAllocationProperties() schema {
 }
 
 func batesAllocationRequired() []string {
-	return []string{"allocation_id", "namespace_id", "snapshot_id", "recipe_sha256", schemaStateField,
+	return []string{allocationIDField, "namespace_id", "snapshot_id", "recipe_sha256", schemaStateField,
 		"start_sequence", "end_sequence", "labels", schemaCreatedAtField}
 }
 
@@ -426,7 +427,7 @@ func reserveBatesRangeSchemas() (schema, schema) {
 }
 
 func getBatesAllocationSchemas() (schema, schema) {
-	return rootObjectSchema(schema{"allocation_id": uuidSchema()}, "allocation_id"), batesAllocationOutputSchema()
+	return rootObjectSchema(schema{allocationIDField: uuidSchema()}, allocationIDField), batesAllocationOutputSchema()
 }
 
 func batesExportPageReceiptSchema() schema {
@@ -441,7 +442,7 @@ func batesExportProperties() schema {
 	allocation := objectSchema(batesAllocationProperties(), batesAllocationRequired()...)
 	return schema{
 		"recipe": schema{"type": "object"}, "allocation": allocation, "namespace": batesNamespaceSchema(),
-		"artifact_id": uuidSchema(), "allocation_id": uuidSchema(), "blob_sha256": sha256Schema(),
+		"artifact_id": uuidSchema(), allocationIDField: uuidSchema(), "blob_sha256": sha256Schema(),
 		"size": integerSchema(1, 0), "media_type": schema{"type": "string", jsonSchemaConst: batesExportMediaType},
 		"page_count": integerSchema(1, maxBatesLabels), "recipe_sha256": sha256Schema(),
 		"manifest_sha256": sha256Schema(), schemaStateField: schema{"type": "string", jsonSchemaConst: "verified"},
@@ -451,7 +452,7 @@ func batesExportProperties() schema {
 
 func batesExportOutputSchema() schema {
 	return rootObjectSchema(withPrivateCache(batesExportProperties()), cacheRequired(
-		"artifact_id", "allocation_id", "blob_sha256", "size", "media_type", "page_count",
+		"artifact_id", allocationIDField, "blob_sha256", "size", "media_type", "page_count",
 		"recipe_sha256", "manifest_sha256", schemaStateField, schemaCreatedAtField, "pages")...)
 }
 
@@ -478,18 +479,18 @@ func batesRecipeSchema() schema {
 func listBatesExportsSchemas() (schema, schema) {
 	input := rootObjectSchema(schema{"after": uuidSchema(), schemaLimitField: integerSchema(1, maxBatesLabels)})
 	output := rootObjectSchema(withPrivateCache(schema{
-		"items": arraySchema(objectSchema(batesExportProperties(), "artifact_id", "allocation_id", "blob_sha256", "size", "media_type", "page_count", "recipe_sha256", "manifest_sha256", schemaStateField, schemaCreatedAtField, "pages"), maxBatesLabels),
+		"items": arraySchema(objectSchema(batesExportProperties(), "artifact_id", allocationIDField, "blob_sha256", "size", "media_type", "page_count", "recipe_sha256", "manifest_sha256", schemaStateField, schemaCreatedAtField, "pages"), maxBatesLabels),
 		"total": integerSchema(0, 0), "next_after": uuidSchema(),
 	}), cacheRequired("items", "total")...)
 	return input, output
 }
 
 func getBatesExportSchemas() (schema, schema) {
-	return rootObjectSchema(schema{"allocation_id": uuidSchema()}, "allocation_id"), batesExportOutputSchema()
+	return rootObjectSchema(schema{allocationIDField: uuidSchema()}, allocationIDField), batesExportOutputSchema()
 }
 
 func publishBatesExportSchemas() (schema, schema) {
-	return rootObjectSchema(schema{"allocation_id": uuidSchema(), "recipe": batesRecipeSchema()}, "allocation_id", "recipe"), batesExportOutputSchema()
+	return rootObjectSchema(schema{allocationIDField: uuidSchema(), "recipe": batesRecipeSchema()}, allocationIDField, "recipe"), batesExportOutputSchema()
 }
 
 func findBatesExportsSchemas() (schema, schema) {
@@ -510,12 +511,12 @@ func findBatesExportsSchemas() (schema, schema) {
 		"package_record_id": sha256Schema(),
 	}, "kind", "occurrence_id")
 	candidate := objectSchema(schema{
-		"artifact_id": uuidSchema(), "allocation_id": uuidSchema(), "snapshot_id": uuidSchema(),
+		"artifact_id": uuidSchema(), allocationIDField: uuidSchema(), "snapshot_id": uuidSchema(),
 		"blob_sha256": sha256Schema(), "size": integerSchema(1, 0), "media_type": schema{"type": "string", jsonSchemaConst: batesExportMediaType},
 		"page_count": integerSchema(1, 1_000_000), "manifest_sha256": sha256Schema(), schemaStateField: enumSchema("verified"),
 		schemaCreatedAtField: dateTimeSchema(), "evidence": arraySchema(evidence, maxBatesCandidateEvidence),
 		"evidence_truncated": booleanSchema(), "evidence_cursor": stringSchema(maxCursorCharacters),
-	}, "artifact_id", "allocation_id", "snapshot_id", "blob_sha256", "size", "media_type", "page_count", "manifest_sha256", schemaStateField, schemaCreatedAtField, "evidence", "evidence_truncated")
+	}, "artifact_id", allocationIDField, "snapshot_id", "blob_sha256", "size", "media_type", "page_count", "manifest_sha256", schemaStateField, schemaCreatedAtField, "evidence", "evidence_truncated")
 	return input, rootObjectSchema(withPrivateCache(schema{
 		"items": arraySchema(candidate, 250), "next_cursor": stringSchema(maxCursorCharacters),
 	}), cacheRequired("items")...)
@@ -531,16 +532,16 @@ func selectorExcludes(fields ...string) schema {
 
 func exportBatesFileSchemas() (schema, schema) {
 	return rootObjectSchema(schema{
-			"allocation_id": uuidSchema(), "destination_path": schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters},
+			allocationIDField: uuidSchema(), "destination_path": schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters},
 			"overwrite":        booleanSchema(),
 			"preparation_path": schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters},
 			"masks_path":       schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters},
 			"review_path":      schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters},
-		}, "allocation_id", "destination_path", "overwrite"), rootObjectSchema(withPrivateCache(schema{
-			"allocation_id": uuidSchema(), "artifact_id": uuidSchema(), "destination_path": stringSchema(maxPathCharacters),
+		}, allocationIDField, "destination_path", "overwrite"), rootObjectSchema(withPrivateCache(schema{
+			allocationIDField: uuidSchema(), "artifact_id": uuidSchema(), "destination_path": stringSchema(maxPathCharacters),
 			"blob_sha256": sha256Schema(), "manifest_sha256": sha256Schema(), "size": integerSchema(1, 512<<20), "verification": enumSchema("recorded_bytes_and_numbers", "masks_text_and_numbers", "stamped_labels"),
 			schemaStateField: enumSchema("published", "published_durability_unknown"),
-		}), cacheRequired("allocation_id", "artifact_id", "destination_path", "blob_sha256", "manifest_sha256", "size", "verification", schemaStateField)...)
+		}), cacheRequired(allocationIDField, "artifact_id", "destination_path", "blob_sha256", "manifest_sha256", "size", "verification", schemaStateField)...)
 }
 
 func exportLoadFilePackageSchemas() (schema, schema) {
@@ -1064,4 +1065,13 @@ func promotePhotoNodeSchemas() (schema, schema) {
 
 func fenceFingerprintSchema() schema {
 	return schema{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "maxLength": 71}
+}
+
+func publishNumberedPDFSchemas() (schema, schema) {
+	return rootObjectSchema(schema{
+		allocationIDField: uuidSchema(), "review_sha256": sha256Schema(),
+		"preparation_path": schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters},
+		"masks_path":       schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters},
+		"review_path":      schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters},
+	}, allocationIDField, "review_sha256", "preparation_path", "masks_path", "review_path"), batesExportOutputSchema()
 }

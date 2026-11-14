@@ -446,6 +446,16 @@ images. Body reads have a finite 60-second deadline, cleared before publication.
 Completed retries use the first verified retained PDF without a page runtime.
 Cleanup failure after commit is logged without reporting a failed publication.
 
+Standalone MCP exposes `publish_numbered_pdf` with `--allow-package-writes`.
+Reservation and permanent original-retention consent stay on operator surfaces.
+The tool reads the three private review files and checks the expected review
+digest before daemon access. Its checked daemon client bounds and validates the
+publication receipt against the requested allocation and review. It makes one
+POST; an uncertain reply requires an explicit identical replay or artifact read.
+MCP performs no rendering or PDF staging for publication. Independent checking
+and local delivery use the existing reviewed `export_bates_file` path, with its
+own process-wide verifier gate. HTTP MCP retains its two-minute request limit.
+
 `GET /api/v1/bates/namespaces/{id}` reads the namespace and its advisory
 `next_sequence` together. The cursor is separate from immutable namespace objects
 embedded in recipes and receipts. It includes reserved and skipped numbers; it

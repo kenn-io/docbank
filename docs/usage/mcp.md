@@ -167,8 +167,8 @@ environment. Printing configuration leaves the listener's startup to you.
 
 Both transports have the fixed read catalog described below.
 `--allow-processing` adds only guarded processing start.
-`--allow-package-writes` permits load-file preflight, import, and custodian
-changes. `--allow-photo-edits` permits photo asset mutations.
+`--allow-package-writes` permits load-file preflight, import, custodian changes,
+Bates exports and publication of an operator-reserved reviewed PDF. `--allow-photo-edits` permits photo asset mutations.
 `--allow-export-writes` enables native export jobs and local downloads.
 `--allow-report-writes` enables frozen report creation, revision, local delivery,
 and explicit release. `--allow-kata-writes` permits quoting verified passages
@@ -768,6 +768,53 @@ initial `processing_outcome_unknown` result contains no job ID, so its outcome
 cannot be reconciled through MCP. Do not retry it blindly, because MCP has no
 job lookup for that case.
 
+## Publish a reserved numbered PDF
+
+An operator first [reserves the reviewed PDF](document-processing.md#deliver-one-reviewed-pdf-with-bates-numbers)
+through the browser or CLI and consents to retaining the unredacted original
+indefinitely. `publish_numbered_pdf` grants no consent, creates no snapshot and
+allocates no numbers. Keep the resulting allocation ID and the three private
+review files. Ordinary Bates tools keep their existing sealed-snapshot contract.
+
+With `--allow-package-writes`, call `publish_numbered_pdf` with:
+
+```json
+{
+  "allocation_id": "11111111-1111-4111-8111-111111111111",
+  "preparation_path": "/reviews/PRIVATE-preparation.json",
+  "masks_path": "/reviews/PRIVATE-masks.json",
+  "review_path": "/reviews/PRIVATE-review.json",
+  "review_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+```
+
+Copy `review_sha256` from the saved review's `sha256` field; it is not the JSON
+file's hash. Paths name regular files on the MCP host, with the same limits as
+[checked downloads](#recover-numbered-pdfs). A changed review is refused before
+daemon access. Keep the private files unchanged until publication and any retry
+finish. They stay outside the vault and delivery.
+
+The daemon renders from the allocation's retained original, verifies the numbered
+PDF and keeps the first published artifact. The tool returns that artifact's
+record and page labels, without downloading PDF bytes. Use `export_bates_file`
+with the review files for an independent full check and local delivery. Default
+and daemon-hosted MCP remain read-only.
+
+A lost response can mean the PDF was already published. `bates_outcome_unknown`
+means query `get_bates_export` for that allocation or repeat the identical
+publication, including the review digest and paths. Never reserve another range
+to recover a reply. Completed retries return the same artifact after restart
+without a page runtime; pending allocations can finish after the live source
+is deleted.
+
+Publication can take ten minutes and holds the daemon's shared native-PDF slot.
+`redaction_busy` names contention in the daemon; `redaction_memory` means its
+renderer memory ceiling was exceeded. Standalone HTTP MCP still has a two-minute
+request deadline, so use stdio for longer calls and reconcile uncertain replies.
+`redaction_review_changed` means the files or allocation do not match the review;
+`redaction_verifier_version` means a different qualified verifier is required.
+MCP reports malformed private input without its contents or reader diagnostics.
+
 ## Recover numbered PDFs
 
 Use `find_bates_exports` to find a retained delivery by an exact Bates label.
@@ -779,7 +826,8 @@ The latter checks the recorded size, SHA-256 and numbering metadata; it does not
 recheck masks, approved text or rendered numbers. It works after restart and
 backup/restore without the original review files or a configured page runtime.
 
-Numbered reservation and rendering use the CLI or authenticated HTTP routes.
+For native redactions, the operator reserves through the browser or CLI.
+Publication can use MCP as described above.
 For full checking, give `export_bates_file` all three private review files:
 
 ```json
@@ -834,7 +882,7 @@ change package custodians with a separate opt-in:
 docbank mcp --transport stdio --allow-package-writes
 ```
 
-This flag adds four tools:
+For load-file imports, this flag adds:
 
 | Tool | Contract |
 | --- | --- |

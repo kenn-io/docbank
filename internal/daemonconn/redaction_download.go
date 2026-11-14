@@ -34,7 +34,7 @@ func (c *Connection) RenderNativePDFTo(ctx context.Context, request processing.R
 		return result, err
 	}
 	var response *http.Response
-	_, err = c.apiWithResponseLimit(&response, processing.MaxRedactionResponseBytes).RenderNativePDF(runtime.WithStreamingResponse(ctx), &apiclient.RenderNativePDFRequestOptions{Body: &request})
+	_, err = c.redactionAPI(&response).RenderNativePDF(runtime.WithStreamingResponse(ctx), &apiclient.RenderNativePDFRequestOptions{Body: &request})
 	if err != nil {
 		return result, err
 	}

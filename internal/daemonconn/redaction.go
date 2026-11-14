@@ -21,7 +21,7 @@ func (c *Connection) ResolveNativePDF(ctx context.Context, request processing.Re
 		return processing.RedactionReview{}, err
 	}
 	var response *http.Response
-	_, err := c.apiWithResponseLimit(&response, processing.MaxRedactionResponseBytes).ResolveNativePDF(runtime.WithStreamingResponse(ctx), &apiclient.ResolveNativePDFRequestOptions{Body: &request})
+	_, err := c.redactionAPI(&response).ResolveNativePDF(runtime.WithStreamingResponse(ctx), &apiclient.ResolveNativePDFRequestOptions{Body: &request})
 	if err != nil {
 		return processing.RedactionReview{}, err
 	}
