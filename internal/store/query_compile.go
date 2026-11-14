@@ -479,7 +479,11 @@ func (c queryCompiler) compileQueryFilters(filters query.Filters, start, end int
 		}
 	}
 	if len(filters.People) > 0 {
-		people = append(people, c.compileRoleGroup(filters.People))
+		group, err := c.compileRoleGroup(filters.People)
+		if err != nil {
+			return compiledQueryFragment{}, err
+		}
+		people = append(people, group)
 	}
 	photo, err := c.compilePhotoFilters(filters, start, end)
 	if err != nil {

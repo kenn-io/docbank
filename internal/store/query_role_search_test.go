@@ -2,7 +2,7 @@ package store
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 
@@ -82,7 +82,6 @@ func TestRoleSearchOperandSets(t *testing.T) {
 	projection, err := s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: q})
 	require.NoError(t, err)
 	require.Len(t, projection.Rows, 2)
-
 }
 
 func TestRoleSearchMatchesAndPeopleFacet(t *testing.T) {
@@ -225,7 +224,6 @@ func TestRoleSearchMentionNamesAreLiteral(t *testing.T) {
 	require.Contains(t, args[1], `"Alias 197"`)
 	require.Contains(t, compiled.PositiveTextTerms(), `A "OR" *`)
 	require.Contains(t, compiled.PositiveTextTerms(), "Jory Pellham")
-
 }
 
 func TestRoleSearchMentionsFTSDistinctAlias(t *testing.T) {
@@ -747,12 +745,14 @@ func publishRoleFixtures(t *testing.T, s *Store) {
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT version_id FROM content_versions`)
 	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
 	var ids []string
 	for rows.Next() {
 		var id string
 		require.NoError(t, rows.Scan(&id))
 		ids = append(ids, id)
 	}
+	require.NoError(t, rows.Err())
 	require.NoError(t, rows.Close())
 	for _, id := range ids {
 		input, err := s.PrepareDocumentPeopleInputs(ctx, id)
@@ -828,7 +828,6 @@ func TestRoleSearchMentionsRequireDocumentContent(t *testing.T) {
 			require.Equal(t, []string{"mentioned"}, row.MatchedRoles)
 		}
 	}
-
 }
 
 func TestRoleSearchMentionsSelectedRendition(t *testing.T) {

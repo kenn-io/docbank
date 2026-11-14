@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
@@ -51,7 +52,7 @@ func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
 		raw, err := canonical.Marshal(input)
 		require.NoError(t, err)
 		digest := sha256.Sum256(raw)
-		_, err = s.PublishDocumentPeople(ctx, store.DocumentPeoplePublication{People: document.DocumentPeopleV1{ContractVersion: document.PersonContractV1, ContentVersionID: id, EventGenerationID: input.EventGenerationID, Edges: []document.DocumentPersonEdgeV1{}}, InputsSHA256: fmt.Sprintf("%x", digest), ResolverFingerprint: document.PersonResolverFingerprint(), NodeID: input.NodeID, NodeRevision: input.NodeRevision, BindingEpoch: input.BindingEpoch})
+		_, err = s.PublishDocumentPeople(ctx, store.DocumentPeoplePublication{People: document.DocumentPeopleV1{ContractVersion: document.PersonContractV1, ContentVersionID: id, EventGenerationID: input.EventGenerationID, Edges: []document.DocumentPersonEdgeV1{}}, InputsSHA256: hex.EncodeToString(digest[:]), ResolverFingerprint: document.PersonResolverFingerprint(), NodeID: input.NodeID, NodeRevision: input.NodeRevision, BindingEpoch: input.BindingEpoch})
 		require.NoError(t, err)
 	}
 	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "If-Match": `"1"`}

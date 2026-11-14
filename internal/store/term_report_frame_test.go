@@ -179,7 +179,6 @@ func TestTermReportMatchesSelectedProcessingProfile(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []bool{true, false, true, false}, frame.Members[0].RawMatches)
 	require.Equal(t, selected.Fingerprint, frame.Texts[0].ProfileFingerprint)
-
 }
 
 func TestTermReportSharedChildJoinsExactVersionFamily(t *testing.T) {

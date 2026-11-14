@@ -156,6 +156,7 @@ func annotateMatchedRoles(ctx context.Context, q metadataQuerier, compiled Compi
 	if err != nil {
 		return fmt.Errorf("loading matched roles: %w", err)
 	}
+	defer func() { _ = found.Close() }()
 	for found.Next() {
 		var node int64
 		var person, role string
@@ -200,6 +201,7 @@ func annotateMatchedRoles(ctx context.Context, q metadataQuerier, compiled Compi
 		if err != nil {
 			return err
 		}
+		defer func() { _ = found.Close() }()
 		for found.Next() {
 			var node int64
 			if err := found.Scan(&node); err != nil {
@@ -286,7 +288,7 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
 	selected := map[string]bool{}
 	for _, entry := range compiled.Query.Filters.People {
 		var id, name string
-		err := q.QueryRowContext(ctx, `SELECT person_id,display_name FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=$1),$2) AND `+personVisibleSQL("persons.person_id", 3), entry.PersonID, entry.PersonID, 1, 1).Scan(&id, &name)
+		err := q.QueryRowContext(ctx, `SELECT person_id,display_name FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=$1),$2) AND `+personVisibleSQL(3), entry.PersonID, entry.PersonID, 1, 1).Scan(&id, &name)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}

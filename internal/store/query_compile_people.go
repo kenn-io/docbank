@@ -1,7 +1,7 @@
 package store
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"strings"
 
@@ -16,25 +16,28 @@ func currentPhotoSourcePredicate(file, node, version string) string {
 }
 
 // compileRoleGroup evaluates all selected people in one predicate.
-func (c queryCompiler) compileRoleGroup(entries []query.PersonFilter) compiledQueryFragment {
+func (c queryCompiler) compileRoleGroup(entries []query.PersonFilter) (compiledQueryFragment, error) {
 	if len(entries) == 1 {
-		return c.compileRolePredicate(entries[0].PersonID, entries[0].Roles)
+		return c.compileRolePredicate(entries[0].PersonID, entries[0].Roles), nil
 	}
 	fragment := c.compileRolePredicate(entries[0].PersonID, []string{entries[0].Roles[0]})
 	person := `COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?)`
 	fragment.sql = strings.ReplaceAll(fragment.sql, person, `json_extract(j.value,'$.person_id')`)
 	fragment.sql = strings.ReplaceAll(fragment.sql, `role IN (?)`, `role IN (SELECT value FROM json_each(j.value,'$.roles'))`)
-	raw, _ := json.Marshal(entries)
+	raw, err := json.Marshal(entries)
+	if err != nil {
+		return compiledQueryFragment{}, err
+	}
 	fragment.args = append([]any{string(raw)}, fragment.args[6:]...)
 	fragment.args = append(fragment.args, document.PersonResolverFingerprint(), c.eventState.InputEpoch, c.eventState.ContractVersion, c.eventState.DeriverFingerprint)
 	fragment.sql = `(CASE WHEN NOT EXISTS(SELECT 1 FROM json_each(?) j WHERE (` + fragment.sql + `) IS NOT TRUE) THEN TRUE WHEN EXISTS(SELECT 1 FROM ` + freshPeopleHeadSQL("cv.version_id") + `) THEN FALSE END)`
-	return fragment
+	return fragment, nil
 }
 
 func currentPersonAssertionFence(safe bool) string {
 	fence := `a.action='assert'`
 	if safe {
-		fence += ` AND ` + personVisibleAssertionSQL("a", "1")
+		fence += ` AND ` + personVisibleAssertionSQL("1")
 	}
 	return fence
 }
@@ -42,7 +45,7 @@ func currentPersonAssertionFence(safe bool) string {
 func currentPersonPublishedFence(safe bool) string {
 	fence := `h.state='published' AND h.event_generation_id=eh.generation_id AND h.binding_epoch=ps.binding_epoch AND h.node_revision=n.revision AND h.resolver_fingerprint=? AND ` + documentEventFreshIndexedSQL("ea", "ed", "eh", "eg", "?", "?", "?")
 	if safe {
-		fence += ` AND ` + personVisibleActorSQL("p", "1")
+		fence += ` AND ` + personVisibleActorSQL("1")
 	}
 	return fence
 }
@@ -75,7 +78,7 @@ func (c queryCompiler) compileRolePredicate(id string, roles []string) compiledQ
 	assertion := `EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.content_version_id=cv.version_id AND ` + currentPersonAssertionFence(c.safePeople) + ` AND COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=a.person_id),a.person_id)=` + person + ` AND a.role IN (` + roleList + `))`
 	edge := `COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=p.person_id),p.person_id)=` + person + ` AND p.role IN (` + roleList + `)`
 	if c.safePeople {
-		edge += ` AND ` + personVisibleActorSQL("p", "1")
+		edge += ` AND ` + personVisibleActorSQL("1")
 	}
 	// One fresh-head scan answers match (1), known absence (0), and unknown (NULL).
 	head := strings.Replace(freshPeopleHeadSQL("cv.version_id"), " WHERE h.content_version_id=", " LEFT JOIN document_people p ON p.content_version_id=h.content_version_id AND p.generation_id=h.generation_id WHERE h.content_version_id=", 1)
