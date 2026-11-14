@@ -187,7 +187,11 @@ async function captureStates(
   await inspectorLoaded(page);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   for (const [part, target] of parts) {
-    await target.evaluate((element) => element.scrollIntoView({ block: "start" }));
+    await target.evaluate((element, isPeople) => {
+      if (isPeople) element.style.scrollMarginTop = "8px";
+      element.scrollIntoView({ block: "start" });
+      if (isPeople) element.style.removeProperty("scroll-margin-top");
+    }, part === "people");
     await expect(target).toBeInViewport({ ratio: 0.99 });
     await capture(page, testInfo, `${state}-mobile-${part}`, "dark");
     await capture(page, testInfo, `${state}-mobile-${part}`, "light");
