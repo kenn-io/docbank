@@ -849,6 +849,10 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkDocumentPeopleFactsSensitiveUnresolvedActor(t, newPostgresQueryStore)
 		}},
+		{"DocumentPeopleFactsCandidateQueueOverflow", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsCandidateQueueOverflow(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFactsCandidateQueueOverflow(t, newPostgresQueryStore)
+		}},
 		{"DocumentPeopleFactsMergeResolvesCandidate", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsMergeResolvesCandidate(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()
 			checkDocumentPeopleFactsMergeResolvesCandidate(t, newPostgresQueryStore)
