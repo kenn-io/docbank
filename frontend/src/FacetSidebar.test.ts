@@ -246,7 +246,15 @@ const facets: SnapshotPage["facets"] = [
 
 it("shows why People counts are unavailable", () => {
   render(FacetSidebar, {
-    facets: [facet("person_role", { available: false, reason: "people_evidence_pending" })],
+    facets: [
+      facet("person_role", {
+        available: false,
+        reason: "people_evidence_pending",
+        total: null,
+        missing: null,
+        other: null,
+      }),
+    ],
     query: originalQuery,
     onchange: vi.fn(),
   });

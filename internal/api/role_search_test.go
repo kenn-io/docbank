@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"crypto/sha256"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
@@ -8,7 +9,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -55,7 +58,41 @@ func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
 		require.Equal(t, "letter.txt", page.Rows[0].Name)
 	})
 	t.Run("person role facet", func(t *testing.T) {
-		resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", browser, `{"query":{},"facets":["collections","tags","media_family","extension","modified","size","text_coverage","duplicates","person_role"]}`)
+		visible, err := s.CreatePerson(t.Context(), "Matrix Sender", "operator")
+		require.NoError(t, err)
+		_, err = s.AssertDocumentPerson(t.Context(), store.PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: visible.PersonID, Role: "sender", Action: "assert", Revision: 1})
+		require.NoError(t, err)
+		ctx := t.Context()
+		require.NoError(t, s.EnsureDocumentEventRecipe(ctx, store.DocumentEventsDeriverFingerprint))
+		targets, err := s.MissingDocumentEventTargetsAfter(ctx, store.DocumentEventsDeriverFingerprint, "", 100)
+		require.NoError(t, err)
+		require.Len(t, targets, 1)
+		target := targets[0]
+		evidence, err := s.LoadDocumentEventEvidence(ctx, target)
+		require.NoError(t, err)
+		record := document.DocumentEventsV1{VaultUID: s.VaultID(), ContentVersionID: target.ContentVersionID, ContractVersion: document.DocumentEventsContractV1, DocumentKind: store.DocumentEventKindForMIMEType(target.MIMEType), Diagnostics: []document.DocumentEventDiagnosticV1{}, Events: []document.DocumentEventV1{}, Primaries: []document.DocumentEventPrimaryV1{}, Sources: []document.DocumentEventSourceV1{}}
+		raw, _, err := document.MarshalDocumentEventsV1(record)
+		require.NoError(t, err)
+		_, err = s.PublishDocumentEvents(ctx, target, store.DocumentEventsDeriverFingerprint, evidence.InputsSHA256, raw)
+		require.NoError(t, err)
+		input, err := s.PrepareDocumentPeopleInputs(ctx, node.CurrentVersionID)
+		require.NoError(t, err)
+		raw, err = canonical.Marshal(input)
+		require.NoError(t, err)
+		digest := sha256.Sum256(raw)
+		_, err = s.PublishDocumentPeople(ctx, store.DocumentPeoplePublication{People: document.DocumentPeopleV1{ContractVersion: document.PersonContractV1, ContentVersionID: node.CurrentVersionID, EventGenerationID: input.EventGenerationID, Edges: []document.DocumentPersonEdgeV1{}}, InputsSHA256: fmt.Sprintf("%x", digest), ResolverFingerprint: document.PersonResolverFingerprint(), NodeID: input.NodeID, NodeRevision: input.NodeRevision, BindingEpoch: input.BindingEpoch})
+		require.NoError(t, err)
+		resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", browser, `{"query":{"syntax":"advanced","text":"from:\"Matrix Sender\""},"facets":["collections","tags","media_family","extension","modified","size","text_coverage","duplicates","person_role"]}`)
 		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		var page api.WorkspaceQueryResponse
+		require.NoError(t, json.Unmarshal([]byte(body), &page))
+		require.Len(t, page.Rows, 1)
+		require.Equal(t, []string{"sender"}, page.Rows[0].MatchedRoles)
+		require.Len(t, page.Facets, 9)
+		require.Equal(t, "person_role", page.Facets[8].Dimension)
+		require.True(t, page.Facets[8].Available)
+		require.Len(t, page.Facets[8].Values, 1)
+		require.Equal(t, visible.PersonID, page.Facets[8].Values[0].Key)
+		require.Equal(t, []string{"sender"}, page.Facets[8].Values[0].Roles)
 	})
 }

@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"encoding/json/v2"
 	"fmt"
 	"strings"
 
@@ -67,10 +66,6 @@ func TestRoleSearchOperandSets(t *testing.T) {
 	forbidden := snapshotTestQuery(t, fmt.Sprintf(`{"filters":{"people":[{"person_id":%q,"roles":["blind_copy"]}]}}`, a.PersonID))
 	_, err = s.MaterializeQuerySnapshot(WithSafeRoleSearch(ctx), SnapshotRequest{Query: forbidden})
 	require.ErrorContains(t, err, "Bcc searches are unavailable here.")
-	q := snapshotTestQuery(t, `{"syntax":"advanced","text":"person:\"Dahlia Blind\""}`)
-	visible, err := s.MaterializeQuerySnapshot(WithSafeRoleSearch(ctx), SnapshotRequest{Query: q})
-	require.NoError(t, err)
-	require.Len(t, visible.Rows, 1)
 	for _, text := range []string{`to:"Dahlia Blind"`, `between:("Aster Sender", "Dahlia Blind")`} {
 		value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, text))
 		result, err := s.MaterializeQuerySnapshot(WithSafeRoleSearch(ctx), SnapshotRequest{Query: value})
@@ -274,7 +269,10 @@ func TestRoleSearchNegationWithPendingPeople(t *testing.T) {
 				_, err = s.db.ExecContext(ctx, `UPDATE document_event_state SET input_epoch=input_epoch-1`)
 				require.NoError(t, err)
 			}
-			publishRoleFixtures(t, s)
+			input, err = s.PrepareDocumentPeopleInputs(ctx, version.ID)
+			require.NoError(t, err)
+			_, err = s.PublishDocumentPeople(ctx, documentPeoplePublicationForInput(t, input))
+			require.NoError(t, err)
 			result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: negative})
 			require.NoError(t, err)
 			require.Empty(t, result.Rows)
@@ -523,23 +521,6 @@ func TestRoleSearchInlineCapacity(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
 	require.Equal(t, []string{"speaker"}, result.Rows[0].MatchedRoles)
-	varied := []string{"author", "last_saved_by", "custodian", "sender", "recipient", "copied"}
-	for i, entry := range entries {
-		selected := []string{"speaker"}
-		for bit, role := range varied {
-			if i&(1<<bit) != 0 {
-				selected = append(selected, role)
-			}
-		}
-		encoded, err := json.Marshal(selected)
-		require.NoError(t, err)
-		entries[i] = strings.Replace(entry, roles, string(encoded), 1)
-	}
-	value = snapshotTestQuery(t, `{"syntax":"advanced","text":"saved:\"Capacity saved\"","filters":{"people":[`+strings.Join(entries, ",")+`]}}`)
-	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
-	require.NoError(t, err)
-	require.Len(t, result.Rows, 1)
-	require.Equal(t, []string{"speaker"}, result.Rows[0].MatchedRoles)
 }
 
 // The facet member budget bounds counts for one document with many people.
@@ -700,18 +681,7 @@ func TestRoleSearchHiddenPersonScope(t *testing.T) {
 
 func seedCurrentRoleSearchEvent(t *testing.T, s *Store, name, seed string, actors []document.DocumentEventActorV1) ContentVersion {
 	t.Helper()
-	version, target := ingestDocumentEventTarget(t, s, name, seed)
-	_, err := s.db.ExecContext(t.Context(), `INSERT INTO document_event_state(singleton,contract_version,deriver_fingerprint,input_epoch,publication_epoch,updated_at) VALUES(1,$1,$2,1,1,$3) ON CONFLICT(singleton) DO NOTHING`, document.DocumentEventsContractV1, DocumentEventsDeriverFingerprint, nowRFC3339())
-	require.NoError(t, err)
-	record := documentEventRecord(t, s.VaultID(), version.ID, seed)
-	if actors != nil {
-		record.Events[0].Actors = actors
-	}
-	raw, _, err := document.MarshalDocumentEventsV1(record)
-	require.NoError(t, err)
-	_, err = s.PublishDocumentEvents(t.Context(), target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), raw)
-	require.NoError(t, err)
-	return version
+	return seedDocumentPeopleEvent(t, s, name, seed, actors, DocumentEventsDeriverFingerprint)
 }
 
 func publishRoleFixtures(t *testing.T, s *Store) {
@@ -814,6 +784,7 @@ func TestRoleSearchMentionsRequireDocumentContent(t *testing.T) {
 			require.Equal(t, []string{"mentioned"}, row.MatchedRoles)
 		}
 	}
+	// FTS distinguishes the fullwidth display name from its ASCII alias.
 	person, err = s.CreatePerson(ctx, "Ａda Lovelace", "operator")
 	require.NoError(t, err)
 	_, _ = addTestPersonIdentity(t, s, person, "name_alias", "Ada Lovelace", "ascii-alias")

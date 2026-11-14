@@ -166,7 +166,6 @@ func TestResolveQueryNormalizesCopyWithoutMutatingInput(t *testing.T) {
 	assert.Equal(t, []string{tagID, otherTagID}, resolved.Query.Filters.TagIDs)
 	*resolved.Query.Filters.SizeMax = 10
 	assert.Equal(t, int64(20), *input.Filters.SizeMax)
-
 }
 
 func TestResolveQueryUnknownReferencesPositionOnlyExpressionOperands(t *testing.T) {
