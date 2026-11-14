@@ -6,7 +6,7 @@
   // A result's name with the folder it lives in as one muted line beneath, so a
   // long path never wraps or repeats the name. The folder keeps its end, which
   // is the part that tells siblings apart. Chips show frozen roles held by
-  // positively named people and text mentions, beside or beneath the name.
+  // positively named people and text mentions beneath the name.
   let {
     name,
     folder = "",
@@ -60,19 +60,13 @@
     font-weight: var(--font-weight-medium);
     min-width: 0;
   }
-  /* Keep chips beside the name, stacking them when the row is tight, and wrap
-     them beneath it only when even the widest chip does not fit. */
   .title-line {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: first baseline;
-    column-gap: var(--space-2);
-    row-gap: var(--space-1);
+    display: grid;
+    gap: var(--space-1);
     min-width: 0;
   }
   .roles {
     display: flex;
-    flex: 1 1 min-content;
     flex-wrap: wrap;
     gap: var(--space-1);
   }

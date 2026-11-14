@@ -84,6 +84,16 @@ async function capture(page: Page, testInfo: TestInfo, name: string, theme: "lig
   expect(corner).toBeDefined();
   await page.mouse.move(corner![0]!, corner![1]!);
   if (name.endsWith("-wide")) {
+    const collections = page.getByRole("group", { name: "Collections facet" });
+    for (const label of await collections.locator("button > span").all()) {
+      expect(
+        await label.evaluate((element) => {
+          const range = document.createRange();
+          range.selectNodeContents(element);
+          return range.getClientRects().length;
+        }),
+      ).toBe(1);
+    }
     const row = page
       .getByRole("region", { name: "Frozen query results" })
       .locator("tbody tr")
@@ -91,11 +101,6 @@ async function capture(page: Page, testInfo: TestInfo, name: string, theme: "lig
     const title = row.locator(".title");
     await expect(row.locator(".col-modified")).toBeVisible();
     const chip = row.locator(".roles .kit-chip").first();
-    const titleBox = await title.boundingBox();
-    const chipBox = await chip.boundingBox();
-    expect(titleBox).not.toBeNull();
-    expect(chipBox).not.toBeNull();
-    expect(Math.abs(titleBox!.y - chipBox!.y)).toBeLessThan(5);
     expect(await title.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
       true,
     );
@@ -124,6 +129,25 @@ async function capture(page: Page, testInfo: TestInfo, name: string, theme: "lig
       return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
     });
     expect(contrast).toBeGreaterThanOrEqual(4.5);
+  }
+  if (name.endsWith("-wide") || name.endsWith("-mobile-results")) {
+    for (const row of await page
+      .getByRole("region", { name: "Frozen query results" })
+      .locator("tbody tr")
+      .all()) {
+      const title = await row.locator(".title").boundingBox();
+      const folder = await row.locator(".folder").boundingBox();
+      const chips = await Promise.all(
+        (await row.locator(".roles .kit-chip").all()).map((chip) => chip.boundingBox()),
+      );
+      expect(title).not.toBeNull();
+      expect(folder).not.toBeNull();
+      expect(chips.length).toBeGreaterThan(0);
+      expect(chips.every((chip) => chip && Math.abs(chip.y - chips[0]!.y) < 1)).toBe(true);
+      expect(Math.abs(chips[0]!.x - title!.x)).toBeLessThan(1);
+      expect(chips[0]!.y).toBeGreaterThanOrEqual(title!.y + title!.height);
+      expect(chips[0]!.y + chips[0]!.height).toBeLessThanOrEqual(folder!.y);
+    }
   }
   if (name.endsWith("-narrow")) {
     const aside = await page.getByRole("complementary", { name: "Snapshot facets" }).boundingBox();
