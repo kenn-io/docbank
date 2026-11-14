@@ -522,6 +522,9 @@ tr:focus-visible {
   .snapshot-browser {
     grid-template-columns: minmax(0, 1fr);
   }
+  .snapshot-browser:has(.facets) {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
 }
 
 /* ─── Inspector ─────────────────────────────────────────────────────── */
@@ -764,6 +767,11 @@ dd {
 
 .browser.hide-modified .col-modified,
 .browser.hide-type .col-type {
+  display: none;
+}
+
+/* Give result names and role chips room before the modified date at tight widths. */
+.browser.hide-type:has(.snapshot-results .roles) .snapshot-table .col-modified {
   display: none;
 }
 

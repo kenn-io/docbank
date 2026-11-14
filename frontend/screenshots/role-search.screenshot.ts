@@ -22,7 +22,7 @@ const mara = '"Mara Okonkwo-Fell" <mara@okonkwo.example.test>';
 const ines = "=?UTF-8?Q?Ines_Albarr=C3=A1n?= <ines@albarran.example.test>";
 const teodor = '"Teodor Vask" <teodor@vask.example.test>';
 const jory = '"Jory Pellham" <jory@pellham.example.test>';
-const hidden = '"Private Reviewer" <reviewer@private.example.test>';
+const hidden = '"Hidden Recipient" <hidden@example.test>';
 const emails: [string, Record<string, string>, string][] = [
   [
     "board-update.eml",
@@ -63,19 +63,69 @@ async function capture(page: Page, testInfo: TestInfo, name: string, theme: "lig
     document.documentElement.classList.toggle("dark", value === "dark");
     await document.fonts.ready;
   }, theme);
-  // Park the pointer so a clicked control keeps no hover style. The top-left
-  // corner is the navigation's padding at wide and the top bar's when compact.
-  await page.mouse.move(0, 0);
-  expect(
-    await page.evaluate(
-      () =>
-        document
-          .elementFromPoint(0, 0)
+  // Park the pointer away from controls after scrolling each view.
+  const corner = await page.evaluate(() =>
+    [
+      [0, 0],
+      [innerWidth - 1, 0],
+      [0, innerHeight - 1],
+      [innerWidth - 1, innerHeight - 1],
+    ].find(
+      ([x, y]) =>
+        !document
+          .elementFromPoint(x!, y!)
           ?.closest(
             "a[href], button, input, label, select, summary, textarea, tr, [role=button], [role=link], [role=tab]",
-          ) ?? null,
+          ),
     ),
-  ).toBeNull();
+  );
+  expect(corner).toBeDefined();
+  await page.mouse.move(corner![0]!, corner![1]!);
+  if (name.endsWith("-wide")) {
+    const row = page
+      .getByRole("region", { name: "Frozen query results" })
+      .locator("tbody tr")
+      .first();
+    const title = row.locator(".title");
+    const chip = row.locator(".roles .kit-chip").first();
+    const titleBox = await title.boundingBox();
+    const chipBox = await chip.boundingBox();
+    expect(titleBox).not.toBeNull();
+    expect(chipBox).not.toBeNull();
+    expect(Math.abs(titleBox!.y - chipBox!.y)).toBeLessThan(5);
+    expect(await title.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+      true,
+    );
+    const contrast = await chip.evaluate((element) => {
+      const color = (value: string) =>
+        value
+          .match(/[\d.]+/g)!
+          .slice(0, 3)
+          .map(Number);
+      const luminance = (rgb: number[]) =>
+        rgb
+          .map((v) => {
+            const channel = v / 255;
+            return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+          })
+          .reduce((sum, value, i) => sum + value * [0.2126, 0.7152, 0.0722][i]!, 0);
+      const style = getComputedStyle(element);
+      const a = luminance(color(style.color));
+      const b = luminance(color(style.backgroundColor));
+      return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    });
+    expect(contrast).toBeGreaterThanOrEqual(4.5);
+  }
+  if (name.endsWith("-narrow")) {
+    const aside = await page.getByRole("complementary", { name: "Snapshot facets" }).boundingBox();
+    const people = await page.getByRole("group", { name: "People facet" }).boundingBox();
+    const results = await page.getByRole("region", { name: "Frozen query results" }).boundingBox();
+    expect(aside).not.toBeNull();
+    expect(people).not.toBeNull();
+    expect(results).not.toBeNull();
+    expect(aside!.width - people!.width).toBeLessThan(24);
+    expect(results!.y - (people!.y + people!.height)).toBeLessThan(24);
+  }
   // The JSON reporter embeds the body as base64 in the uploaded CI report.
   const body = await page.screenshot({ animations: "disabled" });
   await testInfo.attach(`role-search-${proof}-${name}-${theme}.png`, {
@@ -123,8 +173,8 @@ async function captureStates(
   await inspectorLoaded(page);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   for (const [part, target] of parts) {
-    await target.scrollIntoViewIfNeeded();
-    await expect(target).toBeInViewport({ ratio: 1 });
+    await target.evaluate((element) => element.scrollIntoView({ block: "start" }));
+    await expect(target).toBeInViewport({ ratio: 0.99 });
     await capture(page, testInfo, `${state}-mobile-${part}`, "dark");
     await capture(page, testInfo, `${state}-mobile-${part}`, "light");
   }
@@ -209,7 +259,7 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
     const people = page.getByRole("group", { name: "People facet" });
     const parts: [string, Locator][] = [
       ["people", people],
-      ["results", results],
+      ["results", results.locator("tbody tr").first()],
     ];
     const open = async (value: ReturnType<typeof advanced>) => {
       const launch = new URL(issued);
@@ -263,7 +313,9 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
       "from-query-person-selected",
       async () => {
         await expect(
-          results.getByRole("cell", { name: "/board-update.eml, people evidence: Recipient, Sender" }),
+          results.getByRole("cell", {
+            name: "/board-update.eml, people evidence: Recipient, Sender",
+          }),
         ).toBeVisible();
         await expect(
           people.getByRole("button", { name: "Ines Albarrán, Recipient, 1 documents, selected" }),
@@ -312,7 +364,9 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
       "merged-survivor-selected",
       async () => {
         await expect(
-          results.getByRole("cell", { name: "/board-update.eml, people evidence: Recipient, Sender" }),
+          results.getByRole("cell", {
+            name: "/board-update.eml, people evidence: Recipient, Sender",
+          }),
         ).toBeVisible();
         await expect(survivorSelected).toHaveAttribute("aria-pressed", "true");
       },

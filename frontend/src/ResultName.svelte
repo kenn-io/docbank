@@ -27,7 +27,7 @@
   <span class="text">
     {#if roles.length}<span class="title-line"
         ><span class="title">{name}</span><span class="roles"
-          >{#each roles as role (role)}<Chip size="xs" tone="muted" uppercase={false}
+          >{#each roles as role (role)}<Chip size="xs" tone="neutral" uppercase={false}
               >{roleChipLabel(role)}</Chip
             >{/each}</span
         ></span
@@ -58,9 +58,9 @@
   .title {
     color: var(--text-primary);
     font-weight: var(--font-weight-medium);
+    min-width: 0;
   }
-  /* Chips sit beside the name while both fit; otherwise they wrap beneath it
-   * so the name keeps the cell's width instead of collapsing to an ellipsis. */
+  /* On small screens, let chips wrap beneath the name. */
   .title-line {
     display: flex;
     flex-wrap: wrap;
@@ -75,6 +75,15 @@
     flex-wrap: wrap;
     gap: var(--space-1);
     min-width: 0;
+  }
+  @media (min-width: 641px) {
+    .title-line {
+      flex-wrap: nowrap;
+    }
+    .roles {
+      flex: none;
+      flex-wrap: nowrap;
+    }
   }
   .folder,
   .excerpt {

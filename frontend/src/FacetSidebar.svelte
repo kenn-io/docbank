@@ -536,6 +536,9 @@
     .facets > h2 {
       grid-column: 1 / -1;
     }
+    .facets > section:only-of-type {
+      grid-column: 1 / -1;
+    }
   }
   @media (max-width: 640px) {
     .facets {
