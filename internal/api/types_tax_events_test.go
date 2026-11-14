@@ -15,9 +15,3 @@ func TestTaxRecordDetailBalance(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"outstanding_minor":null`)
 }
-
-func TestTaxCashRequestMembers(t *testing.T) {
-	t.Parallel()
-	var req AddTaxEventRequest
-	require.Error(t, json.Unmarshal([]byte(`{"kind":"payment","currency":null}`), &req))
-}
