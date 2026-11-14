@@ -10,6 +10,8 @@ export type SelectionState<ID = number> = {
 export type SelectionTarget = {
   node_id: number;
   revision: number;
+  /** Shown when the document can't be read back. */
+  name: string;
 };
 
 function eligibleIDs(rows: readonly SelectableRow[]): number[] {
@@ -85,5 +87,5 @@ export function selectedTargets(
 ): SelectionTarget[] {
   return rows
     .filter((row) => row.node.kind === "file" && selectedIDs.has(row.node.id))
-    .map((row) => ({ node_id: row.node.id, revision: row.node.revision }));
+    .map((row) => ({ node_id: row.node.id, revision: row.node.revision, name: row.path }));
 }

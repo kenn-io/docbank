@@ -1371,6 +1371,56 @@ it("keeps the inspected source after batch tagging when the folder refresh fails
   expect(screen.getByRole("region", { name: "Verified content of readme.txt" })).toBeTruthy();
 });
 
+it("refreshes inspected tags after closing an uncertain selection change", async () => {
+  prepareSelectionApp();
+  const { fetchMock } = installSelectionBackend();
+  const backend = fetchMock.getMockImplementation()!;
+  const tag = {
+    id: "33333333-3333-4333-8333-333333333333",
+    name: "tax",
+    revision: 2,
+    assignment_count: 4,
+  };
+  let changed = false;
+  let inspectorFailed = false;
+  const json = (value: unknown) => Response.json(value);
+  fetchMock.mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === `/api/v1/tags/${tag.id}`) return json(tag);
+    if (url === "/api/v1/nodes/3")
+      return json(selectionNode(3, "readme.txt", "file", 1, changed ? 2 : 1));
+    if (url === "/api/v1/nodes/3/tags?limit=1000&offset=0") {
+      if (!inspectorFailed) {
+        inspectorFailed = true;
+        return Response.json({ detail: "Inspector unavailable" }, { status: 503 });
+      }
+      return json({ items: changed ? [tag] : [], total: changed ? 1 : 0, limit: 1000, offset: 0 });
+    }
+    if (changed && url.includes("/children?"))
+      return Response.json({ detail: "Folder unavailable" }, { status: 503 });
+    if (url === "/api/v1/batch/tags") return new Response("unavailable", { status: 503 });
+    return backend(input, init);
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("cell", { name: "readme.txt" }));
+  await screen.findByRole("region", { name: "Verified content of readme.txt" });
+  await screen.findByText("Inspector unavailable");
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select readme.txt" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
+  await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
+    target: { value: "tax" },
+  });
+  await fireEvent.click(screen.getByRole("option", { name: /^tax \(\d+\)$/ }));
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await screen.findByRole("button", { name: "Check tag results" });
+  changed = true;
+  await fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(screen.queryByText("Inspector unavailable")).toBeNull());
+  await waitFor(() =>
+    expect(document.querySelector('[aria-label="Assigned tags"]')?.textContent).toContain("tax"),
+  );
+});
+
 it("uses refreshed live metadata for the selected row and tag actions", async () => {
   prepareSelectionApp();
   const { fetchMock } = installSelectionBackend();
