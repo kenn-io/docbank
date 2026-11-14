@@ -173,8 +173,11 @@ deadline and qualified renderer's 300 DPI, 512 MiB WASM and 1 GiB process-RSS
 limits apply. Evidence size is not a peak-memory bound.
 
 RSS refusals preserve a typed cause with observed and allowed byte counts in
-daemon diagnostics. A live request receives 503 `redaction_preparation_memory`;
-an internal deadline receives 503 `redaction_preparation_worker_timeout`.
+daemon diagnostics. On macOS the ceiling measures the process's physical
+footprint. macOS keeps memory the Go runtime has returned in resident size, so
+that value would not fall after the worker frees memory before refusing a job.
+A live request receives 503 `redaction_preparation_memory`; an internal
+deadline receives 503 `redaction_preparation_worker_timeout`.
 Only the original request context selects 408 cancellation or 504 timeout.
 A stopped service or missing runtime returns 503 unavailable; a second request
 returns 503 busy. Limit and unsupported-source refusals are 422, stale selection
