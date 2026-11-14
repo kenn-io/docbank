@@ -2,6 +2,7 @@ package docbank_test
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"fmt"
 	"io"
 	"io/fs"
@@ -18,6 +19,8 @@ import (
 	docbank "go.kenn.io/docbank/docbank"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/docbank/internal/store"
+	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
 func assertReaderContent(t *testing.T, reader *docbank.ContentReader, path, want string) {
@@ -221,6 +224,18 @@ func TestContentReaderRejectsRegistryInsideVault(t *testing.T) {
 	})
 }
 
+type recordingScratchDriver struct {
+	docsqlite.Driver
+	paths []string
+}
+
+func (d *recordingScratchDriver) Open(path string, opts docsqlite.OpenOptions) (*sql.DB, error) {
+	if opts.Access == docsqlite.Create {
+		d.paths = append(d.paths, path)
+	}
+	return d.Driver.Open(path, opts)
+}
+
 func TestContentReaderStorageUnchanged(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing")
 	_, err := docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: missing})
@@ -228,10 +243,12 @@ func TestContentReaderStorageUnchanged(t *testing.T) {
 	_, err = os.Lstat(missing)
 	require.ErrorIs(t, err, os.ErrNotExist)
 
-	for _, kind := range []string{"loose", "packed", "tampered", "temp inside vault"} {
+	for _, kind := range []string{"loose", "packed", "tampered", "external registry"} {
 		t.Run(kind, func(t *testing.T) {
-			if kind == "temp inside vault" {
-				t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
+			registry := ""
+			if kind == "external registry" {
+				registry = t.TempDir()
+				t.Setenv("DOCBANK_LOCK_DIR", registry)
 			} else {
 				t.Parallel()
 			}
@@ -256,19 +273,20 @@ func TestContentReaderStorageUnchanged(t *testing.T) {
 				damage[0] ^= 1
 				require.NoError(t, os.WriteFile(path, damage, 0o600))
 			}
-			if kind == "temp inside vault" {
-				tmp := filepath.Join(root, "tmp")
-				require.NoError(t, os.Mkdir(tmp, 0o700))
-				stamp := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
-				require.NoError(t, os.Chtimes(tmp, stamp, stamp))
-				for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
-					t.Setenv(key, tmp)
-				}
-			}
 			stabilizeReaderTree(t, root)
 			before := snapshotReaderTree(t, root)
-			reader, err := docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
+			config := docbank.ContentReaderConfig{Root: root}
+			var driver *recordingScratchDriver
+			if kind == "external registry" {
+				driver = &recordingScratchDriver{Driver: store.DefaultSQLiteDriver()}
+				config.SQLite = driver
+			}
+			reader, err := docbank.OpenContentReader(t.Context(), config)
 			require.NoError(t, err)
+			if driver != nil {
+				require.Len(t, driver.paths, 1)
+				require.Equal(t, registry, filepath.Dir(driver.paths[0]))
+			}
 			if kind == "loose" {
 				require.Equal(t, id, reader.ID())
 				_, err = docbank.New(t.Context(), docbank.Config{Root: root})
