@@ -58,11 +58,13 @@ const query = advanced('from:"Mara Okonkwo-Fell"');
 // Attachments are named
 // role-search-branch-<state>-<wide|narrow|mobile-<part>>-<theme>.png.
 async function capture(page: Page, testInfo: TestInfo, name: string, theme: "light" | "dark") {
-  await page.evaluate(async (value) => {
-    localStorage.setItem("docbank-theme", value);
-    document.documentElement.classList.toggle("dark", value === "dark");
-    await document.fonts.ready;
-  }, theme);
+  const toggle = page.getByRole("button", { name: /Change theme \(current:/ });
+  const expected = `Change theme (current: ${theme === "dark" ? "Dark" : "Light"})`;
+  for (let i = 0; i < 2 && (await toggle.getAttribute("aria-label")) !== expected; i++) {
+    await toggle.dispatchEvent("click");
+  }
+  await expect(toggle).toHaveAttribute("aria-label", expected);
+  await page.evaluate(() => document.fonts.ready);
   // Park the pointer away from controls after scrolling each view.
   const corner = await page.evaluate(() =>
     [
