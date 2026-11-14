@@ -258,6 +258,9 @@ func TestContentReaderStorageUnchanged(t *testing.T) {
 			}
 			if kind == "temp inside vault" {
 				tmp := filepath.Join(root, "tmp")
+				require.NoError(t, os.Mkdir(tmp, 0o700))
+				stamp := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+				require.NoError(t, os.Chtimes(tmp, stamp, stamp))
 				for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
 					t.Setenv(key, tmp)
 				}
