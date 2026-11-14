@@ -113,14 +113,10 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 	}
 	peopleState := factsStateNone
 	var edges []document.DocumentPersonEdgeV1
-	if eventState != factsStatePending && eventState != factsStateFailed {
+	if eventState == "published" {
 		var head DocumentPeopleHead
 		var headErr error
-		if eventState == factsStateNone {
-			head, headErr = documentPeopleHeadTx(ctx, tx, versionID)
-		} else {
-			edges, head, headErr = documentPeopleForVersionTx(ctx, tx, versionID)
-		}
+		edges, head, headErr = documentPeopleForVersionTx(ctx, tx, versionID)
 		if headErr != nil && !errors.Is(headErr, ErrNotFound) {
 			return DocumentPeopleFacts{}, headErr
 		}
@@ -142,8 +138,6 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 	facts.State = peopleState
 	if eventState == factsStatePending || eventState == factsStateFailed {
 		facts.State = eventState
-	} else if eventState == factsStateNone && peopleState == "published" {
-		facts.State = factsStatePending
 	}
 	if eventState == "published" && peopleState == "published" {
 		facts.Edges = edges
