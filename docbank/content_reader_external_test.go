@@ -286,7 +286,9 @@ func TestContentReaderStorageUnchanged(t *testing.T) {
 			require.NoError(t, err)
 			if driver != nil {
 				require.Len(t, driver.paths, 1)
-				require.Equal(t, registry, filepath.Dir(driver.paths[0]))
+				canonicalRegistry, err := filepath.EvalSymlinks(registry)
+				require.NoError(t, err)
+				require.Equal(t, canonicalRegistry, filepath.Dir(driver.paths[0]))
 			}
 			if kind == "loose" {
 				require.Equal(t, id, reader.ID())
