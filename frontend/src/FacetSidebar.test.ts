@@ -696,9 +696,35 @@ it("narrows and clears people while keeping other filters", async () => {
     { person_id: typed, roles: ["custodian"] },
   ]);
 
-  await fireEvent.click(joryButton);
+  await view.rerender({
+    facets: [
+      facet("person_role", { available: false, reason: "people_evidence_incomplete", values: [] }),
+    ],
+    query: added,
+  });
+  await fireEvent.click(screen.getByRole("button", { name: /Jory Pellham.*selected/ }));
+  expect(onchange.mock.lastCall?.[0].filters.people).toEqual([
+    { person_id: typed, roles: ["custodian"] },
+  ]);
+
+  await view.rerender({
+    facets: [peopleFacet([{ ...peopleValues[0]!, selected: true, selected_person_ids: [jory] }])],
+    query: added,
+  });
+  await fireEvent.click(screen.getByRole("button", { name: /Jory Pellham.*selected/ }));
   const removed = onchange.mock.lastCall?.[0] as Query;
   expect(removed.filters.people).toEqual([{ person_id: typed, roles: ["custodian"] }]);
   expect(removed.filters.person_ids).toEqual([mara]);
   expect(removed.filters.paths).toEqual(originalQuery.filters.paths);
+
+  await view.rerender({
+    facets: [
+      facet("person_role", { available: false, reason: "people_evidence_incomplete", values: [] }),
+    ],
+    query: unmergedQuery,
+  });
+  await fireEvent.click(
+    screen.getByRole("button", { name: `Person ${typed.slice(0, 8)}, selected` }),
+  );
+  expect(onchange.mock.lastCall?.[0].filters.people).toBeUndefined();
 });

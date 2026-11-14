@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
@@ -138,7 +139,7 @@ func (r queryResolver) personMentionNames(ctx context.Context, id string) ([]str
 	if err := r.q.QueryRowContext(ctx, `SELECT display_name FROM persons WHERE person_id=?`, id).Scan(&name); err != nil {
 		return nil, err
 	}
-	names := []string{name}
+	names := []string{strings.ReplaceAll(name, "\x00", " ")}
 	q, ok := r.q.(rowsQuerier)
 	if !ok {
 		return nil, errors.New("person aliases require a rows querier")
@@ -154,7 +155,7 @@ func (r queryResolver) personMentionNames(ctx context.Context, id string) ([]str
 			return nil, err
 		}
 		if alias != "" && alias != name {
-			names = append(names, alias)
+			names = append(names, strings.ReplaceAll(alias, "\x00", " "))
 		}
 	}
 	if err := rows.Err(); err != nil {

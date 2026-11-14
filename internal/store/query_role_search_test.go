@@ -756,6 +756,18 @@ func TestRoleSearchMentionsRequireDocumentContent(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
 	require.Equal(t, "ascii.txt", result.Rows[0].Name)
+	person, err = s.CreatePerson(ctx, "Null\x00Name", "operator")
+	require.NoError(t, err)
+	_, _ = addTestPersonIdentity(t, s, person, "name_alias", "Searchable Alias", "searchable-alias")
+	file, err = s.CreateFile(ctx, s.RootID(), "alias.txt", fakeHash("ce06"), 12, "text/plain")
+	require.NoError(t, err)
+	seedCompiledLegacyText(t, s, file, "Searchable Alias")
+	value = snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"mentions:%s"}`, person.PersonID))
+	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	require.Equal(t, "alias.txt", result.Rows[0].Name)
+
 }
 
 func TestRoleSearchMentionsSelectedRendition(t *testing.T) {

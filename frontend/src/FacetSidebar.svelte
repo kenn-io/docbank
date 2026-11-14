@@ -139,6 +139,30 @@
   const [captureAfter, captureBefore] = facetFilterFields.year;
   const [ratingMin, ratingMax] = facetFilterFields.rating;
   const [people] = facetFilterFields.person_role;
+  let knownPeople: FacetValue[] = $state([]);
+  $effect(() => {
+    const facet = facets.find((item) => item.dimension === "person_role");
+    if (facet?.available) knownPeople = facet.values;
+  });
+  const unavailablePeople = $derived.by(() => {
+    const selected = query.filters[people] ?? [];
+    const result = new Map<string, FacetValue>();
+    for (const entry of selected) {
+      const known = knownPeople.find(
+        (value) =>
+          value.key === entry.person_id || value.selected_person_ids?.includes(entry.person_id),
+      );
+      const key = known?.key ?? entry.person_id;
+      result.set(key, {
+        key,
+        label: known?.label ?? "",
+        count: 0,
+        selected: true,
+        selected_person_ids: [...(result.get(key)?.selected_person_ids ?? []), entry.person_id],
+      });
+    }
+    return [...result.values()];
+  });
   const sizeRanges: Record<string, { min?: number; max?: number; label: string }> = {
     lt_1_mib: { max: (1 << 20) - 1, label: "Less than 1 MiB" },
     "1_mib_to_10_mib": { min: 1 << 20, max: (10 << 20) - 1, label: "1 MiB to 10 MiB" },
@@ -389,6 +413,21 @@
           <h3>{names[facet.dimension]}</h3>
           {#if !facet.available}
             <p class="unavailable">Unavailable · {facet.reason?.replaceAll("_", " ")}</p>
+            {#if facet.dimension === "person_role" && unavailablePeople.length}
+              <div class="values">
+                {#each unavailablePeople as value (value.key)}
+                  <button
+                    type="button"
+                    class:selected={true}
+                    aria-pressed="true"
+                    aria-label={`${label("person_role", value)}, selected`}
+                    {disabled}
+                    onclick={() => onchange(personQuery(value))}
+                    >{label("person_role", value)}</button
+                  >
+                {/each}
+              </div>
+            {/if}
           {:else}
             <div class="values">
               {#each shown(facet) as value (value.key)}
