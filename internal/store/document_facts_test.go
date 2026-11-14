@@ -148,6 +148,7 @@ func checkDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T, newStore fun
 	record := documentEventRecord(t, s.VaultID(), version.ID, "d9")
 	record.Events[0].Sensitive = true
 	record.Events[0].Actors = []document.DocumentEventActorV1{actor,
+		{ActorKey: "name_alias:public author", Claim: "Public Author", DisplayName: "Public Author", Role: "author"},
 		{ActorKey: "email:sender@example.test", Address: "sender@example.test", Claim: `"Private Name" <sender@example.test>`, DisplayName: "Private Name", Role: "blind_copy", Sensitive: true},
 		{ActorKey: "email:sender@example.test", Address: "sender@example.test", Claim: `<sender@example.test>`, Role: "sender"}}
 	raw, _, err := document.MarshalDocumentEventsV1(record)
@@ -167,20 +168,29 @@ func checkDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T, newStore fun
 	safe, err := s.DocumentPeopleFacts(t.Context(), version.ID, true)
 	require.NoError(t, err)
 	require.Equal(t, "none", safe.State)
+	var public *VersionCandidate
+	for i := range safe.Candidates {
+		if safe.Candidates[i].ActorKey == "name_alias:public author" {
+			public = &safe.Candidates[i]
+		}
+	}
+	require.NotNil(t, public)
+	require.Len(t, public.Occurrences, 1)
+	require.Equal(t, "Public Author", public.Occurrences[0].Label)
 	foundSender := false
 	for _, c := range safe.Candidates {
 		if c.ActorKey == "email:sender@example.test" {
 			require.Len(t, c.Occurrences, 1)
 			require.Equal(t, "sender@example.test", c.Occurrences[0].Label)
 			foundSender = true
-		} else {
+		} else if c.ActorKey != "name_alias:public author" {
 			require.Empty(t, c.Occurrences)
 		}
 	}
 	require.True(t, foundSender)
 	full, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
 	require.NoError(t, err)
-	require.Len(t, full.Candidates, 2)
+	require.Len(t, full.Candidates, 3)
 	var sender *VersionCandidate
 	for i := range full.Candidates {
 		if full.Candidates[i].ActorKey == "email:sender@example.test" {
@@ -206,19 +216,15 @@ func checkDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T, newStore fun
 	require.Empty(t, pending.Candidates)
 }
 
-func TestDocumentPeopleFactsCandidateQueueOverflow(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkDocumentPeopleFactsCandidateQueueOverflow(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	s := newStore(t)
 	ctx := t.Context()
-	_, err := s.db.ExecContext(ctx, `WITH RECURSIVE seq(value) AS (
-		VALUES(1) UNION ALL SELECT value+1 FROM seq WHERE value<?
-	) INSERT INTO person_match_candidates(candidate_id,actor_key,display_name,reason,evidence_json,evidence_sha256,occurrence_count,revision,state,created_at)
-	SELECT printf('00000000-0000-4000-8000-%012x',value),printf('name_alias:synthetic-%d',value),'Synthetic','name_only','[]',printf('%064x',value),1,1,'open',? FROM seq`, maxOpenPersonCandidates, nowRFC3339())
-	require.NoError(t, err)
 	version, target := ingestDocumentEventTarget(t, s, "overflow.txt", "d4")
+	fillFaceCandidateQueue(t, s, version.ID, maxOpenPersonCandidates)
 	record := documentEventRecord(t, s.VaultID(), version.ID, "d4")
 	record.Events[0].Actors = []document.DocumentEventActorV1{{ActorKey: "name_alias:queue overflow", Claim: "Queue Overflow", DisplayName: "Queue Overflow", Role: "author"}}
-	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+	_, err := s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
 	require.NoError(t, err)
 	input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
 	require.NoError(t, err)
