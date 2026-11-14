@@ -251,6 +251,10 @@ Installing a provider package does not register it with the daemon, and does
 not prepare an import for semantic search. The default configuration has no
 processing profiles, and new imports do not run this workflow automatically.
 
+## Connect to DocuSeal
+
+[Check a DocuSeal connection and list templates](usage/contracts.md) without sending documents.
+
 ## What Docbank does not do
 
 Docbank does not synchronize a working folder between devices, create public

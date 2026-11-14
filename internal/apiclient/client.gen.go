@@ -16,6 +16,7 @@ import (
 	redaction "go.kenn.io/docbank/document/redaction"
 	api "go.kenn.io/docbank/internal/api"
 	backupapp "go.kenn.io/docbank/internal/backupapp"
+	docusealclient "go.kenn.io/docbank/internal/docusealclient"
 	ingest "go.kenn.io/docbank/internal/ingest"
 	kataclient "go.kenn.io/docbank/internal/kataclient"
 	kataevidence "go.kenn.io/docbank/internal/kataevidence"
@@ -4517,6 +4518,102 @@ func (c *Client) StreamIngest(ctx context.Context, options *StreamIngestRequestO
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/ingest/stream")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetDocuSealStatus Check the DocuSeal connection
+func (c *Client) GetDocuSealStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetDocuSealStatusResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/integrations/docuseal/status",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetDocuSealStatusResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetDocuSealStatusResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetDocuSealStatusResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetDocuSealStatusErrorResponse](resp, "GetDocuSealStatusErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/integrations/docuseal/status")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListDocuSealTemplates List DocuSeal templates
+func (c *Client) ListDocuSealTemplates(ctx context.Context, options *ListDocuSealTemplatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListDocuSealTemplatesResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"after": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/integrations/docuseal/templates",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListDocuSealTemplatesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListDocuSealTemplatesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListDocuSealTemplatesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListDocuSealTemplatesErrorResponse](resp, "ListDocuSealTemplatesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/integrations/docuseal/templates")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -19376,6 +19473,37 @@ func (o *StreamIngestRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// ListDocuSealTemplatesRequestOptions is the options needed to make a request to ListDocuSealTemplates.
+type ListDocuSealTemplatesRequestOptions struct {
+	Query *ListDocuSealTemplatesQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListDocuSealTemplatesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListDocuSealTemplatesRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListDocuSealTemplatesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListDocuSealTemplatesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetLaneControlRequestOptions is the options needed to make a request to GetLaneControl.
 type GetLaneControlRequestOptions struct {
 	PathParams *GetLaneControlPath
@@ -28773,6 +28901,10 @@ type ReadFormatCapabilitiesQuery struct {
 	Extension *string `json:"extension,omitempty"`
 }
 
+type ListDocuSealTemplatesQuery struct {
+	After *int64 `json:"after,omitempty"`
+}
+
 type ListMailboxJobsQuery struct {
 	After *string `json:"after,omitempty"`
 
@@ -29419,6 +29551,32 @@ type PreflightIngestErrorResponse = Error
 type StreamIngestResponse = []byte
 
 type StreamIngestErrorResponse = Error
+
+type GetDocuSealStatusResponse = docusealclient.Status
+
+type GetDocuSealStatusErrorResponse api.Error
+
+type GetDocuSealStatusErrorResponseApplicationProblemPlusJSON api.Error
+
+type GetDocuSealStatusErrorResponseApplicationProblemPlusJSON502 api.Error
+
+type GetDocuSealStatusErrorResponseApplicationProblemPlusJSON503 api.Error
+
+type GetDocuSealStatusErrorResponseApplicationProblemPlusJSON504 api.Error
+
+type ListDocuSealTemplatesResponse = docusealclient.TemplatePage
+
+type ListDocuSealTemplatesErrorResponse api.Error
+
+type ListDocuSealTemplatesErrorResponseApplicationProblemPlusJSON api.Error
+
+type ListDocuSealTemplatesErrorResponseApplicationProblemPlusJSON500 api.Error
+
+type ListDocuSealTemplatesErrorResponseApplicationProblemPlusJSON502 api.Error
+
+type ListDocuSealTemplatesErrorResponseApplicationProblemPlusJSON503 api.Error
+
+type ListDocuSealTemplatesErrorResponseApplicationProblemPlusJSON504 api.Error
 
 type ListJobsResponse = api.JobList
 
@@ -32286,6 +32444,8 @@ type StartStorageSalvageRequest struct {
 	PreviewToken string  `json:"preview_token"`
 }
 
+type Status = docusealclient.Status
+
 type StorageOperation = api.StorageOperation
 
 type StoragePackReport = api.StoragePackReport
@@ -32329,6 +32489,10 @@ type TaggedNode = api.TaggedNode
 type TaggedNodePage = api.TaggedNodePage
 
 type TelemetryEventProperties = api.TelemetryEventProperties
+
+type Template = docusealclient.Template
+
+type TemplatePage = docusealclient.TemplatePage
 
 type Term = report.Term
 

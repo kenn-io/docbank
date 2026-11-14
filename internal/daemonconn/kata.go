@@ -23,7 +23,7 @@ func (c *Connection) CiteKataEvidence(ctx context.Context, request kataevidence.
 
 		Schema string `json:"$schema,omitzero"`
 	}
-	if err := decodeCitationResponse(response, &transport, 3<<20); err != nil {
+	if err := decodeBoundedResponse(response, &transport, 3<<20); err != nil {
 		return kataclient.Issue{}, &responseDecodeError{err: err}
 	}
 	if transport.UID == "" || transport.QualifiedRef == "" {
@@ -47,7 +47,7 @@ func (c *Connection) KataContext(ctx context.Context, request kataevidence.Conte
 
 		Schema string `json:"$schema,omitzero"`
 	}
-	if err := decodeCitationResponse(response, &transport, 3<<20); err != nil {
+	if err := decodeBoundedResponse(response, &transport, 3<<20); err != nil {
 		return kataevidence.Context{}, &responseDecodeError{err: err}
 	}
 	if transport.Issue.UID == "" || len(transport.Passages) > kataevidence.ContextPageSize || transport.NextOffset != 0 &&

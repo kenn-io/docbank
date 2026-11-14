@@ -20496,6 +20496,25 @@ components:
       required:
         - preview_token
       type: object
+    Status:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Status.json
+          format: uri
+          readOnly: true
+          type: string
+        endpoint:
+          type: string
+      required:
+        - endpoint
+      type: object
+      x-go-type: docusealclient.Status
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/docusealclient
+        name: docusealclient
     StorageOperation:
       additionalProperties: false
       properties:
@@ -21271,6 +21290,52 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    Template:
+      additionalProperties: false
+      properties:
+        id:
+          format: int64
+          type: integer
+        name:
+          type: string
+        roles:
+          items:
+            type: string
+          type: array
+      required:
+        - id
+        - name
+        - roles
+      type: object
+      x-go-type: docusealclient.Template
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/docusealclient
+        name: docusealclient
+    TemplatePage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TemplatePage.json
+          format: uri
+          readOnly: true
+          type: string
+        next:
+          format: int64
+          type: integer
+        templates:
+          items:
+            $ref: "#/components/schemas/Template"
+          type: array
+      required:
+        - templates
+        - next
+      type: object
+      x-go-type: docusealclient.TemplatePage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/docusealclient
+        name: docusealclient
     Term:
       additionalProperties: false
       properties:
@@ -25462,6 +25527,110 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Import server-side paths while streaming structured progress
+  /api/v1/integrations/docuseal/status:
+    get:
+      operationId: getDocuSealStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+        "408":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Timeout
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "502":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Gateway
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+        "504":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Gateway Timeout
+      summary: Check the DocuSeal connection
+  /api/v1/integrations/docuseal/templates:
+    get:
+      operationId: listDocuSealTemplates
+      parameters:
+        - explode: false
+          in: query
+          name: after
+          schema:
+            format: int64
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TemplatePage"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+        "408":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Timeout
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "502":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Gateway
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+        "504":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Gateway Timeout
+      summary: List DocuSeal templates
   /api/v1/jobs:
     get:
       operationId: listJobs

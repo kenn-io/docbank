@@ -35,7 +35,7 @@ func (c *Connection) ResolveTextCitation(
 
 		Schema string `json:"$schema,omitzero"`
 	}
-	if err := decodeCitationResponse(response, &transport, 1<<20); err != nil {
+	if err := decodeBoundedResponse(response, &transport, 1<<20); err != nil {
 		return document.ResolvedTextCitation{}, err
 	}
 	result := transport.ResolvedTextCitation
@@ -49,16 +49,16 @@ func (c *Connection) ResolveTextCitation(
 	return result, nil
 }
 
-func decodeCitationResponse(response *http.Response, output any, maxBytes int64) error {
+func decodeBoundedResponse(response *http.Response, output any, maxBytes int64) error {
 	encoded, err := io.ReadAll(io.LimitReader(response.Body, maxBytes+1))
 	if err != nil {
-		return fmt.Errorf("reading retained text response: %w", err)
+		return fmt.Errorf("reading daemon response: %w", err)
 	}
 	if int64(len(encoded)) > maxBytes {
-		return errors.New("retained text response is too large")
+		return errors.New("daemon response is too large")
 	}
 	if err := json.Unmarshal(encoded, output, json.RejectUnknownMembers(true)); err != nil {
-		return fmt.Errorf("decoding retained text response: %w", err)
+		return fmt.Errorf("decoding daemon response: %w", err)
 	}
 	return nil
 }

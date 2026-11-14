@@ -30,6 +30,7 @@ nav = [
     {"Search exports" = "usage/search-exports.md"},
     {"Document processing" = "usage/document-processing.md"},
     {"Cite documents in Kata" = "usage/kata-evidence.md"},
+    {"DocuSeal connection" = "usage/contracts.md"},
     {"Automatic and processing search" = "usage/search.md"},
     {"Web application" = "usage/web.md"},
     {"Interactive terminal browser" = "usage/tui.md"},
