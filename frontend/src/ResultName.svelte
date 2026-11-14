@@ -60,21 +60,21 @@
     font-weight: var(--font-weight-medium);
     min-width: 0;
   }
-  /* Let chips wrap beneath the name when the row is tight. */
+  /* Keep chips beside the name, stacking them when the row is tight, and wrap
+     them beneath it only when even the widest chip does not fit. */
   .title-line {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
+    align-items: first baseline;
     column-gap: var(--space-2);
     row-gap: var(--space-1);
     min-width: 0;
   }
   .roles {
     display: flex;
-    flex: 0 1 auto;
+    flex: 1 1 min-content;
     flex-wrap: wrap;
     gap: var(--space-1);
-    min-width: 0;
   }
   .folder,
   .excerpt {
