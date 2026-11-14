@@ -725,11 +725,16 @@ With contract writes enabled, a synthetic workflow is:
 2. Call `get_contract` with the returned `contract_id` to inspect the record
    and revision. Existing party UUIDs are available in contract details; party
    management remains in the CLI or HTTP API.
-3. Call `update_contract` with `{"contract_id":"<id>","revision":1,"patch":{"starts_on":null}}`
+3. Call `update_contract` with `{"contract_id":"<id>","revision":"1","patch":{"starts_on":null}}`
    to clear the date. Omitted patch fields remain unchanged.
 4. Call `link_contract_document` with the returned revision, exact numeric
    `node_id`, `content_version_id`, and role (for example `signed`). Linking a
    signed copy does not change the contract status.
+
+Contract revisions are decimal strings, from `"1"` through `"9223372036854775807"`,
+in reads, write inputs, and receipts. Keep them as strings to preserve imported
+revisions exactly; do not convert them to floating-point numbers. A write that
+would advance past the maximum is rejected without changing the contract.
 
 Use the latest revision from a read or receipt. A stale revision is rejected;
 read again before deciding whether to retry. If a write returns

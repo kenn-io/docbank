@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -69,7 +71,7 @@ func TestContractMCPWorkflowAndWriteOptIn(t *testing.T) {
 	created := call("create_contract", map[string]any{"title": "Agreement %_", "starts_on": "2026-01-01", "expires_on": "2026-12-01", "summary": "Synthetic terms", "parties": []any{map[string]any{"party_id": party.PartyID, "role": "own"}}})
 	id, ok := created["contract_id"].(string)
 	require.True(t, ok)
-	assert.EqualValues(t, 1, created["revision"])
+	assert.Equal(t, "1", created["revision"])
 	_, err = catalog.CreateContract(t.Context(), store.ContractInput{Title: "Agreement %_ without party"})
 	require.NoError(t, err)
 	_, err = catalog.CreateContract(t.Context(), store.ContractInput{Title: "Other agreement", Parties: []store.ContractPartyInput{{PartyID: party.PartyID, Role: "own"}}})
@@ -89,12 +91,12 @@ func TestContractMCPWorkflowAndWriteOptIn(t *testing.T) {
 	detail := call("get_contract", map[string]any{"contract_id": id, "as_of": "2026-11-12"})
 	assert.Equal(t, "Synthetic terms", detail["summary"])
 	require.Len(t, detail["parties"], 1)
-	updated := call("update_contract", map[string]any{"contract_id": id, "revision": 1, "patch": map[string]any{"starts_on": nil, "summary": ""}})
-	assert.EqualValues(t, 2, updated["revision"])
+	updated := call("update_contract", map[string]any{"contract_id": id, "revision": "1", "patch": map[string]any{"starts_on": nil, "summary": ""}})
+	assert.Equal(t, "2", updated["revision"])
 	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "agreement.txt", strings.Repeat("a", 64), 12, "text/plain")
 	require.NoError(t, err)
-	linked := call("link_contract_document", map[string]any{"contract_id": id, "revision": 2, "node_id": node.ID, "content_version_id": node.CurrentVersionID, "role": "signed"})
-	assert.EqualValues(t, 3, linked["revision"])
+	linked := call("link_contract_document", map[string]any{"contract_id": id, "revision": updated["revision"], "node_id": node.ID, "content_version_id": node.CurrentVersionID, "role": "signed"})
+	assert.Equal(t, "3", linked["revision"])
 	detail = call("get_contract", map[string]any{"contract_id": id})
 	assert.Equal(t, "draft", detail["status"])
 	documents, ok := detail["documents"].([]any)
@@ -149,6 +151,82 @@ func TestContractMCPWorkflowAndWriteOptIn(t *testing.T) {
 	assert.Len(t, page, 5)
 }
 
+// Imported contract revisions are authority, including values outside float64's exact range.
+func TestContractMCPImportedRevisionRoundTrip(t *testing.T) {
+	for _, revision := range []int64{contractSafeInteger, contractSafeInteger + 2, math.MaxInt64 - 2} {
+		t.Run(strconv.FormatInt(revision, 10), func(t *testing.T) {
+			source, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "source.db"))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, source.Close()) })
+			contract, err := source.CreateContract(t.Context(), store.ContractInput{Title: "Imported agreement"})
+			require.NoError(t, err)
+			node, err := source.CreateFile(t.Context(), source.RootID(), "agreement.txt", strings.Repeat("a", 64), 12, "text/plain")
+			require.NoError(t, err)
+			var exported bytes.Buffer
+			require.NoError(t, source.ExportMetadata(t.Context(), &exported))
+			lines := strings.Split(exported.String(), "\n")
+			found := false
+			for i, line := range lines {
+				if strings.Contains(line, `"type":"contract"`) && strings.Contains(line, contract.ContractID) {
+					lines[i] = strings.Replace(line, `"revision":1`, `"revision":`+strconv.FormatInt(revision, 10), 1)
+					require.NotEqual(t, line, lines[i])
+					found = true
+				}
+			}
+			require.True(t, found)
+			fixture := newNativeExportFixture(t)
+			require.NoError(t, fixture.catalog.ImportMetadata(t.Context(), strings.NewReader(strings.Join(lines, "\n"))))
+			server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{AllowContractWrites: true}, fixture.lease)
+			call := func(name string, args map[string]any, code string) map[string]any {
+				t.Helper()
+				result := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": name, "arguments": args})))
+				if code == "" {
+					require.NotEqual(t, true, result["isError"], "%v", result)
+				} else {
+					require.Equal(t, true, result["isError"])
+					require.Equal(t, code, objectField(t, result, "structuredContent")["code"])
+				}
+				return objectField(t, result, "structuredContent")
+			}
+			checkReads := func(want int64) {
+				t.Helper()
+				detail := call("get_contract", map[string]any{"contract_id": contract.ContractID}, "")
+				require.Equal(t, strconv.FormatInt(want, 10), detail["revision"])
+				page := call("list_contracts", map[string]any{}, "")
+				items, ok := page["items"].([]any)
+				require.True(t, ok)
+				require.Len(t, items, 1)
+				item, ok := items[0].(map[string]any)
+				require.True(t, ok)
+				require.Equal(t, contract.ContractID, item["contract_id"])
+				require.Equal(t, detail["revision"], item["revision"])
+			}
+			checkReads(revision)
+			updated := call("update_contract", map[string]any{"contract_id": contract.ContractID, "revision": strconv.FormatInt(revision, 10), "patch": map[string]any{"title": "Edited agreement"}}, "")
+			require.Equal(t, strconv.FormatInt(revision+1, 10), updated["revision"])
+			call("update_contract", map[string]any{"contract_id": contract.ContractID, "revision": strconv.FormatInt(revision, 10), "patch": map[string]any{"title": "Stale edit"}}, "stale_revision")
+			linked := call("link_contract_document", map[string]any{"contract_id": contract.ContractID, "revision": updated["revision"], "node_id": node.ID, "content_version_id": node.CurrentVersionID, "role": "signed"}, "")
+			require.Equal(t, strconv.FormatInt(revision+2, 10), linked["revision"])
+			call("link_contract_document", map[string]any{"contract_id": contract.ContractID, "revision": updated["revision"], "node_id": node.ID, "content_version_id": node.CurrentVersionID, "role": "attachment"}, "stale_revision")
+			checkReads(revision + 2)
+			stored, err := fixture.catalog.GetContract(t.Context(), contract.ContractID, "2026-11-12")
+			require.NoError(t, err)
+			assert.Equal(t, "Edited agreement", stored.Title)
+			assert.Equal(t, revision+2, stored.Revision)
+			require.Len(t, stored.Documents, 1)
+			assert.Equal(t, "signed", stored.Documents[0].Role)
+			if stored.Revision == math.MaxInt64 {
+				var before, after bytes.Buffer
+				require.NoError(t, fixture.catalog.ExportMetadata(t.Context(), &before))
+				call("update_contract", map[string]any{"contract_id": contract.ContractID, "revision": linked["revision"], "patch": map[string]any{"title": "Overflow edit"}}, "invalid_contract")
+				call("link_contract_document", map[string]any{"contract_id": contract.ContractID, "revision": linked["revision"], "node_id": node.ID, "content_version_id": node.CurrentVersionID, "role": "attachment"}, "invalid_contract")
+				require.NoError(t, fixture.catalog.ExportMetadata(t.Context(), &after))
+				assert.Equal(t, before.String(), after.String(), "exhausted revisions must not commit any changes")
+			}
+		})
+	}
+}
+
 func TestContractMCPClosedArgumentsAndBounds(t *testing.T) {
 	tools := catalogMap(toolCatalog(ServerOptions{AllowContractWrites: true}))
 	for _, tc := range []struct {
@@ -158,9 +236,9 @@ func TestContractMCPClosedArgumentsAndBounds(t *testing.T) {
 		{"list_contracts", map[string]any{"contract_type": ""}}, {"list_contracts", map[string]any{"offset": float64(9007199254740992)}},
 		{"get_contract", map[string]any{"contract_id": "11111111-1111-4111-8111-111111111111", "As_of": "2026-01-01"}},
 		{"create_contract", map[string]any{"title": nil}},
-		{"update_contract", map[string]any{"contract_id": "11111111-1111-4111-8111-111111111111", "revision": 1, "patch": map[string]any{}}},
-		{"update_contract", map[string]any{"contract_id": "11111111-1111-4111-8111-111111111111", "revision": 1, "patch": map[string]any{"parties": []any{}}}},
-		{"link_contract_document", map[string]any{"contract_id": "11111111-1111-4111-8111-111111111111", "revision": 1, "node_id": 1, "role": "signed"}},
+		{"update_contract", map[string]any{"contract_id": "11111111-1111-4111-8111-111111111111", "revision": "1", "patch": map[string]any{}}},
+		{"update_contract", map[string]any{"contract_id": "11111111-1111-4111-8111-111111111111", "revision": "1", "patch": map[string]any{"parties": []any{}}}},
+		{"link_contract_document", map[string]any{"contract_id": "11111111-1111-4111-8111-111111111111", "revision": "1", "node_id": 1, "role": "signed"}},
 	} {
 		t.Run(tc.name+fmt.Sprint(tc.args), func(t *testing.T) { assertSchemaRejects(t, tools[tc.name].InputSchema, tc.args) })
 	}
@@ -192,7 +270,7 @@ func TestContractMCPPatchDateRelay(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, conn.Close()) })
 	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) { return conn, nil }, func(*daemonconn.Connection) error { return nil })
 	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{AllowContractWrites: true}, lease)
-	response := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "update_contract", "arguments": map[string]any{"contract_id": id, "revision": 7, "patch": map[string]any{"starts_on": nil, "expires_on": "2026-12-01", "summary": ""}}})))
+	response := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "update_contract", "arguments": map[string]any{"contract_id": id, "revision": "7", "patch": map[string]any{"starts_on": nil, "expires_on": "2026-12-01", "summary": ""}}})))
 	require.NotEqual(t, true, response["isError"], "%v", response)
 	assert.Equal(t, 1, attempts)
 	assert.Equal(t, `"7"`, match)
@@ -282,7 +360,7 @@ func TestContractMCPGetContractTooLargeWire(t *testing.T) {
 	assert.NotContains(t, string(wire), id)
 }
 
-func TestContractMCPWriteInvalidIntegerEncoding(t *testing.T) {
+func TestContractMCPWriteInvalidRevision(t *testing.T) {
 	var mutations atomic.Int32
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		mutations.Add(1)
@@ -290,14 +368,21 @@ func TestContractMCPWriteInvalidIntegerEncoding(t *testing.T) {
 	}))
 	t.Cleanup(daemon.Close)
 	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{AllowContractWrites: true}, exportTestLease(t, daemon.URL))
-	args := map[string]any{"contract_id": "11111111-1111-4111-8111-111111111111", "revision": 1, "patch": map[string]any{"title": "Synthetic"}}
-	args["revision"] = float64(1)
-	assertSchemaAccepts(t, catalogMap(toolCatalog(ServerOptions{AllowContractWrites: true}))["update_contract"].InputSchema, args)
-	args["revision"] = 1
-	request := requestFor("tools/call", map[string]any{"name": "update_contract", "arguments": args})
-	wireRequest := strings.Replace(string(request), `"revision":1`, `"revision":1.0`, 1)
-	require.NotEqual(t, string(request), wireRequest)
-	wire := exchangeRaw(t, server, []byte(wireRequest))
-	assert.Zero(t, mutations.Load())
-	assert.EqualValues(t, -32602, decodeWireError(t, wire).Code)
+	for _, name := range []string{"update_contract", "link_contract_document"} {
+		for _, revision := range []any{nil, 1, "", "0", "-1", "01", "+1", "1.0", "1e0", " 1", "9223372036854775808", "10000000000000000000"} {
+			t.Run(name+fmt.Sprint(revision), func(t *testing.T) {
+				args := map[string]any{"contract_id": "11111111-1111-4111-8111-111111111111", "revision": revision}
+				if name == "update_contract" {
+					args["patch"] = map[string]any{"title": "Synthetic"}
+				} else {
+					args["node_id"] = 1
+					args["content_version_id"] = "22222222-2222-4222-8222-222222222222"
+					args["role"] = "signed"
+				}
+				wire := exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": name, "arguments": args}))
+				assert.EqualValues(t, -32602, decodeWireError(t, wire).Code)
+			})
+		}
+	}
+	assert.Zero(t, mutations.Load(), "invalid revisions must be rejected before making a daemon request")
 }

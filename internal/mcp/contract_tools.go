@@ -28,7 +28,7 @@ type contractListItem struct {
 	StartsOn        *string `json:"starts_on"`
 	ExpiresOn       *string `json:"expires_on"`
 	SignedOn        *string `json:"signed_on"`
-	Revision        int64   `json:"revision"`
+	Revision        int64   `json:"revision,string"`
 }
 type contractParty struct {
 	PartyID     string  `json:"party_id"`
@@ -73,7 +73,7 @@ type contractReceipt struct {
 	privateCache
 
 	ContractID string `json:"contract_id"`
-	Revision   int64  `json:"revision"`
+	Revision   int64  `json:"revision,string"`
 }
 
 func contractItem(c api.Contract) contractListItem {
@@ -175,7 +175,7 @@ func executeContractWriteTool(ctx context.Context, lease *daemonLease, name stri
 	case "update_contract":
 		var in struct {
 			ContractID string         `json:"contract_id"`
-			Revision   int64          `json:"revision"`
+			Revision   int64          `json:"revision,string"`
 			Patch      jsontext.Value `json:"patch"`
 		}
 		if err = decodeReadArguments(raw, &in); err == nil {
@@ -190,7 +190,7 @@ func executeContractWriteTool(ctx context.Context, lease *daemonLease, name stri
 	case "link_contract_document":
 		var in struct {
 			ContractID       string `json:"contract_id"`
-			Revision         int64  `json:"revision"`
+			Revision         int64  `json:"revision,string"`
 			NodeID           int64  `json:"node_id"`
 			ContentVersionID string `json:"content_version_id"`
 			Role             string `json:"role"`
