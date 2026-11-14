@@ -302,6 +302,23 @@ func TestRoleSearchNegationWithPendingPeople(t *testing.T) {
 	}
 }
 
+func TestRoleSearchNegatedCollapsedSavedQueryWithPendingPeople(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	version := seedCurrentRoleSearchEvent(t, s, "sender.txt", "a4", []document.DocumentEventActorV1{{
+		Role: "sender", ActorKey: "email:sender@example.test", Address: "sender@example.test", DisplayName: "Sender Person", Claim: `"sender"`,
+	}})
+	_, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
+	require.NoError(t, err)
+	_, err = s.CreateSavedQuery(ctx, "Collapsed sender", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"from:\"Sender Person\"","filters":{"collapse_duplicates":true}}`))
+	require.NoError(t, err)
+	value := snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT saved:\"Collapsed sender\""}`)
+	result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+}
+
 func TestRoleSearchPeopleFacetPending(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

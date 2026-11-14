@@ -404,13 +404,34 @@ func (c queryCompiler) compileSavedPredicate(expression *query.ResolvedExpressio
 			nested, {sql: photoBrowseEligibleMemberPredicate(c.photoHidden)},
 		}, ` AND `)
 	}
-	population := selectCompiledPopulation(nested, true)
+	return collapsedSavedMembership(nested), nil
+}
+
+// collapsedSavedMembership keeps SQL three-valued logic across the duplicate
+// collapse. Candidates whose membership is not false are ranked in
+// representative order: a row is false when a proven member precedes it, true
+// when it is a proven member with no unknown predecessor, and NULL otherwise.
+// Rows outside the candidates are proven absent.
+func collapsedSavedMembership(nested compiledQueryFragment) compiledQueryFragment {
+	live := compiledLiveCurrentPredicate()
 	return compiledQueryFragment{
-		sql: `EXISTS (SELECT 1 FROM (` + population.sql + `) saved_population
-			WHERE saved_population.node_id=n.id
-			  AND saved_population.content_version_id=cv.version_id)`,
-		args: population.args, relations: population.relations, lexical: nested.lexical,
-	}, nil
+		sql: `NULLIF(COALESCE((SELECT membership FROM (
+			SELECT node_id,content_version_id,CASE
+				WHEN COUNT(CASE WHEN state IS TRUE THEN 1 END) OVER earlier>0 THEN 0
+				WHEN state IS TRUE AND COUNT(CASE WHEN state IS NULL THEN 1 END) OVER earlier=0 THEN 1
+				ELSE 2 END membership
+			FROM (SELECT n.id AS node_id,cv.version_id AS content_version_id,
+					cv.blob_hash,n.modified_at,(` + nested.sql + `) AS state
+				FROM nodes n JOIN content_versions cv ON cv.node_id=n.id
+				WHERE ` + live.sql + `) candidates
+			WHERE state IS NOT FALSE
+			WINDOW earlier AS (PARTITION BY blob_hash ORDER BY ` + DuplicateRepresentativeOrder + `
+				ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)
+		) saved_membership
+		WHERE saved_membership.node_id=n.id
+		  AND saved_membership.content_version_id=cv.version_id),0),2)`,
+		args: nested.args, relations: nested.relations, lexical: nested.lexical,
+	}
 }
 
 func (c queryCompiler) compileScalarPredicate(field, value string, start, end int) (compiledQueryFragment, error) {
