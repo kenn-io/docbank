@@ -373,7 +373,25 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
     const mergedPerson = people.getByRole("button", {
       name: "Teodor Vask-Ruiz, Cc, Recipient, 2 documents, selected",
     });
-    await expect(mergedPerson).toHaveAttribute("aria-pressed", "true");
+    await captureStates(
+      page,
+      testInfo,
+      "merged-person-selected",
+      async () => {
+        await expect(
+          results.getByRole("cell", {
+            name: "/board-update.eml, people evidence: Cc, Sender",
+          }),
+        ).toBeVisible();
+        await expect(
+          results.getByRole("cell", {
+            name: "/budget-follow-up.eml, people evidence: Recipient, Sender",
+          }),
+        ).toBeVisible();
+        await expect(mergedPerson).toHaveAttribute("aria-pressed", "true");
+      },
+      parts,
+    );
     const cleared = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === "/api/v1/workspace/queries" &&
