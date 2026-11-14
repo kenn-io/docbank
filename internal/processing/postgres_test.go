@@ -93,3 +93,60 @@ func TestProcessingWorkersPostgres(t *testing.T) {
 		checkExportEmailPDFRecipeAcrossDistinctMessages(t, postgresEmailPipelineFixture)
 	})
 }
+
+func postgresPhotoDescriptionFixture(t *testing.T) *photoDescriptionFixture {
+	t.Helper()
+	return photoDescriptionFixtureWithStore(t, postgresProcessingStore(t))
+}
+
+func TestEmbeddingPhotoWorkersPostgres(t *testing.T) {
+	t.Parallel()
+	for _, scenario := range []struct {
+		name  string
+		check func(*testing.T, publicationFixtureFactory)
+	}{
+		{"EmbeddingWorkerPublishesThroughRealCatalogAndBlobStore", checkEmbeddingWorkerPublishesThroughRealCatalogAndBlobStore},
+		{"EmbeddingWorkerFencesConsentThroughProviderCall", checkEmbeddingWorkerFencesConsentThroughProviderCall},
+		{"EmbeddingWorkerRejectsConsentRevokedBeforeProviderCall", checkEmbeddingWorkerRejectsConsentRevokedBeforeProviderCall},
+		{"EmbeddingWorkerTargetReportsSourceFence", checkEmbeddingWorkerTargetReportsSourceFence},
+		{"EmbeddingWorkerAbandonsReplacedRendition", checkEmbeddingWorkerAbandonsReplacedRendition},
+		{"EmbeddingWorkerRecoversConsentRevokedBeforePublication", checkEmbeddingWorkerRecoversConsentRevokedBeforePublication},
+		{"EmbeddingWorkerCancellationDuringClaimPreservesQueuedWork", checkEmbeddingWorkerCancellationDuringClaimPreservesQueuedWork},
+		{"EmbeddingWorkerReportsCancellationAndCleanupFailure", checkEmbeddingWorkerReportsCancellationAndCleanupFailure},
+		{"EmbeddingWorkerStorageErrorsLeaveClaimsRecoverable", checkEmbeddingWorkerStorageErrorsLeaveClaimsRecoverable},
+		{"EmbeddingWorkerRecoversProviderAuthorization", checkEmbeddingWorkerRecoversProviderAuthorization},
+		{"EmbeddingWorkerRecordsClassifiedInvalidProviderResponse", checkEmbeddingWorkerRecordsClassifiedInvalidProviderResponse},
+		{"EmbeddingWorkerWakesForConsentAndExpiry", checkEmbeddingWorkerWakesForConsentAndExpiry},
+		{"EmbeddingWorkerRecoversBlobOperationContextErrors", checkEmbeddingWorkerRecoversBlobOperationContextErrors},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			t.Parallel()
+			scenario.check(t, postgresPublicationFixture)
+		})
+	}
+	for _, scenario := range []struct {
+		name  string
+		check func(*testing.T, photoDescriptionFixtureFactory)
+	}{
+		{"PhotoDescriptionProfileCoverageHasNoRenditionClass", checkPhotoDescriptionProfileCoverageHasNoRenditionClass},
+		{"PhotoDescriptionFlow", checkPhotoDescriptionFlow},
+		{"PhotoDescriptionPlanDuringPreviewPublication", checkPhotoDescriptionPlanDuringPreviewPublication},
+		{"PhotoDescriptionJobFailureIsLogged", checkPhotoDescriptionJobFailureIsLogged},
+		{"PhotoDescriptionBackfillLoopAdmitsAndStops", checkPhotoDescriptionBackfillLoopAdmitsAndStops},
+		{"PhotoDescriptionStartRefusesHiddenPhotoBeforeSavingConsent", checkPhotoDescriptionStartRefusesHiddenPhotoBeforeSavingConsent},
+		{"PhotoDescriptionAutomaticAndExplicitRequestsShareOneProviderCall", checkPhotoDescriptionAutomaticAndExplicitRequestsShareOneProviderCall},
+		{"PhotoDescriptionHiddenAtPublishRetriesOnceVisible", checkPhotoDescriptionHiddenAtPublishRetriesOnceVisible},
+		{"PhotoDescriptionLimitUsesFinalUpload", checkPhotoDescriptionLimitUsesFinalUpload},
+		{"PhotoFaceDetectionProfilesPlanAndFirstReadyTarget", checkPhotoFaceDetectionProfilesPlanAndFirstReadyTarget},
+		{"PhotoFaceDetectionFlow", checkPhotoFaceDetectionFlow},
+		{"PhotoFaceDetectionPublicationFailureKeepsWorkerRunning", checkPhotoFaceDetectionPublicationFailureKeepsWorkerRunning},
+		{"PhotoFaceDetectionAuditRefusesEgress", checkPhotoFaceDetectionAuditRefusesEgress},
+		{"ImageEmbeddingRuntimePreviewValidation", checkImageEmbeddingRuntimePreviewValidation},
+		{"ImageEmbeddingProfilesSharingDescriptorRegisterOneRuntime", checkImageEmbeddingProfilesSharingDescriptorRegisterOneRuntime},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			t.Parallel()
+			scenario.check(t, postgresPhotoDescriptionFixture)
+		})
+	}
+}
