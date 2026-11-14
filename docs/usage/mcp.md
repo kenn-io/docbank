@@ -311,6 +311,9 @@ metadata, and cache fields; a larger catalog requires a reviewed budget edit.
 
 The browser applies [name visibility and namesake recognition rules](people.md#browser-names-and-visibility). MCP `find_people` keeps global search. An invalid cursor or one from another query, projection, or ordering returns the tool error `cursor_expired`; restart from the first page.
 
+For a locked Hidden photo, the dates and people facts routes return HTTP 404;
+the MCP tools return `not_found`.
+
 Starting the server with `--allow-kata-writes` adds this write tool:
 
 | Tool | Contract and important bounds |

@@ -20,7 +20,15 @@ sensitive claims with an API key. The API reads a specific version at
 and `disclosure=full` requires an API key. Each assertion includes the person’s
 `display_name`, even when no derived edge is published. Browser sessions and MCP's
 `get_document_people` use safe disclosure, which omits blind-copy evidence and
-provisional people without visible support. When a public origin is configured, `open.web` opens the exact node and version; otherwise `open` is absent. People reads wait for current date evidence. While dates or people are pending or failed, the response reports that state and withholds derived people and unresolved names. Operator assertions remain visible.
+provisional people without visible support. When a public origin is configured,
+`open.web` opens the exact node and version; otherwise `open` is absent.
+
+People reads wait for current date evidence. While dates or people are pending
+or failed, the response reports that state and withholds derived people and
+unresolved names. Operator assertions remain visible.
+
+Date and people facts for a Hidden photo return HTTP 404 while Hidden is locked,
+including reads with an API key. An unlocked Hidden session can read those facts.
 
 ## People in Photos
 
