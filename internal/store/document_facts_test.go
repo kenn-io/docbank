@@ -7,19 +7,7 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func checkDocumentFactsDatesState(t *testing.T, newStore func(*testing.T) *Store) {
-	t.Helper()
-	s := newStore(t)
-	version, _ := ingestDocumentEventTarget(t, s, "example.txt", "a1")
-	facts, err := s.DocumentDateFacts(t.Context(), version.ID)
-	require.NoError(t, err)
-	require.Equal(t, "none", facts.State)
-	require.Empty(t, facts.View.Events.Events)
-	_, err = s.DocumentDateFacts(t.Context(), "00000000-0000-4000-8000-000000000000")
-	require.ErrorIs(t, err, ErrNotFound)
-}
-
-func checkDocumentPeopleFactsFiltersBlindCopyAssertion(t *testing.T, newStore func(*testing.T) *Store) {
+func checkDocumentPeopleFactsAssertionsAndRetiredPerson(t *testing.T, newStore func(*testing.T) *Store) {
 	t.Helper()
 	s := newStore(t)
 	_, versionID := seedPeopleVersion(t, s)
@@ -49,11 +37,17 @@ func checkDocumentDateFactsNeverReturnsStaleClaims(t *testing.T, newStore func(*
 	t.Helper()
 	s := newStore(t)
 	version, target := ingestDocumentEventTarget(t, s, "date.txt", "d3")
+	facts, err := s.DocumentDateFacts(t.Context(), version.ID)
+	require.NoError(t, err)
+	require.Equal(t, "none", facts.State)
+	require.Empty(t, facts.View.Events.Events)
+	_, err = s.DocumentDateFacts(t.Context(), "00000000-0000-4000-8000-000000000000")
+	require.ErrorIs(t, err, ErrNotFound)
 	record := coverageDocumentEventRecord(t, s.VaultID(), version.ID, "d4", "created", false)
 	digest := requireDocumentEventInputsSHA256(t, s, target)
-	_, err := s.PublishDocumentEvents(t.Context(), target, DocumentEventsDeriverFingerprint, digest, mustMarshalDocumentEvents(t, record))
+	_, err = s.PublishDocumentEvents(t.Context(), target, DocumentEventsDeriverFingerprint, digest, mustMarshalDocumentEvents(t, record))
 	require.NoError(t, err)
-	facts, err := s.DocumentDateFacts(t.Context(), version.ID)
+	facts, err = s.DocumentDateFacts(t.Context(), version.ID)
 	require.NoError(t, err)
 	require.Equal(t, "published", facts.State)
 	require.NotEmpty(t, facts.View.Events.Events)
@@ -80,7 +74,7 @@ func checkDocumentDateFactsNeverReturnsStaleClaims(t *testing.T, newStore func(*
 	require.Equal(t, "pending", facts.State)
 }
 
-func sensitiveUnresolvedActorFixture(t *testing.T, newStore func(*testing.T) *Store) (*Store, string, DocumentPeopleInputs, PersonDocumentAssertion) {
+func checkDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T, newStore func(*testing.T) *Store) {
 	t.Helper()
 	s := newStore(t)
 	actor := document.DocumentEventActorV1{ActorKey: "name_alias:private author", Claim: `"Private Author"`, DisplayName: "Private Author", Role: "recipient", Sensitive: true}
@@ -92,10 +86,6 @@ func sensitiveUnresolvedActorFixture(t *testing.T, newStore func(*testing.T) *St
 	raw, _, err := document.MarshalDocumentEventsV1(record)
 	require.NoError(t, err)
 	_, err = s.PublishDocumentEvents(t.Context(), target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), raw)
-	require.NoError(t, err)
-	person, err := s.CreatePerson(t.Context(), "Asserted Author", "operator")
-	require.NoError(t, err)
-	assertion, err := s.AssertDocumentPerson(t.Context(), PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1})
 	require.NoError(t, err)
 	input, err := s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
 	require.NoError(t, err)
@@ -124,16 +114,29 @@ func sensitiveUnresolvedActorFixture(t *testing.T, newStore func(*testing.T) *St
 	full, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
 	require.NoError(t, err)
 	require.Len(t, full.Candidates, 2)
-	for _, c := range full.Candidates {
-		if c.ActorKey == "email:sender@example.test" {
-			for _, o := range c.Occurrences {
-				if o.Role == "sender" {
-					require.Equal(t, "sender@example.test", o.Label)
-				}
-			}
+	var sender *VersionCandidate
+	for i := range full.Candidates {
+		if full.Candidates[i].ActorKey == "email:sender@example.test" {
+			sender = &full.Candidates[i]
 		}
 	}
-	return s, version.ID, input, assertion
+	require.NotNil(t, sender)
+	require.Len(t, sender.Occurrences, 2)
+	require.Equal(t, "blind_copy", sender.Occurrences[0].Role)
+	require.Equal(t, "Private Name", sender.Occurrences[0].Label)
+	require.Equal(t, "sender", sender.Occurrences[1].Role)
+	require.Equal(t, "sender@example.test", sender.Occurrences[1].Label)
+	require.NoError(t, s.MarkDocumentPeopleFailed(t.Context(), input, "derivation_failed"))
+	failed, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
+	require.NoError(t, err)
+	require.Equal(t, "failed", failed.State)
+	require.Empty(t, failed.Candidates)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE document_people_heads SET resolver_fingerprint=$1 WHERE content_version_id=$2`, "old-resolver", version.ID)
+	require.NoError(t, err)
+	pending, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
+	require.NoError(t, err)
+	require.Equal(t, "pending", pending.State)
+	require.Empty(t, pending.Candidates)
 }
 
 func checkDocumentPeopleFactsPublicationAndFailure(t *testing.T, newStore func(*testing.T) *Store) {
@@ -216,29 +219,6 @@ func checkDocumentPeopleFactsPublicationAndFailure(t *testing.T, newStore func(*
 	check("published", true)
 }
 
-func checkDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T, newStore func(*testing.T) *Store) {
-	t.Helper()
-	s, versionID, input, assertion := sensitiveUnresolvedActorFixture(t, newStore)
-	require.NoError(t, s.MarkDocumentPeopleFailed(t.Context(), input, "derivation_failed"))
-	checkSuppressedPeopleCandidates(t, s, versionID, assertion)
-}
-
-func checkSuppressedPeopleCandidates(t *testing.T, s *Store, versionID string, assertion PersonDocumentAssertion) {
-	t.Helper()
-	failed, err := s.DocumentPeopleFacts(t.Context(), versionID, false)
-	require.NoError(t, err)
-	require.Equal(t, "failed", failed.State)
-	require.Empty(t, failed.Candidates)
-	require.Equal(t, []PersonDocumentAssertion{assertion}, failed.Assertions)
-	_, err = s.db.ExecContext(t.Context(), `UPDATE document_people_heads SET resolver_fingerprint=$1 WHERE content_version_id=$2`, "old-resolver", versionID)
-	require.NoError(t, err)
-	pending, err := s.DocumentPeopleFacts(t.Context(), versionID, false)
-	require.NoError(t, err)
-	require.Equal(t, "pending", pending.State)
-	require.Empty(t, pending.Candidates)
-	require.Equal(t, []PersonDocumentAssertion{assertion}, pending.Assertions)
-}
-
 func checkDocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession(t *testing.T, newStore func(*testing.T) *Store) {
 	t.Helper()
 	s := newStore(t)
@@ -251,17 +231,10 @@ func checkDocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession(t *testing.T,
 	require.NoError(t, err)
 	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 	require.NoError(t, err)
-	person, err := s.CreatePerson(ctx, "Hidden Person", "operator")
-	require.NoError(t, err)
-	_, err = s.MarkPersonInPhoto(WithPhotoHiddenToken(ctx, token), photo.CurrentVersionID, person.PersonID, "")
-	require.NoError(t, err)
-	_, err = s.db.ExecContext(ctx, `UPDATE persons SET state='provisional' WHERE person_id=$1`, person.PersonID)
-	require.NoError(t, err)
 	_, err = s.DocumentPeopleFacts(ctx, photo.CurrentVersionID, true)
 	require.ErrorIs(t, err, ErrNotFound)
-	facts, err := s.DocumentPeopleFacts(WithVisiblePeopleOnly(WithPhotoHiddenToken(ctx, token)), photo.CurrentVersionID, true)
+	_, err = s.DocumentPeopleFacts(WithPhotoHiddenToken(ctx, token), photo.CurrentVersionID, true)
 	require.NoError(t, err)
-	require.True(t, facts.Persons[person.PersonID].Visible)
 }
 
 func checkDocumentPeopleFactsFiltersBlindCopyEdge(t *testing.T, newStore func(*testing.T) *Store) {

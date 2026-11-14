@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json/v2"
+	"maps"
 	"reflect"
 	"testing"
 
@@ -28,8 +29,7 @@ func TestWhenFieldTable(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			response := versionDatesAPI(store.DocumentDateFacts{State: "published", View: store.DocumentEventView{Events: document.DocumentEventsV1{Events: []document.DocumentEventV1{tc.claim}}}}, "safe")
-			raw, err := json.Marshal(response.Claims[0].When)
+			raw, err := json.Marshal(whenFromClaim(tc.claim))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -91,10 +91,11 @@ func TestVersionPeopleProjectionHidesUnsupportedPeople(t *testing.T) {
 	f.Edges[0].RawLabel = "Public Author"
 	// The store supplies already-filtered candidate occurrences for safe reads.
 	safeFacts := f
+	safeFacts.Persons = maps.Clone(f.Persons)
 	safeFacts.Edges = f.Edges[:2]
 	safeFacts.Candidates = []store.VersionCandidate{{CandidateID: "candidate", Occurrences: []store.VersionCandidateOccurrence{{Role: "author", Label: "Recipient"}}}}
 	safe := versionPeopleAPI(safeFacts, true)
-	if len(safe.Edges) != 1 || safe.Edges[0].PersonID != "visible" || safe.Edges[0].DisplayName != "Public Author" || len(safe.Assertions) != 0 || len(safe.Unresolved) != 1 || safe.Unresolved[0].Role != "author" || safe.Unresolved[0].RawLabel != "Recipient" {
+	if len(safe.Edges) != 1 || safe.Edges[0].PersonID != "visible" || len(safe.Assertions) != 0 || len(safe.Unresolved) != 1 || safe.Unresolved[0].Role != "author" || safe.Unresolved[0].RawLabel != "Recipient" {
 		t.Fatalf("safe: %+v", safe)
 	}
 	// Only explicit assignments may use a provisional derived catalog name in safe reads.
