@@ -39,6 +39,11 @@ func newEmailPipelineFixture(t *testing.T) emailPipelineFixture {
 	require.NoError(t, err)
 	catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
+	return emailPipelineFixtureWithStore(t, root, catalog)
+}
+
+func emailPipelineFixtureWithStore(t *testing.T, root string, catalog *store.Store) emailPipelineFixture {
+	t.Helper()
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
 	require.NoError(t, err)

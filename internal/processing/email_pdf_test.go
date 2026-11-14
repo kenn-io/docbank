@@ -24,6 +24,13 @@ func (r pdfTestRenderer) Render(context.Context, emailpdf.HTML) ([]byte, int64, 
 	return r.pdf, 1, nil
 }
 
+type malformedPDFRenderer struct{ calls int }
+
+func (r *malformedPDFRenderer) Render(context.Context, emailpdf.HTML) ([]byte, int64, error) {
+	r.calls++
+	return []byte("malformed PDF"), 1, nil
+}
+
 // RunEmailPDFRetentionTest keeps the existing processing fixture available to
 // the external backup test without introducing a backupapp import cycle.
 func RunEmailPDFRetentionTest(t *testing.T, released bool,
@@ -168,12 +175,18 @@ func RunEmailPDFRetentionTest(t *testing.T, released bool,
 
 func TestEmailPDFJobRetainsExactReceiptWithoutReplacingBodyHead(t *testing.T) {
 	t.Parallel()
-	f := newEmailPipelineFixture(t)
+	checkEmailPDFJobRetainsExactReceiptWithoutReplacingBodyHead(t, newEmailPipelineFixture)
+}
+
+func checkEmailPDFJobRetainsExactReceiptWithoutReplacingBodyHead(t *testing.T, newFixture func(*testing.T) emailPipelineFixture) {
+	t.Helper()
+	f := newFixture(t)
 	target := f.add(t, "synthetic.eml", emailPipelineSource, "message/rfc822")
 	view, err := EnsureEmailTarget(t.Context(), f.catalog, f.blobs, f.spool, target)
 	require.NoError(t, err)
 	before := view.BodySearch
-	r := &EmailPDFRuntime{Catalog: f.catalog, Blobs: f.blobs, Renderer: pdfTestRenderer{[]byte("malformed PDF")}, Recipe: document.EmailPDFRecipeV1{Contract: document.EmailPDFContract, RendererVersion: "151.0.7922.34", RendererSHA256: strings.Repeat("a", 64), FontsSHA256: strings.Repeat("b", 64), Paper: "A4"}}
+	renderer := &malformedPDFRenderer{}
+	r := &EmailPDFRuntime{Catalog: f.catalog, Blobs: f.blobs, Renderer: renderer, Recipe: document.EmailPDFRecipeV1{Contract: document.EmailPDFContract, RendererVersion: "151.0.7922.34", RendererSHA256: strings.Repeat("a", 64), FontsSHA256: strings.Repeat("b", 64), Paper: "A4"}}
 	r.Recipe.WorkerSHA256 = strings.Repeat("c", 64)
 	r.Recipe.BubblewrapSHA256 = strings.Repeat("d", 64)
 	request, err := r.Request(t.Context(), target.Version.ID, view.Generation.ID, "A4")
@@ -185,9 +198,10 @@ func TestEmailPDFJobRetainsExactReceiptWithoutReplacingBodyHead(t *testing.T) {
 	require.NoError(t, err)
 	_, err = worker.RunOne(t.Context())
 	require.NoError(t, err)
+	require.Equal(t, 1, renderer.calls, "the refusal must follow renderer execution")
 	view, err = f.catalog.EmailMetadata(t.Context(), target.Version.ID)
 	require.NoError(t, err)
 	require.Equal(t, before, view.BodySearch)
 	_, err = f.catalog.EmailPDFReceipt(t.Context(), target.Version.ID, request.Profile.Fingerprint)
-	require.Error(t, err, "a malformed PDF must never acquire a retained receipt")
+	require.ErrorIs(t, err, store.ErrNotFound, "a malformed PDF must never acquire a retained receipt")
 }

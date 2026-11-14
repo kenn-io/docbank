@@ -16,8 +16,8 @@ Instructions for autonomous coding agents working in this repository.
   its database. An explicitly configured but unavailable server fails the test.
   Store query tests use `pgschema.Setup` and a separate runtime role; do not
   maintain a second copy of the catalog DDL in fixtures.
-  Share runtime grants through `internal/pgstoretest`; Store and backup tests
-  open the same validation-only runtime path.
+  Share runtime grants through `internal/pgstoretest`; Store, backup and
+  processing tests open the same validation-only runtime path.
   Do not start a container per test or repeat unrelated SQLite suites in the
   PostgreSQL lane. Follow the existing main-pinned PR dispatcher and cache
   ownership; branch changes to `ci.yml` only take effect for PRs after merge.
