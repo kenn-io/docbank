@@ -249,7 +249,7 @@ it("shows why People counts are unavailable", () => {
     facets: [
       facet("person_role", {
         available: false,
-        reason: "people_evidence_pending",
+        reason: "people_evidence_incomplete",
         total: null,
         missing: null,
         other: null,
@@ -259,7 +259,7 @@ it("shows why People counts are unavailable", () => {
     onchange: vi.fn(),
   });
   expect(screen.getByRole("group", { name: "People facet" })).toBeTruthy();
-  expect(screen.getByText("Unavailable · people evidence pending")).toBeTruthy();
+  expect(screen.getByText("Unavailable · people evidence incomplete")).toBeTruthy();
 });
 
 it("shows the facets that can narrow the results and leaves out the rest", () => {

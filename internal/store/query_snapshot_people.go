@@ -261,7 +261,7 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
 			return SnapshotFacet{}, err
 		}
 		if !current {
-			return unavailableSnapshotFacet("person_role", "people_evidence_pending"), nil
+			return unavailableSnapshotFacet("person_role", "people_evidence_incomplete"), nil
 		}
 		observation.add("person_role", node, id, name, 1, memberLimit)
 		if observation.limited {

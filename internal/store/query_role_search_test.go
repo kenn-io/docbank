@@ -276,15 +276,15 @@ func TestRoleSearchNegationWithPendingPeople(t *testing.T) {
 	}
 }
 
-func TestRoleSearchPeopleFacetPending(t *testing.T) {
+func TestRoleSearchPeopleFacetIncomplete(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	seedCurrentRoleSearchEvent(t, s, "pending.txt", "a5", nil)
+	version := seedCurrentRoleSearchEvent(t, s, "pending.txt", "a5", nil)
 	result, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: snapshotTestQuery(t, `{}`), Facets: []string{"person_role"}})
 	require.NoError(t, err)
 	require.Len(t, result.Facets, 1)
 	require.False(t, result.Facets[0].Available)
-	require.Equal(t, "people_evidence_pending", result.Facets[0].Reason)
+	require.Equal(t, "people_evidence_incomplete", result.Facets[0].Reason)
 	require.Nil(t, result.Facets[0].Missing)
 	publishRoleFixtures(t, s)
 	_, err = s.db.ExecContext(t.Context(), `UPDATE document_people_state SET binding_epoch=binding_epoch+1`)
@@ -292,8 +292,15 @@ func TestRoleSearchPeopleFacetPending(t *testing.T) {
 	result, err = s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: snapshotTestQuery(t, `{}`), Facets: []string{"person_role"}})
 	require.NoError(t, err)
 	require.False(t, result.Facets[0].Available)
-	require.Equal(t, "people_evidence_pending", result.Facets[0].Reason)
+	require.Equal(t, "people_evidence_incomplete", result.Facets[0].Reason)
 	require.Nil(t, result.Facets[0].Missing)
+	publishRoleFixtures(t, s)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE document_event_attempts SET state='failed' WHERE content_version_id=$1`, version.ID)
+	require.NoError(t, err)
+	result, err = s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: snapshotTestQuery(t, `{}`), Facets: []string{"person_role"}})
+	require.NoError(t, err)
+	require.False(t, result.Facets[0].Available)
+	require.Equal(t, "people_evidence_incomplete", result.Facets[0].Reason)
 }
 
 func TestRoleSearchPeopleFacetBoundsAndFreeze(t *testing.T) {

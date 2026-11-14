@@ -254,9 +254,9 @@ For example, `from:"Mara Okonkwo-Fell"`, `custodian:"Mara Okonkwo-Fell"`, and `b
 
 Browser searches refuse `bcc:` and structured `blind_copy` role filters. Their other role searches omit Bcc evidence. API-key and MCP queries include Bcc evidence. `person:` retains its any-role meaning.
 
-While people evidence is pending, a version matches neither a role search nor its `NOT` unless an operator assertion establishes the role; an independent `OR` branch can still match it. Use the document event coverage report to inspect pending and failed work.
+While people evidence is incomplete, a version matches neither a role search nor its `NOT` unless an operator assertion establishes the role; an independent `OR` branch can still match it. Use the document event coverage report to inspect pending and failed work.
 
-The People facet is unavailable while any document in its population has pending people evidence.
+The People facet is unavailable while any document in its population has incomplete people evidence, including pending or failed processing.
 
 Structured queries can use `"people":[{"person_id":"00000000-0000-4000-8000-000000000001","roles":["sender","organizer"]}]` inside `filters`. Each entry is required, while its roles are alternatives. The People facet uses safe evidence for every caller and ignores only root `filters.people` entries when counting. Result roles, facet names and counts are frozen with the snapshot; later renames or republishing do not change it. PostgreSQL search is not yet qualified.
 
