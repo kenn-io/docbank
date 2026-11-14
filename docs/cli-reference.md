@@ -392,7 +392,6 @@ results are published, pending, failed, or absent. Dates also show diagnostics.
 Use `--full` to include sensitive claims and `--json` for structured output.
 For a Hidden photo, the facts request returns HTTP 404; these commands do not
 unlock Hidden.
-See [People](usage/people.md) and [document timeline](architecture/document-timeline.md).
 
 ## docbank document stat
 

@@ -3344,10 +3344,6 @@ export interface FactExternal {
   uid: string;
 }
 
-export interface FactOpen {
-  web: string;
-}
-
 export interface GPSBounds {
   east: string;
   north: string;
@@ -9279,7 +9275,6 @@ export interface VersionDates {
   diagnostics: FactDiagnostic[];
   document_kind?: string;
   node_id: number;
-  open?: FactOpen;
   primary?: VersionDatePrimary;
   state: string;
 }
@@ -9322,7 +9317,6 @@ export interface VersionPeople {
   assertions: VersionPersonAssertion[];
   content_version_id: string;
   edges: VersionPersonEdge[];
-  open?: FactOpen;
   state: string;
   unresolved: VersionUnresolvedName[];
 }

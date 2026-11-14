@@ -14,14 +14,11 @@ uses the revision returned by the preceding read.
 ## Read a document's people
 
 Run `docbank document people <path-or-id>` to see the current version's people
-and unresolved names. Add `--json` for structured output or `--full` to include
-sensitive claims with an API key. The API reads a specific version at
+and unresolved names. The API reads a specific version at
 `GET /api/v1/versions/{version_id}/people`; `disclosure=safe` is the default,
-and `disclosure=full` requires an API key. Each assertion includes the person’s
-`display_name`, even when no derived edge is published. Browser sessions and MCP's
+and `disclosure=full` requires an API key. Browser sessions and MCP's
 `get_document_people` use safe disclosure, which omits blind-copy evidence and
-provisional people without visible support. When a public origin is configured,
-`open.web` opens the exact node and version; otherwise `open` is absent.
+provisional people without visible support.
 
 People reads wait for current date evidence. While dates or people are pending
 or failed, the response reports that state and withholds derived people and

@@ -69,9 +69,6 @@ func whenFromClaim(event document.DocumentEventV1) WhenV1 {
 	return w
 }
 
-type FactOpen struct {
-	Web string `json:"web"`
-}
 type VersionDateClaim struct {
 	EventID         string                     `json:"event_id"`
 	DateKind        document.DateKind          `json:"date_kind"`
@@ -109,7 +106,6 @@ type VersionDates struct {
 	Primary          *VersionDatePrimary   `json:"primary,omitempty"`
 	Claims           []VersionDateClaim    `json:"claims"`
 	Diagnostics      []FactDiagnostic      `json:"diagnostics"`
-	Open             *FactOpen             `json:"open,omitempty"`
 }
 type FactExternal struct {
 	System    string `json:"system"`
@@ -151,5 +147,4 @@ type VersionPeople struct {
 	Edges            []VersionPersonEdge      `json:"edges"`
 	Assertions       []VersionPersonAssertion `json:"assertions"`
 	Unresolved       []VersionUnresolvedName  `json:"unresolved"`
-	Open             *FactOpen                `json:"open,omitempty"`
 }

@@ -2,8 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -17,18 +15,6 @@ type versionFactsInput struct {
 	Disclosure string `query:"disclosure" enum:"safe,full" default:"safe"`
 }
 
-func factOpen(webURL string, nodeID int64, versionID string) *FactOpen {
-	if webURL == "" {
-		return nil
-	}
-	return &FactOpen{Web: fmt.Sprintf("%s#node=%d&version=%s", webURL, nodeID, versionID)}
-}
-func factsError(err error) error {
-	if errors.Is(err, store.ErrNotFound) {
-		return NewError(http.StatusNotFound, "version_not_found", "Content version not found")
-	}
-	return FromStoreError(err)
-}
 func registerDocumentFactsRoutes(api huma.API, d Deps) {
 	huma.Register(api, huma.Operation{OperationID: "getVersionDates", Method: http.MethodGet, Path: "/api/v1/versions/{version_id}/dates", Middlewares: huma.Middlewares{rejectFactsUnknownQuery}, Summary: "Read a version's date claims"}, func(ctx context.Context, in *versionFactsInput) (*struct{ Body VersionDates }, error) {
 		if browserSessionRequest(ctx) && in.Disclosure == "full" {
@@ -36,9 +22,9 @@ func registerDocumentFactsRoutes(api huma.API, d Deps) {
 		}
 		f, err := d.Store.DocumentDateFacts(browserPeopleScope(ctx), in.VersionID)
 		if err != nil {
-			return nil, factsError(err)
+			return nil, FromStoreError(err)
 		}
-		out := versionDatesAPI(f, in.Disclosure, webLaunchURL(d.Cfg.Web.PublicOrigin, d.Cfg.Web.BasePath))
+		out := versionDatesAPI(f, in.Disclosure)
 		return &struct{ Body VersionDates }{Body: out}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "getVersionPeople", Method: http.MethodGet, Path: "/api/v1/versions/{version_id}/people", Middlewares: huma.Middlewares{rejectFactsUnknownQuery}, Summary: "Read a version's people"}, func(ctx context.Context, in *versionFactsInput) (*struct{ Body VersionPeople }, error) {
@@ -48,15 +34,15 @@ func registerDocumentFactsRoutes(api huma.API, d Deps) {
 		safe := in.Disclosure != "full"
 		f, err := d.Store.DocumentPeopleFacts(browserPeopleScope(ctx), in.VersionID, safe)
 		if err != nil {
-			return nil, factsError(err)
+			return nil, FromStoreError(err)
 		}
-		out := versionPeopleAPI(f, safe, webLaunchURL(d.Cfg.Web.PublicOrigin, d.Cfg.Web.BasePath))
+		out := versionPeopleAPI(f, safe)
 		return &struct{ Body VersionPeople }{Body: out}, nil
 	})
 }
 
-func versionDatesAPI(f store.DocumentDateFacts, disclosure, webURL string) VersionDates {
-	out := VersionDates{ContentVersionID: f.Version.ID, NodeID: f.Version.NodeID, State: f.State, Claims: []VersionDateClaim{}, Diagnostics: []FactDiagnostic{}, Open: factOpen(webURL, f.Version.NodeID, f.Version.ID)}
+func versionDatesAPI(f store.DocumentDateFacts, disclosure string) VersionDates {
+	out := VersionDates{ContentVersionID: f.Version.ID, NodeID: f.Version.NodeID, State: f.State, Claims: []VersionDateClaim{}, Diagnostics: []FactDiagnostic{}}
 	if f.State == "published" {
 		out.DocumentKind = f.View.Events.DocumentKind
 		for _, p := range f.View.Events.Primaries {
@@ -79,8 +65,8 @@ func versionDatesAPI(f store.DocumentDateFacts, disclosure, webURL string) Versi
 	return out
 }
 
-func versionPeopleAPI(f store.DocumentPeopleFacts, safe bool, webURL string) VersionPeople {
-	out := VersionPeople{ContentVersionID: f.Version.ID, State: f.State, Edges: []VersionPersonEdge{}, Assertions: []VersionPersonAssertion{}, Unresolved: []VersionUnresolvedName{}, Open: factOpen(webURL, f.Version.NodeID, f.Version.ID)}
+func versionPeopleAPI(f store.DocumentPeopleFacts, safe bool) VersionPeople {
+	out := VersionPeople{ContentVersionID: f.Version.ID, State: f.State, Edges: []VersionPersonEdge{}, Assertions: []VersionPersonAssertion{}, Unresolved: []VersionUnresolvedName{}}
 	for _, e := range f.Edges {
 		p, ok := f.Persons[e.PersonID]
 		if !ok || safe && !p.Visible {
