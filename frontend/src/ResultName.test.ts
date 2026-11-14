@@ -22,3 +22,18 @@ it("adds a matched excerpt only when given one", () => {
   const withExcerpt = render(ResultName, { name: "a.txt", folder: "/x", excerpt: "net 30 terms" });
   expect(withExcerpt.container.querySelector(".excerpt")?.textContent).toBe("net 30 terms");
 });
+
+it("shows frozen people evidence as chips beside the name", () => {
+  const view = render(ResultName, {
+    name: "board-memo.eml",
+    folder: "/synthetic",
+    roles: ["sender", "copied", "mentioned"],
+  });
+  expect(screen.getByText("board-memo.eml")).toBeTruthy();
+  expect(
+    [...view.container.querySelectorAll(".roles > *")].map((chip) => chip.textContent?.trim()),
+  ).toEqual(["Sender", "Cc", "Mentioned"]);
+  view.unmount();
+  const plain = render(ResultName, { name: "board-memo.eml", folder: "/synthetic" });
+  expect(plain.container.querySelector(".roles")).toBeNull();
+});

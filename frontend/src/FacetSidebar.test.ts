@@ -244,6 +244,24 @@ const facets: SnapshotPage["facets"] = [
   }),
 ];
 
+it("shows why People counts are unavailable", () => {
+  render(FacetSidebar, {
+    facets: [
+      facet("person_role", {
+        available: false,
+        reason: "people_evidence_incomplete",
+        total: null,
+        missing: null,
+        other: null,
+      }),
+    ],
+    query: originalQuery,
+    onchange: vi.fn(),
+  });
+  expect(screen.getByRole("group", { name: "People facet" })).toBeTruthy();
+  expect(screen.getByText("Unavailable · people evidence incomplete")).toBeTruthy();
+});
+
 it("shows the facets that can narrow the results and leaves out the rest", () => {
   render(FacetSidebar, { facets, query: originalQuery, disabled: false, onchange: vi.fn() });
   expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(7);
@@ -544,4 +562,164 @@ it("omits the whole Filters panel when no group can narrow one result", () => {
   });
   expect(screen.queryByRole("complementary", { name: "Snapshot facets" })).toBeNull();
   expect(screen.queryByRole("heading", { name: "Filters" })).toBeNull();
+});
+
+const jory = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const mara = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const typed = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+const peopleFacet = (values: SnapshotPage["facets"][number]["values"]) =>
+  facet("person_role", { total: 3, missing: 0, other: 0, values });
+const peopleValues = [
+  { key: jory, label: "Jory Pellham", count: 2, selected: false, roles: ["author", "sender"] },
+  { key: mara, label: "Mara Okonkwo-Fell", count: 1, selected: false, roles: ["copied"] },
+] satisfies SnapshotPage["facets"][number]["values"];
+
+it("narrows and clears people while keeping other filters", async () => {
+  const onchange = vi.fn();
+  const query: Query = {
+    ...originalQuery,
+    filters: {
+      ...originalQuery.filters,
+      people: [
+        { person_id: jory, roles: ["sender"] },
+        { person_id: jory, roles: ["author"] },
+        { person_id: typed, roles: ["author"] },
+        { person_id: mara, roles: ["copied"] },
+      ],
+    },
+  };
+  const view = render(FacetSidebar, {
+    facets: [
+      peopleFacet([
+        {
+          key: mara,
+          label: "Merged Person",
+          count: 2,
+          selected: true,
+          roles: ["author", "sender"],
+          selected_person_ids: [jory, mara],
+        },
+        {
+          key: typed,
+          label: "Other Person",
+          count: 1,
+          selected: true,
+          roles: ["author"],
+          selected_person_ids: [typed],
+        },
+      ]),
+    ],
+    query,
+    onchange,
+  });
+  const button = screen.getByRole("button", {
+    name: "Merged Person, Author, Sender, 2 documents, selected",
+  });
+  expect(button.getAttribute("aria-pressed")).toBe("true");
+  await fireEvent.click(button);
+  expect(onchange.mock.lastCall?.[0].filters.people).toEqual([
+    { person_id: typed, roles: ["author"] },
+  ]);
+  await view.rerender({
+    query: {
+      ...query,
+      filters: { ...query.filters, people: [{ person_id: jory, roles: ["sender"] }] },
+    },
+  });
+  await fireEvent.click(
+    screen.getByRole("button", { name: "Merged Person, Author, Sender, 2 documents, selected" }),
+  );
+  expect(onchange.mock.lastCall?.[0].filters.people).toBeUndefined();
+
+  const unmergedQuery: Query = {
+    ...originalQuery,
+    filters: {
+      ...originalQuery.filters,
+      person_ids: [mara],
+      people: [{ person_id: typed, roles: ["custodian"] }],
+    },
+  };
+  await view.rerender({
+    facets: [
+      peopleFacet([
+        ...peopleValues,
+        {
+          key: typed,
+          label: "Typed Person",
+          count: 0,
+          selected: true,
+          roles: ["custodian"],
+          selected_person_ids: [typed],
+        },
+      ]),
+    ],
+    query: unmergedQuery,
+  });
+  const group = screen.getByRole("group", { name: "People facet" });
+  expect(within(group).getByText("Author, Sender")).toBeTruthy();
+  await fireEvent.click(
+    within(group).getByRole("button", { name: "Jory Pellham, Author, Sender, 2 documents" }),
+  );
+  const added = onchange.mock.lastCall?.[0] as Query;
+  expect(added.text).toBe(originalQuery.text);
+  expect(added.filters.person_ids).toEqual([mara]);
+  expect(added.filters.people).toEqual([
+    { person_id: jory, roles: ["author", "sender"] },
+    { person_id: typed, roles: ["custodian"] },
+  ]);
+
+  await view.rerender({
+    query: added,
+    facets: [
+      peopleFacet([
+        { ...peopleValues[0]!, selected: true, selected_person_ids: [jory] },
+        peopleValues[1]!,
+        {
+          key: typed,
+          label: "Typed Person",
+          count: 0,
+          selected: true,
+          roles: ["custodian"],
+          selected_person_ids: [typed],
+        },
+      ]),
+    ],
+  });
+  const joryButton = screen.getByRole("button", {
+    name: "Jory Pellham, Author, Sender, 2 documents, selected",
+  });
+  expect(joryButton.getAttribute("aria-pressed")).toBe("true");
+  await fireEvent.click(screen.getByRole("button", { name: /^Mara Okonkwo-Fell, Cc, 1/ }));
+  expect(onchange.mock.lastCall?.[0].filters.people).toEqual([
+    { person_id: jory, roles: ["author", "sender"] },
+    { person_id: mara, roles: ["copied"] },
+    { person_id: typed, roles: ["custodian"] },
+  ]);
+
+  await view.rerender({
+    facets: [
+      facet("person_role", { available: false, reason: "people_evidence_incomplete", values: [] }),
+    ],
+    query: added,
+  });
+  await fireEvent.click(screen.getByRole("button", { name: /Jory Pellham.*selected/ }));
+  const removed = onchange.mock.lastCall?.[0] as Query;
+  expect(removed.filters.people).toEqual([{ person_id: typed, roles: ["custodian"] }]);
+  expect(removed.filters.person_ids).toEqual([mara]);
+  expect(removed.filters.paths).toEqual(originalQuery.filters.paths);
+
+  await view.rerender({
+    facets: [peopleFacet([{ ...peopleValues[0]!, selected: true, selected_person_ids: [jory] }])],
+    query: added,
+  });
+  await view.rerender({
+    facets: [
+      facet("person_role", { available: false, reason: "people_evidence_incomplete", values: [] }),
+    ],
+    query: unmergedQuery,
+  });
+  await fireEvent.click(
+    screen.getByRole("button", { name: `Person ${typed.slice(0, 8)}, selected` }),
+  );
+  expect(onchange.mock.lastCall?.[0].filters.people).toBeUndefined();
 });

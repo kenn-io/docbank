@@ -622,3 +622,58 @@ it("retains photo ranking status on snapshot continuation pages", async () => {
   expect(result).toMatchObject(status);
   expect(fetcher.mock.calls[0]?.[0]).toBe(`/api/v1/workspace/queries/${snapshotID}/pages`);
 });
+
+it("parses people evidence and rejects an invalid matched role", async () => {
+  const safeRoles = [
+    "author",
+    "last_saved_by",
+    "custodian",
+    "sender",
+    "recipient",
+    "copied",
+    "organizer",
+    "attendee",
+    "participant",
+    "speaker",
+    "depicted",
+  ];
+  const person = {
+    key: tagID,
+    label: "Synthetic",
+    count: 1,
+    selected: true,
+    roles: safeRoles,
+    selected_person_ids: [version2, tagID],
+  };
+  const good = { ...row(2, version2, blob2, 20), matched_roles: ["sender"] };
+  const facet = {
+    dimension: "person_role",
+    available: true,
+    values: [person],
+    total: 1,
+    missing: 0,
+    other: 0,
+  };
+  const fetcher = vi.spyOn(globalThis, "fetch");
+  fetcher.mockResolvedValueOnce(jsonResponse(await page({ rows: [good], facets: [facet] })));
+  const receipt = await createSnapshot(
+    "session",
+    query,
+    { page_size: 50, facets: ["person_role"] },
+    new AbortController().signal,
+  );
+  expect(receipt.rows[0]!.matched_roles).toEqual(["sender"]);
+  expect(receipt.facets[0]!.values[0]!.roles).toEqual(safeRoles);
+  expect(receipt.facets[0]!.values[0]!.selected_person_ids).toEqual([version2, tagID]);
+  fetcher.mockResolvedValueOnce(
+    jsonResponse(await page({ rows: [{ ...good, matched_roles: ["bogus"] }], facets: [facet] })),
+  );
+  await expect(
+    createSnapshot(
+      "session",
+      query,
+      { page_size: 50, facets: ["person_role"] },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("rows[0].matched_roles contains an invalid role");
+});

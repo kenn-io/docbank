@@ -107,6 +107,7 @@
     "size",
     "text_coverage",
     "duplicates",
+    "person_role",
   ];
 
   function invalidate() {
@@ -278,6 +279,15 @@
                 PDF evidence: <code>pdf_embedded_file_count_min:1 OR pdf_has_javascript:true</code>.
               </p>
               <p>References: <code>tag:</code>, <code>collection:</code>, <code>saved:</code>.</p>
+              <p>
+                People by role: <code>author:</code>, <code>from:</code>, <code>to:</code>,
+                <code>cc:</code>, <code>custodian:</code>, <code>participant:</code>,
+                <code>organizer:</code>, <code>attendee:</code>, and <code>person:</code> for any role.
+              </p>
+              <code>between:("Mara Okonkwo-Fell", "Ines Albarrán")</code>
+              <p>
+                <code>mentions:</code> searches the text for a person's names.
+              </p>
             </Disclosure>{/if}
         </div>
       {:else if expressionError}<p class="error" role="alert">{expressionError}</p>{/if}

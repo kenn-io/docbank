@@ -111,6 +111,7 @@
   import PanelResizer from "./PanelResizer.svelte";
   import { readPanelWidth, watchWidth } from "./panelWidth.js";
   import ResultName from "./ResultName.svelte";
+  import { roleListLabel } from "./personRoles.js";
   import { resultColumns } from "./resultColumns.js";
   import ResultsPager from "./ResultsPager.svelte";
   import SnapshotActions, { type SnapshotActionChoice } from "./SnapshotActions.svelte";
@@ -4718,11 +4719,17 @@
                                   onchange={(checked) => snapshot.toggleSelection(row, checked)}
                                 />
                               </td>
-                              <td class="name-cell" aria-label={row.path}>
+                              <td
+                                class="name-cell"
+                                aria-label={row.matched_roles?.length
+                                  ? `${row.path}, people evidence: ${roleListLabel(row.matched_roles)}`
+                                  : row.path}
+                              >
                                 <ResultName
                                   name={row.name}
                                   folder={parentPath(row.path)}
                                   mime={row.mime_type}
+                                  roles={row.matched_roles}
                                 />
                               </td>
                               <td class="type-cell col-type"

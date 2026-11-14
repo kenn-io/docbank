@@ -319,6 +319,12 @@ body .app-shell .search-controls .kit-button--outline.kit-button--neutral {
   grid-template-columns: minmax(0, 1fr);
 }
 
+@media (min-width: 901px) {
+  .snapshot-browser:has(.facets):has(.roles) {
+    grid-template-columns: 190px minmax(0, 1fr);
+  }
+}
+
 .snapshot-results {
   display: flex;
   flex-direction: column;
@@ -521,6 +527,9 @@ tr:focus-visible {
 @media (max-width: 900px) {
   .snapshot-browser {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .snapshot-browser:has(.facets) {
+    grid-template-rows: auto minmax(0, 1fr);
   }
 }
 

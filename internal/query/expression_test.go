@@ -151,6 +151,7 @@ func TestParseExpressionAdvancedRecognizesExactFieldNames(t *testing.T) {
 		"name", "path", "tag", "collection", "saved", "mime", "extension",
 		"media_family", "modified_after", "modified_before", "size_min", "size_max",
 		"text_coverage", "has_duplicates",
+		"author", "from", "to", "cc", "bcc", "custodian", "participant", "organizer", "attendee", "mentions",
 	}
 	for _, field := range fields {
 		t.Run(field, func(t *testing.T) {
@@ -303,4 +304,24 @@ func assertExpressionSpans(t *testing.T, expr *Expression, textLen int) {
 	for _, child := range expr.Children {
 		assertExpressionSpans(t, child, textLen)
 	}
+}
+
+func TestRoleSearchGrammar(t *testing.T) {
+	for _, input := range []string{`between:("Mara Okonkwo-Fell", "Ines Albarrán")`, `between:("A" "B")`, `between:(aaa,bbb)`} {
+		expr, err := ParseExpression(input, "advanced")
+		require.NoError(t, err, input)
+		require.Equal(t, "between", expr.Field)
+		require.Len(t, expr.Children, 1)
+		require.Equal(t, ExpressionAnd, expr.Children[0].Kind)
+		require.Len(t, expr.Children[0].Children, 2)
+	}
+	for _, input := range []string{`between:("A")`, `between:("A""B")`, `between:(A,B,C)`, `between:()`, `between:(A OR B)`, `between:(A,)`, `between:A`, `between:(NOT A, B)`} {
+		_, err := ParseExpression(input, "advanced")
+		var exprErr *ExpressionError
+		require.ErrorAs(t, err, &exprErr, input)
+		assert.Equal(t, "between: needs two different people", exprErr.Message, input)
+	}
+	expr, err := ParseExpression(`name:a,b`, "advanced")
+	require.NoError(t, err)
+	assert.Equal(t, "a,b", expr.Children[0].Value)
 }

@@ -57,6 +57,9 @@ type CompiledQuery struct {
 	withoutSuggestion bool
 	predicate         compiledQueryFragment
 	positiveTextTerms []string
+	roleMatches       []compiledRoleMatch
+	safePeople        bool
+	eventState        DocumentEventState
 }
 
 // compileQuery resolves references and compiles one bounded query without
@@ -74,11 +77,27 @@ type queryCompiler struct {
 	photoMetadataDensity func(string) (bool, error)
 	pdfOnly              bool
 	photoHidden          bool
+	safePeople           bool
+	personNames          func(string) ([]string, error)
+	eventState           DocumentEventState
 }
 
 func (c queryCompiler) compile(
 	ctx context.Context, value query.Query, resolver query.Resolver,
 ) (CompiledQuery, error) {
+	c.safePeople, _ = ctx.Value(safeRoleSearchKey{}).(bool)
+	if r, ok := resolver.(queryResolver); ok {
+		if !c.photoDisplayMetadata {
+			state, err := effectiveDocumentEventState(ctx, r.q, DocumentEventsDeriverFingerprint)
+			if err != nil {
+				return CompiledQuery{}, err
+			}
+			c.eventState = state
+		}
+		c.personNames = func(id string) ([]string, error) {
+			return r.personMentionNames(ctx, id)
+		}
+	}
 	resolved, err := query.ResolveQuery(ctx, value, resolver)
 	if err != nil {
 		return CompiledQuery{}, err
@@ -97,6 +116,12 @@ func (c queryCompiler) compile(
 		photoHidden:       c.photoHidden,
 		predicate:         predicate,
 		positiveTextTerms: query.PositiveTextTerms(resolved),
+		eventState:        c.eventState,
+		safePeople:        c.safePeople,
+	}
+	compiled.roleMatches, err = c.collectRoleMatches(resolved)
+	if err != nil {
+		return CompiledQuery{}, err
 	}
 	if _, err := compiled.bind("", nil); err != nil {
 		return CompiledQuery{}, err
@@ -195,6 +220,9 @@ func (c queryCompiler) compileResolvedExpression(expression *query.ResolvedExpre
 		if len(expression.Children) != 1 {
 			return compiledQueryFragment{}, errors.New("resolved field expression has invalid children")
 		}
+		if syntax.Field == "between" {
+			return c.compileBetween(expression)
+		}
 		return c.compileResolvedExpression(expression.Children[0], syntax.Field)
 	case query.ExpressionAnd, query.ExpressionOr:
 		parts, err := c.compileAssociativeChildren(expression, field, syntax.Kind)
@@ -280,6 +308,37 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 			return compiledQueryFragment{}, errors.New("resolved person operand lacks a dependency")
 		}
 		return c.compilePersonPredicate(expression.Dependency.ID), nil
+	case query.IsRoleOperand(field):
+		if c.photoDisplayMetadata {
+			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "Search roles in Documents.")
+		}
+		if expression.Dependency == nil {
+			return compiledQueryFragment{}, errors.New("resolved person operand lacks a dependency")
+		}
+		roles, err := rolesForOperand(field, c.safePeople)
+		if err != nil {
+			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, err.Error())
+		}
+		return c.compileRolePredicate(expression.Dependency.ID, roles), nil
+	case field == "mentions":
+		if c.photoDisplayMetadata {
+			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "Search roles in Documents.")
+		}
+		if expression.Dependency == nil || c.personNames == nil {
+			return compiledQueryFragment{}, errors.New("resolved mention lacks names")
+		}
+		names, err := c.personNames(expression.Dependency.ID)
+		if err != nil {
+			return compiledQueryFragment{}, err
+		}
+		if len(names) == 0 {
+			return compiledQueryFragment{sql: `FALSE`}, nil
+		}
+		parts := make([]string, 0, len(names))
+		for _, name := range names {
+			parts = append(parts, quoteFTSOperand(name, false))
+		}
+		return compileDocumentContentPredicate(strings.Join(parts, ` OR `)), nil
 	case field == "tag":
 		if expression.Dependency == nil {
 			return compiledQueryFragment{}, errors.New("resolved tag operand lacks a dependency")
@@ -340,13 +399,34 @@ func (c queryCompiler) compileSavedPredicate(expression *query.ResolvedExpressio
 			nested, {sql: photoBrowseEligibleMemberPredicate(c.photoHidden)},
 		}, ` AND `)
 	}
-	population := selectCompiledPopulation(nested, true)
+	return collapsedSavedMembership(nested), nil
+}
+
+// collapsedSavedMembership keeps SQL three-valued logic across the duplicate
+// collapse. Candidates whose membership is not false are ranked in
+// representative order: a row is false when a proven member precedes it, true
+// when it is a proven member with no unknown predecessor, and NULL otherwise.
+// Rows outside the candidates are proven absent.
+func collapsedSavedMembership(nested compiledQueryFragment) compiledQueryFragment {
+	live := compiledLiveCurrentPredicate()
 	return compiledQueryFragment{
-		sql: `EXISTS (SELECT 1 FROM (` + population.sql + `) saved_population
-			WHERE saved_population.node_id=n.id
-			  AND saved_population.content_version_id=cv.version_id)`,
-		args: population.args, relations: population.relations, lexical: nested.lexical,
-	}, nil
+		sql: `NULLIF(COALESCE((SELECT membership FROM (
+			SELECT node_id,content_version_id,CASE
+				WHEN COUNT(CASE WHEN state IS TRUE THEN 1 END) OVER earlier>0 THEN 0
+				WHEN state IS TRUE AND COUNT(CASE WHEN state IS NULL THEN 1 END) OVER earlier=0 THEN 1
+				ELSE 2 END membership
+			FROM (SELECT n.id AS node_id,cv.version_id AS content_version_id,
+					cv.blob_hash,n.modified_at,(` + nested.sql + `) AS state
+				FROM nodes n JOIN content_versions cv ON cv.node_id=n.id
+				WHERE ` + live.sql + `) candidates
+			WHERE state IS NOT FALSE
+			WINDOW earlier AS (PARTITION BY blob_hash ORDER BY ` + DuplicateRepresentativeOrder + `
+				ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)
+		) saved_membership
+		WHERE saved_membership.node_id=n.id
+		  AND saved_membership.content_version_id=cv.version_id),0),2)`,
+		args: nested.args, relations: nested.relations, lexical: nested.lexical,
+	}
 }
 
 func (c queryCompiler) compileScalarPredicate(field, value string, start, end int) (compiledQueryFragment, error) {
@@ -407,11 +487,26 @@ func (c queryCompiler) compileScalarPredicate(field, value string, start, end in
 }
 
 func (c queryCompiler) compileQueryFilters(filters query.Filters, start, end int) (compiledQueryFragment, error) {
+	var people compiledQueryFragment
+	if len(filters.People) > 0 {
+		if c.photoDisplayMetadata {
+			return compiledQueryFragment{}, compileExpressionError(start, end, "Search roles in Documents.")
+		}
+		for _, entry := range filters.People {
+			if c.safePeople && slices.Contains(entry.Roles, "blind_copy") {
+				return compiledQueryFragment{}, compileExpressionError(start, end, "Bcc searches are unavailable here.")
+			}
+		}
+		var err error
+		if people, err = c.compileRoleGroup(filters.People); err != nil {
+			return compiledQueryFragment{}, err
+		}
+	}
 	photo, err := c.compilePhotoFilters(filters, start, end)
 	if err != nil {
 		return compiledQueryFragment{}, err
 	}
-	parts := []compiledQueryFragment{photo,
+	parts := []compiledQueryFragment{photo, people,
 		compileValuePredicates(filters.Paths, compilePathPredicate),
 		negateCompiledFragment(compileValuePredicates(filters.ExcludePaths, compilePathPredicate)),
 		compileValuePredicates(filters.CollectionIDs, compileCollectionPredicate),
@@ -576,8 +671,18 @@ func (c queryCompiler) compileLexicalPredicate(fts string, includeContent bool) 
 	if !includeContent {
 		return name
 	}
+	content := compileDocumentContentPredicate(fts)
+	metadata := compiledQueryFragment{sql: `cv.blob_hash IN (SELECT h.source_sha256 FROM photo_metadata_fts JOIN source_metadata_heads h ON h.generation_id=photo_metadata_fts.generation_id WHERE photo_metadata_fts MATCH ?)`, args: []any{"text : (" + fts + ")"}}
+	parts := []compiledQueryFragment{name, content}
+	if c.photoDisplayMetadata {
+		parts = append(parts, metadata, photoAssetTextPredicate(fts))
+	}
+	return joinCompiledFragments(parts, ` OR `)
+}
+
+func compileDocumentContentPredicate(fts string) compiledQueryFragment {
 	marker := compiledGenerationArgument{}
-	content := compiledQueryFragment{
+	return compiledQueryFragment{
 		sql: `(
 			(?='' AND cv.blob_hash IN (
 				SELECT content_fts.blob_hash FROM content_fts WHERE content_fts MATCH ?
@@ -599,12 +704,6 @@ func (c queryCompiler) compileLexicalPredicate(fts string, includeContent bool) 
 		)`,
 		args: []any{marker, fts, marker, compiledProfileArgument{}, compiledProfileArgument{}, fts, marker},
 	}
-	metadata := compiledQueryFragment{sql: `cv.blob_hash IN (SELECT h.source_sha256 FROM photo_metadata_fts JOIN source_metadata_heads h ON h.generation_id=photo_metadata_fts.generation_id WHERE photo_metadata_fts MATCH ?)`, args: []any{"text : (" + fts + ")"}}
-	parts := []compiledQueryFragment{name, content}
-	if c.photoDisplayMetadata {
-		parts = append(parts, metadata, photoAssetTextPredicate(fts))
-	}
-	return joinCompiledFragments(parts, ` OR `)
 }
 
 // photoAssetTextPredicate matches a photo when any live, non-sidecar file of
@@ -668,4 +767,19 @@ func joinCompiledFragments(parts []compiledQueryFragment, operator string) compi
 
 func compileExpressionError(start, end int, message string) *query.ExpressionError {
 	return &query.ExpressionError{Offset: start, End: end, Message: message}
+}
+
+func (c queryCompiler) compileBetween(expression *query.ResolvedExpression) (compiledQueryFragment, error) {
+	syntax := expression.Syntax
+	if c.photoDisplayMetadata {
+		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "Search roles in Documents.")
+	}
+	if len(expression.Children) != 1 || len(expression.Children[0].Children) != 2 {
+		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "between: needs two different people")
+	}
+	children := expression.Children[0].Children
+	if children[0].Dependency == nil || children[1].Dependency == nil || children[0].Dependency.ID == children[1].Dependency.ID {
+		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "between: needs two different people")
+	}
+	return joinCompiledFragments([]compiledQueryFragment{c.compileRolePredicate(children[0].Dependency.ID, betweenPersonRoles), c.compileRolePredicate(children[1].Dependency.ID, betweenPersonRoles)}, ` AND `), nil
 }

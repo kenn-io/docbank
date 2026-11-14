@@ -40,6 +40,8 @@ try {
         mode,
       ),
       PLAYWRIGHT_JSON_OUTPUT_FILE: report,
+      // P07 role search: role chips and the People facet (#1453).
+      DOCBANK_ROLE_SEARCH_PROOF: "branch",
     };
     try {
       await rm(env.DOCBANK_REPORT_EXPORT_SCREENSHOT_DIR, { recursive: true, force: true });
@@ -57,6 +59,7 @@ try {
           "frontend/node_modules/@playwright/test/cli.js",
           "test",
           "report-export.screenshot.ts",
+          "role-search.screenshot.ts",
           "--config",
           "frontend/screenshots/playwright.config.ts",
           "--project",
@@ -69,16 +72,16 @@ try {
         { cwd: repository, env, stdio: "inherit", timeout: browserWatchdog },
       );
       if (run.error) throw run.error;
-      assert.equal(run.status, 0, `${mode} browser case failed`);
+      assert.equal(run.status, 0, `${mode} browser cases failed`);
       const result = JSON.parse(await readFile(report, "utf8"));
       assert.equal(result.errors.length, 0, `${mode} runner errors`);
       const { expected, unexpected, flaky, skipped } = result.stats;
       assert.deepEqual(
         { expected, unexpected, flaky, skipped },
-        { expected: 1, unexpected: 0, flaky: 0, skipped: 0 },
-        `${mode} must execute one passing case`,
+        { expected: 2, unexpected: 0, flaky: 0, skipped: 0 },
+        `${mode} must execute two passing cases`,
       );
-      console.log(`${mode}: executed=1 passed=1 skipped=0 failed=0`);
+      console.log(`${mode}: executed=2 passed=2 skipped=0 failed=0`);
     } catch (error) {
       failures.push(mode);
       console.error(`${mode}: ${error.message}`);

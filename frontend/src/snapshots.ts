@@ -12,6 +12,8 @@ import {
   parseQuery,
   queryFingerprint as fingerprintQuery,
   type Query,
+  personRoles,
+  type PersonRole,
 } from "./query.js";
 import { snapshotTargetRevision, type SnapshotReceiptOverlay } from "./snapshotOverlays.js";
 
@@ -23,6 +25,7 @@ export type SnapshotOptions = {
 };
 
 export interface SnapshotRow {
+  matched_roles?: (PersonRole | "mentioned")[];
   flag?: "" | "pick" | "reject";
   asset_id?: string;
   node_id: number;
@@ -90,6 +93,7 @@ export interface WorkspaceQueryResponse extends PhotoSearchStatus {
       | "size"
       | "text_coverage"
       | "duplicates"
+      | "person_role"
       | "camera"
       | "lens"
       | "year"
@@ -101,7 +105,14 @@ export interface WorkspaceQueryResponse extends PhotoSearchStatus {
     available: boolean;
     reason?: string;
     total?: number | null;
-    values: { key: string; label: string; count: number; selected: boolean }[];
+    values: {
+      key: string;
+      label: string;
+      count: number;
+      selected: boolean;
+      roles?: PersonRole[];
+      selected_person_ids?: string[];
+    }[];
     missing?: number | null;
     other?: number | null;
   }[];
@@ -164,6 +175,7 @@ const facetDimensions = new Set<WorkspaceQueryResponse["facets"][number]["dimens
   "size",
   "text_coverage",
   "duplicates",
+  "person_role",
   "camera",
   "lens",
   "year",
@@ -285,6 +297,20 @@ function parseTag(value: unknown, index: number): SnapshotRow["tags"][number] {
   };
 }
 
+function parseRoles(
+  value: unknown,
+  field: string,
+  allowMention: boolean,
+): (PersonRole | "mentioned")[] {
+  if (!Array.isArray(value) || value.length > (allowMention ? 16 : personRoles.length - 1))
+    malformed(`${field} exceeds its bound`);
+  const valid: readonly string[] = allowMention ? [...personRoles, "mentioned"] : personRoles;
+  if (!value.every((role) => typeof role === "string" && valid.includes(role)))
+    malformed(`${field} contains an invalid role`);
+  if (new Set(value).size !== value.length) malformed(`${field} repeats a role`);
+  return value as (PersonRole | "mentioned")[];
+}
+
 function parseRow(value: unknown, index: number): SnapshotRow {
   const raw = record(value, `rows[${index}]`);
   keys(
@@ -313,6 +339,7 @@ function parseRow(value: unknown, index: number): SnapshotRow {
       "excerpt",
       "asset_id",
       "flag",
+      "matched_roles",
     ],
     `rows[${index}]`,
   );
@@ -367,6 +394,9 @@ function parseRow(value: unknown, index: number): SnapshotRow {
   if (assetID === undefined && flag !== undefined)
     malformed(`rows[${index}].flag requires a photo identity`);
   return {
+    ...(raw.matched_roles === undefined
+      ? {}
+      : { matched_roles: parseRoles(raw.matched_roles, `rows[${index}].matched_roles`, true) }),
     ...(flag === undefined ? {} : { flag: flag as SnapshotRow["flag"] }),
     ...(assetID === undefined ? {} : { asset_id: assetID }),
     node_id: integer(raw.node_id, `rows[${index}].node_id`, 1),
@@ -437,16 +467,35 @@ function parseFacet(
     keys(
       facetValue,
       ["key", "label", "count", "selected"],
-      [],
+      ["roles", "selected_person_ids"],
       `facets[${index}].values[${valueIndex}]`,
     );
     if (typeof facetValue.selected !== "boolean")
       malformed(`facets[${index}].values[${valueIndex}].selected must be boolean`);
+    const selectedIDs = facetValue.selected_person_ids;
+    if (
+      selectedIDs !== undefined &&
+      (!Array.isArray(selectedIDs) ||
+        selectedIDs.length > 64 ||
+        !selectedIDs.every((id) => typeof id === "string" && uuidV4.test(id)) ||
+        new Set(selectedIDs).size !== selectedIDs.length)
+    )
+      malformed(`facets[${index}].values[${valueIndex}].selected_person_ids is invalid`);
     return {
       key: string(facetValue.key, `facets[${index}].values[${valueIndex}].key`),
       label: string(facetValue.label, `facets[${index}].values[${valueIndex}].label`),
       count: integer(facetValue.count, `facets[${index}].values[${valueIndex}].count`),
       selected: facetValue.selected,
+      ...(selectedIDs === undefined ? {} : { selected_person_ids: selectedIDs as string[] }),
+      ...(facetValue.roles === undefined
+        ? {}
+        : {
+            roles: parseRoles(
+              facetValue.roles,
+              `facets[${index}].values[${valueIndex}].roles`,
+              false,
+            ) as PersonRole[],
+          }),
     };
   });
   if (new Set(values.map((entry) => entry.key)).size !== values.length)
@@ -647,7 +696,7 @@ async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<Sna
   if (total === 0 ? raw.rows.length !== 0 : raw.rows.length === 0)
     malformed("rows is inconsistent with total");
   const rows = raw.rows.map((value, index) => parseRow(value, index));
-  if (!Array.isArray(raw.facets) || raw.facets.length > 8) malformed("facets exceeds its bound");
+  if (!Array.isArray(raw.facets) || raw.facets.length > 9) malformed("facets exceeds its bound");
   const facets = raw.facets.map((value, index) => parseFacet(value, index));
   if (new Set(facets.map((facet) => facet.dimension)).size !== facets.length)
     malformed("facets repeat a dimension");
@@ -746,7 +795,7 @@ function normalizedOptions(
     throw new Error("Snapshot page size is invalid.");
   if (
     options.facets !== undefined &&
-    (!Array.isArray(options.facets) || options.facets.length > 8)
+    (!Array.isArray(options.facets) || options.facets.length > 9)
   ) {
     throw new Error("Snapshot facets exceed their bound.");
   }

@@ -141,6 +141,7 @@ it.each(["live", "query page", "missing identity"])(
             "size",
             "text_coverage",
             "duplicates",
+            "person_role",
           ].map((dimension) => ({
             dimension,
             available: false,

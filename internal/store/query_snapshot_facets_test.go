@@ -552,3 +552,24 @@ func TestYearFacetCountsFileModifiedTimeYears(t *testing.T) {
 	require.Len(t, page.Facets, 1)
 	require.Equal(t, map[string]int64{"2023": 2, "2025": 1}, facetCounts(page.Facets[0]))
 }
+
+// The collection facet recomputes its population with the collection filter removed.
+func TestRoleSearchCollectionFacetSelfExclusion(t *testing.T) {
+	t.Parallel()
+	fixture := newSnapshotFacetFixture(t)
+	ctx := t.Context()
+	person, err := fixture.store.CreatePerson(ctx, "Facet Sender", "operator")
+	require.NoError(t, err)
+	_, err = fixture.store.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: fixture.nodes["a"].CurrentVersionID, PersonID: person.PersonID, Role: "sender", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	_, err = fixture.store.CreateSavedQuery(ctx, "Facet sender", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"from:\"Facet Sender\""}`))
+	require.NoError(t, err)
+	publishRoleFixtures(t, fixture.store)
+	text := `saved:"Facet sender"`
+	value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q,"filters":{"collection_ids":[%q]}}`, text, fixture.collections[0].ID()))
+	projection, err := fixture.store.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Coverage: fixture.selection, Facets: []string{"collections"}})
+	require.NoError(t, err)
+	require.Len(t, projection.Rows, 1)
+	require.Equal(t, fixture.nodes["a"].ID, projection.Rows[0].NodeID)
+	require.Equal(t, map[string]int64{fixture.collections[0].ID(): 1, fixture.collections[1].ID(): 1}, facetCounts(facetByDimension(t, projection, "collections")))
+}

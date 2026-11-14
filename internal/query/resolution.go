@@ -260,6 +260,9 @@ func (state *resolutionState) resolveFacets(ctx context.Context, value Query) ([
 		{kind: ReferenceTag, values: value.Filters.ExcludeTagIDs},
 		{kind: ReferencePerson, values: value.Filters.PersonIDs},
 	}
+	for _, person := range value.Filters.People {
+		facets = append(facets, facet{kind: ReferencePerson, values: []string{person.PersonID}})
+	}
 	var dependencies []Dependency
 	for _, facet := range facets {
 		for _, id := range facet.values {
@@ -352,12 +355,15 @@ func (state *resolutionState) recordDependency(dependency Dependency) error {
 }
 
 func referenceKindForField(field string) (ReferenceKind, bool) {
+	if IsRoleOperand(field) {
+		return ReferencePerson, true
+	}
 	switch field {
 	case string(ReferenceTag):
 		return ReferenceTag, true
 	case string(ReferenceCollection):
 		return ReferenceCollection, true
-	case string(ReferencePerson):
+	case string(ReferencePerson), "between", "mentions":
 		return ReferencePerson, true
 	case string(ReferenceSaved):
 		return ReferenceSaved, true

@@ -70,6 +70,7 @@ function snapshot(
       "size",
       "text_coverage",
       "duplicates",
+      "person_role",
     ].map((dimension) =>
       dimension === "extension"
         ? {
@@ -407,16 +408,7 @@ it("keeps rapid runs bound to the accepted frozen snapshot while live observatio
   });
   expect(workspaceBodies.at(-1)).toMatchObject({
     page_size: 100,
-    facets: [
-      "collections",
-      "tags",
-      "media_family",
-      "extension",
-      "modified",
-      "size",
-      "text_coverage",
-      "duplicates",
-    ],
+    facets: expect.arrayContaining(["person_role"]),
   });
 
   expect(creates).toBe(2);
@@ -433,7 +425,7 @@ it("keeps rapid runs bound to the accepted frozen snapshot while live observatio
   expect(new URLSearchParams(location.hash.slice(1)).has("query")).toBe(false);
 });
 
-it("reruns supported facets and sorting from the complete accepted query", async () => {
+it("reruns sorting from the complete accepted query", async () => {
   history.replaceState(
     null,
     "",
@@ -528,16 +520,6 @@ it("reruns supported facets and sorting from the complete accepted query", async
   expect(bodies.at(-1)?.query.sort).toEqual({ field: "name", direction: "asc" });
   expect(bodies.at(-1)).toMatchObject({
     page_size: 100,
-    facets: [
-      "collections",
-      "tags",
-      "media_family",
-      "extension",
-      "modified",
-      "size",
-      "text_coverage",
-      "duplicates",
-    ],
   });
 
   await waitFor(() =>

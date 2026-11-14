@@ -130,6 +130,7 @@ async function pages(): Promise<[SnapshotPage, SnapshotPage]> {
       "size",
       "text_coverage",
       "duplicates",
+      "person_role",
     ].map((dimension) => ({
       dimension: dimension as SnapshotPage["facets"][number]["dimension"],
       available: false,

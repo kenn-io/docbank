@@ -18,7 +18,7 @@ type WorkspaceQueryCreateRequest struct {
 	Query    QueryPayload `json:"query"`
 	Profile  string       `json:"profile,omitempty" maxLength:"128"`
 	PageSize int          `json:"page_size,omitempty" enum:"50,100,250" default:"100"`
-	Facets   []string     `json:"facets,omitempty" maxItems:"8" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates"`
+	Facets   []string     `json:"facets,omitempty" maxItems:"9" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates,person_role"`
 }
 
 // WorkspaceQueryPageRequest reads one page using only the opaque cursor minted
@@ -34,7 +34,7 @@ type SavedQueryRunRequest struct {
 	Photos             bool     `json:"photos,omitempty"`
 	Profile            string   `json:"profile,omitempty" maxLength:"128"`
 	PageSize           int      `json:"page_size,omitempty" enum:"50,100,250" default:"100"`
-	Facets             []string `json:"facets,omitempty" maxItems:"8" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates"`
+	Facets             []string `json:"facets,omitempty" maxItems:"9" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates,person_role"`
 }
 
 // WorkspaceQueryDependency is the explicit snake-case wire form of an
@@ -62,6 +62,7 @@ type WorkspaceQueryTag struct {
 }
 
 type WorkspaceQueryRow struct {
+	MatchedRoles           []string            `json:"matched_roles,omitzero" maxItems:"16"`
 	Flag                   *string             `json:"flag,omitzero" nullable:"false" enum:",pick,reject" doc:"Display-file flag in a photo snapshot; absent in a document snapshot."`
 	AssetID                string              `json:"asset_id,omitempty" format:"uuid"`
 	NodeID                 int64               `json:"node_id" minimum:"1"`
@@ -86,10 +87,12 @@ type WorkspaceQueryRow struct {
 }
 
 type WorkspaceFacetValue struct {
-	Key      string `json:"key"`
-	Label    string `json:"label"`
-	Count    int64  `json:"count" minimum:"0"`
-	Selected bool   `json:"selected"`
+	SelectedPersonIDs []string `json:"selected_person_ids,omitzero" maxItems:"64"`
+	Roles             []string `json:"roles,omitzero" maxItems:"11"`
+	Key               string   `json:"key"`
+	Label             string   `json:"label"`
+	Count             int64    `json:"count" minimum:"0"`
+	Selected          bool     `json:"selected"`
 }
 
 // WorkspaceFacet is either available with count pointers or explicitly
@@ -134,7 +137,7 @@ type WorkspaceQueryResponse struct {
 	Total               int64                      `json:"total" minimum:"0"`
 	TotalBytes          int64                      `json:"total_bytes" minimum:"0"`
 	Rows                []WorkspaceQueryRow        `json:"rows" maxItems:"250"`
-	Facets              []WorkspaceFacet           `json:"facets" maxItems:"8"`
+	Facets              []WorkspaceFacet           `json:"facets" maxItems:"9"`
 	Snapshot            bool                       `json:"snapshot"`
 	SnapshotID          string                     `json:"snapshot_id" pattern:"^[0-9a-f]{32}$"`
 	CreatedAt           time.Time                  `json:"created_at" format:"date-time"`
@@ -197,7 +200,7 @@ func fromStoreWorkspacePage(page store.SnapshotPage) (WorkspaceQueryResponse, er
 	}
 	for _, row := range page.Rows {
 		wire := WorkspaceQueryRow{
-			Flag: row.Flag, AssetID: row.AssetID, NodeID: row.NodeID, ContentVersionID: row.ContentVersionID, BlobHash: row.BlobHash,
+			MatchedRoles: row.MatchedRoles, Flag: row.Flag, AssetID: row.AssetID, NodeID: row.NodeID, ContentVersionID: row.ContentVersionID, BlobHash: row.BlobHash,
 			Size: row.Size, Revision: row.Revision, Name: row.Name, Path: row.Path,
 			MIMEType: row.MIMEType, MediaFamily: row.MediaFamily, ModifiedAt: row.ModifiedAt,
 			SortKey: row.SortKey, Tags: []WorkspaceQueryTag{}, CollectionIDs: row.CollectionIDs,
@@ -239,7 +242,7 @@ func fromStoreFacets(facets []store.SnapshotFacet) []WorkspaceFacet {
 			Missing: facet.Missing, Other: facet.Other}
 		for _, value := range facet.Values {
 			wire.Values = append(wire.Values, WorkspaceFacetValue{
-				Key: value.Key, Label: value.Label, Count: value.Count, Selected: value.Selected,
+				Key: value.Key, Label: value.Label, Count: value.Count, Selected: value.Selected, Roles: value.Roles, SelectedPersonIDs: value.SelectedPersonIDs,
 			})
 		}
 		result = append(result, wire)
