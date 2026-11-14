@@ -60,7 +60,7 @@
     font-weight: var(--font-weight-medium);
     min-width: 0;
   }
-  /* On small screens, let chips wrap beneath the name. */
+  /* Let chips wrap beneath the name when the row is tight. */
   .title-line {
     display: flex;
     flex-wrap: wrap;
@@ -75,15 +75,6 @@
     flex-wrap: wrap;
     gap: var(--space-1);
     min-width: 0;
-  }
-  @media (min-width: 641px) {
-    .title-line {
-      flex-wrap: nowrap;
-    }
-    .roles {
-      flex: none;
-      flex-wrap: nowrap;
-    }
   }
   .folder,
   .excerpt {

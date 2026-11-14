@@ -319,6 +319,12 @@ body .app-shell .search-controls .kit-button--outline.kit-button--neutral {
   grid-template-columns: minmax(0, 1fr);
 }
 
+@media (min-width: 901px) {
+  .snapshot-browser:has(.facets):has(.roles) {
+    grid-template-columns: 190px minmax(0, 1fr);
+  }
+}
+
 .snapshot-results {
   display: flex;
   flex-direction: column;
@@ -767,11 +773,6 @@ dd {
 
 .browser.hide-modified .col-modified,
 .browser.hide-type .col-type {
-  display: none;
-}
-
-/* Give result names and role chips room before the modified date at tight widths. */
-.browser.hide-type:has(.snapshot-results .roles) .snapshot-table .col-modified {
   display: none;
 }
 

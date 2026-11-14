@@ -87,6 +87,7 @@ async function capture(page: Page, testInfo: TestInfo, name: string, theme: "lig
       .locator("tbody tr")
       .first();
     const title = row.locator(".title");
+    await expect(row.locator(".col-modified")).toBeVisible();
     const chip = row.locator(".roles .kit-chip").first();
     const titleBox = await title.boundingBox();
     const chipBox = await chip.boundingBox();
@@ -96,6 +97,12 @@ async function capture(page: Page, testInfo: TestInfo, name: string, theme: "lig
     expect(await title.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
       true,
     );
+    const titles = page
+      .getByRole("region", { name: "Frozen query results" })
+      .locator("tbody .title");
+    for (const element of await titles.all()) {
+      expect(await element.evaluate((title) => title.scrollWidth <= title.clientWidth)).toBe(true);
+    }
     const contrast = await chip.evaluate((element) => {
       const color = (value: string) =>
         value
@@ -123,8 +130,15 @@ async function capture(page: Page, testInfo: TestInfo, name: string, theme: "lig
     expect(aside).not.toBeNull();
     expect(people).not.toBeNull();
     expect(results).not.toBeNull();
-    expect(aside!.width - people!.width).toBeLessThan(24);
-    expect(results!.y - (people!.y + people!.height)).toBeLessThan(24);
+    if (
+      (await page
+        .getByRole("complementary", { name: "Snapshot facets" })
+        .locator("section")
+        .count()) === 1
+    ) {
+      expect(aside!.width - people!.width).toBeLessThan(24);
+    }
+    expect(results!.y - (aside!.y + aside!.height)).toBeLessThan(24);
   }
   // The JSON reporter embeds the body as base64 in the uploaded CI report.
   const body = await page.screenshot({ animations: "disabled" });
@@ -298,13 +312,13 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
         new URL(response.url()).pathname === "/api/v1/workspace/queries" &&
         response.request().method() === "POST",
     );
-    await people.getByRole("button", { name: "Ines Albarrán, Recipient, 1 documents" }).click();
+    await people.getByRole("button", { name: "Teodor Vask, Cc, Recipient, 2 documents" }).click();
     const response = await narrowing;
     expect(response.status()).toBe(200);
     const sent = response.request().postDataJSON();
     expect(sent.query.text).toBe(query.text);
     expect(sent.query.filters.people).toEqual([
-      { person_id: expect.any(String), roles: ["recipient"] },
+      { person_id: expect.any(String), roles: ["copied", "recipient"] },
     ]);
 
     await captureStates(
@@ -314,25 +328,30 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
       async () => {
         await expect(
           results.getByRole("cell", {
-            name: "/board-update.eml, people evidence: Recipient, Sender",
+            name: "/board-update.eml, people evidence: Cc, Sender",
           }),
         ).toBeVisible();
         await expect(
-          people.getByRole("button", { name: "Ines Albarrán, Recipient, 1 documents, selected" }),
+          results.getByRole("cell", {
+            name: "/budget-follow-up.eml, people evidence: Recipient, Sender",
+          }),
+        ).toBeVisible();
+        await expect(
+          people.getByRole("button", { name: "Teodor Vask, Cc, Recipient, 2 documents, selected" }),
         ).toHaveAttribute("aria-pressed", "true");
       },
       parts,
     );
 
-    // Merge the provisioned Ines into a new survivor. A query that still names
+    // Merge the provisioned Teodor into a new survivor. A query that still names
     // the retired ID shows the survivor selected in the People facet.
     const provisioned = await freeze(query, ["person_role"]);
     const retiredID = provisioned?.facets[0]?.values.find(
-      (value) => value.label === "Ines Albarrán",
+      (value) => value.label === "Teodor Vask",
     )?.key;
-    if (!retiredID) throw new Error("Synthetic Ines person missing");
+    if (!retiredID) throw new Error("Synthetic Teodor person missing");
     const retired = JSON.parse(await run("people", "show", retiredID));
-    const survivor = JSON.parse(await run("people", "create", "Ines Albarrán-Ruiz"));
+    const survivor = JSON.parse(await run("people", "create", "Teodor Vask-Ruiz"));
     await run(
       "people",
       "merge",
@@ -344,19 +363,18 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
       String(retired.revision),
     );
     const retiredQuery = advanced(query.text, {
-      people: [{ person_id: retiredID, roles: ["recipient"] }],
+      people: [{ person_id: retiredID, roles: ["copied", "recipient"] }],
     });
     await expect
       .poll(
-        async () =>
-          summary(await freeze(retiredQuery, ["person_role"])).people["Ines Albarrán-Ruiz"],
+        async () => summary(await freeze(retiredQuery, ["person_role"])).people["Teodor Vask-Ruiz"],
         { timeout: 120_000, intervals: [1_000] },
       )
-      .toEqual([1, ["recipient"]]);
+      .toEqual([2, ["copied", "recipient"]]);
 
     await open(retiredQuery);
     const survivorSelected = people.getByRole("button", {
-      name: "Ines Albarrán-Ruiz, Recipient, 1 documents, selected",
+      name: "Teodor Vask-Ruiz, Cc, Recipient, 2 documents, selected",
     });
     await captureStates(
       page,
@@ -365,7 +383,12 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
       async () => {
         await expect(
           results.getByRole("cell", {
-            name: "/board-update.eml, people evidence: Recipient, Sender",
+            name: "/board-update.eml, people evidence: Cc, Sender",
+          }),
+        ).toBeVisible();
+        await expect(
+          results.getByRole("cell", {
+            name: "/budget-follow-up.eml, people evidence: Recipient, Sender",
           }),
         ).toBeVisible();
         await expect(survivorSelected).toHaveAttribute("aria-pressed", "true");
