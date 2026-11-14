@@ -161,7 +161,6 @@ func annotateMatchedRoles(ctx context.Context, q metadataQuerier, compiled Compi
 		var node int64
 		var person, role string
 		if err := found.Scan(&node, &person, &role); err != nil {
-			_ = found.Close()
 			return err
 		}
 		for _, match := range compiled.roleMatches {
@@ -176,7 +175,6 @@ func annotateMatchedRoles(ctx context.Context, q metadataQuerier, compiled Compi
 		}
 	}
 	if err := found.Err(); err != nil {
-		_ = found.Close()
 		return err
 	}
 	if err := found.Close(); err != nil {
@@ -205,7 +203,6 @@ func annotateMatchedRoles(ctx context.Context, q metadataQuerier, compiled Compi
 		for found.Next() {
 			var node int64
 			if err := found.Scan(&node); err != nil {
-				_ = found.Close()
 				return err
 			}
 			for _, i := range roots[node] {
@@ -215,7 +212,6 @@ func annotateMatchedRoles(ctx context.Context, q metadataQuerier, compiled Compi
 			}
 		}
 		if err := found.Err(); err != nil {
-			_ = found.Close()
 			return err
 		}
 		if err := found.Close(); err != nil {

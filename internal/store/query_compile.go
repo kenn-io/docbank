@@ -469,27 +469,26 @@ func (c queryCompiler) compileScalarPredicate(field, value string, start, end in
 }
 
 func (c queryCompiler) compileQueryFilters(filters query.Filters, start, end int) (compiledQueryFragment, error) {
-	var people []compiledQueryFragment
-	for _, entry := range filters.People {
+	var people compiledQueryFragment
+	if len(filters.People) > 0 {
 		if c.photoDisplayMetadata {
 			return compiledQueryFragment{}, compileExpressionError(start, end, "role operands apply to documents, not photos")
 		}
-		if c.safePeople && slices.Contains(entry.Roles, "blind_copy") {
-			return compiledQueryFragment{}, compileExpressionError(start, end, "bcc: is not available with safe people disclosure")
+		for _, entry := range filters.People {
+			if c.safePeople && slices.Contains(entry.Roles, "blind_copy") {
+				return compiledQueryFragment{}, compileExpressionError(start, end, "bcc: is not available with safe people disclosure")
+			}
 		}
-	}
-	if len(filters.People) > 0 {
-		group, err := c.compileRoleGroup(filters.People)
-		if err != nil {
+		var err error
+		if people, err = c.compileRoleGroup(filters.People); err != nil {
 			return compiledQueryFragment{}, err
 		}
-		people = append(people, group)
 	}
 	photo, err := c.compilePhotoFilters(filters, start, end)
 	if err != nil {
 		return compiledQueryFragment{}, err
 	}
-	parts := []compiledQueryFragment{photo, joinCompiledFragments(people, ` AND `),
+	parts := []compiledQueryFragment{photo, people,
 		compileValuePredicates(filters.Paths, compilePathPredicate),
 		negateCompiledFragment(compileValuePredicates(filters.ExcludePaths, compilePathPredicate)),
 		compileValuePredicates(filters.CollectionIDs, compileCollectionPredicate),

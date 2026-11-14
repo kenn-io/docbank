@@ -17,9 +17,6 @@ func currentPhotoSourcePredicate(file, node, version string) string {
 
 // compileRoleGroup evaluates all selected people in one predicate.
 func (c queryCompiler) compileRoleGroup(entries []query.PersonFilter) (compiledQueryFragment, error) {
-	if len(entries) == 1 {
-		return c.compileRolePredicate(entries[0].PersonID, entries[0].Roles), nil
-	}
 	fragment := c.compileRolePredicate(entries[0].PersonID, []string{entries[0].Roles[0]})
 	person := `COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?)`
 	fragment.sql = strings.ReplaceAll(fragment.sql, person, `json_extract(j.value,'$.person_id')`)
