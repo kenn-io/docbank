@@ -18,8 +18,6 @@ import (
 	"slices"
 	"time"
 
-	"github.com/shirou/gopsutil/v4/process"
-
 	"go.kenn.io/docbank/document/redaction"
 )
 
@@ -153,22 +151,6 @@ type RSSLimitError struct {
 
 func (e *RSSLimitError) Error() string {
 	return fmt.Sprintf("PDF worker RSS %d exceeds qualified ceiling %d", e.ObservedBytes, e.LimitBytes)
-}
-
-func readProcessRSS(ctx context.Context) (uint64, error) {
-	pid := os.Getpid()
-	if pid < 0 || pid > math.MaxInt32 {
-		return 0, errors.New("invalid PDF worker process ID")
-	}
-	p, err := process.NewProcess(int32(pid))
-	if err != nil {
-		return 0, fmt.Errorf("open worker memory accounting: %w", err)
-	}
-	info, err := p.MemoryInfoWithContext(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("read worker RSS: %w", err)
-	}
-	return info.RSS, nil
 }
 
 func checkRSS(ctx context.Context, limit int64, read func(context.Context) (uint64, error)) error {
