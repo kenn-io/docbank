@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"uuid"
 
@@ -19,14 +18,6 @@ type documentFactsInput struct {
 	ContentVersionID string `json:"content_version_id"`
 	Offset           int    `json:"offset"`
 	Snapshot         string `json:"snapshot"`
-}
-
-func documentFactsSelection(raw []byte) (documentFactsInput, error) {
-	var in documentFactsInput
-	if err := decodeReadArguments(raw, &in); err != nil {
-		return in, err
-	}
-	return in, nil
 }
 
 type documentDatesOutput struct {
@@ -47,8 +38,8 @@ type documentPeopleOutput struct {
 }
 
 func getDocumentFacts(ctx context.Context, lease *daemonLease, raw []byte, kind string) (any, error) {
-	in, err := documentFactsSelection(raw)
-	if err != nil {
+	var in documentFactsInput
+	if err := decodeReadArguments(raw, &in); err != nil {
 		return nil, err
 	}
 	type factsResponse struct {
@@ -82,10 +73,10 @@ func getDocumentFacts(ctx context.Context, lease *daemonLease, raw []byte, kind 
 		return factsResponse{people: result}, err
 	})
 	if err != nil {
-		if facts, ok := toolProblemFacts(err); ok && facts.Code == "version_not_found" {
-			return nil, &searchProfileError{code: "not_found", message: domainErrorMessage("not_found")}
-		}
 		return nil, err
+	}
+	if response.noVersion {
+		return nil, &searchProfileError{code: "no_content_version", message: "Document has no current content version."}
 	}
 	if response.dates != nil {
 		if err := validateFactsSnapshot(in, *response.dates); err != nil {
@@ -93,19 +84,10 @@ func getDocumentFacts(ctx context.Context, lease *daemonLease, raw []byte, kind 
 		}
 		return documentDatesPage(*response.dates, in.Offset)
 	}
-	if response.people != nil {
-		if err := validateFactsSnapshot(in, *response.people); err != nil {
-			return nil, err
-		}
-		return documentPeoplePage(*response.people, in.Offset)
+	if err := validateFactsSnapshot(in, *response.people); err != nil {
+		return nil, err
 	}
-	if response.noVersion {
-		if in.Offset > 0 {
-			return nil, staleFactsPage()
-		}
-		return nil, &searchProfileError{code: "no_content_version", message: "Document has no current content version."}
-	}
-	return nil, errors.New("document facts response is empty")
+	return documentPeoplePage(*response.people, in.Offset)
 }
 
 func validateFactsSnapshot(in documentFactsInput, value any) error {

@@ -7262,18 +7262,6 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
-    FactOpen:
-      additionalProperties: false
-      properties:
-        web:
-          type: string
-      required:
-        - web
-      type: object
-      x-go-type: api.FactOpen
-      x-go-type-import:
-        path: go.kenn.io/docbank/internal/api
-        name: api
     Filters:
       additionalProperties: false
       properties:
@@ -22246,8 +22234,6 @@ components:
         node_id:
           format: int64
           type: integer
-        open:
-          $ref: "#/components/schemas/FactOpen"
         primary:
           $ref: "#/components/schemas/VersionDatePrimary"
         state:
@@ -22283,8 +22269,6 @@ components:
           items:
             $ref: "#/components/schemas/VersionPersonEdge"
           type: array
-        open:
-          $ref: "#/components/schemas/FactOpen"
         state:
           type: string
         unresolved:

@@ -31409,8 +31409,6 @@ type FactDiagnostic = api.FactDiagnostic
 
 type FactExternal = api.FactExternal
 
-type FactOpen = api.FactOpen
-
 type Filters = query.Filters
 
 type ForgetBackupSnapshotsRequest struct {

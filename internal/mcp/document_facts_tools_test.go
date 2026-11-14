@@ -129,9 +129,11 @@ func TestDocumentFactsToolsUseSafeDisclosure(t *testing.T) {
 		}
 	}
 	for _, name := range []string{"get_document_dates", "get_document_people"} {
-		output := exportCall(t, server, name, map[string]any{"node_id": directory.ID})
-		require.Equal(t, "no_content_version", output["code"])
-		require.Contains(t, output["message"], "no current content version")
+		for _, args := range []map[string]any{{"node_id": directory.ID}, {"node_id": directory.ID, "offset": 1, "snapshot": "sha256:" + strings.Repeat("0", 64)}} {
+			output := exportCall(t, server, name, args)
+			require.Equal(t, "no_content_version", output["code"])
+			require.Contains(t, output["message"], "no current content version")
+		}
 	}
 }
 
@@ -182,7 +184,7 @@ func TestDocumentDatesPagePreservesClaimsAndPrimaryWithinEnvelope(t *testing.T) 
 }
 
 func TestDocumentPeoplePagePreservesAllArraysWithinEnvelope(t *testing.T) {
-	people := api.VersionPeople{ContentVersionID: "00000000-0000-4000-8000-000000000001", State: "published", Open: &api.FactOpen{Web: "https://example.test"}}
+	people := api.VersionPeople{ContentVersionID: "00000000-0000-4000-8000-000000000001", State: "published"}
 	for i := range 40 {
 		edge := api.VersionPersonEdge{PersonID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1), DisplayName: "Example Person", Role: "author", Basis: "identifier_match", Confidence: "exact_identifier", EvidenceKind: "source_metadata", EvidenceID: "metadata", RawLabel: "Example Person", ClaimCount: 1, LinkedContact: true}
 		for j := range document.MaxPersonExternalIdentities {
@@ -203,7 +205,6 @@ func TestDocumentPeoplePagePreservesAllArraysWithinEnvelope(t *testing.T) {
 		require.Less(t, size, maxToolResponseBytes)
 		require.Equal(t, people.ContentVersionID, page.ContentVersionID)
 		require.Equal(t, people.State, page.State)
-		require.Equal(t, people.Open, page.Open)
 		edges = append(edges, page.Edges...)
 		assertions = append(assertions, page.Assertions...)
 		unresolved = append(unresolved, page.Unresolved...)

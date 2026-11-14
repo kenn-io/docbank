@@ -19,47 +19,25 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestVersionFactsRoutesAndOpenLink(t *testing.T) {
+func TestVersionFactsRoutes(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name, origin, basePath, webURL string
-	}{
-		{"no origin", "", "", ""},
-		{"no origin mounted", "", "/archive", ""},
-		{"root", "https://docs.example.test", "", "https://docs.example.test/"},
-		{"mounted", "https://docs.example.test", "/archive", "https://docs.example.test/archive/"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			ts, s := newTestServer(t, func(d *api.Deps) {
-				d.Cfg.Web.PublicOrigin = tc.origin
-				d.Cfg.Web.BasePath = tc.basePath
-			})
-			node := createFileWithContent(t, ts, s, "sample.txt", "synthetic")
-			for _, kind := range []string{"dates", "people"} {
-				path := fmt.Sprintf("/api/v1/versions/%s/%s", node.CurrentVersionID, kind)
-				for _, query := range []string{"", "?disclosure=full"} {
-					res, body := get(t, ts, path+query, nil)
-					require.Equal(t, http.StatusOK, res.StatusCode, body)
-					var result map[string]any
-					require.NoError(t, json.Unmarshal([]byte(body), &result))
-					require.Equal(t, node.CurrentVersionID, result["content_version_id"])
-					if tc.webURL == "" {
-						require.NotContains(t, result, "open")
-					} else {
-						open, ok := result["open"].(map[string]any)
-						require.True(t, ok)
-						require.Equal(t, fmt.Sprintf("%s#node=%d&version=%s", tc.webURL, node.ID, node.CurrentVersionID), open["web"])
-					}
-				}
-				res, body := get(t, ts, path+"?timezone=UTC", nil)
-				require.Equal(t, http.StatusBadRequest, res.StatusCode, body)
-				require.Equal(t, "unknown_parameter", decodeProblem(t, body).Code)
-				res, body = get(t, ts, "/api/v1/versions/00000000-0000-4000-8000-000000000000/"+kind, nil)
-				require.Equal(t, http.StatusNotFound, res.StatusCode, body)
-				require.Equal(t, "version_not_found", decodeProblem(t, body).Code)
-			}
-		})
+	ts, s := newTestServer(t, nil)
+	node := createFileWithContent(t, ts, s, "sample.txt", "synthetic")
+	for _, kind := range []string{"dates", "people"} {
+		path := fmt.Sprintf("/api/v1/versions/%s/%s", node.CurrentVersionID, kind)
+		for _, query := range []string{"", "?disclosure=full"} {
+			res, body := get(t, ts, path+query, nil)
+			require.Equal(t, http.StatusOK, res.StatusCode, body)
+			var result map[string]any
+			require.NoError(t, json.Unmarshal([]byte(body), &result))
+			require.Equal(t, node.CurrentVersionID, result["content_version_id"])
+		}
+		res, body := get(t, ts, path+"?timezone=UTC", nil)
+		require.Equal(t, http.StatusBadRequest, res.StatusCode, body)
+		require.Equal(t, "unknown_parameter", decodeProblem(t, body).Code)
+		res, body = get(t, ts, "/api/v1/versions/00000000-0000-4000-8000-000000000000/"+kind, nil)
+		require.Equal(t, http.StatusNotFound, res.StatusCode, body)
+		require.Equal(t, "not_found", decodeProblem(t, body).Code)
 	}
 }
 
