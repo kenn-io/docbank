@@ -365,7 +365,9 @@ func TestWorkerActualGatewayLostReplyAndResume(t *testing.T) {
 				f, upload = audio.fixture, audio.upload
 				backendResult = asrResultResponse("asr-spoken.wav", "1.10.0", 3.06)
 			} else if testCase.pageError {
-				backendResult.(map[string]any)["errors"] = []any{map[string]any{"page_no": 1}}
+				result, ok := backendResult.(map[string]any)
+				require.True(t, ok)
+				result["errors"] = []any{map[string]any{"page_no": 1}}
 			}
 			var backendPosts atomic.Int32
 			backend := httptest.NewServer(http.HandlerFunc(func(out http.ResponseWriter, r *http.Request) {
