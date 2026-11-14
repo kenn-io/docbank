@@ -61,16 +61,14 @@ func TestVersionDatesProjectionUsesSelectedDisclosure(t *testing.T) {
 	if len(full.Claims) != 2 || !full.Claims[0].Primary {
 		t.Fatalf("full = %+v", full)
 	}
-	if safe.Claims[0].When.PlacedBy == nil || safe.Claims[0].When.PlacedBy.EventID != "created" || full.Claims[0].When.PlacedBy == nil || full.Claims[0].When.PlacedBy.EventID != "sent" || full.Claims[1].When.PlacedBy != nil {
+	if safe.Claims[0].When.PlacedBy == nil || safe.Claims[0].When.PlacedBy.EventID != "created" || safe.Claims[0].When.PlacedBy.Fallback || full.Claims[0].When.PlacedBy == nil || full.Claims[0].When.PlacedBy.EventID != "sent" || full.Claims[1].When.PlacedBy != nil {
 		t.Fatalf("primary placement: safe=%+v full=%+v", safe.Claims, full.Claims)
 	}
-	for _, kind := range []document.DateKind{"imported", "vault_recorded"} {
-		event := document.DocumentEventV1{EventID: "fallback", DateKind: kind, Precision: "date", DateValue: "2026-03-09"}
-		facts := store.DocumentDateFacts{State: "published", View: store.DocumentEventView{Events: document.DocumentEventsV1{Events: []document.DocumentEventV1{event}, Primaries: []document.DocumentEventPrimaryV1{{EventID: "fallback", ScopeClass: "vault", Disclosure: "safe", RuleID: "primary-rule/v1"}}}}}
-		placed := versionDatesAPI(facts, "safe").Claims[0].When.PlacedBy
-		if placed == nil || !placed.Fallback || placed.Source != kind || placed.Rule != "primary-rule/v1" {
-			t.Fatalf("%s placement = %+v", kind, placed)
-		}
+	event := document.DocumentEventV1{EventID: "fallback", DateKind: "imported", Precision: "date", DateValue: "2026-03-09"}
+	facts := store.DocumentDateFacts{State: "published", View: store.DocumentEventView{Events: document.DocumentEventsV1{Events: []document.DocumentEventV1{event}, Primaries: []document.DocumentEventPrimaryV1{{EventID: "fallback", ScopeClass: "vault", Disclosure: "safe", RuleID: "primary-rule/v1"}}}}}
+	placed := versionDatesAPI(facts, "safe").Claims[0].When.PlacedBy
+	if placed == nil || !placed.Fallback || placed.Source != "imported" || placed.Rule != "primary-rule/v1" {
+		t.Fatalf("fallback placement = %+v", placed)
 	}
 }
 

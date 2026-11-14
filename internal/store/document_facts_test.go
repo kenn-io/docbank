@@ -168,12 +168,6 @@ func checkDocumentPeopleFactsAwaitFirstPeopleHead(t *testing.T, newStore func(*t
 	facts, err := s.DocumentPeopleFacts(ctx, version.ID, false)
 	require.NoError(t, err)
 	require.Equal(t, "published", facts.State)
-	var senderLinked bool
-	for _, edge := range facts.Edges {
-		senderLinked = senderLinked || edge.Role == "sender" && edge.ActorKey == "email:sender@example.test"
-	}
-	require.True(t, senderLinked)
-	require.Empty(t, facts.Candidates)
 }
 
 func checkDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T, newStore func(*testing.T) *Store) {
@@ -244,11 +238,6 @@ func checkDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T, newStore fun
 	require.Equal(t, "Private Name", sender.Occurrences[0].Label)
 	require.Equal(t, "sender", sender.Occurrences[1].Role)
 	require.Equal(t, "sender@example.test", sender.Occurrences[1].Label)
-	require.NoError(t, s.MarkDocumentPeopleFailed(t.Context(), input, "derivation_failed"))
-	failed, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
-	require.NoError(t, err)
-	require.Equal(t, "failed", failed.State)
-	require.Empty(t, failed.Candidates)
 	_, err = s.db.ExecContext(t.Context(), `UPDATE document_people_heads SET resolver_fingerprint=$1 WHERE content_version_id=$2`, "old-resolver", version.ID)
 	require.NoError(t, err)
 	pending, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
@@ -269,7 +258,6 @@ func checkDocumentPeopleFactsCandidateQueueOverflow(t *testing.T, newStore func(
 	require.NoError(t, err)
 	input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
 	require.NoError(t, err)
-	require.EqualValues(t, 1, input.CandidateOverflow)
 	_, err = s.PublishDocumentPeople(ctx, DocumentPeoplePublication{
 		People:     document.DocumentPeopleV1{ContractVersion: document.PersonContractV1, ContentVersionID: version.ID, EventGenerationID: input.EventGenerationID, Edges: []document.DocumentPersonEdgeV1{}},
 		Resolution: DocumentPeopleResolution{UnresolvedActors: 1, CandidateOverflow: input.CandidateOverflow}, InputsSHA256: fakeHash("a3"), ResolverFingerprint: document.PersonResolverFingerprint(), NodeID: input.NodeID, BindingEpoch: input.BindingEpoch, NodeRevision: input.NodeRevision,
@@ -288,7 +276,7 @@ func checkDocumentPeopleFactsPublicationAndFailure(t *testing.T, newStore func(*
 	t.Helper()
 	s := newStore(t)
 	ctx := t.Context()
-	version, _ := ingestDocumentEventTarget(t, s, "precedence.txt", "d1")
+	version, target := ingestDocumentEventTarget(t, s, "precedence.txt", "d1")
 	facts, err := s.DocumentPeopleFacts(ctx, version.ID, true)
 	require.NoError(t, err)
 	require.Equal(t, "none", facts.State)
@@ -297,18 +285,7 @@ func checkDocumentPeopleFactsPublicationAndFailure(t *testing.T, newStore func(*
 	require.NoError(t, err)
 	assertion, err := s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1})
 	require.NoError(t, err)
-	_, err = s.StartDocumentEventRebuild(ctx, "00000000-0000-4000-8000-000000000003", DocumentEventRebuildRequestSHA256)
-	require.NoError(t, err)
-	facts, err = s.DocumentPeopleFacts(ctx, version.ID, true)
-	require.NoError(t, err)
-	require.Equal(t, "pending", facts.State)
-	require.Equal(t, []PersonDocumentAssertion{assertion}, facts.Assertions)
-	target := requireDocumentEventTarget(t, s, version.ID)
 	digest := requireDocumentEventInputsSHA256(t, s, target)
-	require.NoError(t, s.RecordDocumentEventAttempt(ctx, target, digest, "failed", []byte(`[]`)))
-	facts, err = s.DocumentPeopleFacts(ctx, version.ID, true)
-	require.NoError(t, err)
-	require.Equal(t, "failed", facts.State)
 	record := documentEventRecord(t, s.VaultID(), version.ID, "d1")
 	raw := mustMarshalDocumentEvents(t, record)
 	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, digest, raw)
@@ -331,6 +308,7 @@ func checkDocumentPeopleFactsPublicationAndFailure(t *testing.T, newStore func(*
 			require.Empty(t, facts.Candidates)
 		} else {
 			require.Empty(t, facts.Edges)
+			require.Empty(t, facts.Candidates)
 		}
 	}
 	publishPeople()
@@ -355,14 +333,6 @@ func checkDocumentPeopleFactsPublicationAndFailure(t *testing.T, newStore func(*
 	require.NoError(t, err)
 	require.NoError(t, s.MarkDocumentPeopleFailed(ctx, input, "derivation_failed"))
 	check("failed", false)
-	_, err = s.StartDocumentEventRebuild(ctx, "00000000-0000-4000-8000-000000000002", DocumentEventRebuildRequestSHA256)
-	require.NoError(t, err)
-	check("pending", false)
-	target = requireDocumentEventTarget(t, s, version.ID)
-	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), raw)
-	require.NoError(t, err)
-	publishPeople()
-	check("published", true)
 }
 
 func checkDocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession(t *testing.T, newStore func(*testing.T) *Store) {

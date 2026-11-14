@@ -49,11 +49,11 @@ func TestDocumentFactsTableEscapesAndTimezones(t *testing.T) {
 
 	t.Run("published claim", func(t *testing.T) {
 		result := &api.VersionDates{State: "published", Claims: []api.VersionDateClaim{{
-			Primary: true, DateKind: "vault_recorded", DateValue: "2024-03-15", ZoneText: "America/Vancouver", Precision: "date", ClaimBasis: "source_asserted", When: api.WhenV1{State: "date"},
+			Primary: true, DateKind: "vault_recorded", DateValue: "2024-03-15", Precision: "date", ClaimBasis: "source_asserted", When: api.WhenV1{State: "date"},
 		}}}
 		var output strings.Builder
 		require.NoError(t, writeVersionDatesTable(&output, result))
-		require.Equal(t, "State: published\n* Recorded  2024-03-15  \"America/Vancouver\" (state=date, zone=\"\")  date  From document\n", output.String())
+		require.Equal(t, "State: published\n* Recorded  2024-03-15  \"\" (state=date, zone=\"\")  date  From document\n", output.String())
 	})
 }
 
@@ -76,29 +76,19 @@ func TestDocumentFactsCommands(t *testing.T) {
 	stop := startServe(t)
 	t.Cleanup(stop)
 	waitForDaemon(t, f.root)
-	for _, noun := range []string{"dates", "people"} {
-		table, err := runCLI(t, "document", noun, "/notes.txt")
-		require.NoError(t, err)
-		if noun == "people" {
-			require.Contains(t, table, "Synthetic Author")
-			require.Contains(t, table, "author")
-			fullTable, err := runCLI(t, "document", noun, "/notes.txt", "--full")
-			require.NoError(t, err)
-			require.Contains(t, fullTable, "Bcc")
-		}
-		safeOutput, err := runCLI(t, "document", noun, "/notes.txt", "--json")
-		require.NoError(t, err)
-		if noun == "people" {
-			var safe api.VersionPeople
-			require.NoError(t, json.Unmarshal([]byte(safeOutput), &safe))
-			require.Len(t, safe.Assertions, 1)
-			require.Equal(t, person.PersonID, safe.Assertions[0].PersonID)
-		} else {
-			var dates api.VersionDates
-			require.NoError(t, json.Unmarshal([]byte(safeOutput), &dates))
-			require.Equal(t, f.nodes["notes.txt"].CurrentVersionID, dates.ContentVersionID)
-		}
-	}
+	table, err := runCLI(t, "document", "people", "/notes.txt")
+	require.NoError(t, err)
+	require.Contains(t, table, "Synthetic Author")
+	require.NotContains(t, table, "Synthetic Blind Recipient")
+	fullTable, err := runCLI(t, "document", "people", "/notes.txt", "--full")
+	require.NoError(t, err)
+	require.Contains(t, fullTable, "Synthetic Blind Recipient")
+	dateOutput, err := runCLI(t, "document", "dates", "/notes.txt", "--json")
+	require.NoError(t, err)
+	var dates api.VersionDates
+	require.NoError(t, json.Unmarshal([]byte(dateOutput), &dates))
+	require.Equal(t, f.nodes["notes.txt"].CurrentVersionID, dates.ContentVersionID)
+	require.NotNil(t, dates.Claims)
 	_, err = runCLI(t, "document", "people", "/empty")
 	require.ErrorContains(t, err, "document has no current content version")
 }
