@@ -1120,8 +1120,8 @@ func validateRenditionProfileConfig(profile RenditionProfileConfig, prefix strin
 	if (profile.AdapterContract == DoclingDocumentAdapterContract || profile.AdapterContract == MistralOCRAdapterContract) && profile.MaxTranscriptChars != 0 {
 		return fmt.Errorf("%s max_transcript_chars is only supported for ASR", prefix)
 	}
-	if profile.Model != "" && profile.AdapterContract != vision.AdapterContract {
-		return fmt.Errorf("%s model is only supported for %s", prefix, vision.AdapterContract)
+	if profile.Model != "" && profile.AdapterContract != vision.AdapterContract && profile.AdapterContract != vision.UnderstandingAdapterContract {
+		return fmt.Errorf("%s model is only supported for %s or %s", prefix, vision.AdapterContract, vision.UnderstandingAdapterContract)
 	}
 
 	if profile.MaxUnits <= 0 || profile.MaxUnits > 1_000_000 {
@@ -1151,8 +1151,8 @@ func validateRenditionProfileConfig(profile RenditionProfileConfig, prefix strin
 
 func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix string) error {
 	runtime := profile.Runtime
-	if profile.AdapterContract != DoclingASRAdapterContract && profile.AdapterContract != DoclingDocumentAdapterContract && profile.AdapterContract != MistralOCRAdapterContract && profile.AdapterContract != vision.AdapterContract {
-		return fmt.Errorf("%s runtime is supported only for %s, %s, %s, or %s", prefix, DoclingASRAdapterContract, DoclingDocumentAdapterContract, MistralOCRAdapterContract, vision.AdapterContract)
+	if profile.AdapterContract != DoclingASRAdapterContract && profile.AdapterContract != DoclingDocumentAdapterContract && profile.AdapterContract != MistralOCRAdapterContract && profile.AdapterContract != vision.AdapterContract && profile.AdapterContract != vision.UnderstandingAdapterContract {
+		return fmt.Errorf("%s runtime is supported only for %s, %s, %s, %s, or %s", prefix, DoclingASRAdapterContract, DoclingDocumentAdapterContract, MistralOCRAdapterContract, vision.AdapterContract, vision.UnderstandingAdapterContract)
 	}
 	if profile.AdapterContract == MistralOCRAdapterContract {
 		return validateMistralRuntime(profile, prefix)
@@ -1165,12 +1165,15 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 		return fmt.Errorf("%s runtime trust_boundary must be operator_network or hosted_provider", prefix)
 	}
 	switch profile.AdapterContract {
-	case vision.AdapterContract:
+	case vision.AdapterContract, vision.UnderstandingAdapterContract:
 		if runtime.RequestTimeout.Std() <= 0 || runtime.RequestTimeout.Std() > vision.MaxRequestTimeout {
 			return fmt.Errorf("%s runtime request_timeout must be positive and at most 10m", prefix)
 		}
 		if _, err := vision.Descriptor(profile.DescriptorID, profile.Model, document.RenditionTrustBoundary(profile.TrustBoundary)); err != nil {
 			return fmt.Errorf("%s: %w", prefix, err)
+		}
+		if (profile.AdapterContract == vision.UnderstandingAdapterContract) != (profile.DescriptorID == vision.UnderstandingProviderID) {
+			return fmt.Errorf("%s image understanding requires its own task and adapter", prefix)
 		}
 		if profile.DiscloseFilename || len(profile.RequestedArtifacts) != 1 || profile.RequestedArtifacts[0] != string(document.EvidenceArtifactStructured) || profile.MaxResponseBytes > vision.MaxResponseBytes {
 			return fmt.Errorf("%s vision requires a withheld filename, structured evidence, and at most 1 MiB response", prefix)
@@ -1209,7 +1212,7 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 	if err := validateRenditionOrigin(parsed, document.RenditionTrustBoundary(profile.TrustBoundary)); err != nil {
 		return fmt.Errorf("%s: %w", prefix, err)
 	}
-	if profile.AdapterContract != vision.AdapterContract && (runtime.RequestTimeout.Std() <= 0 || runtime.RequestTimeout.Std() > 24*time.Hour ||
+	if profile.AdapterContract != vision.AdapterContract && profile.AdapterContract != vision.UnderstandingAdapterContract && (runtime.RequestTimeout.Std() <= 0 || runtime.RequestTimeout.Std() > 24*time.Hour ||
 		runtime.TotalTimeout.Std() <= 0 || runtime.TotalTimeout.Std() > 24*time.Hour ||
 		runtime.PollInterval.Std() <= 0 || runtime.PollInterval.Std() > runtime.TotalTimeout.Std() ||
 		runtime.MaxPollAttempts <= 0 || runtime.MaxPollAttempts > 10_000) {

@@ -270,9 +270,6 @@ func normalizeEmbeddingSetRecord(record EmbeddingSetRecord) (EmbeddingSetRecord,
 		if err != nil {
 			return EmbeddingSetRecord{}, fmt.Errorf("decoding canonical E2 generation JSON: %w", err)
 		}
-		if generation.Version != document.EmbeddingInputGenerationVersion {
-			return EmbeddingSetRecord{}, errors.New("E2 generation artifact is not the current policy-complete version")
-		}
 		canonical, err := document.MarshalEmbeddingInputGeneration(generation)
 		if err != nil {
 			return EmbeddingSetRecord{}, fmt.Errorf("encoding canonical E2 generation JSON: %w", err)
@@ -372,9 +369,6 @@ func validateExactEmbeddingGenerationArtifact(record EmbeddingInputGenerationRec
 	})
 	if err != nil {
 		return err
-	}
-	if generation.Version != document.EmbeddingInputGenerationVersion {
-		return errors.New("E2 generation artifact is not the current policy-complete version")
 	}
 	canonical, err := document.MarshalEmbeddingInputGeneration(generation)
 	if err != nil || !bytes.Equal(canonical, data) {

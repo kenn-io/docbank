@@ -459,7 +459,21 @@ func TestSearcherRerankingPayloadKeepsPublicExcerpt(t *testing.T) {
 			require.Len(t, reranker.candidates, 1)
 			assert.Equal(t, test.want, reranker.candidates[0].Excerpt)
 			require.Len(t, ranked.Results, 1)
-			assert.Equal(t, test.lexical, ranked.Results[0].Excerpt)
+			assert.Equal(t, test.want, ranked.Results[0].Excerpt)
+		})
+	}
+}
+
+func TestSearcherRemovesControlsFromPublicExcerpt(t *testing.T) {
+	for _, mode := range []Mode{ModeSemantic, ModeHybrid} {
+		t.Run(string(mode), func(t *testing.T) {
+			searcher, backend, _, descriptor := retrievalSearcherFixture(t, true, 1)
+			backend.semantic[0].Excerpt = "plain text \x1b[2J\tstill here\n"
+			report, err := searcher.Search(t.Context(), Query{Text: "query", Mode: mode, Limit: 1,
+				ProcessingProfileFingerprint: "profile", BindingID: "required", Authorization: retrievalAuthorization(descriptor)})
+			require.NoError(t, err)
+			require.Len(t, report.Results, 1)
+			assert.Equal(t, "plain text [2J\tstill here\n", report.Results[0].Excerpt)
 		})
 	}
 }

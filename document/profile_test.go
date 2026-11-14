@@ -226,6 +226,33 @@ func TestCanonicalProfileRejectsInvalidPolicy(t *testing.T) {
 			p.RetentionDisclosure.RetainProviderMarkdown = false
 			p.RetentionDisclosure.RetainTypedArtifacts = true
 		}, "photo vision profiles do not retain Markdown or typed artifacts"},
+		{"understanding task with photo adapter", func(p *document.ProcessingProfileV1) {
+			p.Rendition.AdapterContract = vision.AdapterContract
+			p.Rendition.Descriptor.ID = vision.UnderstandingProviderID
+			p.Embeddings = nil
+			p.RetentionDisclosure.RetainSanitizedMarkdown = false
+			p.RetentionDisclosure.RetainProviderMarkdown = false
+			p.RetentionDisclosure.RetainTypedArtifacts = false
+		}, "requires its own adapter and task"},
+		{"image understanding unit boundary", func(p *document.ProcessingProfileV1) {
+			p.Rendition.AdapterContract = document.ImageUnderstandingAdapterContract
+			p.Rendition.Descriptor.ID = vision.UnderstandingProviderID
+			p.Rendition.MaxUnits = 3
+		}, "at least four units"},
+		{"image understanding source size", func(p *document.ProcessingProfileV1) {
+			p.Rendition.AdapterContract = document.ImageUnderstandingAdapterContract
+			p.Rendition.Descriptor.ID = vision.UnderstandingProviderID
+			p.Rendition.MaxDocumentBytes = 16<<20 + 1
+			p.Rendition.MaxUnits = 4
+		}, "at most 16 MiB"},
+		{"image understanding chunk formatter", func(p *document.ProcessingProfileV1) {
+			p.Rendition.AdapterContract = document.ImageUnderstandingAdapterContract
+			p.Rendition.Descriptor.ID = vision.UnderstandingProviderID
+			p.Rendition.MaxUnits = 4
+		}, "headings formatter"},
+		{"headings formatter without image understanding", func(p *document.ProcessingProfileV1) {
+			p.Embeddings[1].Chunk.Formatter = document.RenditionChunkHeadingsFormatter
+		}, "headings formatter requires image understanding"},
 		{"chunk embedding with photo description", func(p *document.ProcessingProfileV1) {
 			p.Rendition.AdapterContract = vision.AdapterContract
 			p.RetentionDisclosure.RetainSanitizedMarkdown = false

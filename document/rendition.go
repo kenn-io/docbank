@@ -30,6 +30,7 @@ type RenditionLimits struct {
 // RenditionPolicy binds rendition construction to one immutable set of
 // limits. Renditions never chunk, so it carries no chunk bounds.
 type RenditionPolicy struct {
+	imageUnderstanding bool
 	maxDocumentChars   int
 	maxUnitRunes       int
 	maxSegmentRunes    int
@@ -119,6 +120,8 @@ type RenditionV1 struct {
 	MarkdownChecksum string
 	Units            []NormalizedUnitV1
 	Warnings         []RenditionWarningV1
+
+	imageUnderstanding bool
 }
 
 func invalidRenditionError(reason string) error {

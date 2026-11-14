@@ -165,7 +165,8 @@ func TestMediaEvidenceReusesVerifiedGenerationAcrossLookups(t *testing.T) {
 	require.Error(t, err, "cache entries must match all catalog authority")
 }
 
-func TestSearcherSemanticRerankingUsesExactRenditionInputExcerpt(t *testing.T) {
+func TestSearcherReranksFullRenditionAndCapsPublicExcerpt(t *testing.T) {
+	full := strings.Repeat("é", 600)
 	policy, err := document.NewEvidencePolicy(4096)
 	require.NoError(t, err)
 	evidence, err := document.NormalizeEvidenceV1(document.SourceEvidenceV1{
@@ -174,7 +175,7 @@ func TestSearcherSemanticRerankingUsesExactRenditionInputExcerpt(t *testing.T) {
 		Units: []document.SourceEvidenceUnitV1{
 			{Order: 0, Text: "first cue", Locator: document.SourceEvidenceLocatorV1{
 				Kind: document.EvidenceLocatorSegment, IndexOrigin: document.EvidenceIndexOriginZero, Start: 0, End: 1000}},
-			{Order: 1, Text: "second cue", Locator: document.SourceEvidenceLocatorV1{
+			{Order: 1, Text: full, Locator: document.SourceEvidenceLocatorV1{
 				Kind: document.EvidenceLocatorSegment, IndexOrigin: document.EvidenceIndexOriginZero, Start: 7000, End: 9500}},
 		},
 	}, policy)
@@ -207,22 +208,28 @@ func TestSearcherSemanticRerankingUsesExactRenditionInputExcerpt(t *testing.T) {
 	blobs := &mediaBlobFixture{data: map[string][]byte{
 		artifacts.GenerationBlobHash: generationBytes, evidenceHash: evidenceBytes,
 	}}
-	searcher, backend, _, descriptor := retrievalSearcherFixture(t, true, 1)
-	backend.semantic[0].InputKind = document.EmbeddingInputRenditionChunk
-	backend.semantic[0].InputID = generation.Inputs[1].Key
-	backend.semantic[0].MediaEvidence = artifacts
-	searcher.mediaEvidence = NewMediaEvidenceResolver(blobs)
-	reranker := &stageReranker{}
-	searcher.reranking = RerankingConfig{Enabled: true,
-		Profile: RerankingProfile{ID: "reranking", MaxCandidates: 1}, Provider: reranker,
-		Authorizer: &stageAuthorizer{}, Deadline: time.Second, FailurePolicy: ProviderFailureDegrade}
+	for _, mode := range []Mode{ModeSemantic, ModeHybrid} {
+		t.Run(string(mode), func(t *testing.T) {
+			searcher, backend, _, descriptor := retrievalSearcherFixture(t, true, 1)
+			backend.semantic[0].InputKind = document.EmbeddingInputRenditionChunk
+			backend.semantic[0].InputID = generation.Inputs[1].Key
+			backend.semantic[0].MediaEvidence = artifacts
+			searcher.mediaEvidence = NewMediaEvidenceResolver(blobs)
+			reranker := &stageReranker{}
+			searcher.reranking = RerankingConfig{Enabled: true,
+				Profile: RerankingProfile{ID: "reranking", MaxCandidates: 1}, Provider: reranker,
+				Authorizer: &stageAuthorizer{}, Deadline: time.Second, FailurePolicy: ProviderFailureDegrade}
 
-	_, err = searcher.Search(t.Context(), Query{Text: "query", Mode: ModeSemantic, Limit: 1,
-		ProcessingProfileFingerprint: "profile", BindingID: "required",
-		Authorization: retrievalAuthorization(descriptor)})
-	require.NoError(t, err)
-	require.Len(t, reranker.candidates, 1)
-	require.Equal(t, "second cue", reranker.candidates[0].Excerpt)
+			report, err := searcher.Search(t.Context(), Query{Text: "query", Mode: mode, Limit: 1,
+				ProcessingProfileFingerprint: "profile", BindingID: "required",
+				Authorization: retrievalAuthorization(descriptor)})
+			require.NoError(t, err)
+			require.Len(t, reranker.candidates, 1)
+			require.Equal(t, full, reranker.candidates[0].Excerpt)
+			require.Len(t, report.Results, 1)
+			require.Equal(t, strings.Repeat("é", 512), report.Results[0].Excerpt)
+		})
+	}
 }
 
 type mediaTokenizer struct{}

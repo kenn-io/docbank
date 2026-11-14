@@ -79,6 +79,8 @@ type Provider struct {
 // taskPrompt selects a task's prompt and completion budget. Detection output grows with each face.
 func taskPrompt(id string) (string, int, error) {
 	switch id {
+	case UnderstandingProviderID:
+		return understandingPrompt, 8192, nil
 	case ProviderID:
 		return prompt, 2048, nil
 	case document.FaceDetectionProviderID:
@@ -100,8 +102,16 @@ func Descriptor(id, model string, trust document.RenditionTrustBoundary) (docume
 	if model == "" || len(model) > 255 || model != strings.TrimSpace(model) || strings.ContainsAny(model, "\r\n\x00") {
 		return document.RenditionDescriptor{}, errors.New("vision model is invalid")
 	}
-	fingerprint := providerutil.SHA256Hex([]byte(AdapterContract + "\x00" + model + "\x00" + InputProfile + "\x00" + text))
-	return document.NewRenditionDescriptor(document.RenditionDescriptor{ID: id, ContractVersion: document.RenditionProviderContractVersion, PolicyFingerprint: fingerprint, TrustBoundary: trust, SupportedFormats: []document.RenditionFormatCapability{{MediaFamily: "image", MediaType: "image/jpeg", InputKind: document.RenditionInputDerivedUpload}}, ReturnsStructured: true, ArtifactRoles: []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}})
+	contract, inputProfile := AdapterContract, InputProfile
+	formats := []document.RenditionFormatCapability{{MediaFamily: "image", MediaType: "image/jpeg", InputKind: document.RenditionInputDerivedUpload}}
+	if id == UnderstandingProviderID {
+		contract, inputProfile, formats = UnderstandingAdapterContract, "original-image-max16mib-labeled-units-v5", nil
+		for _, mediaType := range []string{"image/jpeg", "image/png", "image/webp"} {
+			formats = append(formats, document.RenditionFormatCapability{MediaFamily: "image", MediaType: mediaType, InputKind: document.RenditionInputOriginalFile})
+		}
+	}
+	fingerprint := providerutil.SHA256Hex([]byte(contract + "\x00" + model + "\x00" + inputProfile + "\x00" + text))
+	return document.NewRenditionDescriptor(document.RenditionDescriptor{ID: id, ContractVersion: document.RenditionProviderContractVersion, PolicyFingerprint: fingerprint, TrustBoundary: trust, SupportedFormats: formats, ReturnsStructured: true, ArtifactRoles: []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}})
 }
 
 // DisclosureFingerprint binds consent to the exact destination and deployment.
@@ -169,8 +179,8 @@ type response struct {
 	} `json:"choices"`
 }
 
-func (p *Provider) describe(ctx context.Context, data []byte, text string, tokens int, expiresAt string) ([]byte, error) {
-	body, err := json.Marshal(request{Model: p.profile.Model, Messages: []message{{Role: "user", Content: []part{{Type: "text", Text: text}, {Type: "image_url", ImageURL: &imageURL{URL: "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(data)}}}}}, MaxCompletionTokens: tokens})
+func (p *Provider) describe(ctx context.Context, data []byte, mediaType, text string, tokens int, expiresAt string) ([]byte, error) {
+	body, err := json.Marshal(request{Model: p.profile.Model, Messages: []message{{Role: "user", Content: []part{{Type: "text", Text: text}, {Type: "image_url", ImageURL: &imageURL{URL: "data:" + mediaType + ";base64," + base64.StdEncoding.EncodeToString(data)}}}}}, MaxCompletionTokens: tokens})
 	if err != nil {
 		return nil, err
 	}
@@ -216,8 +226,8 @@ func (p *Provider) describe(ctx context.Context, data []byte, text string, token
 // clipped, so one bad field never discards the rest. Text around the first JSON
 // object is ignored. The object must contain at least one description field.
 func Parse(raw []byte) (document.PhotoDescription, error) {
-	start := bytes.IndexByte(raw, '{')
-	if start < 0 {
+	decoder := firstObjectDecoder(raw)
+	if decoder == nil {
 		return document.PhotoDescription{}, errors.New("vision response has no JSON object")
 	}
 	var fields struct {
@@ -226,7 +236,7 @@ func Parse(raw []byte) (document.PhotoDescription, error) {
 		Tags        jsontext.Value `json:"tags"`
 		VisibleText jsontext.Value `json:"visible_text"`
 	}
-	if err := json.UnmarshalDecode(jsontext.NewDecoder(bytes.NewReader(raw[start:])), &fields); err != nil {
+	if err := json.UnmarshalDecode(decoder, &fields); err != nil {
 		return document.PhotoDescription{}, err
 	}
 	if len(fields.Caption)+len(fields.Tags)+len(fields.VisibleText)+len(fields.Rotation) == 0 {
@@ -286,7 +296,19 @@ func Parse(raw []byte) (document.PhotoDescription, error) {
 	out.Tags = out.Tags[:min(10, len(out.Tags))]
 	return out, nil
 }
+
+func firstObjectDecoder(raw []byte) *jsontext.Decoder {
+	start := bytes.IndexByte(raw, '{')
+	if start < 0 {
+		return nil
+	}
+	return jsontext.NewDecoder(bytes.NewReader(raw[start:]))
+}
+
 func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization) (document.RenditionResult, error) {
+	if p.descriptor.ID == UnderstandingProviderID {
+		return p.renderUnderstanding(ctx, upload, authorization)
+	}
 	started := time.Now().UTC()
 	meta := upload.Metadata()
 	if meta.InputKind != document.RenditionInputDerivedUpload || meta.ByteLength > 4<<20 {
@@ -296,7 +318,7 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	raw, err := p.describe(ctx, data, p.prompt, p.tokens, authorization.ExpiresAt)
+	raw, err := p.describe(ctx, data, "image/jpeg", p.prompt, p.tokens, authorization.ExpiresAt)
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
@@ -339,7 +361,7 @@ func (p *Provider) Probe(ctx context.Context) error {
 	if err := jpeg.Encode(&jpegData, probeImage, nil); err != nil {
 		return fmt.Errorf("encode probe JPEG: %w", err)
 	}
-	response, err := p.describe(ctx, jpegData.Bytes(), document.VisionProbePrompt, 2048, "")
+	response, err := p.describe(ctx, jpegData.Bytes(), "image/jpeg", document.VisionProbePrompt, 2048, "")
 	if err != nil {
 		// Synthetic probes can retry safely and retain the provider's delay.
 		if classified, ok := errors.AsType[*document.RenditionProviderError](err); ok && classified.Code() == document.RenditionErrorAmbiguousSubmission {

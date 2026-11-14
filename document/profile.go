@@ -451,6 +451,12 @@ func validateProcessingProfile(profile ProcessingProfileV1) error {
 		if err := validateRenditionBinding(*profile.Rendition); err != nil {
 			return err
 		}
+		if (profile.Rendition.AdapterContract == ImageUnderstandingAdapterContract) != (profile.Rendition.Descriptor.ID == ImageUnderstandingProviderID) {
+			return errors.New("image understanding requires its own adapter and task")
+		}
+		if err := validateImageUnderstandingRendition(*profile.Rendition); err != nil {
+			return err
+		}
 	}
 	if err := validateEvidenceLexicalPolicy(profile.EvidenceLexical); err != nil {
 		return err
@@ -474,8 +480,14 @@ func validateProcessingProfile(profile ProcessingProfileV1) error {
 			return fmt.Errorf("embedding binding name %q is duplicated", binding.Name)
 		}
 		names[binding.Name] = struct{}{}
+		if binding.Chunk != nil && binding.Chunk.Formatter == RenditionChunkHeadingsFormatter && (profile.Rendition == nil || profile.Rendition.AdapterContract != ImageUnderstandingAdapterContract) {
+			return errors.New("rendition chunk headings formatter requires image understanding")
+		}
 		if binding.InputKind == EmbeddingInputRenditionChunk && profile.Rendition != nil && profile.Rendition.AdapterContract == VisionAdapterContract {
 			return errors.New("rendition_chunk embeddings require a text rendition; photo vision profiles publish photo results")
+		}
+		if binding.InputKind == EmbeddingInputRenditionChunk && profile.Rendition != nil && profile.Rendition.AdapterContract == ImageUnderstandingAdapterContract && (binding.Chunk == nil || binding.Chunk.Formatter != RenditionChunkHeadingsFormatter) {
+			return errors.New("image understanding requires the rendition chunk headings formatter")
 		}
 		if err := validateEmbeddingBinding(binding, profile.Rendition != nil); err != nil {
 			return fmt.Errorf("embedding binding %d: %w", index, err)

@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"go.kenn.io/docbank/document"
@@ -183,7 +184,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		}
 		args := []any{fq}
 		contentQuery := `SELECT ` + nodeCols + `,'' AS build_id,'' AS segment_id,
-			 snippet(content_fts,2,char(1),char(2),' … ',24) AS excerpt,'' AS locator_json
+			 snippet(content_fts,2,char(1),char(2),' … ',24) AS excerpt,'' AS locator_json,'' AS headings_json,'' AS provider_id
 			FROM content_fts CROSS JOIN content_versions matched_cv ON matched_cv.blob_hash=content_fts.blob_hash
 			CROSS JOIN nodes n ON n.id=matched_cv.node_id AND n.current_version_id=matched_cv.version_id
 			CROSS JOIN content_versions cv ON cv.version_id=matched_cv.version_id
@@ -193,13 +194,14 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		if generationID != "" {
 			contentQuery = selectedCTE + `SELECT ` + nodeCols + `,rendition_lexical_fts.build_id,
 				 rendition_lexical_fts.segment_id,snippet(rendition_lexical_fts,2,char(1),char(2),' … ',24),
-				 ru.locator_json
+				 ru.locator_json,ru.heading_path_json,coalesce(json_extract(rb.provider_receipt_json,'$.provider_id'),'')
 				FROM rendition_lexical_fts ` + selectedJoin + `
 				CROSS JOIN rendition_lexical_generation_builds gb
 				 ON gb.build_id=rendition_lexical_fts.build_id
 				CROSS JOIN rendition_lexical_segments ls ON ls.build_id=rendition_lexical_fts.build_id
 				 AND ls.segment_id=rendition_lexical_fts.segment_id
 				CROSS JOIN rendition_units ru ON ru.build_id=ls.build_id AND ru.unit_id=ls.unit_id
+				JOIN rendition_builds rb ON rb.build_id=ls.build_id
 				JOIN rendition_attachments a
 				 ON a.build_id=rendition_lexical_fts.build_id ` + attachmentSelection + `
 				JOIN rendition_heads rh ON rh.content_version_id=a.content_version_id
@@ -312,18 +314,18 @@ func explainedNameCandidates(hits []SearchHit) []ExplainedLexicalCandidate {
 	result := make([]ExplainedLexicalCandidate, len(hits))
 	for index, hit := range hits {
 		result[index] = ExplainedLexicalCandidate{Node: hit.Node, Path: hit.Path,
-			Match: SearchMatchName, EvidenceKind: "node_name", Excerpt: boundedExplainedSearchExcerpt(hit.Node.Name)}
+			Match: SearchMatchName, EvidenceKind: "node_name", Excerpt: boundedExplainedSearchExcerpt(hit.Node.Name, maxExplainedSearchExcerptRunes)}
 	}
 	return result
 }
 
 func scanExplainedLexicalRow(row interface{ Scan(dest ...any) error }, candidate *ExplainedLexicalCandidate) (Node, error) {
 	var node Node
-	var locatorJSON string
+	var locatorJSON, headingsJSON, providerID string
 	if err := row.Scan(&node.ID, &node.ParentID, &node.Name, &node.Kind,
 		&node.CurrentVersionID, &node.BlobHash, &node.MD5, &node.Size, &node.MimeType,
 		&node.Revision, &node.CreatedAt, &node.ModifiedAt, &node.TrashedAt,
-		&candidate.BuildID, &candidate.SegmentID, &candidate.Excerpt, &locatorJSON); err != nil {
+		&candidate.BuildID, &candidate.SegmentID, &candidate.Excerpt, &locatorJSON, &headingsJSON, &providerID); err != nil {
 		return Node{}, err
 	}
 	if locatorJSON != "" {
@@ -331,17 +333,25 @@ func scanExplainedLexicalRow(row interface{ Scan(dest ...any) error }, candidate
 			return Node{}, fmt.Errorf("decoding lexical evidence locator: %w", err)
 		}
 	}
-	candidate.Excerpt = boundedExplainedSearchExcerpt(candidate.Excerpt)
+	if providerID == document.ImageUnderstandingProviderID {
+		var headings []string
+		if err := json.Unmarshal([]byte(headingsJSON), &headings); err != nil {
+			return Node{}, fmt.Errorf("decoding lexical evidence headings: %w", err)
+		}
+		prefix := document.FormatRenditionHeadingContext(headings, "")
+		candidate.Excerpt = prefix + boundedExplainedSearchExcerpt(candidate.Excerpt, max(0, maxExplainedSearchExcerptRunes-utf8.RuneCountInString(prefix)))
+	} else {
+		candidate.Excerpt = boundedExplainedSearchExcerpt(candidate.Excerpt, maxExplainedSearchExcerptRunes)
+	}
 	return node, nil
 }
 
-func boundedExplainedSearchExcerpt(value string) string {
+func boundedExplainedSearchExcerpt(value string, limit int) string {
 	runes := []rune(value)
-	if len(runes) > maxExplainedSearchExcerptRunes {
+	if len(runes) > limit {
 		match := max(slices.Index(runes, rune(1)), 0)
-		start := max(0, min(match-maxExplainedSearchExcerptRunes/2,
-			len(runes)-maxExplainedSearchExcerptRunes))
-		runes = runes[start : start+maxExplainedSearchExcerptRunes]
+		start := max(0, min(match-limit/2, len(runes)-limit))
+		runes = runes[start : start+limit]
 	}
 	runes = slices.DeleteFunc(runes, func(value rune) bool { return value == 1 || value == 2 })
 	return string(runes)
@@ -1013,7 +1023,7 @@ func searchExcerptByVersionTx(ctx context.Context, queryer interface {
 	if err != nil {
 		return "", err
 	}
-	return boundedExplainedSearchExcerpt(excerpt), nil
+	return boundedExplainedSearchExcerpt(excerpt, maxExplainedSearchExcerptRunes), nil
 }
 
 type semanticEligibilityKey struct {

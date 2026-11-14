@@ -109,13 +109,15 @@ func publishRenditionTextSourceFixture(
 	buildID := testHash("rendition-build")
 	attachmentID := testHash("rendition-attachment")
 	artifactID := "artifact_" + testHash("markdown-artifact")
+	providerReceipt, err := json.Marshal(document.RenditionReceipt{ProviderID: document.PDFTextProviderID, DescriptorFingerprint: testHash("descriptor"), PolicyFingerprint: testHash("policy"), RenditionRequestFingerprint: profile.RenditionRequestFingerprint, AuthorizationFingerprint: testHash("publication-authorization"), SourceSHA256: node.BlobHash, OperationID: "synthetic-pdf-operation", StartedAt: "2026-09-11T12:00:00.000000000Z", CompletedAt: "2026-09-11T12:00:00.000000000Z", Usage: document.RenditionUsage{Requests: 1, InputBytes: node.Size, Units: 1}})
+	require.NoError(t, err)
 	build := store.RenditionBuildRecord{
 		ID: buildID, VaultID: s.VaultID(), SourceSHA256: node.BlobHash,
 		RenditionRequestFingerprint:       profile.RenditionRequestFingerprint,
 		EvidenceLexicalFingerprint:        profile.EvidenceLexicalFingerprint,
 		CapturedArtifactPolicyFingerprint: testHash(string(policy)), CapturedArtifactPolicy: policy,
 		AuthorizationChecksum: testHash("publication-authorization"), ProviderOperationID: "synthetic-pdf-operation",
-		ProviderReceipt:  jsontext.Value(`{"provider":"synthetic","request_id":"db17"}`),
+		ProviderReceipt:  jsontext.Value(providerReceipt),
 		EvidenceChecksum: evidenceHash, RenditionChecksum: rendition.Checksum,
 		MarkdownChecksum: rendition.MarkdownChecksum, Completeness: document.EvidenceComplete,
 		CompletedAt: "2026-09-11T12:00:00.000000000Z", DeclaredArtifactCount: 2,
@@ -197,6 +199,7 @@ func TestRenditionTextHTTPResolvesAndStreamsOneVerifiedExactArtifact(t *testing.
 	contentResp, content := get(t, ts, "/api/v1/renditions/text/content?"+params.Encode(), nil)
 	require.Equal(t, http.StatusOK, contentResp.StatusCode, content)
 	require.Equal(t, fixture.markdown, []byte(content))
+	assert.Equal(t, document.PDFTextProviderID, contentResp.Header.Get("X-Docbank-Rendition-Provider-Id"))
 	require.Equal(t, receipt.Artifact.SHA256, contentResp.Header.Get("X-Docbank-Rendition-Sha256"))
 	require.Equal(t, base64.StdEncoding.EncodeToString(mustDecodeTestHash(t, receipt.Artifact.SHA256)),
 		strings.TrimSuffix(strings.TrimPrefix(contentResp.Header.Get("Content-Digest"), "sha-256=:"), ":"))

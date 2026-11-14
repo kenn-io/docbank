@@ -176,10 +176,9 @@ func TestRenderSendsImageBytesOnce(t *testing.T) {
 // renderJPEG runs one authorized description of data through the provider.
 func renderJPEG(t *testing.T, p *Provider, data []byte) (document.RenditionResult, error) {
 	t.Helper()
-	descriptor := p.Descriptor()
-	now := time.Now().UTC()
 	metadata := document.AuthorizedUploadMetadata{MediaFamily: "image", MediaType: "image/jpeg", InputKind: document.RenditionInputDerivedUpload, ByteLength: int64(len(data)), SHA256: providerutil.SHA256Hex(data), CapabilityRecordChecksum: strings.Repeat("a", 64), ProviderMetadataChecksum: strings.Repeat("b", 64)}
-	auth := document.RenditionAuthorization{ProviderID: descriptor.ID, DescriptorFingerprint: descriptor.Fingerprint, PolicyFingerprint: descriptor.PolicyFingerprint, RenditionRequestFingerprint: strings.Repeat("c", 64), SourceSHA256: strings.Repeat("d", 64), SourceBytes: 8192, CapabilityRecordChecksum: metadata.CapabilityRecordChecksum, ProviderMetadataChecksum: metadata.ProviderMetadataChecksum, MediaFamily: "image", MediaType: "image/jpeg", InputKind: document.RenditionInputDerivedUpload, AllowedArtifactRoles: []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}, MaxArtifactBytes: 1 << 20, MaxArtifacts: 1, MaxTotalResultBytes: 1 << 20, AuthorizedAt: now.Format("2006-01-02T15:04:05.000000000Z"), ExpiresAt: now.Add(time.Minute).Format("2006-01-02T15:04:05.000000000Z")}
+	auth := imageAuthorization(p, metadata)
+	auth.SourceSHA256, auth.SourceBytes = strings.Repeat("d", 64), 8192
 	return document.RenderRendition(context.Background(), p, &testUpload{ReadCloser: io.NopCloser(bytes.NewReader(data)), metadata: metadata}, auth)
 }
 

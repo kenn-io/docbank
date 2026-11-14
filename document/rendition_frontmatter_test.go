@@ -50,6 +50,33 @@ func TestEnvelopeRenditionV1KeepsNavigationBodyRelative(t *testing.T) {
 		}
 	}
 
+	t.Run("image text matching its notice", func(t *testing.T) {
+		evidence := normalizeRenditionEvidence(t, SourceEvidenceV1{ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance, Family: "image", UnitKind: EvidenceUnitGeneric,
+			Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionField, Field: "natural_provenance", Reason: "unknown"}},
+			Units: []SourceEvidenceUnitV1{
+				{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text (best-effort transcription)"}, Text: "image", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}},
+				{Order: 1, HeadingPath: []string{ImageUnderstandingHeading, "Literal description"}, Text: "```", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}},
+			}})
+		policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: 10_000, MaxUnitRunes: 10_000, MaxSegmentRunes: 1000})
+		require.NoError(t, err)
+		policy.imageUnderstanding = true
+		imageRendition, err := BuildRenditionV1(evidence, policy)
+		require.NoError(t, err)
+		enveloped, _, err := EnvelopeRenditionV1(imageRendition, RenditionEnvelopeV1{BuildID: frontmatterHash("build"), SourceSHA256: frontmatterHash("source"), SourceFormat: "png", SourceMediaType: "image/png", RenditionRequestFingerprint: frontmatterHash("request"), EvidenceLexicalFingerprint: frontmatterHash("lexical"), NormalizedEvidenceContract: NormalizedEvidenceContractV1, UnitKind: EvidenceUnitGeneric})
+		require.NoError(t, err)
+		front, imageBody, err := ParseRenditionFrontMatterV1(enveloped.Markdown)
+		require.NoError(t, err)
+		require.Len(t, front.Navigation.Entries, 2)
+		textStart := bytes.Index(imageBody, []byte("```\nimage\n```"))
+		require.NotEqual(t, -1, textStart)
+		require.Equal(t, textStart+4, front.Navigation.Entries[0].Byte)
+		require.Equal(t, 1+bytes.Count(imageBody[:textStart+4], []byte("\n")), front.Navigation.Entries[0].Line)
+		second := bytes.Index(imageBody, []byte("````\n```\n````"))
+		require.NotEqual(t, -1, second)
+		require.Equal(t, second+5, front.Navigation.Entries[1].Byte)
+		require.Equal(t, 1+bytes.Count(imageBody[:second+5], []byte("\n")), front.Navigation.Entries[1].Line)
+	})
+
 	parsed, parsedBody, err := ParseRenditionFrontMatterV1(got.Markdown)
 	require.NoError(t, err)
 	require.Equal(t, frontmatter, parsed)

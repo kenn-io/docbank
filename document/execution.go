@@ -15,6 +15,8 @@ import (
 const (
 	// VisionAdapterContract identifies the photo description adapter contract.
 	VisionAdapterContract = "docbank-compatible-vision/v1"
+	// ImageUnderstandingAdapterContract identifies image understanding renditions.
+	ImageUnderstandingAdapterContract = "docbank-compatible-image-understanding/v1"
 	// VisionProbePrompt is the question the adapter's readiness probe asks of a
 	// synthetic red and blue image, and the text test fixtures recognize it by.
 	VisionProbePrompt = "What are the colors of the left and right halves of this image? Reply with two lowercase color names separated by a comma and no other text."
@@ -266,6 +268,7 @@ func renditionExecutionPoliciesForCanonicalProfileV1(
 	if err != nil {
 		return EvidencePolicy{}, RenditionPolicy{}, err
 	}
+	rendition.imageUnderstanding = profile.Rendition.AdapterContract == ImageUnderstandingAdapterContract
 	return evidence, rendition, nil
 }
 
@@ -353,6 +356,7 @@ func (snapshot RenditionExecutionSnapshotV1) Policies() (
 	if err != nil {
 		return EvidencePolicy{}, RenditionPolicy{}, err
 	}
+	rendition.imageUnderstanding = snapshot.Authorization.ProviderID == ImageUnderstandingProviderID
 	return evidence, rendition, nil
 }
 

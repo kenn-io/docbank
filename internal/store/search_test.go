@@ -950,6 +950,32 @@ func TestSearchExplainedLexicalCandidatesCitesActiveRenditionSegment(t *testing.
 	assert.Contains(t, candidates[0].Excerpt, "mercury")
 	assert.LessOrEqual(t, len([]rune(candidates[0].Excerpt)), maxExplainedSearchExcerptRunes)
 	assert.Equal(t, versions[0], candidates[0].Node.CurrentVersionID)
+	t.Run("image interpretation", func(t *testing.T) {
+		s, _ := newRenditionCatalogFixture(t)
+		node, err := s.CreateFile(t.Context(), s.RootID(), "synthetic-image.jpg", catalogSourceHash, 20, "image/jpeg")
+		require.NoError(t, err)
+		profile := catalogProcessingProfileWith(t, false, func(p *document.ProcessingProfileV1) {
+			p.Rendition.AdapterContract = document.ImageUnderstandingAdapterContract
+			p.Rendition.Descriptor.ID = document.ImageUnderstandingProviderID
+		})
+		build := lexicalSearchBuild(s, profile, catalogBuildID, "SAVE\nNOW\nR and D \\&amp; partners")
+		build.Units[0].HeadingPath = []string{document.ImageUnderstandingHeading, "Visible text (best-effort transcription)"}
+		build.Units[0].Locator = document.EvidenceLocatorV1{Kind: document.EvidenceLocatorGeneric, IndexOrigin: document.EvidenceIndexOriginNone, Name: "synthetic-vision"}
+		build.Completeness = document.EvidenceDegradedProvenance
+		receipt, err := json.Marshal(document.RenditionReceipt{ProviderID: document.ImageUnderstandingProviderID, DescriptorFingerprint: fakeHash("a3"), PolicyFingerprint: testSHA256([]byte("policy")), RenditionRequestFingerprint: profile.RenditionRequestFingerprint, AuthorizationFingerprint: testSHA256([]byte("authorization")), SourceSHA256: catalogSourceHash, OperationID: "synthetic-operation", StartedAt: embeddingCatalogTime, CompletedAt: embeddingCatalogTime, Usage: document.RenditionUsage{Requests: 1, InputBytes: 20, Units: 1}})
+		require.NoError(t, err)
+		build.ProviderReceipt = receipt
+		require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+		generation, err := s.StageLexicalGeneration(t.Context(), hashVectorIndexTest("image-lexical"))
+		require.NoError(t, err)
+		attachment := RenditionAttachmentRecord{ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: node.CurrentVersionID, BuildID: build.ID, Profile: profile, AttachedAt: embeddingCatalogTime}
+		require.NoError(t, s.PublishRenditionAndLexicalHeads(t.Context(), attachment, RenditionHeadRecord{ContentVersionID: node.CurrentVersionID, ProcessingProfileFingerprint: profile.Fingerprint, AttachmentID: attachment.ID, PublishedAt: embeddingCatalogTime}, generation.ID))
+		candidates, _, err := s.SearchExplainedLexicalCandidates(t.Context(), "partners", 10, SearchOptions{}, false)
+		require.NoError(t, err)
+		require.Len(t, candidates, 1)
+		assert.Contains(t, candidates[0].Excerpt, document.ImageUnderstandingHeading+" / Visible text (best-effort transcription)")
+		assert.Contains(t, candidates[0].Excerpt, "SAVE\nNOW\nR and D \\&amp; partners")
+	})
 }
 
 func TestSearchExplainedLexicalCandidatesIncludesNamePath(t *testing.T) {
