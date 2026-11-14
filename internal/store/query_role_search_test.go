@@ -72,6 +72,7 @@ func TestRoleSearchOperandSets(t *testing.T) {
 	result, err := s.MaterializeQuerySnapshot(WithSafeRoleSearch(ctx), SnapshotRequest{Query: value})
 	require.NoError(t, err)
 	require.Empty(t, result.Rows)
+
 }
 
 func TestRoleSearchMatchesAndPeopleFacet(t *testing.T) {
@@ -776,6 +777,23 @@ func TestRoleSearchMentionsRequireDocumentContent(t *testing.T) {
 	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
 	require.NoError(t, err)
 	require.Empty(t, result.Rows)
+	survivor, err := s.CreatePerson(ctx, "Merge Survivor", "operator")
+	require.NoError(t, err)
+	retired, err := s.CreatePerson(ctx, "Merge Retired", "operator")
+	require.NoError(t, err)
+	survivor, _ = addTestPersonIdentity(t, s, survivor, "name_alias", "Survivor Alias", "survivor-alias")
+	_, err = s.MergePersons(ctx, survivor.PersonID, retired.PersonID, "11111111-1111-4111-8111-111111111111", survivor.Revision, retired.Revision)
+	require.NoError(t, err)
+	for i, text := range []string{"Merge Retired", "Survivor Alias"} {
+		file, err = s.CreateFile(ctx, s.RootID(), fmt.Sprintf("merged-%d.txt", i), fakeHash(fmt.Sprintf("ce1%d", i)), 12, "text/plain")
+		require.NoError(t, err)
+		seedCompiledLegacyText(t, s, file, text)
+	}
+	value = snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"mentions:%s"}`, retired.PersonID))
+	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 2)
+	require.ElementsMatch(t, []string{"merged-0.txt", "merged-1.txt"}, []string{result.Rows[0].Name, result.Rows[1].Name})
 }
 
 func TestRoleSearchMentionsSelectedRendition(t *testing.T) {

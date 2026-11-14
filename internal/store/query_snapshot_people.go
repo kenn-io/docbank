@@ -52,7 +52,7 @@ func (c queryCompiler) collectRoleMatches(resolved query.ResolvedQuery) ([]compi
 					return err
 				}
 				matches = append(matches, compiledRoleMatch{mention: fragment})
-			} else if slices.Contains([]string{"author", "from", "to", "cc", "bcc", "custodian", "participant", "organizer", "attendee", "between"}, field) {
+			} else if field == "between" || query.IsRoleOperand(field) {
 				roles := betweenPersonRoles
 				var err error
 				if field != "between" {

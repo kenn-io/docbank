@@ -355,12 +355,15 @@ func (state *resolutionState) recordDependency(dependency Dependency) error {
 }
 
 func referenceKindForField(field string) (ReferenceKind, bool) {
+	if IsRoleOperand(field) {
+		return ReferencePerson, true
+	}
 	switch field {
 	case string(ReferenceTag):
 		return ReferenceTag, true
 	case string(ReferenceCollection):
 		return ReferenceCollection, true
-	case string(ReferencePerson), "author", "from", "to", "cc", "bcc", "custodian", "participant", "organizer", "attendee", "between", "mentions":
+	case string(ReferencePerson), "between", "mentions":
 		return ReferencePerson, true
 	case string(ReferenceSaved):
 		return ReferenceSaved, true

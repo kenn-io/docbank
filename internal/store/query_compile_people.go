@@ -25,18 +25,14 @@ func currentPhotoSourcePredicate(file, node, version string) string {
 
 // compileRoleGroup evaluates all selected people in one predicate.
 func (c queryCompiler) compileRoleGroup(entries []query.PersonFilter) (compiledQueryFragment, error) {
-	fragment := c.compileRolePredicate(entries[0].PersonID, []string{entries[0].Roles[0]})
-	person := `COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?)`
-	fragment.sql = strings.ReplaceAll(fragment.sql, person, `COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=json_extract(j.value,'$.person_id')),json_extract(j.value,'$.person_id'))`)
-	fragment.sql = strings.ReplaceAll(fragment.sql, `role IN (?)`, `role IN (SELECT value FROM json_each(j.value,'$.roles'))`)
 	raw, err := json.Marshal(entries)
 	if err != nil {
 		return compiledQueryFragment{}, err
 	}
-	fragment.args = append([]any{string(raw)}, fragment.args[6:]...)
-	fragment.args = append(fragment.args, document.PersonResolverFingerprint(), c.eventState.InputEpoch, c.eventState.ContractVersion, c.eventState.DeriverFingerprint)
-	fragment.sql = `(CASE WHEN NOT EXISTS(SELECT 1 FROM json_each(?) j WHERE (` + fragment.sql + `) IS NOT TRUE) THEN TRUE WHEN EXISTS(SELECT 1 FROM ` + freshPeopleHeadSQL("cv.version_id") + `) THEN FALSE END)`
-	return fragment, nil
+	person := `COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=json_extract(j.value,'$.person_id')),json_extract(j.value,'$.person_id'))`
+	role := `SELECT value FROM json_each(j.value,'$.roles')`
+	args := []any{string(raw), document.PersonResolverFingerprint(), c.eventState.InputEpoch, c.eventState.ContractVersion, c.eventState.DeriverFingerprint, document.PersonResolverFingerprint(), c.eventState.InputEpoch, c.eventState.ContractVersion, c.eventState.DeriverFingerprint}
+	return compiledQueryFragment{sql: `(CASE WHEN NOT EXISTS(SELECT 1 FROM json_each(?) j WHERE (` + c.rolePredicateSQL(person, role) + `) IS NOT TRUE) THEN TRUE WHEN EXISTS(SELECT 1 FROM ` + freshPeopleHeadSQL("cv.version_id") + `) THEN FALSE END)`, args: args}, nil
 }
 
 func currentPersonAssertionFence(safe bool) string {
@@ -80,6 +76,16 @@ func freshPeopleHeadSQL(version string) string {
 func (c queryCompiler) compileRolePredicate(id string, roles []string) compiledQueryFragment {
 	person := `COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?)`
 	roleList := strings.TrimSuffix(strings.Repeat("?,", len(roles)), ",")
+	args := []any{id, id}
+	for _, role := range roles {
+		args = append(args, role)
+	}
+	args = append(args, args...)
+	args = append(args, document.PersonResolverFingerprint(), c.eventState.InputEpoch, c.eventState.ContractVersion, c.eventState.DeriverFingerprint)
+	return compiledQueryFragment{sql: c.rolePredicateSQL(person, roleList), args: args}
+}
+
+func (c queryCompiler) rolePredicateSQL(person, roleList string) string {
 	assertion := `EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.content_version_id=cv.version_id AND ` + currentPersonAssertionFence(c.safePeople) + ` AND COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=a.person_id),a.person_id)=` + person + ` AND a.role IN (` + roleList + `))`
 	edge := `COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=p.person_id),p.person_id)=` + person + ` AND p.role IN (` + roleList + `)`
 	if c.safePeople {
@@ -87,13 +93,7 @@ func (c queryCompiler) compileRolePredicate(id string, roles []string) compiledQ
 	}
 	// One fresh-head scan answers match (1), known absence (0), and unknown (NULL).
 	head := strings.Replace(freshPeopleHeadSQL("cv.version_id"), " WHERE h.content_version_id=", " LEFT JOIN document_people p ON p.content_version_id=h.content_version_id AND p.generation_id=h.generation_id WHERE h.content_version_id=", 1)
-	args := []any{id, id}
-	for _, role := range roles {
-		args = append(args, role)
-	}
-	args = append(args, args...)
-	args = append(args, document.PersonResolverFingerprint(), c.eventState.InputEpoch, c.eventState.ContractVersion, c.eventState.DeriverFingerprint)
-	return compiledQueryFragment{sql: `(CASE WHEN ` + assertion + ` THEN TRUE ELSE (SELECT MAX(CASE WHEN ` + edge + ` THEN 1 ELSE 0 END) FROM ` + head + `) END)`, args: args}
+	return `(CASE WHEN ` + assertion + ` THEN TRUE ELSE (SELECT MAX(CASE WHEN ` + edge + ` THEN 1 ELSE 0 END) FROM ` + head + `) END)`
 }
 
 var betweenPersonRoles = func() []string {
@@ -108,8 +108,6 @@ var betweenPersonRoles = func() []string {
 
 func rolesForOperand(field string, safe bool) ([]string, error) {
 	switch field {
-	case "author", "custodian", "participant", "organizer", "attendee":
-		return []string{field}, nil
 	case "from":
 		return []string{"sender", "organizer"}, nil
 	case "to":
@@ -126,6 +124,9 @@ func rolesForOperand(field string, safe bool) ([]string, error) {
 		}
 		return []string{"blind_copy"}, nil
 	default:
+		if query.IsRoleOperand(field) {
+			return []string{field}, nil
+		}
 		return nil, errors.New("unknown role operand")
 	}
 }

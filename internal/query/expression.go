@@ -518,7 +518,7 @@ func (parser *expressionParser) parseField(name expressionToken, depth int) (*Ex
 	if name.prefix {
 		return nil, expressionError(name.start, colon.end, "field name cannot have a prefix suffix")
 	}
-	if _, ok := expressionFields[name.value]; !ok {
+	if _, ok := expressionFields[name.value]; !ok && !IsRoleOperand(name.value) {
 		return nil, expressionError(name.start, colon.end, "unknown expression field")
 	}
 	if err := parser.advance(); err != nil {
@@ -626,10 +626,20 @@ func expressionTokenStartsOperand(kind expressionTokenKind) bool {
 		kind == expressionTokenLeftParen || kind == expressionTokenNot
 }
 
+// IsRoleOperand reports whether a field searches one person's document role.
+func IsRoleOperand(field string) bool {
+	switch field {
+	case "author", "from", "to", "cc", "bcc", "custodian", "participant", "organizer", "attendee":
+		return true
+	default:
+		return false
+	}
+}
+
 var expressionFields = withPDFFields(withQualityFields(map[string]struct{}{
 	"xmp":  {},
 	"name": {}, "path": {}, "tag": {}, "collection": {}, "saved": {}, "person": {},
-	"author": {}, "from": {}, "to": {}, "cc": {}, "bcc": {}, "custodian": {}, "participant": {}, "organizer": {}, "attendee": {}, "between": {}, "mentions": {},
+	"between": {}, "mentions": {},
 	"mime": {}, "extension": {}, "media_family": {},
 	"rating": {}, "rating_min": {}, "rating_max": {}, "flag": {}, "label": {},
 	"modified_after": {}, "modified_before": {}, "size_min": {}, "size_max": {},

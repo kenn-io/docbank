@@ -316,7 +316,7 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 			return compiledQueryFragment{}, errors.New("resolved person operand lacks a dependency")
 		}
 		return c.compilePersonPredicate(expression.Dependency.ID), nil
-	case slices.Contains([]string{"author", "from", "to", "cc", "bcc", "custodian", "participant", "organizer", "attendee"}, field):
+	case query.IsRoleOperand(field):
 		if c.photoDisplayMetadata {
 			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "Search roles in Documents.")
 		}
