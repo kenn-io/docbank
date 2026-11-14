@@ -2062,3 +2062,52 @@ builds; release builds inject both via `-ldflags`).
 `DOCBANK_LOG_LEVEL` sets the daemon or MCP process log level (`debug`, `info`,
 `warn`, `error`; default `info`) for `docbank daemon run`, background-spawned
 daemons, and `docbank mcp` diagnostics.
+
+## docbank cards check
+
+```text
+docbank cards check [--root /answer-cards] [--deep] [--run] [--json]
+```
+
+Reports answer cards in the selected folder and its descendants. Files with
+other media types or without the card marker are reported as `not_a_card`.
+Malformed cards are `invalid`. An approved card whose content has changed is
+`draft`; a card whose source is no longer current is `stale`. `--deep` also
+resolves each quotation and reports citation issues separately from the card
+state, including for drafts and latched stale cards. Read or
+transport failures stop the report. `--run` records newly observed stale states
+in the card, guarded by the revision read. Concurrent edits are reported as
+`stale_revision` and skipped. Cards with YAML aliases or merges cannot be rewritten safely; they are reported as `rewrite_unsupported` and skipped. Already stale cards are not rewritten.
+Discovery is limited to 2,000 files and 32 MiB of downloaded card candidates.
+Oversized text candidates are reported as invalid without reading their marker.
+
+A card is a UTF-8 Markdown or plain-text file of at most 64 KiB, with YAML
+frontmatter and an answer body. Set `docbank_answer_card: 1`, `question`, an
+optional `alternates` list, and a `citations` list. Each citation contains all
+fields of a [saved text citation](usage/mcp.md#saved-text-citations), plus
+`quote` containing the exact resolved text. Questions and alternates are 1–300
+characters and must contain a letter or digit; a card can have up to 20 alternates, 1–16 citations, and an answer
+of 1–4,000 characters. Citations must belong to the current vault. The state
+may be `draft`, `approved`, or `stale`; omitted state means draft.
+
+Approval fields are a writer-trust convention: anyone who can edit a card can
+forge them. A report observes source state while it runs, not as an atomic
+snapshot; a source can change after the final read. Card text is indexed
+like ordinary documents and is not independent evidence for its own answer.
+
+
+## docbank cards approve
+
+```text
+docbank cards approve <path-or-id> [--root /answer-cards] [--yes]
+```
+
+Checks that each source is current and each quotation matches, then shows the
+question, answer, alternate phrasings, quotations, and source paths for approval.
+An empty `quote` is filled from the retained source text and shown before
+confirmation. The filled quote is saved with the approval; a nonempty quote
+that differs from the source is refused. Use `--yes` for scripted approval.
+The command checks the sources again after confirmation and writes the approval
+only if the card revision still matches.
+Source checks are not an atomic snapshot. A stale card stays stale until it is
+approved again after its citations are updated.
