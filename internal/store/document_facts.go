@@ -122,8 +122,6 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 		switch {
 		case headErr != nil && !errors.Is(headErr, ErrNotFound):
 			return DocumentPeopleFacts{}, headErr
-		case headErr != nil && head.ContentVersionID == "":
-			facts.State = factsStateNone
 		case headErr == nil && (head.State == documentPeopleStateFailed || head.State == documentPeopleStateUnavailable):
 			facts.State = factsStateFailed
 		case headErr == nil && head.State == documentPeopleStatePublished && head.GenerationID != "":
@@ -146,7 +144,7 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 	if safe {
 		facts.Assertions = slices.DeleteFunc(facts.Assertions, func(a PersonDocumentAssertion) bool { return a.Role == "blind_copy" })
 	}
-	if eventState == "published" && (facts.State == "published" || facts.State == factsStateNone) {
+	if facts.State == "published" {
 		view, err := s.documentEventsForVersionTx(ctx, tx, versionID)
 		if err != nil {
 			return DocumentPeopleFacts{}, err
