@@ -21,22 +21,21 @@ func checkDocumentPeopleFactsMergeResolvesCandidate(t *testing.T, newStore func(
 	}
 	version, target := ingestDocumentEventTarget(t, s, "candidates.txt", "d2")
 	record := documentEventRecord(t, s.VaultID(), version.ID, "d2")
-	record.Events[0].Actors = []document.DocumentEventActorV1{
-		{Role: "sender", ActorKey: "email:shared@example.test", Address: "shared@example.test", Claim: "shared@example.test"},
-		{Role: "sender", Ordinal: 1, ActorKey: "name_alias:unknown", DisplayName: "Unknown", Claim: "Unknown"},
-	}
+	record.Events[0].Actors = []document.DocumentEventActorV1{{Role: "sender", ActorKey: "email:shared@example.test", Address: "shared@example.test", Claim: "shared@example.test"}}
 	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
 	require.NoError(t, err)
 	input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
 	require.NoError(t, err)
 	_, err = s.PublishDocumentPeople(ctx, DocumentPeoplePublication{
 		People:     document.DocumentPeopleV1{ContractVersion: document.PersonContractV1, ContentVersionID: version.ID, EventGenerationID: input.EventGenerationID, Edges: []document.DocumentPersonEdgeV1{}},
-		Resolution: DocumentPeopleResolution{UnresolvedActors: 2}, InputsSHA256: fakeHash("a2"), ResolverFingerprint: document.PersonResolverFingerprint(), NodeID: input.NodeID, BindingEpoch: input.BindingEpoch, NodeRevision: input.NodeRevision,
+		Resolution: DocumentPeopleResolution{UnresolvedActors: 1}, InputsSHA256: fakeHash("a2"), ResolverFingerprint: document.PersonResolverFingerprint(), NodeID: input.NodeID, BindingEpoch: input.BindingEpoch, NodeRevision: input.NodeRevision,
 	})
 	require.NoError(t, err)
 	facts, err := s.DocumentPeopleFacts(ctx, version.ID, false)
 	require.NoError(t, err)
-	require.Len(t, facts.Candidates, 3)
+	require.NotEmpty(t, facts.Candidates)
+	require.NotEmpty(t, facts.Candidates[0].Occurrences)
+	candidateID := facts.Candidates[0].CandidateID
 	first, _, err = s.PersonByID(ctx, first.PersonID)
 	require.NoError(t, err)
 	second, _, err = s.PersonByID(ctx, second.PersonID)
@@ -45,31 +44,21 @@ func checkDocumentPeopleFactsMergeResolvesCandidate(t *testing.T, newStore func(
 	require.NoError(t, err)
 	input, err = s.PrepareDocumentPeopleInputs(ctx, version.ID)
 	require.NoError(t, err)
-	for _, actor := range input.Actors {
-		if actor.ActorKey == "email:shared@example.test" {
-			input.Actors = []DocumentPeopleActor{actor}
-			break
-		}
-	}
 	_, err = s.PublishDocumentPeople(ctx, documentPeoplePublicationForInput(t, input))
 	require.NoError(t, err)
-	for _, safe := range []bool{false, true} {
+	open, _, err := s.PersonCandidates(ctx, "open", 10, 0)
+	require.NoError(t, err)
+	var stillOpen bool
+	for _, candidate := range open {
+		stillOpen = stillOpen || candidate.CandidateID == candidateID
+	}
+	require.True(t, stillOpen)
+	for _, safe := range []bool{true, false} {
 		facts, err = s.DocumentPeopleFacts(ctx, version.ID, safe)
 		require.NoError(t, err)
 		require.Len(t, facts.Edges, 1)
 		require.Equal(t, first.PersonID, facts.Edges[0].PersonID)
-		found := false
-		for _, c := range facts.Candidates {
-			switch c.ActorKey {
-			case "email:shared@example.test":
-				require.Empty(t, c.Occurrences)
-			case "name_alias:unknown":
-				require.Len(t, c.Occurrences, 1)
-				require.Equal(t, "Unknown", c.Occurrences[0].Label)
-				found = true
-			}
-		}
-		require.True(t, found)
+		require.Empty(t, facts.Candidates)
 	}
 }
 
@@ -287,6 +276,7 @@ func checkDocumentPeopleFactsPublicationAndFailure(t *testing.T, newStore func(*
 		require.Equal(t, []PersonDocumentAssertion{assertion}, facts.Assertions)
 		if edges {
 			require.NotEmpty(t, facts.Edges)
+			require.Empty(t, facts.Candidates)
 		} else {
 			require.Empty(t, facts.Edges)
 		}

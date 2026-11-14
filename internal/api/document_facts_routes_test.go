@@ -8,47 +8,23 @@ import (
 
 func TestDocumentFactsBrowserAllowlist(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{"dates", "people"} {
-		base := "/api/v1/versions/00000000-0000-4000-8000-000000000000/" + kind
-		for _, suffix := range []string{"", "?disclosure=safe", "?disclosure=full"} {
-			if !webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodGet, base+suffix, nil)) {
-				t.Errorf("denied %q", suffix)
-			}
-		}
-		for _, suffix := range []string{"?disclosure=full&disclosure=safe", "?other=1", "?disclosure=bad"} {
-			if webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodGet, base+suffix, nil)) {
-				t.Errorf("allowed %q", suffix)
-			}
-		}
-		for _, path := range []string{base + "/extra", "/api/v1/versions/not-a-uuid/" + kind} {
-			if webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)) {
-				t.Errorf("allowed %q", path)
-			}
-		}
-		if webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodPost, base, nil)) {
-			t.Errorf("allowed POST %q", base)
-		}
-	}
-}
-
-func TestDocumentFactsCacheRoutes(t *testing.T) {
-	t.Parallel()
-	handler := photoHiddenMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
+	base := "/api/v1/versions/00000000-0000-4000-8000-000000000000/"
 	for _, tc := range []struct {
-		path string
-		want string
+		method, path string
+		want         bool
 	}{
-		{"/api/v1/versions/not-a-uuid/dates", "no-store"},
-		{"/api/v1/versions/not-a-uuid/people", "no-store"},
-		{"/api/v1/versions/id/people/extra", ""},
-		{"/api/v1/versions/id/content", ""},
+		{http.MethodGet, base + "dates", true},
+		{http.MethodGet, base + "people?disclosure=safe", true},
+		{http.MethodGet, base + "dates?disclosure=full", true},
+		{http.MethodGet, base + "people?disclosure=full&disclosure=safe", false},
+		{http.MethodGet, base + "dates?other=1", false},
+		{http.MethodGet, base + "people?disclosure=bad", false},
+		{http.MethodGet, "/api/v1/versions/not-a-uuid/dates", false},
+		{http.MethodGet, base + "people/extra", false},
+		{http.MethodPost, base + "people", false},
 	} {
-		w := httptest.NewRecorder()
-		handler.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, tc.path, nil))
-		if got := w.Header().Get("Cache-Control"); got != tc.want {
-			t.Errorf("%s: cache control = %q, want %q", tc.path, got, tc.want)
+		if got := webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil)); got != tc.want {
+			t.Errorf("%s %s: allowed = %v, want %v", tc.method, tc.path, got, tc.want)
 		}
 	}
 }

@@ -132,8 +132,7 @@ func TestVersionPeopleProjectionHidesUnsupportedPeople(t *testing.T) {
 func TestVersionPeopleUnresolvedWithoutCandidateID(t *testing.T) {
 	t.Parallel()
 	f := store.DocumentPeopleFacts{Candidates: []store.VersionCandidate{{Occurrences: []store.VersionCandidateOccurrence{{Role: "author", Label: "Unknown"}}}}}
-	result := versionPeopleAPI(f, true)
-	raw, err := json.Marshal(result.Unresolved)
+	raw, err := json.Marshal(versionPeopleAPI(f, true).Unresolved)
 	if err != nil {
 		t.Fatal(err)
 	}
