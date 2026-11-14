@@ -574,7 +574,7 @@ const peopleValues = [
   { key: mara, label: "Mara Okonkwo-Fell", count: 1, selected: false, roles: ["copied"] },
 ] satisfies SnapshotPage["facets"][number]["values"];
 
-it("clears every original filter for a merged person", async () => {
+it("narrows and clears people while keeping other filters", async () => {
   const onchange = vi.fn();
   const query: Query = {
     ...originalQuery,
@@ -597,7 +597,7 @@ it("clears every original filter for a merged person", async () => {
           count: 2,
           selected: true,
           roles: ["author", "sender"],
-          ...{ selected_person_ids: [jory, mara] },
+          selected_person_ids: [jory, mara],
         },
         { key: typed, label: "Other Person", count: 1, selected: true, roles: ["author"] },
       ]),
@@ -623,11 +623,8 @@ it("clears every original filter for a merged person", async () => {
     screen.getByRole("button", { name: "Merged Person, Author, Sender, 2 documents, selected" }),
   );
   expect(onchange.mock.lastCall?.[0].filters.people).toBeUndefined();
-});
 
-it("narrows by a person with the roles the People group shows and keeps typed entries", async () => {
-  const onchange = vi.fn();
-  const query: Query = {
+  const unmergedQuery: Query = {
     ...originalQuery,
     filters: {
       ...originalQuery.filters,
@@ -635,15 +632,14 @@ it("narrows by a person with the roles the People group shows and keeps typed en
       people: [{ person_id: typed, roles: ["custodian"] }],
     },
   };
-  const view = render(FacetSidebar, {
+  await view.rerender({
     facets: [
       peopleFacet([
         ...peopleValues,
         { key: typed, label: "Typed Person", count: 0, selected: true, roles: ["custodian"] },
       ]),
     ],
-    query,
-    onchange,
+    query: unmergedQuery,
   });
   const group = screen.getByRole("group", { name: "People facet" });
   expect(within(group).getByText("Author, Sender")).toBeTruthy();
@@ -658,7 +654,23 @@ it("narrows by a person with the roles the People group shows and keeps typed en
     { person_id: typed, roles: ["custodian"] },
   ]);
 
-  await view.rerender({ query: added });
+  await view.rerender({
+    query: added,
+    facets: [
+      peopleFacet([
+        { ...peopleValues[0]!, selected: true, selected_person_ids: [jory] },
+        peopleValues[1]!,
+        {
+          key: typed,
+          label: "Typed Person",
+          count: 0,
+          selected: true,
+          roles: ["custodian"],
+          selected_person_ids: [typed],
+        },
+      ]),
+    ],
+  });
   const joryButton = screen.getByRole("button", {
     name: "Jory Pellham, Author, Sender, 2 documents, selected",
   });

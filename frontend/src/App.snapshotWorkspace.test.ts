@@ -424,7 +424,7 @@ it("keeps rapid runs bound to the accepted frozen snapshot while live observatio
   expect(new URLSearchParams(location.hash.slice(1)).has("query")).toBe(false);
 });
 
-it("reruns supported facets and sorting from the complete accepted query", async () => {
+it("reruns sorting from the complete accepted query", async () => {
   history.replaceState(
     null,
     "",
