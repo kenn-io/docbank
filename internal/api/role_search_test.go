@@ -1,19 +1,28 @@
 package api_test
 
 import (
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
 )
 
 // Every snapshot-building route refuses Bcc, including inside saved queries.
 func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
-	_, err := s.CreatePerson(t.Context(), "Matrix Concealed", "operator")
+	person, err := s.CreatePerson(t.Context(), "Matrix Concealed", "operator")
+	require.NoError(t, err)
+	hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("synthetic letter"))
+	require.NoError(t, err)
+	node, err := s.CreateFile(t.Context(), s.RootID(), "letter.txt", hash, size, "text/plain")
+	require.NoError(t, err)
+	_, err = s.AssertDocumentPerson(t.Context(), store.PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: person.PersonID, Role: "blind_copy", Action: "assert", Revision: 1})
 	require.NoError(t, err)
 	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "If-Match": `"1"`}
 	payload := `{"syntax":"advanced","text":"bcc:\"Matrix Concealed\""}`
@@ -37,6 +46,14 @@ func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
 			require.Contains(t, body, "Bcc searches are unavailable here.")
 		})
 	}
+	t.Run("person retains its existing meaning", func(t *testing.T) {
+		resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", browser, `{"query":{"syntax":"advanced","text":"person:\"Matrix Concealed\""},"page_size":50}`)
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		var page api.WorkspaceQueryResponse
+		require.NoError(t, json.Unmarshal([]byte(body), &page))
+		require.Len(t, page.Rows, 1)
+		require.Equal(t, "letter.txt", page.Rows[0].Name)
+	})
 	reportRoute := routes[len(routes)-1]
 	resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, reportRoute.path+"?people_disclosure=safe", map[string]string{"X-Api-Key": testAPIKey}, reportRoute.body)
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)

@@ -17,7 +17,7 @@ func registerWorkspaceQueryRoutes(api huma.API, d Deps, service *store.QuerySnap
 		Path: "/api/v1/workspace/queries", Summary: "Create an exact bounded query snapshot",
 		MaxBodyBytes: maxWorkspaceQueryRequestBytes,
 	}, func(ctx context.Context, in *struct{ Body WorkspaceQueryCreateRequest }) (*struct{ Body WorkspaceQueryResponse }, error) {
-		ctx = browserPeopleScope(ctx)
+		ctx = browserRoleSearchScope(ctx)
 		owner, ok := workspaceSnapshotOwner(ctx)
 		if !ok {
 			return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated snapshot owner is missing")

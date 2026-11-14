@@ -117,9 +117,9 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 		PeopleDisclosure string `query:"people_disclosure" enum:"safe,full" doc:"People evidence allowed in report searches"`
 		Body             report.Request
 	}) (*struct{ Body report.Summary }, error) {
-		ctx = browserPeopleScope(ctx)
+		ctx = browserRoleSearchScope(ctx)
 		if in.PeopleDisclosure == "safe" {
-			ctx = store.WithVisiblePeopleOnly(ctx)
+			ctx = store.WithSafeRoleSearch(ctx)
 		}
 		owner, err := termReportOwner(ctx)
 		if err != nil {

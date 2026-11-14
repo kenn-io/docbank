@@ -85,7 +85,7 @@ type queryCompiler struct {
 func (c queryCompiler) compile(
 	ctx context.Context, value query.Query, resolver query.Resolver,
 ) (CompiledQuery, error) {
-	c.safePeople, _ = ctx.Value(visiblePersonContextKey{}).(bool)
+	c.safePeople, _ = ctx.Value(safeRoleSearchKey{}).(bool)
 	mentionNames := make(map[string][]string)
 	if r, ok := resolver.(queryResolver); ok {
 		if !c.photoDisplayMetadata {

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"encoding/json/v2"
 	"errors"
 	"strings"
@@ -8,6 +9,13 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
 )
+
+type safeRoleSearchKey struct{}
+
+// WithSafeRoleSearch excludes blind-copy and sensitive role evidence.
+func WithSafeRoleSearch(ctx context.Context) context.Context {
+	return context.WithValue(ctx, safeRoleSearchKey{}, true)
+}
 
 // currentPhotoSourcePredicate limits face evidence to a live image or RAW member.
 // kind='file' is implied: the nodes CHECK requires a file for a non-null current_version_id.

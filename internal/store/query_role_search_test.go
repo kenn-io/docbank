@@ -65,15 +65,15 @@ func TestRoleSearchOperandSets(t *testing.T) {
 	require.Len(t, selected.Rows, 1)
 	require.Equal(t, "email.txt", selected.Rows[0].Name)
 	forbidden := snapshotTestQuery(t, fmt.Sprintf(`{"filters":{"people":[{"person_id":%q,"roles":["blind_copy"]}]}}`, a.PersonID))
-	_, err = s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: forbidden})
+	_, err = s.MaterializeQuerySnapshot(WithSafeRoleSearch(ctx), SnapshotRequest{Query: forbidden})
 	require.ErrorContains(t, err, "Bcc searches are unavailable here.")
 	q := snapshotTestQuery(t, `{"syntax":"advanced","text":"person:\"Dahlia Blind\""}`)
-	visible, err := s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: q})
+	visible, err := s.MaterializeQuerySnapshot(WithSafeRoleSearch(ctx), SnapshotRequest{Query: q})
 	require.NoError(t, err)
 	require.Len(t, visible.Rows, 1)
 	for _, text := range []string{`to:"Dahlia Blind"`, `between:("Aster Sender", "Dahlia Blind")`} {
 		value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, text))
-		result, err := s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: value})
+		result, err := s.MaterializeQuerySnapshot(WithSafeRoleSearch(ctx), SnapshotRequest{Query: value})
 		require.NoError(t, err)
 		require.Empty(t, result.Rows)
 	}
@@ -412,7 +412,7 @@ func TestPublishedBccActorQueryPrivacy(t *testing.T) {
 			require.NotEqual(t, id, facet.Key)
 			require.NotContains(t, facet.Roles, "blind_copy")
 		}
-		safe, err := s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: value})
+		safe, err := s.MaterializeQuerySnapshot(WithSafeRoleSearch(ctx), SnapshotRequest{Query: value})
 		if operand == "bcc" {
 			require.ErrorContains(t, err, "Bcc searches are unavailable here.")
 		} else {
@@ -659,8 +659,8 @@ func TestRoleSearchHiddenPersonScope(t *testing.T) {
 		ctx  context.Context
 		ok   bool
 	}{
-		{"unlocked", WithVisiblePeopleOnly(WithPhotoHiddenToken(ctx, token)), false},
-		{"locked", WithVisiblePeopleOnly(ctx), false},
+		{"unlocked", WithSafeRoleSearch(WithPhotoHiddenToken(ctx, token)), false},
+		{"locked", WithSafeRoleSearch(ctx), false},
 		{"full", ctx, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

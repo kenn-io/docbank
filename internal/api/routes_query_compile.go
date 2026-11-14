@@ -8,6 +8,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/query"
+	"go.kenn.io/docbank/internal/store"
 )
 
 // QueryPayload preserves raw JSON until the strict shared QueryV1 codec reads
@@ -52,6 +53,13 @@ type QueryHighlightPreview struct {
 	Terms            []string          `json:"terms" maxItems:"64"`
 }
 
+func browserRoleSearchScope(ctx context.Context) context.Context {
+	if browserSessionRequest(ctx) {
+		return store.WithSafeRoleSearch(ctx)
+	}
+	return ctx
+}
+
 func registerQueryCompileRoutes(api huma.API, d Deps) {
 	huma.Register(api, huma.Operation{
 		OperationID: "parseQuery", Method: http.MethodPost, Path: "/api/v1/queries/parse",
@@ -59,7 +67,7 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 		Description:  "Returns canonical query intent and observed dependency revisions, without executing a search.",
 		MaxBodyBytes: query.MaxInputBytes,
 	}, func(ctx context.Context, in *struct{ Body QueryPayload }) (*struct{ Body QueryPreview }, error) {
-		ctx = browserPeopleScope(ctx)
+		ctx = browserRoleSearchScope(ctx)
 		value, err := query.Parse(in.Body)
 		if err != nil {
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
@@ -94,7 +102,7 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 		Description:  "Returns only bounded positive text operands from the resolved compiler AST; structured, name-only, and negated operands are excluded.",
 		MaxBodyBytes: query.MaxInputBytes,
 	}, func(ctx context.Context, in *struct{ Body QueryPayload }) (*struct{ Body QueryHighlightPreview }, error) {
-		ctx = browserPeopleScope(ctx)
+		ctx = browserRoleSearchScope(ctx)
 		value, err := query.Parse(in.Body)
 		if err != nil {
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())

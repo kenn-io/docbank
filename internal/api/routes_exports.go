@@ -68,7 +68,7 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 		Body    bundle.SourceRequest
 		RawBody []byte
 	}) (*sourceOutput, error) {
-		ctx = browserPeopleScope(ctx)
+		ctx = browserRoleSearchScope(ctx)
 		owner, err := exportOwner(ctx)
 		if err != nil {
 			return nil, err
