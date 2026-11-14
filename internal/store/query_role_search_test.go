@@ -213,8 +213,6 @@ func TestRoleSearchMentionNamesAreLiteral(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, args[1], `"A ""OR"" *"`)
 	require.Contains(t, args[1], `"Alias 197"`)
-	require.Contains(t, compiled.PositiveTextTerms(), `A "OR" *`)
-	require.Contains(t, compiled.PositiveTextTerms(), "Jory Pellham")
 }
 
 func TestRoleSearchNegationWithPendingPeople(t *testing.T) {

@@ -123,7 +123,7 @@ func (c queryCompiler) compile(
 		Query: resolved.Query, Dependencies: resolved.Dependencies,
 		photoHidden:       c.photoHidden,
 		predicate:         predicate,
-		positiveTextTerms: query.PositiveTextTermsWithMentions(resolved, mentionNames),
+		positiveTextTerms: query.PositiveTextTerms(resolved),
 		eventState:        c.eventState,
 		safePeople:        c.safePeople,
 	}

@@ -113,9 +113,7 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 	})
 	huma.Register(api, huma.Operation{OperationID: "createTermReport", Method: http.MethodPost,
 		Path: "/api/v1/search-exports", Summary: "Prepare a frozen search export",
-		MaxBodyBytes: 8 << 20}, func(ctx context.Context, in *struct {
-		Body report.Request
-	}) (*struct{ Body report.Summary }, error) {
+		MaxBodyBytes: 8 << 20}, func(ctx context.Context, in *struct{ Body report.Request }) (*struct{ Body report.Summary }, error) {
 		ctx = browserRoleSearchScope(ctx)
 		owner, err := termReportOwner(ctx)
 		if err != nil {
