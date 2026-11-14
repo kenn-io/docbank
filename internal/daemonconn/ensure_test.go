@@ -228,6 +228,12 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 	assert.False(t, discoverOptions(true).Accept(rec, info), "setup must replace daemons that create a separate local index")
 	rec.Metadata[metaProtocolVersion] = "122" // Before distinct unavailable-index search errors.
 	assert.False(t, discoverOptions(true).Accept(rec, info), "daemons without unavailable-index search errors must be replaced")
+	// Main and document-facts daemons do not support document-date queries.
+	for _, protocol := range []string{"128", "129"} {
+		rec.Metadata[metaProtocolVersion] = protocol
+		assert.False(t, discoverOptions(true).Accept(rec, info), "protocol %s cannot execute document-date queries", protocol)
+		assert.True(t, discoverOptions(false).Accept(rec, info), "status/stop must still discover protocol %s", protocol)
+	}
 	rec.Metadata[metaProtocolVersion] = daemonProtocolVersion + "-other"
 	assert.False(t, discoverOptions(true).Accept(rec, info), "an incompatible protocol must be replaced")
 	assert.True(t, discoverOptions(false).Accept(rec, info), "status/stop discovery must still see incompatible daemons")
