@@ -318,6 +318,19 @@ trust_boundary = "local_process"
       await expect
         .poll(() => tmux(["capture-pane", "-p", "-t", "similar"]), { timeout: 20_000 })
         .toContain("source.txt");
+      // S opens processing with the built-in PDF text profile first, which
+      // has no embeddings. Switch to the embedding profile, then search again.
+      await tmux(["send-keys", "-t", "similar", "S"]);
+      await expect
+        .poll(() => tmux(["capture-pane", "-p", "-t", "similar"]), { timeout: 20_000 })
+        .toContain("Profile: ");
+      await expect(async () => {
+        const pane = await tmux(["capture-pane", "-p", "-t", "similar"]);
+        if (!pane.includes("Profile: private_text")) {
+          await tmux(["send-keys", "-t", "similar", "]"]);
+        }
+        expect(pane).toContain("Profile: private_text");
+      }).toPass({ timeout: 20_000, intervals: [500] });
       await tmux(["send-keys", "-t", "similar", "S"]);
       await expect
         .poll(() => tmux(["capture-pane", "-p", "-t", "similar"]), { timeout: 20_000 })

@@ -173,8 +173,9 @@ test("reports selected versions and preserves historical downloads", async ({ pa
     );
     await drawer.getByRole("button", { name: "Create report" }).click();
     expect((await rejected).status()).toBe(409);
-    await expect(drawer.getByRole("alert")).toHaveText(
-      "Selected documents changed. Refresh the workspace and reselect the intended current versions.",
+    const conflict = drawer.getByRole("region", { name: "Selected documents changed" });
+    await expect(conflict.getByRole("status")).toContainText(
+      "The report didn't run. Some selected documents have a different version or are no longer available.",
     );
   } finally {
     if (running) {
