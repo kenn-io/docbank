@@ -18,11 +18,24 @@ func DocumentDescriptor() (document.RenditionDescriptor, error) {
 		{MediaFamily: "pdf", MediaType: "application/pdf", InputKind: document.RenditionInputOriginalFile},
 		{MediaFamily: "presentation", MediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation", InputKind: document.RenditionInputOriginalFile},
 		{MediaFamily: "spreadsheet", MediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", InputKind: document.RenditionInputOriginalFile},
-		{MediaFamily: "text", MediaType: "text/plain", InputKind: document.RenditionInputOriginalFile},
-		{MediaFamily: "text", MediaType: "text/markdown", InputKind: document.RenditionInputOriginalFile},
 		{MediaFamily: "image", MediaType: "image/png", InputKind: document.RenditionInputOriginalFile},
 		{MediaFamily: "image", MediaType: "image/jpeg", InputKind: document.RenditionInputOriginalFile},
 	}})
+}
+
+type submissionKeyV1 struct {
+	Filename, MediaFamily, MediaType, SHA256, CapabilityRecordChecksum, ProviderMetadataChecksum, InputBinding                     string
+	ByteLength                                                                                                                     int64
+	InputKind                                                                                                                      document.RenditionInputKind
+	ProviderID, DescriptorFingerprint, PolicyFingerprint, RenditionRequestFingerprint                                              string
+	SourceSHA256                                                                                                                   string
+	SourceBytes                                                                                                                    int64
+	AuthorizationCapabilityRecordChecksum, AuthorizationProviderMetadataChecksum, AuthorizationMediaFamily, AuthorizationMediaType string
+	AuthorizationInputKind                                                                                                         document.RenditionInputKind
+	DiscloseFilename                                                                                                               bool
+	AllowedArtifactRoles                                                                                                           []document.EvidenceArtifactRole
+	MaxProviderMarkdownBytes, MaxArtifactBytes, MaxArtifacts, MaxTotalResultBytes                                                  int
+	Fields                                                                                                                         [][2]string
 }
 
 // ASRDescriptor binds a qualified, bounded transcript policy to original WAV/MP3.
@@ -45,47 +58,21 @@ func SubmissionKey(metadata document.AuthorizedUploadMetadata, authorization doc
 	if !authorization.DiscloseFilename {
 		metadata.Filename = ""
 	}
-	authorization.AuthorizedAt = ""
-	authorization.ExpiresAt = ""
-	encoded, err := json.Marshal(struct {
-		Contract      string                            `json:"contract"`
-		Metadata      document.AuthorizedUploadMetadata `json:"metadata"`
-		Authorization document.RenditionAuthorization   `json:"authorization"`
-		Fields        [][2]string                       `json:"fields"`
-	}{Contract, metadata, authorization, fields})
+	encoded, err := json.Marshal(submissionKeyV1{
+		Filename: metadata.Filename, MediaFamily: metadata.MediaFamily, MediaType: metadata.MediaType, ByteLength: metadata.ByteLength,
+		SHA256: metadata.SHA256, CapabilityRecordChecksum: metadata.CapabilityRecordChecksum, ProviderMetadataChecksum: metadata.ProviderMetadataChecksum,
+		InputKind: metadata.InputKind, InputBinding: metadata.InputBinding, ProviderID: authorization.ProviderID,
+		DescriptorFingerprint: authorization.DescriptorFingerprint, PolicyFingerprint: authorization.PolicyFingerprint,
+		RenditionRequestFingerprint: authorization.RenditionRequestFingerprint, SourceSHA256: authorization.SourceSHA256, SourceBytes: authorization.SourceBytes,
+		AuthorizationCapabilityRecordChecksum: authorization.CapabilityRecordChecksum, AuthorizationProviderMetadataChecksum: authorization.ProviderMetadataChecksum,
+		AuthorizationMediaFamily: authorization.MediaFamily, AuthorizationMediaType: authorization.MediaType, AuthorizationInputKind: authorization.InputKind,
+		DiscloseFilename: authorization.DiscloseFilename, AllowedArtifactRoles: authorization.AllowedArtifactRoles,
+		MaxProviderMarkdownBytes: authorization.MaxProviderMarkdownBytes, MaxArtifactBytes: authorization.MaxArtifactBytes,
+		MaxArtifacts: authorization.MaxArtifacts, MaxTotalResultBytes: authorization.MaxTotalResultBytes, Fields: fields,
+	})
 	if err != nil {
 		return "", err
 	}
-	digest := sha256.Sum256(encoded)
+	digest := sha256.Sum256(append([]byte("docbank-worker-submission-v1\x00"), encoded...))
 	return hex.EncodeToString(digest[:]), nil
-}
-
-// ReplaySafeBinding recognizes the exact durable worker protocol, never a
-// provider's ID alone. This only permits re-preparation: current consent,
-// runtime disclosure and request allowlists are still checked before egress.
-func ReplaySafeBinding(canonicalProfile []byte, identity document.RenditionExecutionIdentityV1) bool {
-	var profile document.ProcessingProfileV1
-	if json.Unmarshal(canonicalProfile, &profile, json.RejectUnknownMembers(true)) != nil || profile.Rendition == nil {
-		return false
-	}
-	binding := profile.Rendition
-	auth := identity.Authorization
-	if binding.TrustBoundary != string(document.RenditionTrustOperatorNetwork) || auth.ProviderID != ProviderID || auth.InputKind != document.RenditionInputOriginalFile || identity.Upload.InputKind != auth.InputKind {
-		return false
-	}
-	var descriptor document.RenditionDescriptor
-	var err error
-	switch binding.AdapterContract {
-	case DocumentAdapter:
-		descriptor, err = DocumentDescriptor()
-	case ASRAdapter:
-		descriptor, err = ASRDescriptor(auth.PolicyFingerprint)
-	default:
-		return false
-	}
-	if err != nil || binding.Descriptor.ID != descriptor.ID || binding.Descriptor.Fingerprint != descriptor.Fingerprint || auth.DescriptorFingerprint != descriptor.Fingerprint || auth.PolicyFingerprint != descriptor.PolicyFingerprint {
-		return false
-	}
-	_, fingerprints, err := document.CanonicalProfile(profile)
-	return err == nil && fingerprints.RenditionRequest == auth.RenditionRequestFingerprint
 }

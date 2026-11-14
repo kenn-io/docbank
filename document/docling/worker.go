@@ -35,7 +35,14 @@ func WorkerDisclosureFingerprint(adapter string, descriptor document.RenditionDe
 }
 
 // WorkerClient resumes issued gateway operations; native Docling stays separate.
-type WorkerClient struct{ *Client }
+type WorkerClient struct{ client *Client }
+
+func (client *WorkerClient) Descriptor() document.RenditionDescriptor {
+	if client == nil {
+		return document.RenditionDescriptor{}
+	}
+	return client.client.Descriptor()
+}
 
 // WorkerASRClient resumes the locally proven audio projection without reopening it.
 type WorkerASRClient struct{ *ASRClient }
@@ -99,15 +106,15 @@ func (client *WorkerASRClient) Render(ctx context.Context, upload document.Autho
 
 // RenderResumable checkpoints an issued ID before polling; resume consumes no source.
 func (client *WorkerClient) RenderResumable(ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization, resume *document.RenditionResumeHandle, checkpoint document.RenditionResumeCheckpoint) (document.RenditionResult, error) {
-	if client == nil || client.Client == nil {
+	if client == nil || client.client == nil {
 		return document.RenditionResult{}, errors.New("docling: worker client is required")
 	}
 	fields := [][2]string{{"to_formats", "json"}, {"target_type", "inbody"}}
 	if authorization.MaxProviderMarkdownBytes > 0 {
 		fields = [][2]string{{"to_formats", "md"}, {"to_formats", "json"}, {"target_type", "inbody"}}
 	}
-	return client.renderWorker(ctx, upload, authorization, resume, checkpoint, 0, fields, func(run *rendering, task taskResponse, result doclingResult, _ int64) (document.RenditionResult, error) {
-		return client.buildResult(run, task, result, 1, false)
+	return client.client.renderWorker(ctx, upload, authorization, resume, checkpoint, 0, fields, func(run *rendering, task taskResponse, result doclingResult, _ int64) (document.RenditionResult, error) {
+		return client.client.buildResult(run, task, result, 1, false)
 	})
 }
 
@@ -128,6 +135,9 @@ func (client *WorkerASRClient) RenderResumable(ctx context.Context, upload docum
 		duration, err = client.inputDuration(upload, authorization)
 		if err != nil {
 			return document.RenditionResult{}, err
+		}
+		if duration > time.Hour.Milliseconds() {
+			return document.RenditionResult{}, provider.Classified(document.RenditionErrorUnsupportedInput, "worker audio exceeds one hour", nil)
 		}
 	}
 	return client.client.renderWorker(ctx, upload, authorization, resume, checkpoint, duration, [][2]string{{"from_formats", "audio"}, {"to_formats", "json"}, {"target_type", "inbody"}}, client.buildResult)
@@ -158,7 +168,7 @@ func parseWorkerResume(value string) (workerResume, error) {
 		}
 		numbers[i] = n
 	}
-	if numbers[0] <= 0 || numbers[1] < numbers[0] || numbers[2] > (24*time.Hour).Milliseconds() {
+	if numbers[0] <= 0 || numbers[1] < numbers[0] || numbers[2] > time.Hour.Milliseconds() {
 		return workerResume{}, errors.New("worker handle acceptance facts are invalid")
 	}
 	return workerResume{id: parts[1], authorization: parts[2], started: time.Unix(0, numbers[0]).UTC(), accepted: time.Unix(0, numbers[1]).UTC(), filenameSHA256: parts[5], durationMS: numbers[2]}, nil
@@ -230,6 +240,9 @@ func (client *Client) renderWorker(ctx context.Context, upload document.Authoriz
 		if lookupErr != nil {
 			run.operation.Cancel()
 			return document.RenditionResult{}, lookupErr
+		}
+		if exists && found.status == "failure" {
+			exists = false
 		}
 		if !exists {
 			if err := client.readyWorker(ctx, run); err != nil {
@@ -352,6 +365,6 @@ func (client *Client) readyWorker(ctx context.Context, run *rendering) error {
 	return nil
 }
 func workerFilename(mediaType string) string {
-	extensions := map[string]string{"application/pdf": ".pdf", "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx", "image/png": ".png", "image/jpeg": ".jpg", "text/plain": ".txt", "text/markdown": ".md", "audio/wav": ".wav", "audio/mpeg": ".mp3"}
+	extensions := map[string]string{"application/pdf": ".pdf", "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx", "image/png": ".png", "image/jpeg": ".jpg", "audio/wav": ".wav", "audio/mpeg": ".mp3"}
 	return "document" + extensions[mediaType]
 }

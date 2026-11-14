@@ -436,10 +436,10 @@ func newASRFixture(t *testing.T, mediaType, filename string, source []byte, over
 		DescriptorFingerprint: descriptor.Fingerprint,
 		ProfileFingerprint:    strings.Repeat("5", 64), DisclosureFingerprint: strings.Repeat("6", 64),
 		InputKind:      document.RenditionInputOriginalFile,
-		MaxSourceBytes: 1 << 20, MaxExpandedBytes: 1, MaxEntryBytes: 1, MaxEntries: 1,
+		MaxSourceBytes: max(1<<20, int64(len(source))), MaxExpandedBytes: 1, MaxEntryBytes: 1, MaxEntries: 1,
 		MaxNestingDepth: 1, MaxTextLines: 1, MaxCharacters: 1, MaxRecords: 1, MaxPages: 1,
 		MaxSlides: 1, MaxSheets: 1, MaxCells: 1, MaxSpineItems: 1, MaxResources: 1,
-		MaxDurationMS: 10_000,
+		MaxDurationMS: (24 * time.Hour).Milliseconds(),
 	})
 	require.NoError(t, err)
 	metadata.CapabilityRecordChecksum = record.Checksum

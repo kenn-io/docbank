@@ -30,6 +30,7 @@ type workerServer struct {
 	posts, lookups, results, readiness atomic.Int32
 	accepted, offline, lostResponse    atomic.Bool
 	pending                            atomic.Bool
+	failed                             atomic.Bool
 	key                                string
 	result                             any
 }
@@ -63,6 +64,10 @@ func workerHTTP(t *testing.T, result any) (*workerServer, string, *http.Client) 
 		case strings.HasPrefix(r.URL.Path, workerprotocol.LookupPath):
 			state.lookups.Add(1)
 			if state.accepted.Load() && strings.TrimPrefix(r.URL.Path, workerprotocol.LookupPath) == state.key {
+				if state.failed.Swap(false) {
+					writeJSON(t, out, doclingTask(id, "failure"))
+					return
+				}
 				writeJSON(t, out, doclingTask(id, "success"))
 				return
 			}
@@ -101,6 +106,21 @@ func workerHTTP(t *testing.T, result any) (*workerServer, string, *http.Client) 
 		}
 	}))
 	return state, origin, client
+}
+
+func TestWorkerRepostsFailedLookup(t *testing.T) {
+	f := workerFixture(t)
+	state, origin, httpClient := workerHTTP(t, workerDocumentResult())
+	state.lostResponse.Store(true)
+	client, err := NewWorker(workerProfile(origin, f.descriptor), testSecrets{"worker": "synthetic-worker-key"}, httpClient)
+	require.NoError(t, err)
+	_, err = document.RenderRendition(t.Context(), client, f.upload(), f.authorization)
+	require.Error(t, err)
+	state.failed.Store(true)
+	_, err = document.RenderRendition(t.Context(), client, f.upload(), f.authorization)
+	require.NoError(t, err)
+	require.Equal(t, int32(2), state.posts.Load())
+	require.Equal(t, int32(2), state.readiness.Load())
 }
 func workerFixture(t *testing.T) fixture {
 	t.Helper()
@@ -265,7 +285,7 @@ func TestWorkerOfflineDoesNotReadOrTransferSource(t *testing.T) {
 	})
 }
 func TestWorkerRejectsEncryptedPDFBeforeNetwork(t *testing.T) {
-	source, err := mediatest.EncryptedPDF("open", "owner", 128)
+	source, err := mediatest.EncryptedPDF(t.Context(), "open", "owner", 128)
 	require.NoError(t, err)
 	f := workerFixture(t)
 	native := newFixture(t, "pdf", "application/pdf", "report.pdf", source)
@@ -310,6 +330,27 @@ func TestWorkerASRResumesProvenDurationWithoutSource(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestWorkerASRRejectsAudioOverOneHour(t *testing.T) {
+	// MPEG-1 Layer III frames each carry 1152 samples at 44.1 kHz.
+	source := make([]byte, 140_200*417)
+	for offset := 0; offset < len(source); offset += 417 {
+		source[offset], source[offset+1], source[offset+2] = 0xff, 0xfb, 0x90
+	}
+	descriptor, err := WorkerASRDescriptor(100_000)
+	require.NoError(t, err)
+	f := newASRFixture(t, "audio/mpeg", "long.mp3", source, descriptor)
+	state, origin, httpClient := workerHTTP(t, nil)
+	profile := workerProfile(origin, descriptor)
+	profile.MaxDocumentBytes = 100 << 20
+	client, err := NewWorkerASR(ASRProfile{Profile: profile, MaxTranscriptChars: 100_000}, testSecrets{"worker": "synthetic-worker-key"}, httpClient)
+	require.NoError(t, err)
+	_, err = document.RenderRendition(t.Context(), client, f.upload(), f.authorization)
+	var providerErr *document.RenditionProviderError
+	require.ErrorAs(t, err, &providerErr)
+	require.Equal(t, document.RenditionErrorUnsupportedInput, providerErr.Code())
+	require.Zero(t, state.lookups.Load())
 }
 func TestWorkerSubmissionKeyIgnoresOnlyAuthorizationInterval(t *testing.T) {
 	f := workerFixture(t)
@@ -478,7 +519,7 @@ func TestWorkerResumeEnvelopeRoundTrips(t *testing.T) {
 		hash := providerutil.SHA256Hex(raw)
 		started := hegel.Draw(ht, hegel.Integers[int64](1, math.MaxInt64))
 		accepted := hegel.Draw(ht, hegel.Integers[int64](started, math.MaxInt64))
-		duration := hegel.Draw(ht, hegel.Integers[int64](0, (24*time.Hour).Milliseconds()))
+		duration := hegel.Draw(ht, hegel.Integers[int64](0, time.Hour.Milliseconds()))
 		original := workerResume{id: hash[:32], authorization: hash, filenameSHA256: hash, started: time.Unix(0, started).UTC(), accepted: time.Unix(0, accepted).UTC(), durationMS: duration}
 		encoded := encodeWorkerResume(original)
 		require.LessOrEqual(ht, len(encoded), 512)

@@ -866,7 +866,7 @@ func (worker *RenditionWorker) classifyProviderError(
 	}
 	// Expiry can precede the first issued-handle checkpoint. Only this exact
 	// durable protocol may reprepare current authority and reconcile its key.
-	if errors.Is(err, document.ErrRenditionAuthorizationExpired) && workerprotocol.ReplaySafeBinding(work.Profile.CanonicalProfile, work.ExecutionIdentity) {
+	if errors.Is(err, document.ErrRenditionAuthorizationExpired) && work.ExecutionIdentity.Authorization.ProviderID == workerprotocol.ProviderID {
 		return worker.markSafeTransient(ctx, claim)
 	}
 	if document.IsRenditionAuthorizationPolicyMismatch(err) {

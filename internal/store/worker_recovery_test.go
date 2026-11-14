@@ -56,7 +56,7 @@ func checkWorkerRenditionReplay(t *testing.T, open func(*testing.T) *Store) {
 			_, err = s.BeginRenditionProvider(t.Context(), claim, waiter.ID, at, renditionJobTestSnapshot(request))
 			require.NoError(t, err)
 			recovered, err := s.ClaimRenditionJob(t.Context(), job.ID, "worker-after-crash", at.Add(2*time.Minute), time.Minute)
-			if kind != "worker" {
+			if kind == "native" {
 				require.ErrorIs(t, err, ErrRenditionJobOperatorRequired)
 				return
 			}
