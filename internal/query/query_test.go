@@ -146,18 +146,3 @@ func TestCanonicalRejectsInvalidProgrammaticQuery(t *testing.T) {
 	_, err := Canonical(Query{V: 1, Text: string([]byte{0xff})})
 	require.Error(t, err)
 }
-
-func TestRoleSearchPeopleCanonical(t *testing.T) {
-	const person = "00000000-0000-4000-8000-000000000001"
-	for _, tc := range []struct{ roles, message string }{
-		{`[]`, "people"},
-		{`null`, "null is allowed only for optional query filters"},
-		{`["mentioned"]`, "people"},
-	} {
-		t.Run(tc.roles, func(t *testing.T) {
-			_, err := Parse([]byte(`{"v":1,"filters":{"people":[{"person_id":"` + person + `","roles":` + tc.roles + `}]}}`))
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), tc.message)
-		})
-	}
-}

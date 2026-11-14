@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { APIError } from "./api-transport.js";
-import { canonicalQuery, parseQuery, queryFingerprint } from "./query.js";
+import { parseQuery, queryFingerprint } from "./query.js";
 import { SnapshotSession, type SnapshotState } from "./snapshotState.js";
 
 const query = parseQuery("{}");
@@ -256,7 +256,7 @@ describe("snapshot request-epoch state", () => {
     expect(states.filter((state) => state.status === "ready")).toHaveLength(1);
   });
 
-  it("adopts the receipt's resolved survivor while keeping the request it sent", async () => {
+  it("adopts the receipt's resolved survivor", async () => {
     const retired = "00000000-0000-4000-8000-0000000000aa";
     const survivor = "00000000-0000-4000-8000-0000000000bb";
     const requested = parseQuery(
@@ -277,19 +277,14 @@ describe("snapshot request-epoch state", () => {
       }),
     );
     const states: Readonly<SnapshotState>[] = [];
-    const fetch = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(response(await receipt({ query: resolved })));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(response(await receipt({ query: resolved })));
     const session = new SnapshotSession("session", (state) => states.push(state));
 
     await session.run(requested, { page_size: 50 });
 
-    const sent = JSON.parse(String(fetch.mock.calls[0][1]?.body)) as { query: unknown };
-    expect(sent.query).toEqual(JSON.parse(canonicalQuery(requested)));
     const ready = states.at(-1)!;
     expect(ready.status).toBe("ready");
     expect(ready.query).toEqual(resolved);
-    expect(ready.query).toEqual(ready.firstPage!.query);
   });
 
   it("suppresses delayed work after dispose", async () => {

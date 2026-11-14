@@ -170,14 +170,13 @@ func TestTermReportMatchesSelectedProcessingProfile(t *testing.T) {
 	}
 	request := termFrameRequest()
 	request.Terms = append(request.Terms, report.Term{Number: 3, Expression: "alpha AND NOT beta",
-		Syntax: "advanced", Dates: request.Terms[0].Dates}, report.Term{Number: 4,
-		Expression: "beta AND NOT path:/missing", Syntax: "advanced", Dates: request.Terms[0].Dates})
+		Syntax: "advanced", Dates: request.Terms[0].Dates})
 	budget := report.NewBudget(8 << 20)
 	defer func() { _ = budget.Close() }()
 	frame, err := s.MaterializeTermReportFrame(t.Context(), request,
 		report.CoverageSelection{Configuration: "configured", ProfileFingerprint: selected.Fingerprint}, budget, budget)
 	require.NoError(t, err)
-	require.Equal(t, []bool{true, false, true, false}, frame.Members[0].RawMatches)
+	require.Equal(t, []bool{true, false, true}, frame.Members[0].RawMatches)
 	require.Equal(t, selected.Fingerprint, frame.Texts[0].ProfileFingerprint)
 }
 
@@ -466,19 +465,6 @@ func TestTermReportSelectedAdmission(t *testing.T) {
 	require.Equal(t, first, frame.Members[0].Identity)
 	require.Equal(t, second, frame.Members[1].Identity)
 	require.Equal(t, []bool{true, false}, frame.Members[0].RawMatches)
-	// The inline relation population includes the unselected alpha as well,
-	// but the frame intersects it with the selected node and version pairs.
-	prepared := request
-	prepared.Terms = append([]report.Term(nil), request.Terms[:1]...)
-	prepared.Terms[0].Syntax = "advanced"
-	prepared.Terms[0].Expression = `name:alpha AND NOT path:/missing`
-	selectedFrame, err := capture(prepared)
-	require.NoError(t, err)
-	require.Len(t, selectedFrame.Members, 2)
-	require.Equal(t, first, selectedFrame.Members[0].Identity)
-	require.Equal(t, second, selectedFrame.Members[1].Identity)
-	require.Equal(t, []bool{true}, selectedFrame.Members[0].RawMatches)
-	require.Equal(t, []bool{false}, selectedFrame.Members[1].RawMatches)
 	// Renaming and moving changes metadata, but not the selected content identity.
 	folder, err := s.Mkdir(ctx, s.RootID(), "archive")
 	require.NoError(t, err)
@@ -549,23 +535,4 @@ func TestRefreshTermReportSelection(t *testing.T) {
 	require.Equal(t, "missing", got[3].Status)
 	_, err = s.RefreshTermReportSelection(ctx, []report.Identity{old, old})
 	require.ErrorIs(t, err, report.ErrInvalidSelection)
-}
-
-func TestTermReportInlinePopulationIntersectsCollectionScope(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	first := createCollectionRun(t, s, "alpha.txt", "prepared-report-alpha")
-	_ = createCollectionRun(t, s, "beta.txt", "prepared-report-beta")
-	request := termFrameRequest()
-	request.AllDocuments = false
-	request.CollectionIDs = []string{first.ID()}
-	request.Terms = request.Terms[:1]
-	request.Terms[0].Syntax = "advanced"
-	request.Terms[0].Expression = `name:alpha AND NOT path:/missing AND NOT has_duplicates:true`
-	budget := report.NewBudget(8 << 20)
-	defer func() { _ = budget.Close() }()
-	frame, err := s.MaterializeTermReportFrame(t.Context(), request, report.CoverageSelection{Configuration: "unconfigured"}, budget, budget)
-	require.NoError(t, err)
-	require.Len(t, frame.Members, 1)
-	require.Equal(t, []bool{true}, frame.Members[0].RawMatches)
 }

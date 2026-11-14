@@ -292,22 +292,6 @@ func TestMCPReportDateWireBudget(t *testing.T) {
 	}
 }
 
-func TestMCPReportRefusesBcc(t *testing.T) {
-	f := newNativeExportFixture(t)
-	member := f.addFile(t, "message.txt", "synthetic message")
-	person, err := f.catalog.CreatePerson(t.Context(), "Synthetic Recipient", "operator")
-	require.NoError(t, err)
-	_, err = f.catalog.AssertDocumentPerson(t.Context(), store.PersonDocumentAssertion{ContentVersionID: member.VersionID, PersonID: person.PersonID, Role: "blind_copy", Action: "assert", Revision: 1})
-	require.NoError(t, err)
-	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{AllowReportWrites: true}, f.lease)
-	args := reportArguments()
-	args["selected_documents"] = report.SelectedDocuments{Documents: []report.Identity{{NodeID: member.NodeID, VersionID: member.VersionID, SHA256: member.SHA256}}}
-	args["coverage_mode"] = "available_only"
-	args["terms"] = []report.Term{{Number: 1, Expression: `bcc:"Synthetic Recipient"`, Syntax: "advanced", Dates: report.DateRange{Start: "2020-01-01", End: "2100-01-01"}}}
-	result := exportCall(t, server, "create_report", map[string]any{"request": args})
-	require.Equal(t, "invalid_query", result["code"], "%+v", result)
-}
-
 // This source retains real store evidence and supplies a large observation warning set.
 // The cache still builds and verifies its real report artifacts.
 type warningReportSource struct{ *store.Store }

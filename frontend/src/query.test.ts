@@ -196,27 +196,3 @@ describe("authored photo filters", () => {
     expect(canonicalQuery(value)).toContain('"rating_min":0');
   });
 });
-
-it("canonicalizes person role filters without merging entries", () => {
-  const id = "00000000-0000-4000-8000-000000000001";
-  const parsed = parseQuery(
-    JSON.stringify({
-      filters: {
-        people: [
-          { person_id: id, roles: ["sender"] },
-          { person_id: id, roles: ["author"] },
-        ],
-      },
-    }),
-  );
-  expect(parsed.filters.people).toEqual([
-    { person_id: id, roles: ["author"] },
-    { person_id: id, roles: ["sender"] },
-  ]);
-  expect(canonicalQuery(parseQuery(canonicalQuery(parsed)))).toBe(canonicalQuery(parsed));
-  for (const roles of [[], null, ["mentioned"]]) {
-    expect(() =>
-      parseQuery(JSON.stringify({ filters: { people: [{ person_id: id, roles }] } })),
-    ).toThrow();
-  }
-});

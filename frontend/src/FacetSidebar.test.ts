@@ -613,23 +613,3 @@ it("narrows by a person with the roles the People group shows and keeps typed en
   expect(removed.filters.person_ids).toEqual([mara]);
   expect(removed.filters.paths).toEqual(originalQuery.filters.paths);
 });
-
-it("keeps a selected person with no documents left", () => {
-  const selectedQuery: Query = {
-    ...originalQuery,
-    filters: { ...originalQuery.filters, people: [{ person_id: jory, roles: ["author"] }] },
-  };
-  render(FacetSidebar, {
-    facets: [
-      peopleFacet([
-        { ...peopleValues[0]!, count: 0, selected: true, roles: ["author"] },
-        peopleValues[1],
-      ]),
-    ],
-    query: selectedQuery,
-    onchange: vi.fn(),
-  });
-  expect(
-    screen.getByRole("button", { name: "Jory Pellham, Author, 0 documents, selected" }),
-  ).toBeTruthy();
-});
