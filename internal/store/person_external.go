@@ -92,7 +92,7 @@ func (s *Store) LinkExternalIdentity(ctx context.Context, identity PersonExterna
 				return ErrPersonIdentityConflict
 			}
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO person_external_identities(person_id,system,archive_id,uid,uid_kind,uid_state,last_seen_revision,display_name_snapshot,linked_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(system,archive_id,uid) DO UPDATE SET uid_kind=excluded.uid_kind,uid_state=excluded.uid_state,last_seen_revision=excluded.last_seen_revision,display_name_snapshot=excluded.display_name_snapshot,updated_at=excluded.updated_at`, identity.PersonID, identity.System, identity.ArchiveID, identity.UID, identity.UIDKind, identity.UIDState, identity.LastSeenRevision, identity.DisplayNameSnapshot, now, now)
+		_, err = tx.ExecContext(ctx, `INSERT INTO person_external_identities(person_id,system,archive_id,uid,uid_kind,uid_state,last_seen_revision,display_name_snapshot,linked_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(system,archive_id,uid) DO UPDATE SET uid_kind=excluded.uid_kind,uid_state=excluded.uid_state,last_seen_revision=excluded.last_seen_revision,display_name_snapshot=excluded.display_name_snapshot,updated_at=excluded.updated_at`, identity.PersonID, identity.System, identity.ArchiveID, identity.UID, identity.UIDKind, identity.UIDState, identity.LastSeenRevision, storedString(s.postgresSchema != "", identity.DisplayNameSnapshot), now, now)
 		if err != nil {
 			return err
 		}

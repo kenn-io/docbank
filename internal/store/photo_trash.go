@@ -69,7 +69,7 @@ func (s *Store) trashPhotoAssetTx(
 	if trashed == 0 {
 		return PhotoAsset{}, 0, nil
 	}
-	result, err := commitPhotoAssetTx(ctx, tx, asset, asset, "trash")
+	result, err := s.commitPhotoAssetTx(ctx, tx, asset, asset, "trash")
 	if err == nil {
 		err = s.refreshPhotoAssetWorkTx(ctx, tx, asset.ID)
 	}
@@ -222,7 +222,7 @@ func (s *Store) restorePhotoGroupTx(ctx context.Context, tx *sql.Tx, node Node, 
 		}
 	}
 	for _, asset := range group.assets {
-		if _, err := commitPhotoAssetTx(ctx, tx, asset, asset, "restore"); err != nil {
+		if _, err := s.commitPhotoAssetTx(ctx, tx, asset, asset, "restore"); err != nil {
 			return Node{}, err
 		}
 		if err := s.refreshPhotoAssetWorkTx(ctx, tx, asset.ID); err != nil {

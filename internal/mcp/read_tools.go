@@ -904,11 +904,30 @@ type coverageClassOutput struct {
 type processingCoverageOutput struct {
 	privateCache
 
-	VaultID            string                `json:"vault_id"`
-	ContentVersionIDs  []string              `json:"content_version_ids"`
-	ProfileFingerprint string                `json:"profile_fingerprint"`
-	State              string                `json:"state"`
-	Coverage           []coverageClassOutput `json:"coverage"`
+	VaultID                 string                `json:"vault_id"`
+	ContentVersionIDs       []string              `json:"content_version_ids"`
+	ProfileFingerprint      string                `json:"profile_fingerprint"`
+	State                   string                `json:"state"`
+	Coverage                []coverageClassOutput `json:"coverage"`
+	PagesWithoutText        []api.PageTextGap     `json:"pages_without_text,omitempty"`
+	PageCoverage            string                `json:"page_coverage,omitempty"`
+	PageCoverageUnavailable bool                  `json:"page_coverage_unavailable,omitempty"`
+}
+
+func readProcessingCoverage(ctx context.Context, profile string, fence api.DocumentSourceFence, read func(context.Context, *apiclient.GetDocumentProcessingCoverageRequestOptions) (*api.CoverageReport, error)) (*api.CoverageReport, error) {
+	vaultID, err := uuid.Parse(fence.VaultUID)
+	if err != nil {
+		return nil, fmt.Errorf("parsing coverage vault ID: %w", err)
+	}
+	report, err := read(ctx, &apiclient.GetDocumentProcessingCoverageRequestOptions{Query: &apiclient.GetDocumentProcessingCoverageQuery{
+		Profile: profile, VaultUID: vaultID, ContentVersionID: fence.ContentVersionIDs}})
+	if err != nil {
+		return nil, err
+	}
+	if report.VaultUID != fence.VaultUID {
+		return nil, errors.New("processing coverage escaped its vault fence")
+	}
+	return report, nil
 }
 
 func getProcessingCoverage(
@@ -922,25 +941,22 @@ func getProcessingCoverage(
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return processingCoverageOutput{}, err
 	}
-	vaultID, err := uuid.Parse(input.VaultID)
-	if err != nil {
-		return processingCoverageOutput{}, fmt.Errorf("parsing coverage vault ID: %w", err)
-	}
-	report, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (*api.CoverageReport, error) {
-		return c.API().GetDocumentProcessingCoverage(ctx, &apiclient.GetDocumentProcessingCoverageRequestOptions{Query: &apiclient.GetDocumentProcessingCoverageQuery{
-			Profile: input.Profile, VaultUID: vaultID, ContentVersionID: input.ContentVersionIDs}})
+	report, err := readProcessingCoverage(ctx, input.Profile, api.DocumentSourceFence{VaultUID: input.VaultID, ContentVersionIDs: input.ContentVersionIDs}, func(ctx context.Context, options *apiclient.GetDocumentProcessingCoverageRequestOptions) (*api.CoverageReport, error) {
+		return daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (*api.CoverageReport, error) {
+			return c.API().GetDocumentProcessingCoverage(ctx, options)
+		})
 	})
 	if err != nil {
 		return processingCoverageOutput{}, err
-	}
-	if report.VaultUID != input.VaultID {
-		return processingCoverageOutput{}, errors.New("processing coverage escaped its vault fence")
 	}
 	classes := append([]api.CoverageClass{report.Renditions}, report.Embeddings...)
 	output := processingCoverageOutput{VaultID: report.VaultUID,
 		ContentVersionIDs:  slices.Clone(input.ContentVersionIDs),
 		ProfileFingerprint: report.ProfileFingerprint, State: report.State,
-		Coverage: make([]coverageClassOutput, len(classes)), privateCache: newPrivateCache()}
+		PagesWithoutText:        report.PagesWithoutText,
+		PageCoverage:            report.PageCoverage,
+		PageCoverageUnavailable: report.PageCoverageUnavailable,
+		Coverage:                make([]coverageClassOutput, len(classes)), privateCache: newPrivateCache()}
 	for index, item := range classes {
 		output.Coverage[index] = coverageClassOutput{Name: item.Name, Required: item.Required,
 			State: item.State, Complete: item.Complete, Unavailable: item.Unavailable,

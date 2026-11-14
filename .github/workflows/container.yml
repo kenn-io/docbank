@@ -58,7 +58,7 @@ jobs:
               and .output[0].dest == "/out/" + $arch + ".oci.tar"' bake.json
           done
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.52.0
 
       - name: Build nonroot image and check startup
         run: |

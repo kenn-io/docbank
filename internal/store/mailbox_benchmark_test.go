@@ -42,7 +42,7 @@ func BenchmarkMailboxJobs(b *testing.B) {
 							CollectionID: fmt.Sprintf("%08x-1111-4111-8111-111111111111", i+1),
 							StartedAt:    "2026-01-01T00:00:00.000000000Z",
 						}
-						if err := saveMailboxJob(ctx, tx, job, true); err != nil {
+						if err := saveMailboxJob(ctx, tx, job, true, false); err != nil {
 							return err
 						}
 					}

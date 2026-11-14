@@ -329,6 +329,14 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		logger.Warn("read local text selection; indexing remains inactive", "error", err)
 		choice = config.LocalTextConfig{}
 	}
+	inherited := false
+	if err == nil && choice.Profile == "" {
+		choice, err = inheritedLocalText(processingProfiles)
+		if err != nil {
+			logger.Warn("read shared search by meaning choice; indexing remains inactive", "error", err)
+		}
+		inherited = choice.Profile != ""
+	}
 	baseConfig := cfg
 	candidateProfiles := func(mode, name string) (map[string]processing.ProfileConfig, config.Config, error) {
 		candidate, err := localTextCandidate(baseConfig, mode, name)
@@ -408,11 +416,11 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	}
 
 	tracker := api.NewActivityTracker()
-	var restartPending atomic.Bool
+	var restartPending, inheritedReady atomic.Bool
 	localText := &processing.LocalTextSetup{Service: processingService, Selected: choice.Profile,
 		ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
 		Startup: localTextStartup,
-		Save:    localTextSave(layout.Root, &restartPending, saveLocalText),
+		Save:    localTextSave(layout.Root, &restartPending, saveLocalText, logger),
 	}
 	localText.Candidate = func(mode, name string) (*processing.Service, error) {
 		profiles, _, err := candidateProfiles(mode, name)
@@ -423,11 +431,6 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 			MediaMaxBytes: cfg.Media.MaxSourceBytes,
 			Principal:     "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(), Lifecycle: sigCtx})
 		return service, err
-	}
-	if choice.Profile != "" {
-		if err := jobSupervisor.StartWorker("embed:local-text", func(ctx context.Context) error { return localText.Backfill(ctx, logger) }); err != nil {
-			return err
-		}
 	}
 	pdfText := &processing.PDFTextRunner{Service: processingService}
 	if err := pdfText.Initialize(sigCtx); err != nil {
@@ -731,9 +734,9 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		BackupScheduleWake: backupScheduleWake,
 		Jobs:               jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
 		WebLoginEnabled: webLoginEnabled, APIAddress: addr,
-		Processing: processingService, LocalText: localText,
+		Processing: processingService, LocalText: localText, PDFText: pdfText,
 		LocalTextStatus: func(ctx context.Context) (api.LocalTextStatus, error) {
-			return localTextStatus(ctx, processingProfiles, processingService, restartPending.Load())
+			return localTextStatus(ctx, processingProfiles, processingService, restartPending.Load(), inherited, inheritedReady.Load())
 		}, EnsureEmail: processing.EnsureEmailTarget,
 		PublishEmailDocuments: processing.PublishEmailDocuments,
 		PageRuntime:           pageRuntime,
@@ -790,6 +793,13 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	if mcpURL != "" {
 		logger.Info("docbank MCP HTTP listening", "url", mcpURL)
 	}
+	if choice.Profile != "" {
+		if err := jobSupervisor.StartWorker("embed:local-text", func(ctx context.Context) error {
+			return runLocalText(ctx, localText, inherited, &inheritedReady, logger)
+		}); err != nil {
+			return err
+		}
+	}
 	if ready != nil {
 		ready(serveReady{tracker: tracker, jobs: jobSupervisor})
 	}
@@ -822,11 +832,12 @@ func drainHTTPServer(server *http.Server) func(context.Context) error {
 	}
 }
 
-// withMCPRoute serves hosted MCP at /mcp ahead of the API middleware. The MCP
-// transport applies its own bearer, Host, and Origin checks.
+// withMCPRoute serves hosted MCP and its public icon aliases ahead of the API
+// middleware. The MCP transport applies its own bearer, Host, and Origin checks.
 func withMCPRoute(api, mcp http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == mcpHTTPPath || r.URL.Path == docmcp.OriginalDownloadPath {
+		switch r.URL.Path {
+		case mcpHTTPPath, docmcp.OriginalDownloadPath, "/icon.png", "/favicon.ico":
 			mcp.ServeHTTP(w, r)
 			return
 		}

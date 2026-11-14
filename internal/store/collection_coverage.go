@@ -76,8 +76,17 @@ coverage_versions AS MATERIALIZED (
 ), ` + processingVersionCoverageCTE(metadataJSONDialect{})
 }
 
-func renditionHasSearchableTextSQL(buildID string) string {
-	return `EXISTS(SELECT 1 FROM rendition_lexical_index ix WHERE ix.build_id=` + buildID + ` AND length(trim(ix.text))>0)`
+// SQLite LENGTH(TEXT) stops at NUL. Match that released coverage decision
+// without decoding PostgreSQL's unrestricted byte string as TEXT.
+func nonemptyLegacyTextSQL(expression string, postgres bool) string {
+	if postgres {
+		return `substring(btrim(` + expression + `,' '::bytea),1,1) NOT IN (''::bytea,'\x00'::bytea)`
+	}
+	return `length(trim(` + expression + `))>0`
+}
+
+func renditionHasSearchableTextSQL(buildID string, postgres bool) string {
+	return `EXISTS(SELECT 1 FROM rendition_lexical_index ix WHERE ix.build_id=` + buildID + ` AND ` + nonemptyLegacyTextSQL("ix.text", postgres) + `)`
 }
 
 // processingVersionCoverageCTE classifies exact versions supplied by the caller
@@ -103,7 +112,7 @@ coverage_head_builds AS (
  JOIN rendition_builds b ON b.build_id=a.build_id AND b.vault_uid=a.vault_uid AND b.source_sha256=v.blob_hash
 ),
 coverage_serving AS MATERIALIZED (
- SELECT b.build_id, CASE WHEN ` + renditionHasSearchableTextSQL("b.build_id") + ` THEN 1 ELSE 0 END nonempty
+ SELECT b.build_id, CASE WHEN ` + renditionHasSearchableTextSQL("b.build_id", d.postgres) + ` THEN 1 ELSE 0 END nonempty
  FROM coverage_head_builds b CROSS JOIN coverage_selection p
  WHERE EXISTS(SELECT 1 FROM rendition_lexical_generation_builds gb
   WHERE gb.generation_id=p.generation AND gb.build_id=b.build_id)
@@ -112,7 +121,7 @@ coverage_native AS (
  SELECT v.version_id FROM coverage_versions v CROSS JOIN coverage_selection p
  WHERE p.profile<>'' AND p.generation=''
  AND EXISTS(SELECT 1 FROM text_searchable_versions sv WHERE sv.version_id=v.version_id)
- AND EXISTS(SELECT 1 FROM extracted_text e WHERE e.blob_hash=v.blob_hash AND e.status='ok' AND length(trim(e.text))>0)
+ AND EXISTS(SELECT 1 FROM extracted_text e WHERE e.blob_hash=v.blob_hash AND e.status='ok' AND ` + nonemptyLegacyTextSQL("e.text", d.postgres) + `)
 ),
 processing_coverage AS (
  SELECT v.node_id, v.version_id, v.blob_hash,

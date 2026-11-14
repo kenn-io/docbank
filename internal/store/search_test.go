@@ -390,7 +390,7 @@ func TestResolveAndRevalidateSemanticCandidatesIsolateSharedVectorSpaceAndCovera
 	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
 	otherProfile := embeddingCatalogProfileVariant(t)
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return ensureProcessingProfileTx(t.Context(), tx, otherProfile)
+		return ensureProcessingProfileTx(t.Context(), tx, otherProfile, s.postgresSchema != "")
 	}))
 	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")

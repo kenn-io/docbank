@@ -37,7 +37,7 @@ func checkPersonIdentityAuthorityAndSharedContactPoints(t *testing.T, newStore f
 	ada, err := s.CreatePerson(ctx, "Ada Lovelace", "operator")
 	require.NoError(t, err)
 	identity := PersonIdentity{Kind: "email", ValueDisplay: "Ada@EXAMPLE.TEST", Origin: "operator",
-		EvidenceKind: "operator_assertion", EvidenceID: "claim-1", Confidence: "operator_asserted"}
+		EvidenceKind: "operator_assertion", EvidenceID: "claim\x00\\evidence", Confidence: "operator_asserted"}
 	added, err := s.AddPersonIdentity(ctx, ada.PersonID, ada.Revision, identity)
 	require.NoError(t, err)
 	require.Equal(t, "ada@example.test", added.ValueNormalized)
@@ -54,6 +54,7 @@ func checkPersonIdentityAuthorityAndSharedContactPoints(t *testing.T, newStore f
 	require.NoError(t, err)
 	require.Len(t, identities, 1)
 	require.Equal(t, added.IdentityID, identities[0].IdentityID)
+	require.Equal(t, "claim\x00\\evidence", identities[0].EvidenceID)
 	require.ErrorIs(t, s.RemovePersonIdentity(ctx, ada.PersonID, added.IdentityID, ada.Revision-1), ErrStaleRevision)
 	require.NoError(t, s.RemovePersonIdentity(ctx, ada.PersonID, added.IdentityID, ada.Revision))
 	identities, err = s.PersonIdentities(ctx, ada.PersonID)

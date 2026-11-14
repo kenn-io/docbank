@@ -90,9 +90,9 @@ func mailboxManifest(c MailboxContainer) (string, error) {
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:]), nil
 }
-func loadMailboxContainer(ctx context.Context, q metadataQuerier, owner, id string) (MailboxContainer, error) {
+func loadMailboxContainer(ctx context.Context, q metadataQuerier, owner, id string, postgres bool) (MailboxContainer, error) {
 	var c MailboxContainer
-	err := q.QueryRowContext(ctx, `SELECT id,owner,sha256,size,format,state,created_at,manifest_sha256 FROM mailbox_containers WHERE id=$1 AND owner=$2`, id, owner).Scan(&c.ID, &c.Owner, &c.SHA256, &c.Size, &c.Format, &c.State, &c.CreatedAt, &c.ManifestSHA256)
+	err := q.QueryRowContext(ctx, `SELECT id,owner,sha256,size,format,state,created_at,manifest_sha256 FROM mailbox_containers WHERE id=$1 AND owner=$2`, storedString(postgres, id), storedString(postgres, owner)).Scan(&c.ID, &c.Owner, &c.SHA256, &c.Size, &c.Format, &c.State, &c.CreatedAt, &c.ManifestSHA256)
 	if errors.Is(err, sql.ErrNoRows) {
 		return c, ErrNotFound
 	}
@@ -105,7 +105,7 @@ func loadMailboxContainer(ctx context.Context, q metadataQuerier, owner, id stri
 	if c.State != "uploading" && c.State != mailboxContainerSealed {
 		return c, ErrMailboxInvalid
 	}
-	rows, err := q.QueryContext(ctx, `SELECT chunk_index,blob_hash,size FROM mailbox_chunks WHERE container_id=$1 ORDER BY chunk_index LIMIT 4097`, id)
+	rows, err := q.QueryContext(ctx, `SELECT chunk_index,blob_hash,size FROM mailbox_chunks WHERE container_id=$1 ORDER BY chunk_index LIMIT 4097`, storedString(postgres, id))
 	if err != nil {
 		return c, err
 	}
@@ -140,7 +140,7 @@ func mailboxSessionActive(c MailboxContainer) bool {
 	return e == nil && c.State == "uploading" && time.Now().UTC().Before(t.Add(24*time.Hour))
 }
 func cleanupMailboxContainersTx(ctx context.Context, tx *sql.Tx) error {
-	_, err := tx.ExecContext(ctx, `DELETE FROM mailbox_containers WHERE id IN (SELECT id FROM mailbox_containers WHERE state='uploading' AND created_at<=? LIMIT 8)`, time.Now().UTC().Add(-24*time.Hour).Format(time.RFC3339Nano))
+	_, err := tx.ExecContext(ctx, `DELETE FROM mailbox_containers WHERE id IN (SELECT id FROM mailbox_containers WHERE state='uploading' AND created_at<=$1 LIMIT 8)`, time.Now().UTC().Add(-24*time.Hour).Format(time.RFC3339Nano))
 	return err
 }
 func (s *Store) CleanupMailboxContainers(ctx context.Context) error {
@@ -155,7 +155,7 @@ func (s *Store) BeginMailboxContainer(ctx context.Context, r MailboxContainerReq
 		if err := cleanupMailboxContainersTx(ctx, tx); err != nil {
 			return err
 		}
-		old, err := loadMailboxContainer(ctx, tx, r.Owner, r.ID)
+		old, err := loadMailboxContainer(ctx, tx, r.Owner, r.ID, s.postgresSchema != "")
 		if err == nil {
 			if old.MailboxContainerRequest != r {
 				return ErrMailboxConflict
@@ -170,34 +170,34 @@ func (s *Store) BeginMailboxContainer(ctx context.Context, r MailboxContainerReq
 		// Return a conflict for another owner's ID instead of exposing the
 		// SQLite primary-key error from the insert below.
 		var idTaken bool
-		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM mailbox_containers WHERE id=?)`, r.ID).Scan(&idTaken); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM mailbox_containers WHERE id=$1)`, storedString(s.postgresSchema != "", r.ID)).Scan(&idTaken); err != nil {
 			return err
 		}
 		if idTaken {
 			return ErrMailboxConflict
 		}
 		var all, owned int
-		if err = tx.QueryRowContext(ctx, `SELECT count(*),COALESCE(sum(owner=?),0) FROM mailbox_containers WHERE state='uploading'`, r.Owner).Scan(&all, &owned); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT count(*),COALESCE(sum(CASE WHEN owner=$1 THEN 1 ELSE 0 END),0) FROM mailbox_containers WHERE state='uploading'`, storedString(s.postgresSchema != "", r.Owner)).Scan(&all, &owned); err != nil {
 			return err
 		}
 		if all >= 8 || owned >= 2 {
 			return ErrMailboxLimit
 		}
 		c = MailboxContainer{MailboxContainerRequest: r, State: "uploading", CreatedAt: nowRFC3339(), Chunks: []MailboxChunk{}}
-		_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_containers(id,owner,sha256,size,format,state,created_at) VALUES(?,?,?,?,?,'uploading',?)`, r.ID, r.Owner, r.SHA256, r.Size, r.Format, c.CreatedAt)
+		_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_containers(id,owner,sha256,size,format,state,created_at) VALUES($1,$2,$3,$4,$5,'uploading',$6)`, storedString(s.postgresSchema != "", r.ID), storedString(s.postgresSchema != "", r.Owner), r.SHA256, r.Size, r.Format, c.CreatedAt)
 		return err
 	})
 	return c, err
 }
 func (s *Store) MailboxContainer(ctx context.Context, owner, id string) (MailboxContainer, error) {
-	return loadMailboxContainer(ctx, s.db, owner, id)
+	return loadMailboxContainer(ctx, s.db, owner, id, s.postgresSchema != "")
 }
 
 // PutMailboxChunk records a verified durable blob under the caller's mutation
 // lease. It never replaces an accepted index with a different digest.
 func (s *Store) PutMailboxChunk(ctx context.Context, owner, id string, ch MailboxChunk) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		c, err := loadMailboxContainer(ctx, tx, owner, id)
+		c, err := loadMailboxContainer(ctx, tx, owner, id, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
@@ -216,13 +216,13 @@ func (s *Store) PutMailboxChunk(ctx context.Context, owner, id string, ch Mailbo
 			return ErrMailboxConflict
 		}
 		var size int64
-		if err = tx.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash=?`, ch.SHA256).Scan(&size); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash=$1`, ch.SHA256).Scan(&size); err != nil {
 			return err
 		}
 		if size != ch.Size {
 			return ErrMailboxConflict
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_chunks(container_id,chunk_index,blob_hash,size) VALUES(?,?,?,?)`, id, ch.Index, ch.SHA256, ch.Size)
+		_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_chunks(container_id,chunk_index,blob_hash,size) VALUES($1,$2,$3,$4)`, storedString(s.postgresSchema != "", id), ch.Index, ch.SHA256, ch.Size)
 		return err
 	})
 }
@@ -233,7 +233,7 @@ func (s *Store) SealMailboxContainer(ctx context.Context, owner, id, verifiedHas
 	var c MailboxContainer
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		c, err = loadMailboxContainer(ctx, tx, owner, id)
+		c, err = loadMailboxContainer(ctx, tx, owner, id, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
@@ -252,21 +252,21 @@ func (s *Store) SealMailboxContainer(ctx context.Context, owner, id, verifiedHas
 		}
 		c.State = mailboxContainerSealed
 		c.ManifestSHA256 = h
-		_, err = tx.ExecContext(ctx, `UPDATE mailbox_containers SET state='sealed',manifest_sha256=? WHERE id=?`, h, id)
+		_, err = tx.ExecContext(ctx, `UPDATE mailbox_containers SET state='sealed',manifest_sha256=$1 WHERE id=$2`, h, storedString(s.postgresSchema != "", id))
 		return err
 	})
 	return c, err
 }
 func (s *Store) AbortMailboxContainer(ctx context.Context, owner, id string) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		c, err := loadMailboxContainer(ctx, tx, owner, id)
+		c, err := loadMailboxContainer(ctx, tx, owner, id, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
 		if c.State != "uploading" {
 			return fmt.Errorf("%w: sealed source authority cannot be aborted", ErrMailboxConflict)
 		}
-		_, err = tx.ExecContext(ctx, `DELETE FROM mailbox_containers WHERE id=?`, id)
+		_, err = tx.ExecContext(ctx, `DELETE FROM mailbox_containers WHERE id=$1`, storedString(s.postgresSchema != "", id))
 		return err
 	})
 }

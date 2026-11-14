@@ -532,7 +532,10 @@ func selectorExcludes(fields ...string) schema {
 func exportBatesFileSchemas() (schema, schema) {
 	return rootObjectSchema(schema{
 			"allocation_id": uuidSchema(), "destination_path": schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters},
-			"overwrite": booleanSchema(),
+			"overwrite":        booleanSchema(),
+			"preparation_path": schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters},
+			"masks_path":       schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters},
+			"review_path":      schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters},
 		}, "allocation_id", "destination_path", "overwrite"), rootObjectSchema(withPrivateCache(schema{
 			"allocation_id": uuidSchema(), "artifact_id": uuidSchema(), "destination_path": stringSchema(maxPathCharacters),
 			"blob_sha256": sha256Schema(), "manifest_sha256": sha256Schema(), "size": integerSchema(1, 512<<20), "verification": enumSchema("recorded_bytes_and_numbers", "masks_text_and_numbers", "stamped_labels"),
@@ -890,6 +893,9 @@ func getProcessingCoverageSchemas() (schema, schema) {
 	output := rootObjectSchema(withPrivateCache(schema{
 		"vault_id": uuidSchema(), "content_version_ids": arraySchema(uuidSchema(), 4096),
 		"profile_fingerprint": sha256Schema(), schemaStateField: stringSchema(64), "coverage": arraySchema(class, 65),
+		"pages_without_text":        arraySchema(objectSchema(schema{versionField: uuidSchema(), "pages": arraySchema(integerSchema(1, 0), 5000)}, versionField, "pages"), 4096),
+		"page_coverage":             enumSchema("partial"),
+		"page_coverage_unavailable": booleanSchema(),
 	}), cacheRequired("vault_id", "content_version_ids", "profile_fingerprint", schemaStateField, "coverage")...)
 	return input, output
 }

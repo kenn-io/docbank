@@ -74,11 +74,7 @@ func (s *Store) CreateSavedQuery(
 		CreatedAt: timestamp, UpdatedAt: timestamp,
 	}
 	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `INSERT INTO saved_queries(
-			id,name,description,kind,payload,fingerprint,revision,created_at,updated_at
-		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, created.ID, created.Name, created.Description,
-			created.Kind, created.Payload, created.Fingerprint, created.Revision,
-			created.CreatedAt, created.UpdatedAt)
+		err := insertSavedQueryTx(ctx, tx, created, s.postgresSchema != "")
 		if err != nil {
 			if s.isUniqueViolation(err) {
 				return fmt.Errorf("saved query %q: %w", name, ErrExists)
@@ -126,8 +122,7 @@ func (s *Store) listSavedQueries(ctx context.Context, kind string, limit, offset
 	photoKinds := `json_array_length(payload,'$.filters.kinds')>0
 		AND NOT EXISTS(SELECT 1 FROM json_each(payload,'$.filters.kinds') WHERE value NOT IN ('photo','video'))`
 	if s.postgresSchema != "" {
-		photoKinds = `jsonb_array_length(convert_from(payload,'UTF8')::jsonb #> '{filters,kinds}')>0
-		AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements_text(convert_from(payload,'UTF8')::jsonb #> '{filters,kinds}') AS kinds(value) WHERE value NOT IN ('photo','video'))`
+		photoKinds = "photo_scope=1"
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		WITH filtered AS (
@@ -224,10 +219,18 @@ func (s *Store) UpdateSavedQuery(
 		}
 		updated.Revision++
 		updated.UpdatedAt = max(current.UpdatedAt, nowRFC3339())
-		result, err := tx.ExecContext(ctx, `UPDATE saved_queries SET
-			name=$1,description=$2,payload=$3,fingerprint=$4,revision=$5,updated_at=$6
-			WHERE id=$7 AND revision=$8`, updated.Name, updated.Description, updated.Payload,
-			updated.Fingerprint, updated.Revision, updated.UpdatedAt, id, revision)
+		extraSet, where := "", "id=$7 AND revision=$8"
+		args := []any{updated.Name, updated.Description, updated.Payload, updated.Fingerprint, updated.Revision, updated.UpdatedAt}
+		if s.postgresSchema != "" {
+			scope, err := savedQueryPhotoScope(updated.Kind, updated.Payload)
+			if err != nil {
+				return err
+			}
+			extraSet, where = ",photo_scope=$7", "id=$8 AND revision=$9"
+			args = append(args, scope)
+		}
+		args = append(args, id, revision)
+		result, err := tx.ExecContext(ctx, `UPDATE saved_queries SET name=$1,description=$2,payload=$3,fingerprint=$4,revision=$5,updated_at=$6`+extraSet+` WHERE `+where, args...)
 		if err != nil {
 			if s.isUniqueViolation(err) {
 				return fmt.Errorf("saved query %q: %w", updated.Name, ErrExists)
@@ -389,4 +392,19 @@ func validateSavedQueryPage(kind string, limit, offset int) error {
 		return fmt.Errorf("%w: %w", ErrInvalidSavedQuery, err)
 	}
 	return nil
+}
+
+func insertSavedQueryTx(ctx context.Context, tx *sql.Tx, value SavedQuery, postgres bool) error {
+	columns, values := "", ""
+	args := []any{value.ID, value.Name, value.Description, value.Kind, value.Payload, value.Fingerprint, value.Revision, value.CreatedAt, value.UpdatedAt}
+	if postgres {
+		scope, err := savedQueryPhotoScope(value.Kind, value.Payload)
+		if err != nil {
+			return err
+		}
+		columns, values = ",photo_scope", ",$10"
+		args = append(args, scope)
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO saved_queries(id,name,description,kind,payload,fingerprint,revision,created_at,updated_at`+columns+`) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9`+values+`)`, args...)
+	return err
 }

@@ -2,6 +2,8 @@ package store
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 )
@@ -21,7 +23,7 @@ type metadataSavedQuery struct {
 
 var savedQueryMetadata = newMetadataTable(metadataTable[metadataSavedQuery]{
 	record: metadataSavedQuery{Type: metadataSavedQueryType}, table: "saved_queries",
-	suffix: "ORDER BY id", validate: validateSavedQueryMetadataRecord, checkExport: true})
+	insert: importSavedQuery, suffix: "ORDER BY id", validate: validateSavedQueryMetadataRecord, checkExport: true})
 
 func validateSavedQueryMetadataRecord(record metadataSavedQuery) error {
 	if record.Type != metadataSavedQueryType || record.Revision < 1 {
@@ -60,4 +62,8 @@ func validateSavedQueryMetadataRecord(record metadataSavedQuery) error {
 		return errors.New("saved query updated_at precedes created_at")
 	}
 	return nil
+}
+
+func importSavedQuery(ctx context.Context, tx *sql.Tx, r metadataSavedQuery, postgres bool) error {
+	return insertSavedQueryTx(ctx, tx, SavedQuery{ID: r.ID, Name: r.Name, Description: r.Description, Kind: r.Kind, Payload: r.Payload, Fingerprint: r.Fingerprint, Revision: r.Revision, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}, postgres)
 }

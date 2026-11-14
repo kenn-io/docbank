@@ -193,7 +193,7 @@ func BenchmarkPhotoStackMixed100K(b *testing.B) {
 			if err != nil {
 				return err
 			}
-			if _, err := insertPhotoTechnicalMetadataTx(ctx, tx, generation, fields); err != nil {
+			if _, err := s.insertPhotoTechnicalMetadataTx(ctx, tx, generation, fields); err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO source_metadata_heads(source_sha256,generation_id,published_at) VALUES(?,?,?)`, hash, generation, stamp); err != nil {

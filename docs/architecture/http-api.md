@@ -212,7 +212,7 @@ modification timestamps, such as nodes restored together.
 `GET /api/v1/search/text-coverage` takes the ordinary search filters and counts
 current files after an empty text search. `no_text` counts files a processing
 profile could make searchable, by `families` (`pdf`, `office`, `other`), and
-`pending` counts native-text files still queued for extraction.
+`pending` counts native-text files still queued for extraction. PDF page coverage reads at most 16 distinct evidence builds; `pdf_page_coverage_partial` marks incomplete coverage, and the PDF and page counts are lower bounds when it is true.
 
 Set `fuzzy=true` on ordinary `GET /search` to append bounded ASCII filename
 and path discovery after existing hits. Blank text returns `422 validation`;
@@ -784,6 +784,8 @@ current source visibility and serving evidence. Missing required coverage keeps
 the aggregate state `partial` even if another class is rebuilding. This read
 does not grant consent or start provider work.
 
+For `docbank-pdf-text`, `pages_without_text` lists source version IDs and one-based PDF page numbers without a text layer. Each response inspects at most 16 candidate builds and contains at most 8,192 page numbers. When `page_coverage` is `partial`, narrow the source fence to inspect more pages. `page_coverage_unavailable` reports evidence that could not be read. Text rendition receipts also expose `pages_without_text` for the source PDF independently of the selected profile, or `page_coverage: "unavailable"` when its evidence could not be read.
+
 `POST /search` uses JSON, separately from ordinary lexical `GET /search`:
 
 ```json
@@ -1044,6 +1046,7 @@ All paths below start with `/api/v1/search-exports` and require authentication.
 | Method and suffix | Request and response |
 | --- | --- |
 | `POST /` | Version 1 request, up to 8 MiB; returns a summary with state `complete` or `needs_review`. Counts and downloads are withheld in `needs_review`. |
+| `POST /selection` | Read-only comparison of exact document identities in one snapshot. Returns each selected identity with status `current`, `changed`, `trashed`, or `missing`, and current identity, path, and version dates when available. The request uses `{"documents":[...]}` and the same selection limits as report creation. Results are ordered by node ID. |
 | `GET /` | `offset` (0–100) and `limit` (1–50, default 20); returns `items` containing reusable `request` and `summary`, and `total`. Lists vault history, including expired receipts. |
 | `GET /{id}` | Returns the caller's live frozen summary. |
 | `DELETE /{id}` | API-key release of an owned live handle; returns 204 without a body. ID must be 48 lowercase hexadecimal characters. |
@@ -1055,11 +1058,17 @@ All paths below start with `/api/v1/search-exports` and require authentication.
 
 Create accepts all-document, collection, or exact current-document scope. The
 selected identities are admitted together in the same read observation as the
-report. Stale selection returns `409 report_selection_changed`. Malformed
+report. Stale selection returns `409 report_selection_changed`. Use `/selection` to compare the full set before choosing replacements. Malformed
 selection or a wrong hash for a current version returns
 `422 invalid_report_request`. Selected-member overflow returns `413 report_limit`,
 while collection-count overflow still returns 422. See the guide for null/empty
 semantics and identity requirements.
+
+The selection comparison accepts up to 8 MiB. An empty, malformed, or duplicate
+selection returns `422 invalid_report_request`; more than 50,000 identities
+returns `413 report_limit`. Comparison checks the full identity, so a wrong
+hash on the current version is `changed` here, although report creation rejects
+that hash as an invalid request.
 
 History pages are also limited to 16 MiB. Advance `offset` by the number of
 returned items when the byte limit shortens a page. Source deletion does not

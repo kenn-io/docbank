@@ -244,7 +244,7 @@ func (s *Store) EnqueueRenditionJob(
 			}
 		} else if binding := request.ExecutionIdentity.Upload.InputBinding; binding != "" {
 			visible, err := mediaInputBindingVisibleForSourceTx(
-				ctx, tx, request.Authorization.Principal, binding, sourceSHA256)
+				ctx, tx, request.Authorization.Principal, binding, sourceSHA256, s.postgresSchema != "")
 			if err != nil {
 				return err
 			}
@@ -252,7 +252,7 @@ func (s *Store) EnqueueRenditionJob(
 				return ErrRenditionJobStaleAuthority
 			}
 		}
-		if err := ensureProcessingProfileTx(ctx, tx, profile); err != nil {
+		if err := ensureProcessingProfileTx(ctx, tx, profile, s.postgresSchema != ""); err != nil {
 			return err
 		}
 		policyFingerprint := digestCatalogJSON(policy.canonical)
@@ -319,7 +319,7 @@ func (s *Store) EnqueueRenditionJob(
 		nowTime := time.Now().UTC()
 		now := nowTime.Format(timestampLayout)
 		admissionAuthorization, err := authorizeProviderOperationTx(
-			ctx, tx, s.vaultID, request.Authorization, nowTime)
+			ctx, tx, s.vaultID, request.Authorization, nowTime, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
@@ -348,7 +348,7 @@ func (s *Store) EnqueueRenditionJob(
 		if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET claim_epoch=`+metadataJSONDialect{s.postgresSchema != ""}.maximum()+`(
 			claim_epoch,COALESCE((SELECT MAX(fencing_token) FROM current_rendition_roots
 			WHERE root_id IN ($1,$2)),0)) WHERE job_id=$3`,
-			renditionJobRootID("build", jobID), renditionJobRootID("generation", jobID),
+			storedString(s.postgresSchema != "", renditionJobRootID("build", jobID)), storedString(s.postgresSchema != "", renditionJobRootID("generation", jobID)),
 			jobID); err != nil {
 			return fmt.Errorf("synchronizing rendition job fencing epoch: %w", err)
 		}
@@ -406,7 +406,7 @@ func (s *Store) EnqueueRenditionJob(
 			ON CONFLICT(waiter_id) DO UPDATE SET
 				state='waiting',failure_code=NULL,updated_at=excluded.updated_at`,
 			waiterID, jobID, request.ContentVersionID, profile.Fingerprint,
-			authority.principal, authority.scope, authority.disclosure,
+			storedString(s.postgresSchema != "", authority.principal), storedString(s.postgresSchema != "", authority.scope), authority.disclosure,
 			authority.inputsJSON, authority.retainedJSON, admissionAuthorization.GrantID,
 			admissionAuthorization.ProcessingIncarnationID,
 			admissionAuthorization.RevocationFence, attachmentID, now, now)
@@ -503,7 +503,7 @@ func (s *Store) EnqueueRenditionJob(
 						ID: renditionJobRootID("build", jobID), Kind: RenditionRootJob,
 						TargetKind: RenditionRootBuild, TargetID: jobID,
 						FencingToken: rootEpoch, RecordedAt: now,
-					}); err != nil {
+					}, s.postgresSchema != ""); err != nil {
 						return fmt.Errorf("rooting reusable rendition build: %w", err)
 					}
 				}
@@ -670,7 +670,7 @@ func (s *Store) ClaimRenditionJob(
 		result, err := tx.ExecContext(ctx, `
 			UPDATE rendition_jobs SET state='running',claim_owner=$1,claim_epoch=$2,
 				lease_expires_at=$3,failure_code=NULL,updated_at=$4 WHERE job_id=$5`,
-			owner, epoch, expires.Format(timestampLayout), at.Format(timestampLayout), jobID)
+			storedString(s.postgresSchema != "", owner), epoch, expires.Format(timestampLayout), at.Format(timestampLayout), jobID)
 		if err != nil {
 			return fmt.Errorf("claiming rendition job: %w", err)
 		}
@@ -682,7 +682,7 @@ func (s *Store) ClaimRenditionJob(
 			return ErrRenditionJobFenced
 		}
 		if err := refreshRenditionJobRootsTx(
-			ctx, tx, jobID, phase, generationID, epoch, at.Format(timestampLayout)); err != nil {
+			ctx, tx, jobID, phase, generationID, epoch, at.Format(timestampLayout), s.postgresSchema != ""); err != nil {
 			return err
 		}
 		claim = RenditionJobClaim{JobID: jobID, Owner: owner, Epoch: epoch,
@@ -789,7 +789,7 @@ func (s *Store) RenditionJobWorkByClaim(
 		}
 		if !waiterID.Valid {
 			candidateID, candidateAuthorization, selectErr := selectRenditionJobWaiterTx(
-				ctx, tx, s.vaultID, job, at.UTC())
+				ctx, tx, s.vaultID, job, at.UTC(), s.postgresSchema != "")
 			if selectErr != nil {
 				if !errors.Is(selectErr, ErrProcessingConsentRequired) &&
 					!errors.Is(selectErr, ErrRenditionJobStaleAuthority) {
@@ -838,7 +838,7 @@ func (s *Store) RenditionJobWorkByClaim(
 }
 
 func selectRenditionJobWaiterTx(
-	ctx context.Context, tx *sql.Tx, vaultID string, job RenditionJob, at time.Time,
+	ctx context.Context, tx *sql.Tx, vaultID string, job RenditionJob, at time.Time, postgres bool,
 ) (string, ProviderOperationAuthorization, error) {
 	waiterIDs, err := renditionWaitingIDsTx(ctx, tx, job.ID)
 	if err != nil {
@@ -849,7 +849,7 @@ func selectRenditionJobWaiterTx(
 		request, err := renditionWaiterAuthorizationTx(ctx, tx, job, candidateID)
 		var authorization ProviderOperationAuthorization
 		if err == nil {
-			authorization, err = authorizeProviderOperationTx(ctx, tx, vaultID, request, at)
+			authorization, err = authorizeProviderOperationTx(ctx, tx, vaultID, request, at, postgres)
 		}
 		if err == nil {
 			return candidateID, authorization, nil
@@ -894,7 +894,7 @@ func (s *Store) RenewRenditionJobClaim(
 		result, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET
 			lease_expires_at=$1,updated_at=$2 WHERE job_id=$3 AND claim_owner=$4 AND claim_epoch=$5`,
 			expires.Format(timestampLayout), at.UTC().Format(timestampLayout),
-			claim.JobID, claim.Owner, claim.Epoch)
+			claim.JobID, storedString(s.postgresSchema != "", claim.Owner), claim.Epoch)
 		if err != nil {
 			return fmt.Errorf("renewing rendition job claim: %w", err)
 		}
@@ -990,7 +990,7 @@ func (s *Store) BeginRenditionProvider(
 			}
 		}
 		if err == nil {
-			authorization, err = authorizeProviderOperationTx(ctx, tx, s.vaultID, request, at.UTC())
+			authorization, err = authorizeProviderOperationTx(ctx, tx, s.vaultID, request, at.UTC(), s.postgresSchema != "")
 		}
 		if errors.Is(err, ErrProcessingConsentRequired) ||
 			errors.Is(err, ErrProcessingConsentExpired) ||
@@ -1006,7 +1006,7 @@ func (s *Store) BeginRenditionProvider(
 				return fmt.Errorf("rejecting stale rendition waiter: %w", rejectErr)
 			}
 			nextWaiterID, nextAuthorization, selectErr := selectRenditionJobWaiterTx(
-				ctx, tx, s.vaultID, job, at.UTC())
+				ctx, tx, s.vaultID, job, at.UTC(), s.postgresSchema != "")
 			if selectErr != nil {
 				if !errors.Is(selectErr, ErrProcessingConsentRequired) &&
 					!errors.Is(selectErr, ErrRenditionJobStaleAuthority) {
@@ -1319,8 +1319,8 @@ func (s *Store) finishRenditionJobClaim(
 		if _, err := tx.ExecContext(ctx, `UPDATE current_rendition_roots
 			SET active=0,released_at=$1
 			WHERE root_id IN ($2,$3) AND fencing_token=$4 AND active=1`,
-			at.UTC().Format(timestampLayout), renditionJobRootID("build", claim.JobID),
-			renditionJobRootID("generation", claim.JobID), claim.Epoch); err != nil {
+			at.UTC().Format(timestampLayout), storedString(s.postgresSchema != "", renditionJobRootID("build", claim.JobID)),
+			storedString(s.postgresSchema != "", renditionJobRootID("generation", claim.JobID)), claim.Epoch); err != nil {
 			return fmt.Errorf("releasing terminal rendition job roots: %w", err)
 		}
 		return nil
@@ -1361,7 +1361,7 @@ func (s *Store) StageRenditionJobBuild(
 			normalized.CapturedArtifactPolicyFingerprint != job.CapturedArtifactPolicyFingerprint {
 			return errors.New("rendition job build identity drifted")
 		}
-		if err := stageRenditionBuildTx(ctx, tx, normalized); err != nil {
+		if err := stageRenditionBuildTx(ctx, tx, normalized, s.postgresSchema != ""); err != nil {
 			return err
 		}
 		root := CurrentRenditionRoot{
@@ -1369,7 +1369,7 @@ func (s *Store) StageRenditionJobBuild(
 			TargetKind: RenditionRootBuild, TargetID: normalized.ID,
 			FencingToken: claim.Epoch, RecordedAt: at.UTC().Format(timestampLayout),
 		}
-		if err := putRenditionJobRootTx(ctx, tx, root); err != nil {
+		if err := putRenditionJobRootTx(ctx, tx, root, s.postgresSchema != ""); err != nil {
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE rendition_jobs
@@ -1397,17 +1397,17 @@ func (s *Store) StageRenditionJobGeneration(
 			job.Phase != RenditionPhaseGenerationStaged {
 			return errors.New("rendition job is not at the lexical generation phase")
 		}
-		generation, err = stageLexicalGenerationTx(ctx, tx, generationID)
+		generation, err = stageLexicalGenerationTx(ctx, tx, generationID, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
-		return rootRenditionJobGenerationTx(ctx, tx, job, claim, generation, at)
+		return rootRenditionJobGenerationTx(ctx, tx, job, claim, generation, at, s.postgresSchema != "")
 	})
 	return generation, err
 }
 
 func rootRenditionJobGenerationTx(
-	ctx context.Context, tx *sql.Tx, job RenditionJob, claim RenditionJobClaim, generation LexicalGeneration, at time.Time,
+	ctx context.Context, tx *sql.Tx, job RenditionJob, claim RenditionJobClaim, generation LexicalGeneration, at time.Time, postgres bool,
 ) error {
 	root := CurrentRenditionRoot{
 		ID: renditionJobRootID("generation", claim.JobID), Kind: RenditionRootJob,
@@ -1419,7 +1419,7 @@ func rootRenditionJobGenerationTx(
 			target_id=$1,recorded_at=$2
 			WHERE root_id=$3 AND root_kind='job' AND target_kind='lexical_generation'
 			  AND fencing_token=$4 AND active=1`, generation.ID, root.RecordedAt,
-			root.ID, claim.Epoch)
+			storedString(postgres, root.ID), claim.Epoch)
 		if err != nil {
 			return fmt.Errorf("refreshing rendition job generation root: %w", err)
 		}
@@ -1430,7 +1430,7 @@ func rootRenditionJobGenerationTx(
 		if changed != 1 {
 			return ErrRenditionJobFenced
 		}
-	} else if err := putRenditionJobRootTx(ctx, tx, root); err != nil {
+	} else if err := putRenditionJobRootTx(ctx, tx, root, postgres); err != nil {
 		return err
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET
@@ -1524,10 +1524,10 @@ func (s *Store) publishRenditionJob(
 			if derived && errors.Is(err, ErrNotFound) {
 				// The selected waiter is gone, but the provider answered under
 				// its grant: that grant alone decides whether the answer stands.
-				err = authorizeStoredEgressTx(ctx, tx, s.vaultID, prior, at.UTC())
+				err = authorizeStoredEgressTx(ctx, tx, s.vaultID, prior, at.UTC(), s.postgresSchema != "")
 			} else if err == nil {
 				providerRequest.PriorAuthorization = &prior
-				_, err = authorizeProviderOperationTx(ctx, tx, s.vaultID, providerRequest, at.UTC())
+				_, err = authorizeProviderOperationTx(ctx, tx, s.vaultID, providerRequest, at.UTC(), s.postgresSchema != "")
 			}
 			if err != nil && !errors.Is(err, ErrRenditionJobStaleAuthority) &&
 				!errors.Is(err, ErrProcessingConsentRequired) &&
@@ -1553,7 +1553,7 @@ func (s *Store) publishRenditionJob(
 			if err == nil && executionIdentity.Upload.InputBinding != "" && !derived {
 				var visible bool
 				visible, err = mediaInputBindingVisibleForSourceTx(ctx, tx, request.Principal,
-					executionIdentity.Upload.InputBinding, job.SourceSHA256)
+					executionIdentity.Upload.InputBinding, job.SourceSHA256, s.postgresSchema != "")
 				if err == nil && !visible {
 					err = ErrRenditionJobStaleAuthority
 				}
@@ -1563,7 +1563,7 @@ func (s *Store) publishRenditionJob(
 					// A fresh grant cannot replace the authority used for provider egress.
 					err = publicationErr
 				} else {
-					_, err = authorizeProviderOperationTx(ctx, tx, s.vaultID, request, at.UTC())
+					_, err = authorizeProviderOperationTx(ctx, tx, s.vaultID, request, at.UTC(), s.postgresSchema != "")
 				}
 			}
 			if err != nil {
@@ -1645,14 +1645,14 @@ func (s *Store) publishRenditionJob(
 			}
 			// Capture the final manifest under the publication writer lock so
 			// another publisher cannot make it stale before the head flip.
-			generation, err := appendLexicalGenerationTx(ctx, tx, []string{job.ID})
+			generation, err := appendLexicalGenerationTx(ctx, tx, []string{job.ID}, s.postgresSchema != "")
 			if errors.Is(err, ErrNotFound) {
-				generation, err = stageLexicalGenerationExcludingTx(ctx, tx, nil)
+				generation, err = stageLexicalGenerationExcludingTx(ctx, tx, nil, s.postgresSchema != "")
 			}
 			if err != nil {
 				return err
 			}
-			if err := rootRenditionJobGenerationTx(ctx, tx, job, claim, generation, at); err != nil {
+			if err := rootRenditionJobGenerationTx(ctx, tx, job, claim, generation, at, s.postgresSchema != ""); err != nil {
 				return err
 			}
 			generationID = generation.ID
@@ -1692,8 +1692,8 @@ func (s *Store) publishRenditionJob(
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE current_rendition_roots
 			SET active=0,released_at=$1 WHERE root_id IN ($2,$3) AND fencing_token=$4 AND active=1`,
-			publishedAt, renditionJobRootID("build", claim.JobID),
-			renditionJobRootID("generation", claim.JobID), claim.Epoch); err != nil {
+			publishedAt, storedString(s.postgresSchema != "", renditionJobRootID("build", claim.JobID)),
+			storedString(s.postgresSchema != "", renditionJobRootID("generation", claim.JobID)), claim.Epoch); err != nil {
 			return fmt.Errorf("releasing rendition job roots: %w", err)
 		}
 		publication.LexicalGenerationID = generationID
@@ -1713,7 +1713,7 @@ func (s *Store) publishRenditionJob(
 // authorizeStoredEgressTx rechecks the grant that authorized provider egress,
 // read from the grant itself so no waiter's state can hide its expiry.
 func authorizeStoredEgressTx(
-	ctx context.Context, tx *sql.Tx, vaultID string, prior ProviderOperationAuthorization, at time.Time,
+	ctx context.Context, tx *sql.Tx, vaultID string, prior ProviderOperationAuthorization, at time.Time, postgres bool,
 ) error {
 	var request ProviderOperationAuthorizationRequest
 	var inputJSON, retainedJSON string
@@ -1735,12 +1735,12 @@ func authorizeStoredEgressTx(
 		return fmt.Errorf("reading provider egress retained classes: %w", err)
 	}
 	request.PriorAuthorization = &prior
-	_, err = authorizeProviderOperationTx(ctx, tx, vaultID, request, at)
+	_, err = authorizeProviderOperationTx(ctx, tx, vaultID, request, at, postgres)
 	return err
 }
 
 func mediaInputBindingVisibleForSourceTx(
-	ctx context.Context, tx *sql.Tx, principal, inputID, sourceSHA256 string,
+	ctx context.Context, tx *sql.Tx, principal, inputID, sourceSHA256 string, postgres bool,
 ) (bool, error) {
 	var found int
 	err := tx.QueryRowContext(ctx, `SELECT 1 FROM media_input_artifacts i
@@ -1749,7 +1749,7 @@ func mediaInputBindingVisibleForSourceTx(
 		JOIN content_versions c ON c.version_id=v.content_version_id
 		WHERE i.input_id=$1 AND o.caller_principal=$2 AND o.visible=1
 			AND c.blob_hash=$3 AND o.source_version_id=i.source_version_id`,
-		inputID, principal, sourceSHA256).Scan(&found)
+		storedString(postgres, inputID), storedString(postgres, principal), sourceSHA256).Scan(&found)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -1783,7 +1783,7 @@ func renditionJobRootID(kind, jobID string) string {
 
 func refreshRenditionJobRootsTx(
 	ctx context.Context, tx *sql.Tx, jobID string, phase RenditionJobPhase,
-	generationID sql.NullString, epoch int64, at string,
+	generationID sql.NullString, epoch int64, at string, postgres bool,
 ) error {
 	if phase != RenditionPhaseBuildStaged && phase != RenditionPhaseGenerationStaged {
 		return nil
@@ -1792,7 +1792,7 @@ func refreshRenditionJobRootsTx(
 		ID: renditionJobRootID("build", jobID), Kind: RenditionRootJob,
 		TargetKind: RenditionRootBuild, TargetID: jobID,
 		FencingToken: epoch, RecordedAt: at,
-	}); err != nil {
+	}, postgres); err != nil {
 		return fmt.Errorf("refreshing rendition build root: %w", err)
 	}
 	if phase != RenditionPhaseGenerationStaged {
@@ -1805,7 +1805,7 @@ func refreshRenditionJobRootsTx(
 		ID: renditionJobRootID("generation", jobID), Kind: RenditionRootJob,
 		TargetKind: RenditionRootLexicalGeneration, TargetID: generationID.String,
 		FencingToken: epoch, RecordedAt: at,
-	}); err != nil {
+	}, postgres); err != nil {
 		return fmt.Errorf("refreshing rendition generation root: %w", err)
 	}
 	return nil
@@ -1815,7 +1815,7 @@ func refreshRenditionJobRootsTx(
 // replayable under the same claim. recorded_at is observation metadata, not a
 // different authority; token, target, kind, and active state remain exact.
 func putRenditionJobRootTx(
-	ctx context.Context, tx *sql.Tx, root CurrentRenditionRoot,
+	ctx context.Context, tx *sql.Tx, root CurrentRenditionRoot, postgres bool,
 ) error {
 	var kind CurrentRenditionRootKind
 	var targetKind CurrentRenditionTargetKind
@@ -1823,7 +1823,7 @@ func putRenditionJobRootTx(
 	var token int64
 	var active bool
 	err := tx.QueryRowContext(ctx, `SELECT root_kind,target_kind,target_id,fencing_token,active
-		FROM current_rendition_roots WHERE root_id=$1`, root.ID).Scan(
+		FROM current_rendition_roots WHERE root_id=$1`, storedString(postgres, root.ID)).Scan(
 		&kind, &targetKind, &targetID, &token, &active)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("reading rendition job root %s: %w", root.ID, err)
@@ -1832,7 +1832,7 @@ func putRenditionJobRootTx(
 		targetKind == root.TargetKind && targetID == root.TargetID {
 		return nil
 	}
-	return putCurrentRenditionRootTx(ctx, tx, root)
+	return putCurrentRenditionRootTx(ctx, tx, root, postgres)
 }
 
 func loadRenditionJobTx(ctx context.Context, query rowQuerier, id string) (RenditionJob, error) {

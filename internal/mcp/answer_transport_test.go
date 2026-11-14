@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -57,8 +58,10 @@ func TestAnswerQuestionQueryProviderOutageKeepsLexicalEvidence(t *testing.T) {
 	}))
 	profile := newSearchTestEmbeddingProfile(t, f, document.EmbeddingInputOriginalFile, true)
 	name := "local-text"
+	pdfName, pdfProfile, err := processing.NewPDFTextProfile()
+	require.NoError(t, err)
 	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(),
-		SpoolDirectory: t.TempDir(), Profiles: map[string]processing.ProfileConfig{name: profile}})
+		SpoolDirectory: t.TempDir(), Profiles: map[string]processing.ProfileConfig{name: profile, pdfName: pdfProfile}})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, service.Shutdown(context.Background())) })
 	selector := processing.Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: name}
@@ -111,8 +114,10 @@ func TestAnswerQuestionRerankRevokedConsent(t *testing.T) {
 	}
 	profile.RerankingDeadline = time.Second
 	profile.RerankingFailurePolicy = retrieval.ProviderFailureDegrade
+	pdfName, pdfProfile, err := processing.NewPDFTextProfile()
+	require.NoError(t, err)
 	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(),
-		SpoolDirectory: filepath.Join(t.TempDir(), "spool"), Profiles: map[string]processing.ProfileConfig{name: profile}})
+		SpoolDirectory: filepath.Join(t.TempDir(), "spool"), Profiles: map[string]processing.ProfileConfig{name: profile, pdfName: pdfProfile}})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, service.Shutdown(context.Background())) })
 	selector := processing.Selector{NodeID: member.NodeID, ContentVersionID: member.VersionID, Profile: name}
@@ -172,6 +177,9 @@ func TestAnswerQuestionProcessingErrorTransport(t *testing.T) {
 				switch r.URL.Path {
 				case "/api/v1/processing/source-fences/resolve":
 					writeDaemonJSON(t, w, api.DocumentSourceFenceResolution{Fence: fence, FenceFingerprint: fingerprint, ObservedScopeCount: len(fence.ContentVersionIDs)})
+				case "/api/v1/coverage":
+					assert.Equal(t, http.MethodGet, r.Method)
+					writeDaemonJSON(t, w, api.CoverageReport{VaultUID: testVaultID})
 				case "/api/v1/processing/profiles":
 					profiles := []api.ProcessingProfileSummary{{Name: "chosen", Fingerprint: strings.Repeat("a", 64), QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: tc.name != "no reranking support"}}
 					if tc.local && tc.code == "processing_unavailable" {
@@ -285,6 +293,8 @@ func TestAnswerQuestionSearchSelectionTransport(t *testing.T) {
 				switch r.URL.Path {
 				case "/api/v1/processing/source-fences/resolve":
 					writeDaemonJSON(t, w, api.DocumentSourceFenceResolution{Fence: fence, FenceFingerprint: fingerprint, ObservedScopeCount: 1})
+				case "/api/v1/coverage":
+					writeDaemonJSON(t, w, api.CoverageReport{VaultUID: testVaultID})
 				case "/api/v1/processing/profiles":
 					writeDaemonJSON(t, w, profiles)
 				case "/api/v1/search":
@@ -414,6 +424,30 @@ func TestAnswerQuestionRealDaemonEvidence(t *testing.T) {
 		})
 		require.Equal(t, "processing_profile_unavailable", unknown["code"])
 	}
+}
+
+func TestAnswerQuestionReportsMixedPDFThroughDaemon(t *testing.T) {
+	f := newNativeExportFixture(t)
+	pdf, err := os.ReadFile("../../document/testdata/scanassessment/mixed-below-ratio.pdf")
+	require.NoError(t, err)
+	hash, size, err := f.blobs.WriteContext(t.Context(), bytes.NewReader(pdf))
+	require.NoError(t, err)
+	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "mixed.pdf", hash, size, "application/pdf")
+	require.NoError(t, err)
+	server, service, _ := newProcessingDocumentServer(t, f)
+	require.NoError(t, (&processing.PDFTextRunner{Service: service}).Initialize(t.Context()))
+	selector := processing.Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: processing.PDFTextProfileName}
+	plan, err := service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	_, err = service.Start(t.Context(), processing.StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+	require.NoError(t, err)
+	output := exportCall(t, server, "answer_question", map[string]any{"question": "absentword", "profile": processing.PDFTextProfileName})
+	require.Equal(t, false, output["coverage_complete"])
+	gaps, ok := output["pages_without_text"].([]any)
+	require.True(t, ok)
+	require.Len(t, gaps, 1)
+	gap := schemaMap(t, gaps[0])
+	require.Equal(t, node.CurrentVersionID, gap["content_version_id"])
 }
 
 func newSearchTestEmbeddingProfile(t *testing.T, f *nativeExportFixture, kind document.EmbeddingInputKind, failQuery bool) processing.ProfileConfig {

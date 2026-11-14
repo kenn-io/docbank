@@ -493,9 +493,23 @@ print('Verified report evidence, CSV and all three original byte streams')
       expect(response.request().postDataJSON().selected_documents.documents).toEqual(identities);
       expect(response.status()).toBe(409);
       expect(await response.json()).toMatchObject({ code: "report_selection_changed" });
-      await expect(drawer.getByRole("alert")).toHaveText(
-        "Selected documents changed. Refresh the workspace and reselect the intended current versions.",
+      await expect(
+        drawer.getByRole("region", { name: "Selected documents changed" }).getByRole("status"),
+      ).toContainText(
+        "The report didn't run. Some selected documents have a different version or are no longer available.",
       );
+      await page.screenshot({ path: path.join(captures!, "selection-before.png") });
+      await drawer.getByRole("button", { name: "Refresh selection" }).click();
+      await expect(drawer.getByText(/^Selected:/)).toBeVisible();
+      await page.screenshot({ path: path.join(captures!, "selection-after.png") });
+      const include = drawer.getByRole("checkbox", { name: "Include current version" });
+      await expect(include).not.toBeChecked();
+      await include.check();
+      await drawer.getByRole("button", { name: "Use this selection" }).click();
+      await expect(
+        drawer.getByRole("status").filter({ hasText: "Selection updated" }),
+      ).toBeVisible();
+      await page.screenshot({ path: path.join(captures!, "selection-updated.png") });
       await expect(drawer.getByRole("table", { name: "Search report counts" })).toHaveCount(0);
       expect(await history()).toEqual(before);
     });

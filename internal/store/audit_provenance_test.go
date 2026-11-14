@@ -294,7 +294,7 @@ func TestAuditedProvenanceImportRequiresCallerSuppliedIngest(t *testing.T) {
 			// Build a correctly hashed append with the supplied stored kind,
 			// bypassing the writer that always adds the caller-supplied prefix.
 			require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-				if _, err := ensureIngestRunTx(ctx, tx, run); err != nil {
+				if _, err := s.ensureIngestRunTx(ctx, tx, run); err != nil {
 					return err
 				}
 				fact := metadataProvenance{
@@ -310,7 +310,7 @@ func TestAuditedProvenanceImportRequiresCallerSuppliedIngest(t *testing.T) {
 					return err
 				}
 				if test.kind == "watch" {
-					if err := insertWatchSourceTx(t.Context(), tx, "source", fact.OriginalPath, node.ID, node.BlobHash, node.Size); err != nil {
+					if err := insertWatchSourceTx(t.Context(), tx, "source", fact.OriginalPath, node.ID, node.BlobHash, node.Size, false); err != nil {
 						return err
 					}
 				}
@@ -424,7 +424,7 @@ func TestAuditedProvenanceReplayRejectsDirectoryTarget(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if _, err = ensureIngestRunTx(ctx, tx, run); err != nil {
+		if _, err = s.ensureIngestRunTx(ctx, tx, run); err != nil {
 			return err
 		}
 		fact := metadataProvenance{
@@ -503,7 +503,7 @@ func TestAuditedProvenanceCanonicalRecords(t *testing.T) {
 					Scan(&run.record.ID, &run.record.StartedAt, &run.record.SourceKind, &run.record.SourceDesc))
 			}
 			require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-				ingestAdded, err := ensureIngestRunTx(ctx, tx, run)
+				ingestAdded, err := s.ensureIngestRunTx(ctx, tx, run)
 				if err != nil {
 					return err
 				}

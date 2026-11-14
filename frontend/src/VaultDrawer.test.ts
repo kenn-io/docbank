@@ -4,6 +4,7 @@ import VaultDrawer, { type SearchByMeaningSetup } from "./VaultDrawer.svelte";
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -190,6 +191,14 @@ it("keeps the restart step beside a failed status read", () => {
   expect(screen.getByRole("alert").textContent).toBe("Daemon busy");
   expect(screen.getByText(/daemon restart/)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+});
+
+it("copies the restart command", async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal("navigator", { clipboard: { writeText } });
+  openSearchTab({ status: { ...off, download_bytes: 0, restart_required: true } });
+  await fireEvent.click(screen.getByRole("button", { name: "Copy restart command" }));
+  expect(writeText).toHaveBeenCalledWith("docbank daemon restart");
 });
 
 it("reads status on entering the tab and stops when leaving it", async () => {

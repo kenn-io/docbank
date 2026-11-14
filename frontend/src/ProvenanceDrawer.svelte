@@ -1,11 +1,12 @@
 <script lang="ts">
   import { provenanceSourceLabel, urlFetchHeader } from "./provenanceLabel.js";
   import * as generated from "./generated/docbank.js";
-  import { onMount } from "svelte";
-  import { Disclosure, Chip, Spinner } from "@kenn-io/kit-ui";
+  import { untrack } from "svelte";
+  import { Disclosure, Button, Chip, Spinner } from "@kenn-io/kit-ui";
   import DrawerShell from "./DrawerShell.svelte";
   import CopyValue from "./CopyValue.svelte";
   import { APIError } from "./api-transport.js";
+  import { readHistory, retryableHistoryError } from "./historyRead.js";
   import { type Node, type ProvenancePage } from "./generated/docbank.js";
   import { basename, formatDate } from "./format.js";
 
@@ -25,29 +26,43 @@
 
   let page = $state<ProvenancePage | null>(null);
   let loading = $state(true);
-  let error = $state("");
+  let error = $state<string | null>(null);
   let generation = 0;
+  let controller: AbortController | undefined;
+  let retryable = $state(false);
   const currentPath = $derived(page ? page.node.path : path);
   const documentName = $derived(
     currentPath ? basename(currentPath) : `${page?.node.name ?? node.name} (trashed)`,
   );
 
-  onMount(() => {
-    void load();
+  $effect(() => {
+    void session;
+    void node.id;
+    page = null;
+    untrack(() => void load());
     return () => {
       generation += 1;
+      controller?.abort();
     };
   });
 
-  async function load(): Promise<void> {
+  async function load(automatic = true): Promise<void> {
+    controller?.abort();
+    const pending = new AbortController();
+    controller = pending;
     const request = ++generation;
     loading = true;
-    error = "";
+    error = null;
     try {
-      const next = await generated.listNodeProvenance(
-        node.id,
-        { limit: 1000, offset: 0 },
-        { session },
+      const next = await readHistory(
+        () =>
+          generated.listNodeProvenance(
+            node.id,
+            { limit: 1000, offset: 0 },
+            { session, signal: pending.signal },
+          ),
+        pending.signal,
+        automatic,
       );
       if (request === generation) page = next;
     } catch (cause) {
@@ -57,6 +72,7 @@
         onclose();
         return;
       }
+      retryable = retryableHistoryError(cause);
       error = cause instanceof Error ? cause.message : String(cause);
     } finally {
       if (request === generation) loading = false;
@@ -75,8 +91,13 @@
     {#if currentPath}<CopyValue value={currentPath} label="document path" />{/if}
     {#if loading}
       <div class="loading" role="status"><Spinner size={16} /> Loading provenance…</div>
-    {:else if error}
-      <p class="error" role="alert">{error}</p>
+    {:else if error !== null}
+      <div class="error-block">
+        <p class="error" role="alert">
+          Couldn't load source history{#if error}: {error}{/if}
+        </p>
+        {#if retryable}<Button size="sm" onclick={() => void load(false)}>Try again</Button>{/if}
+      </div>
     {:else if !page?.items.length}
       <p class="empty">No source history recorded</p>
     {:else}
@@ -215,7 +236,14 @@
     color: var(--text-secondary);
     font-size: var(--font-size-sm);
   }
+  .error-block {
+    display: grid;
+    justify-items: start;
+    gap: var(--space-4);
+    margin-top: var(--space-4);
+  }
   .error {
+    margin: 0;
     color: var(--accent-red);
     overflow-wrap: anywhere;
   }

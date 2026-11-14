@@ -12,6 +12,7 @@
     Checkbox,
     DateRangePicker,
     IconButton,
+    Notice,
     RadioGroup,
     SegmentedControl,
     SelectDropdown,
@@ -84,7 +85,17 @@
   let choices = $state<Record<string, DateChoice>>({});
   let busy = $state(false);
   let error = $state("");
-  let notice = $state("");
+  let notice = $state<{ title?: string; message: string } | null>(null);
+  let selectionConflict = $state(false);
+  let selectionResult = $state<api.TermReportSelectionItem[] | null>(null);
+  let selectionAccepted = $state<Record<number, boolean>>({});
+  const selectedCount = $derived(
+    selectionResult?.filter(
+      (item) =>
+        item.status === "current" ||
+        (item.status === "changed" && selectionAccepted[item.selected.node_id]),
+    ).length ?? 0,
+  );
   let optionsOpen = $state(false);
   let generation = 0;
   let historyGeneration = 0;
@@ -111,12 +122,17 @@
       onclose();
       return;
     }
-    error =
-      cause instanceof APIError && cause.code === "report_selection_changed"
-        ? "Selected documents changed. Refresh the workspace and reselect the intended current versions."
-        : cause instanceof Error
-          ? cause.message
-          : String(cause);
+    if (
+      cause instanceof APIError &&
+      cause.code === "report_selection_changed" &&
+      draft.selected_documents
+    ) {
+      selectionConflict = true;
+      selectionResult = null;
+      error = "";
+      return;
+    }
+    error = cause instanceof Error ? cause.message : String(cause);
   }
 
   async function loadHistory(currentSession = session, reset = false): Promise<void> {
@@ -209,20 +225,95 @@
     draft.terms = [...draft.terms, newTerm(next)];
   }
 
+  function clearSelectionConflict(): void {
+    selectionConflict = false;
+    selectionResult = null;
+  }
+
+  async function refreshSelection(): Promise<void> {
+    if (busy || !draft.selected_documents) return;
+    const epoch = generation;
+    const currentSession = session;
+    busy = true;
+    error = "";
+    try {
+      const result = await api.refreshTermReportSelection(
+        $state.snapshot(draft.selected_documents),
+        { session },
+      );
+      if (epoch !== generation || currentSession !== session || !selectionConflict) return;
+      if (
+        result.some((item) => !["current", "changed", "missing", "trashed"].includes(item.status))
+      )
+        throw new Error("The selection response was incomplete or invalid.");
+      if (result.every((item) => item.status === "current")) {
+        clearSelectionConflict();
+        notice = {
+          title: "Selection is current",
+          message: "All selected documents are current. Create the report again.",
+        };
+      } else {
+        selectionAccepted = {};
+        selectionResult = result;
+      }
+    } catch (cause) {
+      if (epoch !== generation || currentSession !== session || !selectionConflict) return;
+      if (cause instanceof APIError && cause.status === 401) fail(cause);
+      else
+        error = `Couldn't refresh the selection. ${cause instanceof Error ? cause.message : String(cause)}`;
+    } finally {
+      busy = false;
+    }
+  }
+
+  function applySelection(): void {
+    if (!selectionResult || !selectedCount) return;
+    const changed = selectionResult.filter(
+      (item) => item.status === "changed" && selectionAccepted[item.selected.node_id],
+    ).length;
+    const total = selectionResult.length;
+    const leftOut = total - selectedCount;
+    draft.selected_documents = {
+      documents: selectionResult
+        .filter(
+          (item) =>
+            item.status === "current" ||
+            (item.status === "changed" && selectionAccepted[item.selected.node_id]),
+        )
+        .map((item) => item.current!),
+    };
+    clearSelectionConflict();
+    const documents = (count: number) => `${count} document${count === 1 ? "" : "s"}`;
+    notice = {
+      title: "Selection updated",
+      message: [
+        changed &&
+          `${documents(changed)} now ${changed === 1 ? "uses its current version" : "use their current versions"}.`,
+        leftOut && `${documents(leftOut)} ${leftOut === 1 ? "was" : "were"} left out.`,
+        "Create the report again.",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    };
+  }
+
   function openDraft(): void {
+    clearSelectionConflict();
     draft = newDraft();
     editing = true;
     error = "";
-    notice = "";
+    notice = null;
   }
 
   function cancelDraft(): void {
+    clearSelectionConflict();
     editing = false;
     error = "";
-    notice = "";
+    notice = null;
   }
 
   function useHistory(item: TermReportHistory): void {
+    clearSelectionConflict();
     editing = true;
     const source = item.request;
     draft = {
@@ -241,13 +332,13 @@
     reviewLoaded = false;
     choices = {};
     error = "";
-    notice = `Loaded the ${formatDate(item.summary.observed_at)} report.`;
+    notice = { message: `Loaded the ${formatDate(item.summary.observed_at)} report.` };
   }
 
   async function run(): Promise<void> {
     if (busy) return;
     error = "";
-    notice = "";
+    notice = null;
     if (draft.selected_documents && !draft.selected_documents.documents?.length) {
       error = "Select at least one current document in the workspace.";
       return;
@@ -266,6 +357,7 @@
     }
     busy = true;
     const submittedFingerprint = JSON.stringify(draft);
+    const submittedSelection = JSON.stringify(draft.selected_documents);
     const currentSession = session;
     const epoch = generation;
     try {
@@ -277,6 +369,7 @@
       };
       const summary = await api.createTermReport(request, { session: currentSession });
       if (epoch !== generation || currentSession !== session) return;
+      if (submittedSelection === JSON.stringify(draft.selected_documents)) clearSelectionConflict();
       review = [];
       reviewCursor = "";
       reviewLoaded = false;
@@ -284,15 +377,23 @@
       if (JSON.stringify(draft) !== submittedFingerprint) {
         active = null;
         submittedDraft = null;
-        notice = "A report from an earlier draft finished. It's in Recent reports.";
+        notice = { message: "A report from an earlier draft finished. It's in Recent reports." };
       } else {
         active = summary;
         submittedDraft = submittedFingerprint;
-        notice = "";
+        notice = null;
       }
       await loadHistory(currentSession, true);
     } catch (cause) {
-      fail(cause);
+      if (epoch === generation && currentSession === session) {
+        if (
+          (cause instanceof APIError && cause.status === 401) ||
+          submittedSelection === JSON.stringify(draft.selected_documents) ||
+          JSON.stringify(draft) === submittedFingerprint
+        )
+          fail(cause);
+        else error = "A report from an earlier draft didn't run. Create the report again.";
+      }
     } finally {
       busy = false;
     }
@@ -409,7 +510,7 @@
       review = [];
       reviewLoaded = false;
       choices = {};
-      notice = "";
+      notice = null;
       await loadHistory(session, true);
     } catch (cause) {
       fail(cause);
@@ -600,8 +701,62 @@
     </div>
   {/snippet}
   <div class="tool-body">
-    {#if error}<p class="tool-error" role="alert">{error}</p>{/if}
-    {#if notice}<p role="status">{notice}</p>{/if}
+    {#if selectionConflict}
+      <section class="tool-section selection-conflict" aria-label="Selected documents changed">
+        <Notice
+          tone="warning"
+          title="Selected documents changed"
+          message="The report didn't run. Some selected documents have a different version or are no longer available."
+        />
+        {#if error}<p class="tool-error" role="alert">{error}</p>{/if}
+        {#if selectionResult}
+          <ul class="tool-list selection-list">
+            {#each selectionResult.filter((item) => item.status !== "current") as item (item.selected.node_id)}
+              <li>
+                <div class="tool-row-main">
+                  <strong title={item.path || item.name}
+                    >{item.path?.replace(/^\//, "") ||
+                      item.name ||
+                      `Document ${item.selected.node_id}`}</strong
+                  ><span
+                    >{item.status === "changed"
+                      ? `Selected: ${item.selected_recorded ? formatDate(item.selected_recorded) : "date unavailable"} · Current: ${item.selected_recorded && formatDate(item.selected_recorded) === formatDate(item.modified ?? "") ? "different version" : formatDate(item.modified ?? "")}`
+                      : item.status === "trashed"
+                        ? "In trash"
+                        : "No longer available"}</span
+                  >
+                </div>
+                <div class="tool-row-actions">
+                  {#if item.status === "changed"}<Checkbox
+                      label="Include current version"
+                      checked={!!selectionAccepted[item.selected.node_id]}
+                      onchange={(checked) => (selectionAccepted[item.selected.node_id] = checked)}
+                    />{:else}<span class="tool-muted">Will be left out</span>{/if}
+                </div>
+              </li>
+            {/each}
+          </ul>
+          <p class="tool-muted">
+            {selectedCount
+              ? `The report will cover ${selectedCount} of ${selectionResult.length} selected documents.`
+              : "Include at least one document to create a report."}
+          </p>
+          <div class="tool-actions tool-actions--start">
+            <Button disabled={busy || !selectedCount} onclick={applySelection}
+              >Use this selection</Button
+            >
+          </div>
+        {:else}
+          <div class="tool-actions tool-actions--start">
+            <Button disabled={busy} onclick={() => void refreshSelection()}
+              >{#if busy}<Spinner size={14} /> Refreshing…{:else}Refresh selection{/if}</Button
+            >
+          </div>
+        {/if}
+      </section>
+    {:else if error}<p class="tool-error" role="alert">{error}</p>{/if}
+    {#if notice?.title}<Notice tone="success" title={notice.title} message={notice.message} />
+    {:else if notice}<p role="status">{notice.message}</p>{/if}
 
     {#if editing}{@render reportForm()}{/if}
 
@@ -810,7 +965,9 @@
                       : `${item.request.collection_ids?.length ?? 0} import${item.request.collection_ids?.length === 1 ? "" : "s"}`}</span
                 >
               </div>
-              <Button size="sm" onclick={() => useHistory(item)}>Use as draft</Button>
+              <Button size="sm" disabled={busy} onclick={() => useHistory(item)}
+                >Use as draft</Button
+              >
             </li>
           {/each}
         </ul>
@@ -831,7 +988,8 @@
   {onclose}
 >
   {#snippet actions()}
-    {#if page && !editing}<Button size="sm" onclick={openDraft}>Run report</Button>{/if}
+    {#if page && !editing}<Button size="sm" disabled={busy} onclick={openDraft}>Run report</Button
+      >{/if}
   {/snippet}
   {@render reportBody()}
 </DrawerShell>
@@ -862,6 +1020,14 @@
   }
   .scope {
     display: flex;
+  }
+  .selection-conflict {
+    padding-bottom: var(--space-6);
+    border-bottom: 1px solid var(--border-muted);
+  }
+  .selection-list {
+    max-height: 220px;
+    overflow: auto;
   }
   .collection-list {
     display: grid;

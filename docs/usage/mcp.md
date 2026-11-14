@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-31
+last_edited: 2026-11-10
 title: Model Context Protocol
 description: Connect a local MCP client to Docbank's read-mostly document tools through the daemon.
 ---
@@ -15,6 +15,19 @@ Standalone MCP is a client of the selected vault's daemon. It discovers or
 starts that daemon the same way the CLI does and never opens `docbank.db`, a
 blob, pack, or rendition directly. There is no MCP-only embedded-vault path and
 no remote-daemon option.
+
+## Server identity
+
+Stdio and HTTP clients receive Docbank's website and icon in `server/discover`
+metadata. The MCP icon depicts a document with a vault dial and is separate
+from the website favicon. It is an embedded 256×256 PNG data URI, so clients
+can load it without an external request. Whether it appears depends on the client.
+`tools/call` and `resources/read` results repeat a compact server identity
+without embedding the image again.
+
+Standalone and daemon-hosted MCP HTTP listeners also serve that PNG at
+`/icon.png` and `/favicon.ico`. These public image routes accept GET and HEAD
+without a bearer token. `/mcp` keeps its required bearer authentication.
 
 ## Start the server
 
@@ -460,6 +473,8 @@ winner.
 
 ### Answer questions
 
+`answer_question` reports bounded `pages_without_text` as inclusive ranges for PDFs in the resolved scope, including documents absent from search results. Gaps, partial page coverage, and unreadable evidence (`page_coverage_unavailable`) make coverage incomplete; the answer can still contain passages. Narrow the scope or call `get_processing_coverage` with specific content version IDs to inspect more pages. See [OCR](document-processing.md#ocr) for options.
+
 `answer_question` returns evidence without writing an answer. Content passages require every prepared word and exact quoted phrase in one segment. Common words may be dropped and regular word forms match. Use key terms. `ANSWERED` means
 that a content excerpt matched; it does not verify that the excerpt answers the
 question. Open the source to verify any quotation: excerpts can include omission
@@ -756,8 +771,48 @@ recheck masks, approved text or rendered numbers. It works after restart and
 backup/restore without the original review files or a configured page runtime.
 
 Numbered reservation and rendering use the CLI or authenticated HTTP routes.
-Full download verification requires the three review files through
-`bates export download`; the MCP export tool does not accept them. See
+For full checking, give `export_bates_file` all three private review files:
+
+```json
+{
+  "allocation_id": "11111111-1111-4111-8111-111111111111",
+  "destination_path": "/exports/checked.pdf",
+  "overwrite": false,
+  "preparation_path": "/reviews/PRIVATE-preparation.json",
+  "masks_path": "/reviews/PRIVATE-masks.json",
+  "review_path": "/reviews/PRIVATE-review.json"
+}
+```
+
+Paths are absolute, clean paths on the MCP host. Preparation and review files
+are limited to 16 MiB each; masks to 1 MiB. All three must be readable regular
+files. Partial, empty or null inputs are rejected. These files can contain
+unredacted evidence; keep them private and outside the delivery.
+
+Full checking applies only to numbered redactions and returns
+`masks_text_and_numbers`. It checks the recorded PDF identity, reviewed masks,
+approved text and visible numbers before publishing the destination. A failed
+check never falls back to recorded-byte recovery. It does not prove the origin
+of the PDF or compare unmasked pixels with the original.
+
+Only one full export runs per MCP process. Another returns `redaction_busy`
+before reading private files or contacting the daemon. Other tools and exports
+without review files remain available. Full work has a ten-minute limit;
+standalone HTTP MCP retains its shorter two-minute request deadline. The
+daemon-hosted MCP endpoint remains read-only.
+
+The first full check allocates PDFium's 512 MiB backing and compiled-code cache,
+which stay resident until the MCP process exits. The verifier's 1 GiB RSS ceiling
+counts the whole process, including unrelated calls. `redaction_memory` means
+retry after other work finishes; the ceiling is never raised for an export.
+`redaction_verifier_version` means the files or delivery need another verifier,
+while `redaction_review_changed` means the review does not match. Integrity
+failures return `redaction_integrity`; cancellation, request deadlines and page
+deadlines return `redaction_canceled`, `redaction_timeout` and
+`redaction_worker_timeout`. Local staging or publication failures return
+`bates_local_io`. Check the saved path before retrying a lost publication reply.
+
+The same full check is available through `bates export download`. See
 [Numbered delivery](document-processing.md#deliver-one-reviewed-pdf-with-bates-numbers)
 for retention consent and verification scope.
 
@@ -998,8 +1053,9 @@ no processing or provider work.
    for terms, inclusive date cutoffs, timezone, and optional processing profile.
 3. Call `create_report`. Omitted `coverage_mode` means `strict`. Choose
    `available_only` if incomplete evidence is acceptable. A changed selection
-   returns `report_selection_changed`. Refresh and reselect rather than
-   substituting newer versions automatically.
+   returns `report_selection_changed`. Recheck the documents and their current
+   versions with `list_documents` and `list_document_versions`. Review any
+   replacements with the operator before submitting a new selection.
 4. For `needs_review`, page through `get_report_dates`. Keep each member's
    earlier candidates when `candidates_complete` is false. Continue with the
    returned cursor until `next_cursor` is absent. Review the evidence with the

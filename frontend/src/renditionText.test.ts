@@ -126,6 +126,32 @@ it("accepts the worker's bounded digest-form artifact identity", async () => {
   ).resolves.toMatchObject({ state: "ready", artifact: { id: "f".repeat(64) } });
 });
 
+it("validates page fields", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+  const signal = new AbortController().signal;
+  const resolve = (fields: Record<string, unknown>) => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(receipt(fields))));
+    return resolveRenditionText("session", source, 9, "archive", observation, signal);
+  };
+  for (const [fields, expected] of [
+    [{ pages_without_text: [2, 3] }, { pagesWithoutText: [2, 3] }],
+    [{ page_coverage: "unavailable" }, { pageCoverage: "unavailable" }],
+    [
+      { state: "unprocessed", artifact: undefined, pages_without_text: [2] },
+      { state: "unprocessed", pagesWithoutText: [2] },
+    ],
+    [
+      { state: "unprocessed", artifact: undefined, page_coverage: "unavailable" },
+      { state: "unprocessed", pageCoverage: "unavailable" },
+    ],
+  ]) {
+    await expect(resolve(fields)).resolves.toMatchObject(expected);
+  }
+  for (const fields of [{ pages_without_text: [0] }, { page_coverage: "invalid" }]) {
+    await expect(resolve(fields)).rejects.toThrow(/Malformed rendition text receipt/);
+  }
+});
+
 it.each([
   ["source", receipt({ source: { ...(receipt().source as object), blob_hash: "1".repeat(64) } })],
   ["generation", receipt({ generation_id: "1".repeat(64) })],

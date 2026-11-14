@@ -275,7 +275,7 @@ func (s *Store) StageRenditionBuild(ctx context.Context, record RenditionBuildRe
 			normalized.VaultID, s.vaultID)
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return stageRenditionBuildTx(ctx, tx, normalized)
+		return stageRenditionBuildTx(ctx, tx, normalized, s.postgresSchema != "")
 	})
 }
 
@@ -299,15 +299,16 @@ func (s *Store) StageRenditionBuildWithRoot(
 		return errors.New("rooted rendition build requires a root for the staged build")
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if err := stageRenditionBuildTx(ctx, tx, normalized); err != nil {
+		if err := stageRenditionBuildTx(ctx, tx, normalized, s.postgresSchema != ""); err != nil {
 			return err
 		}
-		return putCurrentRenditionRootTx(ctx, tx, root)
+		return putCurrentRenditionRootTx(ctx, tx, root, s.postgresSchema != "")
 	})
 }
 
 func stageRenditionBuildTx(
 	ctx context.Context, tx *sql.Tx, normalized RenditionBuildRecord,
+	postgres bool,
 ) error {
 	suppressed, err := derivativeBuildSuppressedTx(
 		ctx, tx, normalized.SourceSHA256, normalized.ID)
@@ -339,7 +340,7 @@ func stageRenditionBuildTx(
 		normalized.ID, normalized.VaultID, normalized.SourceSHA256,
 		normalized.RenditionRequestFingerprint, normalized.EvidenceLexicalFingerprint,
 		normalized.CapturedArtifactPolicyFingerprint, string(normalized.CapturedArtifactPolicy),
-		normalized.AuthorizationChecksum, normalized.ProviderOperationID,
+		normalized.AuthorizationChecksum, storedString(postgres, normalized.ProviderOperationID),
 		string(normalized.ProviderReceipt), normalized.EvidenceChecksum,
 		normalized.RenditionChecksum, normalized.MarkdownChecksum,
 		normalized.Completeness, boolInt(normalized.PartialSuccess), boolInt(normalized.Truncated),
@@ -363,7 +364,7 @@ func stageRenditionBuildTx(
 		}
 		return validateRenditionBuildStateTx(ctx, tx, normalized.ID)
 	}
-	if err := insertRenditionBuildChildrenTx(ctx, tx, normalized); err != nil {
+	if err := insertRenditionBuildChildrenTx(ctx, tx, normalized, postgres); err != nil {
 		return err
 	}
 	return validateRenditionBuildStateTx(ctx, tx, normalized.ID)
@@ -901,19 +902,24 @@ func validateRenditionHeadRecord(record RenditionHeadRecord) error {
 	return validateMetadataTime("rendition head published_at", record.PublishedAt)
 }
 
-func ensureProcessingProfileTx(ctx context.Context, tx *sql.Tx, record ProcessingProfileRecord) error {
+func ensureProcessingProfileTx(ctx context.Context, tx *sql.Tx, record ProcessingProfileRecord, postgres bool) error {
+	extraColumns, extraValues := "", ""
+	args := []any{record.Fingerprint, string(record.CanonicalProfile), record.RenditionRequestFingerprint, record.EvidenceLexicalFingerprint, record.RetentionDisclosureFingerprint, record.AttachmentPolicyFingerprint, record.ConsentFingerprint, record.RenditionDisclosureFingerprint, storedString(postgres, record.TrustBoundary)}
+	if postgres {
+		bindings, err := processingProfileBindingsJSON(record.CanonicalProfile)
+		if err != nil {
+			return err
+		}
+		extraColumns, extraValues = ",embedding_bindings_json", ",$10"
+		args = append(args, bindings)
+	}
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO processing_profiles(
 			profile_fingerprint,canonical_profile,rendition_request_fingerprint,
 			evidence_lexical_fingerprint,retention_disclosure_fingerprint,
 			attachment_policy_fingerprint,consent_fingerprint,
-			rendition_disclosure_fingerprint,trust_boundary
-		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`,
-		record.Fingerprint, string(record.CanonicalProfile), record.RenditionRequestFingerprint,
-		record.EvidenceLexicalFingerprint, record.RetentionDisclosureFingerprint,
-		record.AttachmentPolicyFingerprint, record.ConsentFingerprint,
-		record.RenditionDisclosureFingerprint, record.TrustBoundary,
-	)
+			rendition_disclosure_fingerprint,trust_boundary`+extraColumns+`
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9`+extraValues+`) ON CONFLICT DO NOTHING`, args...)
 	if err != nil {
 		return fmt.Errorf("inserting processing profile %s: %w", record.Fingerprint, err)
 	}
@@ -934,11 +940,11 @@ func ensureProcessingProfileTx(ctx context.Context, tx *sql.Tx, record Processin
 	return nil
 }
 
-func insertRenditionBuildChildrenTx(ctx context.Context, tx *sql.Tx, record RenditionBuildRecord) error {
+func insertRenditionBuildChildrenTx(ctx context.Context, tx *sql.Tx, record RenditionBuildRecord, postgres bool) error {
 	for _, artifact := range record.Artifacts {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO rendition_artifacts(build_id,artifact_id,role,blob_hash,size,checksum)
-			VALUES($1,$2,$3,$4,$5,$6)`, record.ID, artifact.ID, artifact.Role, artifact.BlobHash,
+			VALUES($1,$2,$3,$4,$5,$6)`, record.ID, storedString(postgres, artifact.ID), artifact.Role, artifact.BlobHash,
 			artifact.Size, artifact.Checksum); err != nil {
 			return fmt.Errorf("inserting rendition artifact %s: %w", artifact.ID, err)
 		}
@@ -947,7 +953,7 @@ func insertRenditionBuildChildrenTx(ctx context.Context, tx *sql.Tx, record Rend
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO rendition_units(
 				build_id,unit_id,evidence_unit_id,unit_order,checksum,heading_path_json,locator_json
-			) VALUES($1,$2,$3,$4,$5,$6,$7)`, record.ID, unit.ID, unit.EvidenceUnitID, unit.Order,
+			) VALUES($1,$2,$3,$4,$5,$6,$7)`, record.ID, storedString(postgres, unit.ID), storedString(postgres, unit.EvidenceUnitID), unit.Order,
 			unit.Checksum, mustCatalogJSON(unit.HeadingPath), mustCatalogJSON(unit.Locator)); err != nil {
 			return fmt.Errorf("inserting rendition unit %s: %w", unit.ID, err)
 		}
@@ -956,8 +962,8 @@ func insertRenditionBuildChildrenTx(ctx context.Context, tx *sql.Tx, record Rend
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO rendition_lexical_segments(
 				build_id,segment_id,unit_id,segment_order,char_start,char_end,checksum,text
-			) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, record.ID, segment.ID, segment.UnitID, segment.Order,
-			segment.CharStart, segment.CharEnd, segment.Checksum, segment.Text); err != nil {
+			) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, record.ID, storedString(postgres, segment.ID), storedString(postgres, segment.UnitID), segment.Order,
+			segment.CharStart, segment.CharEnd, segment.Checksum, storedString(postgres, segment.Text)); err != nil {
 			return fmt.Errorf("inserting rendition lexical segment %s: %w", segment.ID, err)
 		}
 	}

@@ -39,6 +39,8 @@ Cancellation before apply and failed server startup leave the saved choice uncha
 
 In the web app, open **System → Search by meaning**, review the download size, and choose **Turn on** to approve setup. Setup starts the server and saves the indexing choice for this vault and new imports. Run `docbank daemon restart`, then reopen the web app to start indexing and search by meaning. The tab keeps the restart instruction until the daemon restarts.
 
+A successful built-in setup in the web app or CLI records the choice for other Kenn apps on this computer. If another app recorded that choice, Docbank installs any missing shared files and starts indexing at its next launch without saving a vault setup. If setup fails, use **Turn on** to try again. Existing configured providers keep their settings.
+
 For other processing, configure a profile and its referenced rendition, embedding, and retrieval profiles, then select a name listed by `processing profiles`.
 
 Preview the current version before sending a document or query to any provider:
@@ -326,8 +328,8 @@ Check the displayed range, opt in to keeping the unredacted original indefinitel
 and choose **Review numbering**, then **Reserve and keep PDF**. Each page gains
 a half-inch footer below the reviewed content; a Letter page becomes 612 by 828
 points. The server verifies the content and footer before publication.
-**Download numbered PDF** downloads the retained PDF, and **Open Productions**
-opens its recovery view. After editing masks, create another preview to number
+Each kept PDF shows its label range. Under **Download**, **PDF** downloads the
+retained PDF; the open icon beside the range opens Productions. After editing masks, create another preview to number
 the new review with a separate range. Earlier published PDFs stay downloadable
 until you close the review. Downloads check the retained file
 identity; masks and approved text are not rechecked. The plain preview and ZIP remain available
@@ -433,6 +435,22 @@ redactions. Load-file exports accept ordinary
 stamped allocations only. Use `redaction package` for a recipient delivery of numbered redactions.
 
 ### Package completed numbered PDFs for a recipient
+
+In the browser review, choose **Download** › **Recipient ZIP** beside a completed
+numbered PDF. Each completed delivery keeps its own action, even after you edit
+masks or publish another range. The ZIP contains that retained PDF, its reviewed
+text without footer labels, and DAT/OPT load files for recipient import. Private
+preparation, masks and review files stay outside the ZIP.
+
+The server rechecks masks, text and numbers before offering the download. It does
+not render again or need the original to remain live. The page runtime is not
+required; the recorded renderer and writer must still be supported for full
+verification. No weaker check is substituted. The package holds no rendering
+slot while waiting for download, but only one package can wait or transfer at a
+time. Its unused download link expires after two minutes. Keep the review open until
+the transfer finishes: closing it cancels the package and any transfer in
+progress. If cleanup fails, choose **Release recipient ZIP** before retrying. The completed PDF remains in
+Productions, while preparing a new recipient ZIP needs its open private review.
 
 `redaction package` puts completed numbered redactions into one ZIP for import
 by a recipient. It preserves each retained PDF and its numbers, verifies masks,
@@ -588,6 +606,14 @@ integrity failures exit 6. A renderer RSS refusal exits 5 and can be retried whe
 memory use is lower. Opening, reading, staging or cleaning up files, cancellation,
 timeouts, engine failures and output failures exit 1. No success result is printed on validation failure.
 Check the exit status even when output was partially written.
+
+## OCR
+
+Pages without a text layer may be scans or blank pages. OCR can read scanned text. Configure a [Docling profile](../configuration.md#document-conversion-with-docling) or a [Mistral OCR profile](../configuration.md#document-ocr-with-mistral), then use `processing plan` and `processing build` with consent to run it. Neither runs automatically.
+
+Processing coverage for `docbank-pdf-text` lists the source PDF pages without a text layer.
+
+Both profiles refuse PDFs containing DCT, JBIG2, or JPX streams during local inspection, including many scans.
 
 ## Convert documents with Docling
 

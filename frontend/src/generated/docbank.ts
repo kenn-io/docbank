@@ -1752,10 +1752,25 @@ export interface CoverageClass {
   unavailable: number;
 }
 
+export type CoverageReportPageCoverage = typeof CoverageReportPageCoverage[keyof typeof CoverageReportPageCoverage];
+
+
+export const CoverageReportPageCoverage = {
+  partial: 'partial',
+} as const;
+
+export interface PageTextGap {
+  content_version_id: string;
+  pages: number[];
+}
+
 export interface CoverageReport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   embeddings: CoverageClass[];
+  page_coverage?: CoverageReportPageCoverage;
+  page_coverage_unavailable?: boolean;
+  pages_without_text?: PageTextGap[];
   /** @pattern ^[0-9a-f]{64}$ */
   profile_fingerprint: string;
   renditions: CoverageClass;
@@ -7503,6 +7518,18 @@ export interface ProcessingProfileSummary {
   reranking_available?: boolean;
 }
 
+export interface Profile {
+  columns: string[];
+  date_format: string;
+  declared_timezone: string;
+  encoding: string;
+  field: number;
+  header_row: boolean;
+  id: string;
+  newline_in_field: number;
+  qualifier: number;
+}
+
 export type PromotePhotoNodeRequestKind = typeof PromotePhotoNodeRequestKind[keyof typeof PromotePhotoNodeRequestKind];
 
 
@@ -7660,6 +7687,53 @@ export interface QueryPreview {
   dependencies: QueryDependency[];
   query: SavedQueryV1Schema;
   query_fingerprint: string;
+}
+
+export interface RecipientPackageFile {
+  path: string;
+  sha256: string;
+  size: number;
+}
+
+export interface RecipientPackageDocument {
+  allocation_id: string;
+  artifact_manifest_sha256: string;
+  document_id: string;
+  labels: string[];
+  namespace_id: string;
+  ordinal: number;
+  page_count: number;
+  pdf: RecipientPackageFile;
+  recipe_sha256: string;
+  review_sha256: string;
+  text: RecipientPackageFile;
+}
+
+export interface RecipientPackageReceipt {
+  contract: string;
+  dat_profile: Profile;
+  document_count: number;
+  documents: RecipientPackageDocument[];
+  load_file: RecipientPackageFile;
+  mapping: RecipientPackageFile;
+  opt_profile: Profile;
+  page_count: number;
+  page_map: RecipientPackageFile;
+}
+
+export interface RecipientPackageDownload {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  allocation_id: string;
+  contract: string;
+  expires_at: string;
+  id: string;
+  name: string;
+  receipt: RecipientPackageReceipt;
+  sha256: string;
+  size: number;
+  url: string;
+  verification: string;
 }
 
 export interface RedactionFileDigest {
@@ -7859,6 +7933,13 @@ export interface RenditionTextProfile {
   name: string;
 }
 
+export type RenditionTextReceiptPageCoverage = typeof RenditionTextReceiptPageCoverage[keyof typeof RenditionTextReceiptPageCoverage];
+
+
+export const RenditionTextReceiptPageCoverage = {
+  unavailable: 'unavailable',
+} as const;
+
 export type RenditionTextReceiptState = typeof RenditionTextReceiptState[keyof typeof RenditionTextReceiptState];
 
 
@@ -7888,6 +7969,8 @@ export interface RenditionTextReceipt {
   attachment_id: string;
   build_id: string;
   generation_id: string;
+  page_coverage?: RenditionTextReceiptPageCoverage;
+  pages_without_text?: number[];
   profile: RenditionTextProfile;
   source: RenditionTextSource;
   state: RenditionTextReceiptState;
@@ -7999,6 +8082,8 @@ export interface RepositoryClaim {
 }
 
 export interface SelectedDocuments {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
   documents?: Identity[];
 }
 
@@ -8369,6 +8454,13 @@ export interface SearchTextCoverage {
   families: SearchTextCoverageFamiliesItem[];
   /** @minimum 0 */
   no_text: number;
+  /** @minimum 0 */
+  pages_without_text: number;
+  pdf_page_coverage_partial: boolean;
+  /** @minimum 0 */
+  pdf_page_coverage_unavailable: number;
+  /** @minimum 0 */
+  pdfs_without_text: number;
   /** @minimum 0 */
   pending: number;
 }
@@ -8803,6 +8895,16 @@ export interface TermReportHistoryPage {
   readonly $schema?: string;
   items: TermReportHistory[];
   total: number;
+}
+
+export interface TermReportSelectionItem {
+  current?: Identity;
+  modified?: string;
+  name?: string;
+  path?: string;
+  selected: Identity;
+  selected_recorded?: string;
+  status: string;
 }
 
 export interface TextOutlineEntry {
@@ -19871,6 +19973,68 @@ return sessionJSON<BatesExport>(getPublishNumberedPDFUrl(),
 
 
 
+export const getDiscardRecipientPackagesUrl = () => {
+
+
+
+
+  return `/api/v1/redaction/recipient-packages`
+}
+
+/**
+ * @summary Cancel this owner's recipient package and transfer
+ */
+export const discardRecipientPackages = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+  return sessionJSON<void>(getDiscardRecipientPackagesUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export const getBuildRecipientPackageUrl = () => {
+
+
+
+
+  return `/api/v1/redaction/recipient-packages`
+}
+
+/**
+ * @summary Prepare a recipient ZIP from one completed numbered review
+ */
+export const buildRecipientPackage = async (redactionRenderRequest: NonReadonly<RedactionRenderRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<RecipientPackageDownload> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<RecipientPackageDownload>(getBuildRecipientPackageUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(redactionRenderRequest)
+  }
+);}
+
+
+
 export const getRenderNativePDFUrl = () => {
 
 
@@ -20525,6 +20689,44 @@ return sessionJSON<Summary>(getCreateTermReportUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(request)
+  }
+);}
+
+
+
+export const getRefreshTermReportSelectionUrl = () => {
+
+
+
+
+  return `/api/v1/search-exports/selection`
+}
+
+/**
+ * @summary Compare selected document versions
+ */
+export const refreshTermReportSelection = async (selectedDocuments: NonReadonly<SelectedDocuments>, options?: Parameters<typeof sessionJSON>[1]): Promise<TermReportSelectionItem[]> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TermReportSelectionItem[]>(getRefreshTermReportSelectionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(selectedDocuments)
   }
 );}
 

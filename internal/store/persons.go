@@ -62,15 +62,15 @@ func validPersonConfidence(confidence string) bool {
 	return slices.Contains([]string{"exact_identifier", "operator_asserted", "supplied_identity", "name_candidate"}, confidence)
 }
 
-func createPersonTx(ctx context.Context, tx *sql.Tx, displayName, origin string) (Person, error) {
+func (s *Store) createPersonTx(ctx context.Context, tx *sql.Tx, displayName, origin string) (Person, error) {
 	id, err := newUUIDv4()
 	if err != nil {
 		return Person{}, err
 	}
-	return createPersonWithIDTx(ctx, tx, id, displayName, origin)
+	return s.createPersonWithIDTx(ctx, tx, id, displayName, origin)
 }
 
-func createPersonWithIDTx(ctx context.Context, tx *sql.Tx, id, displayName, origin string) (Person, error) {
+func (s *Store) createPersonWithIDTx(ctx context.Context, tx *sql.Tx, id, displayName, origin string) (Person, error) {
 	if !validPersonName(displayName) || !validPersonOrigin(origin) {
 		return Person{}, ErrInvalidPerson
 	}
@@ -86,7 +86,7 @@ func createPersonWithIDTx(ctx context.Context, tx *sql.Tx, id, displayName, orig
 		state = "curated"
 	}
 	now := nowRFC3339()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7)`, id, displayName, document.FoldPersonName(displayName), origin, state, now, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7)`, id, storedString(s.postgresSchema != "", displayName), storedString(s.postgresSchema != "", document.FoldPersonName(displayName)), origin, state, now, now); err != nil {
 		return Person{}, err
 	}
 	var created Person
@@ -100,7 +100,7 @@ func (s *Store) CreatePerson(ctx context.Context, displayName, origin string) (P
 	var created Person
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		created, err = createPersonTx(ctx, tx, displayName, origin)
+		created, err = s.createPersonTx(ctx, tx, displayName, origin)
 		if err != nil {
 			return err
 		}
@@ -124,7 +124,7 @@ func (s *Store) UpdatePerson(ctx context.Context, id string, revision int64, nam
 		if err := fencePersonTx(ctx, tx, id, revision); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE persons SET display_name=$1,display_name_folded=$2,revision=revision+1,state='curated',updated_at=$3 WHERE person_id=$4 AND revision=$5 AND state<>'retired'`, name, document.FoldPersonName(name), nowRFC3339(), id, revision)
+		result, err := tx.ExecContext(ctx, `UPDATE persons SET display_name=$1,display_name_folded=$2,revision=revision+1,state='curated',updated_at=$3 WHERE person_id=$4 AND revision=$5 AND state<>'retired'`, storedString(s.postgresSchema != "", name), storedString(s.postgresSchema != "", document.FoldPersonName(name)), nowRFC3339(), id, revision)
 		if err != nil {
 			return err
 		}
@@ -324,8 +324,14 @@ func (s *Store) peopleCandidatesSQL(prefix string, photosOnly, unlocked bool) (s
 	if prefix != "" {
 		clause, args = `instr(persons.display_name_folded, $1) > 0 AND docbank_person_name_starts_with_word_v1(persons.display_name_folded, $2) AND `, []any{prefix, prefix}
 		if s.postgresSchema != "" {
-			clause = `strpos(persons.display_name_folded, $1)>0 AND persons.display_name_folded COLLATE "C" ~ $2 AND `
-			args[1] = personWordStartPostgres + regexp.QuoteMeta(prefix)
+			clause = `position($1 in persons.display_name_folded)>0 AND CASE WHEN position('\x00'::bytea in persons.display_name_folded)=0
+ THEN convert_from(persons.display_name_folded,'UTF8') COLLATE "C" ~ $2
+ ELSE ` + fmt.Sprintf(personBytePrefixPostgres, "$3") + ` END AND `
+			args = []any{[]byte(prefix), personWordStartPostgres + regexp.QuoteMeta(prefix), personWordStartPostgres + "$"}
+			if strings.ContainsRune(prefix, 0) {
+				clause = fmt.Sprintf(personBytePrefixPostgres, "$2") + " AND "
+				args = []any{[]byte(prefix), personWordStartPostgres + "$"}
+			}
 		}
 	}
 	if photosOnly {
@@ -411,15 +417,18 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 	return people, scope, err
 }
 
-func peopleNamePageSQL(candidates string, first int) string {
+func (s *Store) peopleNamePageSQL(candidates string, first int) string {
 	cursor := fmt.Sprintf(`$%[1]d='' OR display_name_folded>$%[1]d OR (display_name_folded=$%[1]d AND person_id>$%[2]d)`, first, first+1)
+	if s.postgresSchema != "" {
+		cursor = fmt.Sprintf(`CAST($%[1]d AS bytea)='' OR display_name_folded>$%[1]d OR (display_name_folded=$%[1]d AND person_id>$%[2]d)`, first, first+1)
+	}
 	return fmt.Sprintf(peopleByDisplayNameSQL, candidates, cursor, first+2, first+3, first+4)
 }
 
 // peopleByDisplayNameTx bounds the name matches before reading identity labels.
 func (s *Store) peopleByDisplayNameTx(ctx context.Context, tx *sql.Tx, candidates string, args []any, afterName, afterID string, limit int, visibleOnly, hideLocked bool) ([]PersonSearchResult, error) {
-	query := peopleNamePageSQL(candidates, len(args)+1)
-	args = append(slices.Clone(args), afterName, afterID, limit, boolInt(visibleOnly), boolInt(hideLocked))
+	query := s.peopleNamePageSQL(candidates, len(args)+1)
+	args = append(slices.Clone(args), storedString(s.postgresSchema != "", afterName), afterID, limit, boolInt(visibleOnly), boolInt(hideLocked))
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -485,10 +494,14 @@ func (s *Store) peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates strin
 			matchArgs = append(slices.Clone(matchArgs), 1, boolInt(hideLocked))
 		}
 		first := len(matchArgs) + 1
+		emptyCursor := fmt.Sprintf("$%d=''", first)
+		if s.postgresSchema != "" {
+			emptyCursor = fmt.Sprintf("CAST($%d AS bytea)=''", first)
+		}
 		query = rankedSQL + `SELECT person_id,display_name_folded,rank FROM ranked persons WHERE ` + eligible + fmt.Sprintf(`
- ($%[1]d='' OR rank<$%[2]d OR (rank=$%[2]d AND (display_name_folded>$%[1]d OR (display_name_folded=$%[1]d AND person_id>$%[3]d))))
- ORDER BY rank DESC,display_name_folded,person_id LIMIT $%[4]d`, first, first+1, first+2, first+3)
-		matchArgs = append(matchArgs, afterName, afterRecent, afterID, limit)
+ (%[5]s OR rank<$%[2]d OR (rank=$%[2]d AND (display_name_folded>$%[1]d OR (display_name_folded=$%[1]d AND person_id>$%[3]d))))
+ ORDER BY rank DESC,display_name_folded,person_id LIMIT $%[4]d`, first, first+1, first+2, first+3, emptyCursor)
+		matchArgs = append(matchArgs, storedString(s.postgresSchema != "", afterName), afterRecent, afterID, limit)
 		walkArgs = matchArgs
 	}
 	rows, err := tx.QueryContext(ctx, query, walkArgs...)
@@ -582,7 +595,17 @@ func (s *Store) peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates strin
 		if afterRecent != "" {
 			afterName, afterID = "", ""
 		}
-		unranked, err := s.peopleByDisplayNameTx(ctx, tx, candidates+"display_name_folded NOT IN (SELECT value FROM "+d.arrayValues(fmt.Sprintf("$%d", len(args)+1))+") AND ", append(slices.Clone(args), string(encoded)), afterName, afterID, limit-len(people), visibleOnly, hideLocked)
+		excluded := "display_name_folded NOT IN (SELECT value FROM " + d.arrayValues(fmt.Sprintf("$%d", len(args)+1)) + ") AND "
+		var excludedNames any = string(encoded)
+		if s.postgresSchema != "" {
+			excluded = fmt.Sprintf("display_name_folded <> ALL($%d::bytea[]) AND ", len(args)+1)
+			values := make([][]byte, len(unrankedNames))
+			for i, name := range unrankedNames {
+				values[i] = []byte(name)
+			}
+			excludedNames = values
+		}
+		unranked, err := s.peopleByDisplayNameTx(ctx, tx, candidates+excluded, append(slices.Clone(args), excludedNames), afterName, afterID, limit-len(people), visibleOnly, hideLocked)
 		if err != nil {
 			return nil, err
 		}
@@ -669,7 +692,7 @@ func (s *Store) AddPersonIdentity(ctx context.Context, personID string, revision
 		if count >= document.MaxPersonIdentitiesPerPerson {
 			return ErrPersonIdentityConflict
 		}
-		result, err := tx.ExecContext(ctx, `INSERT INTO person_identities(identity_id,person_id,kind,value_normalized,value_display,scope_kind,scope_value,normalization,origin,evidence_kind,evidence_id,confidence,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT DO NOTHING`, identity.IdentityID, personID, identity.Kind, identity.ValueNormalized, identity.ValueDisplay, identity.ScopeKind, identity.ScopeValue, identity.Normalization, identity.Origin, identity.EvidenceKind, identity.EvidenceID, identity.Confidence, identity.RecordedAt)
+		result, err := tx.ExecContext(ctx, `INSERT INTO person_identities(identity_id,person_id,kind,value_normalized,value_display,scope_kind,scope_value,normalization,origin,evidence_kind,evidence_id,confidence,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT DO NOTHING`, identity.IdentityID, personID, identity.Kind, identity.ValueNormalized, identity.ValueDisplay, identity.ScopeKind, identity.ScopeValue, identity.Normalization, identity.Origin, identity.EvidenceKind, storedString(s.postgresSchema != "", identity.EvidenceID), identity.Confidence, identity.RecordedAt)
 		if err != nil {
 			return err
 		}
@@ -845,3 +868,26 @@ func (s *Store) peopleJoin() string {
 	}
 	return "CROSS JOIN"
 }
+
+// NUL-bearing names cannot be decoded as PostgreSQL TEXT. Find exact UTF-8 byte
+// occurrences and decode only the preceding rune to test the same word boundary.
+// The ordinary NUL-free name path keeps its regexp; no rows are filtered in Go.
+const personBytePrefixPostgres = `EXISTS (
+ WITH RECURSIVE matches(at) AS (
+  SELECT position($1 in persons.display_name_folded)
+  UNION ALL
+  SELECT at+position($1 in substring(persons.display_name_folded,at+1)) FROM matches
+  WHERE at>0 AND position($1 in substring(persons.display_name_folded,at+1))>0
+ ) SELECT 1 FROM matches WHERE CASE
+ WHEN at<=1 THEN at=1
+ WHEN get_byte(persons.display_name_folded,at-2)=0 THEN true
+ ELSE convert_from(substring(persons.display_name_folded,
+ at-CASE WHEN get_byte(persons.display_name_folded,at-2)<128 THEN 1
+         WHEN get_byte(persons.display_name_folded,at-3) BETWEEN 192 AND 223 THEN 2
+         WHEN get_byte(persons.display_name_folded,at-4) BETWEEN 224 AND 239 THEN 3
+         ELSE 4 END,
+ CASE WHEN get_byte(persons.display_name_folded,at-2)<128 THEN 1
+      WHEN get_byte(persons.display_name_folded,at-3) BETWEEN 192 AND 223 THEN 2
+      WHEN get_byte(persons.display_name_folded,at-4) BETWEEN 224 AND 239 THEN 3
+      ELSE 4 END),'UTF8') COLLATE "C" ~ %s END
+)`

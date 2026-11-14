@@ -205,7 +205,7 @@ func TestProcessingMetadataRejectsRestoredAttachmentWithForbiddenArtifact(t *tes
 	build.DeclaredArtifactCount = len(build.Artifacts)
 	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return ensureProcessingProfileTx(t.Context(), tx, profile)
+		return ensureProcessingProfileTx(t.Context(), tx, profile, s.postgresSchema != "")
 	}))
 	_, err := s.db.ExecContext(t.Context(), `INSERT INTO rendition_attachments(
 		attachment_id,vault_uid,content_version_id,build_id,profile_fingerprint,

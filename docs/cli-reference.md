@@ -1191,6 +1191,7 @@ adds `degraded_error`. Fuzzy lexical search adds `fuzzy` status and
 `fuzzy_reasons`. Processing headers include coverage and complete/scoped
 document counts. With `--explain`, the header adds trace stage/count pairs.
 With `--rerank`, it adds outcome, candidate count, and any failure cause.
+When similar search lacks a source embedding, the header adds `next=` with the planning command.
 
 Each hit is one line with selector, match, and path. Processing hits add the
 daemon score, a lexical/semantic/hybrid match kind, and a short excerpt.
@@ -1247,13 +1248,16 @@ Use `docbank search --similar-to id:42 --profile private_text` with repeated
 `--source-version <uuid>` values to find files like one selected current
 version. Include that version in the source fence. `--version <uuid>` pins the
 selection; omission uses the node's current version. The fence accepts 1 to
-4,096 versions. `--binding`, `--limit` from 1 to 100, and `--agent` or `--json` are supported.
+4,096 versions. `--binding`, `--limit` from 1 to 100, and `--agent` or `--json`
+are supported.
 The default limit is 20 content groups.
 
 Similarity uses stored embeddings locally. It excludes the source node, groups
 identical content, and reports how many other eligible copies each group has.
-Missing source embeddings return `unavailable`. Query text, `--mode`,
-`--explain`, `--rerank`, and lexical filters cannot accompany `--similar-to`.
+When the source embedding is missing, human and agent output show a
+`docbank processing plan` command. JSON reports `state: unavailable` and the
+missing coverage. Query text, `--mode`, `--explain`, `--rerank`, and lexical
+filters cannot accompany `--similar-to`.
 
 ## docbank export
 

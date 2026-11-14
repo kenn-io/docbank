@@ -76,7 +76,7 @@ func (s *QuerySnapshotService) CreatePhotoAlbum(ctx context.Context, owner, snap
 			if err != nil {
 				return err
 			}
-			if err = writePhotoSetReceipts(ctx, tx, "set_create", PhotoSet{}, out, nil); err != nil {
+			if err = s.store.writePhotoSetReceipts(ctx, tx, "set_create", PhotoSet{}, out, nil); err != nil {
 				return err
 			}
 			// Fixed-width timestamps keep the default Added sort in frozen result order.
