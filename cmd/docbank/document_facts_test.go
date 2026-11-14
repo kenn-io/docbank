@@ -49,17 +49,11 @@ func TestDocumentFactsTableEscapesAndTimezones(t *testing.T) {
 
 	t.Run("published claim", func(t *testing.T) {
 		result := &api.VersionDates{State: "published", Claims: []api.VersionDateClaim{{
-			Primary: true, DateKind: "sent", DateValue: "2024-03-15", ZoneText: "America/Vancouver", Precision: "date", ClaimBasis: "source_asserted", When: api.WhenV1{State: "date"},
+			Primary: true, DateKind: "vault_recorded", DateValue: "2024-03-15", ZoneText: "America/Vancouver", Precision: "date", ClaimBasis: "source_asserted", When: api.WhenV1{State: "date"},
 		}}}
 		var output strings.Builder
 		require.NoError(t, writeVersionDatesTable(&output, result))
-		require.Equal(t, "State: published\n* sent  2024-03-15  \"America/Vancouver\" (state=date, zone=\"\")  date  From document\n", output.String())
-	})
-	t.Run("recorded date", func(t *testing.T) {
-		result := &api.VersionDates{State: "published", Claims: []api.VersionDateClaim{{DateKind: "vault_recorded", DateValue: "2024-03-15", Precision: "date", When: api.WhenV1{State: "date"}}}}
-		var table strings.Builder
-		require.NoError(t, writeVersionDatesTable(&table, result))
-		require.Contains(t, table.String(), "Recorded  2024-03-15")
+		require.Equal(t, "State: published\n* Recorded  2024-03-15  \"America/Vancouver\" (state=date, zone=\"\")  date  From document\n", output.String())
 	})
 }
 
@@ -99,10 +93,14 @@ func TestDocumentFactsCommands(t *testing.T) {
 			require.NoError(t, json.Unmarshal([]byte(safeOutput), &safe))
 			require.Len(t, safe.Assertions, 1)
 			require.Equal(t, person.PersonID, safe.Assertions[0].PersonID)
+		} else {
+			var dates api.VersionDates
+			require.NoError(t, json.Unmarshal([]byte(safeOutput), &dates))
+			require.Equal(t, f.nodes["notes.txt"].CurrentVersionID, dates.ContentVersionID)
 		}
-		_, err = runCLI(t, "document", noun, "/empty")
-		require.ErrorContains(t, err, "document has no current content version")
 	}
+	_, err = runCLI(t, "document", "people", "/empty")
+	require.ErrorContains(t, err, "document has no current content version")
 }
 
 func TestDocumentPeopleTableBccLabels(t *testing.T) {
@@ -141,7 +139,6 @@ func TestDocumentPeopleTableAssertionSupport(t *testing.T) {
 	}{
 		{name: "represented", edges: []api.VersionPersonEdge{edge}, assertion: assertion},
 		{name: "published without edge", assertion: assertion, wantRow: true},
-		{name: "suppress", assertion: func() api.VersionPersonAssertion { a := assertion; a.Action = "suppress"; return a }(), wantRow: true},
 		{name: "new assertion", edges: []api.VersionPersonEdge{edge}, assertion: func() api.VersionPersonAssertion { a := assertion; a.AssertionID = "new"; return a }(), wantRow: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

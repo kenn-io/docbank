@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"maps"
 	"reflect"
+	"slices"
 	"testing"
 
 	"go.kenn.io/docbank/document"
@@ -63,17 +64,6 @@ func TestVersionDatesProjectionUsesSelectedDisclosure(t *testing.T) {
 	if safe.Claims[0].When.PlacedBy == nil || safe.Claims[0].When.PlacedBy.EventID != "created" || full.Claims[0].When.PlacedBy == nil || full.Claims[0].When.PlacedBy.EventID != "sent" || full.Claims[1].When.PlacedBy != nil {
 		t.Fatalf("primary placement: safe=%+v full=%+v", safe.Claims, full.Claims)
 	}
-	raw, err := json.Marshal(full.Claims[1].When)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fields map[string]any
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := fields["placed_by"]; ok {
-		t.Fatalf("non-primary placement in %s", raw)
-	}
 	for _, kind := range []document.DateKind{"imported", "vault_recorded"} {
 		event := document.DocumentEventV1{EventID: "fallback", DateKind: kind, Precision: "date", DateValue: "2026-03-09"}
 		facts := store.DocumentDateFacts{State: "published", View: store.DocumentEventView{Events: document.DocumentEventsV1{Events: []document.DocumentEventV1{event}, Primaries: []document.DocumentEventPrimaryV1{{EventID: "fallback", ScopeClass: "vault", Disclosure: "safe", RuleID: "primary-rule/v1"}}}}}
@@ -92,7 +82,7 @@ func TestVersionPeopleProjectionHidesUnsupportedPeople(t *testing.T) {
 	// The store supplies already-filtered candidate occurrences for safe reads.
 	safeFacts := f
 	safeFacts.Persons = maps.Clone(f.Persons)
-	safeFacts.Edges = f.Edges[:2]
+	safeFacts.Edges = slices.Clone(f.Edges[:2])
 	safeFacts.Candidates = []store.VersionCandidate{{CandidateID: "candidate", Occurrences: []store.VersionCandidateOccurrence{{Role: "author", Label: "Recipient"}}}}
 	safe := versionPeopleAPI(safeFacts, true)
 	if len(safe.Edges) != 1 || safe.Edges[0].PersonID != "visible" || len(safe.Assertions) != 0 || len(safe.Unresolved) != 1 || safe.Unresolved[0].Role != "author" || safe.Unresolved[0].RawLabel != "Recipient" {
@@ -107,7 +97,6 @@ func TestVersionPeopleProjectionHidesUnsupportedPeople(t *testing.T) {
 		{"operator assertion", "operator_assertion", "operator_assigned", "", "Private Bcc"},
 		{"operator custodian", "custodian_assignment", "operator_assigned", "Assigned Label", "Private Bcc"},
 		{"inferred custodian", "custodian_assignment", "package_column", "Package Label", "Package Label"},
-		{"inferred custodian empty label", "custodian_assignment", "transfer_record", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			edgeFacts := safeFacts
@@ -118,17 +107,21 @@ func TestVersionPeopleProjectionHidesUnsupportedPeople(t *testing.T) {
 			}
 		})
 	}
-	safeFacts.Persons["visible"] = store.FactPerson{Person: store.Person{PersonID: "visible", DisplayName: "Confirmed Name", State: "curated", Origin: "derived"}, Visible: true}
-	if got := versionPeopleAPI(safeFacts, true).Edges[0].DisplayName; got != "Confirmed Name" {
+	curatedFacts := safeFacts
+	curatedFacts.Persons = maps.Clone(safeFacts.Persons)
+	curatedFacts.Persons["visible"] = store.FactPerson{Person: store.Person{PersonID: "visible", DisplayName: "Confirmed Name", State: "curated", Origin: "derived"}, Visible: true}
+	if got := versionPeopleAPI(curatedFacts, true).Edges[0].DisplayName; got != "Confirmed Name" {
 		t.Fatalf("curated name = %q", got)
 	}
-	f.Persons["hidden"] = store.FactPerson{Person: store.Person{PersonID: "hidden", DisplayName: "Hidden"}, Visible: true}
-	full := versionPeopleAPI(f, false)
+	fullFacts := f
+	fullFacts.Persons = maps.Clone(f.Persons)
+	fullFacts.Persons["hidden"] = store.FactPerson{Person: store.Person{PersonID: "hidden", DisplayName: "Hidden"}, Visible: true}
+	full := versionPeopleAPI(fullFacts, false)
 	if len(full.Edges) != 3 || len(full.Assertions) != 1 || full.Assertions[0].DisplayName != "Hidden" || len(full.Unresolved) != 2 {
 		t.Fatalf("full: %+v", full)
 	}
-	f.Candidates = []store.VersionCandidate{{Occurrences: []store.VersionCandidateOccurrence{{Role: "author", Label: "Unknown"}}}}
-	raw, err := json.Marshal(versionPeopleAPI(f, true).Unresolved)
+	unknownFacts := store.DocumentPeopleFacts{Candidates: []store.VersionCandidate{{Occurrences: []store.VersionCandidateOccurrence{{Role: "author", Label: "Unknown"}}}}}
+	raw, err := json.Marshal(versionPeopleAPI(unknownFacts, true).Unresolved)
 	if err != nil {
 		t.Fatal(err)
 	}

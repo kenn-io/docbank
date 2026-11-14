@@ -275,11 +275,8 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		if err != nil || r.Method != http.MethodGet || !validPageJobPathID(id) {
 			return false
 		}
-		if len(values) == 0 {
-			return true
-		}
-		entries, ok := values["disclosure"]
-		return len(values) == 1 && ok && len(entries) == 1 && (entries[0] == "safe" || entries[0] == "full")
+		disclosure := values.Get("disclosure")
+		return len(values) == 0 || len(values) == 1 && len(values["disclosure"]) == 1 && (disclosure == "safe" || disclosure == "full")
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/v1/redaction/") {
 		return redactionBrowserRequestAllowed(r)
