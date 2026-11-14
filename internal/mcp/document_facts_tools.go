@@ -79,29 +79,28 @@ func getDocumentFacts(ctx context.Context, lease *daemonLease, raw []byte, kind 
 		return nil, &searchProfileError{code: "no_content_version", message: "Document has no current content version."}
 	}
 	if response.dates != nil {
-		if err := validateFactsSnapshot(in, *response.dates); err != nil {
+		snapshot, err := validateFactsSnapshot(in, *response.dates)
+		if err != nil {
 			return nil, err
 		}
-		return documentDatesPage(*response.dates, in.Offset)
+		return documentDatesPage(*response.dates, in.Offset, snapshot)
 	}
-	if err := validateFactsSnapshot(in, *response.people); err != nil {
+	snapshot, err := validateFactsSnapshot(in, *response.people)
+	if err != nil {
 		return nil, err
 	}
-	return documentPeoplePage(*response.people, in.Offset)
+	return documentPeoplePage(*response.people, in.Offset, snapshot)
 }
 
-func validateFactsSnapshot(in documentFactsInput, value any) error {
-	if in.Offset == 0 {
-		return nil
-	}
+func validateFactsSnapshot(in documentFactsInput, value any) (string, error) {
 	snapshot, err := factsSnapshot(value)
 	if err != nil {
-		return err
+		return "", err
 	}
-	if in.Snapshot != snapshot {
-		return staleFactsPage()
+	if in.Offset > 0 && in.Snapshot != snapshot {
+		return "", staleFactsPage()
 	}
-	return nil
+	return snapshot, nil
 }
 
 func staleFactsPage() error {
@@ -119,18 +118,14 @@ func factsSnapshot(value any) (string, error) {
 
 // documentDatesPage pages claims followed by diagnostics, retaining the primary
 // and version metadata on every page. Oversized individual items fail visibly.
-func documentDatesPage(dates api.VersionDates, offset int) (documentDatesOutput, error) {
+func documentDatesPage(dates api.VersionDates, offset int, snapshot string) (documentDatesOutput, error) {
 	total := len(dates.Claims) + len(dates.Diagnostics)
 	start := min(offset, total)
 	output := documentDatesOutput{privateCache: newPrivateCache(), VersionDates: dates, Offset: start}
-	snapshot, err := factsSnapshot(dates)
-	if err != nil {
-		return output, err
-	}
 	output.Snapshot = snapshot
 	output.Claims = []api.VersionDateClaim{}
 	output.Diagnostics = []api.FactDiagnostic{}
-	err = pageFacts(start, total, &output.NextOffset, func(i int, add bool) {
+	err := pageFacts(start, total, &output.NextOffset, func(i int, add bool) {
 		if i < len(dates.Claims) {
 			if add {
 				output.Claims = append(output.Claims, dates.Claims[i])
@@ -149,20 +144,16 @@ func documentDatesPage(dates api.VersionDates, offset int) (documentDatesOutput,
 }
 
 // documentPeoplePage traverses edges, assertions and unresolved names in order.
-func documentPeoplePage(people api.VersionPeople, offset int) (documentPeopleOutput, error) {
+func documentPeoplePage(people api.VersionPeople, offset int, snapshot string) (documentPeopleOutput, error) {
 	edges, assertions := len(people.Edges), len(people.Assertions)
 	total := edges + assertions + len(people.Unresolved)
 	start := min(offset, total)
 	output := documentPeopleOutput{privateCache: newPrivateCache(), VersionPeople: people, Offset: start}
-	snapshot, err := factsSnapshot(people)
-	if err != nil {
-		return output, err
-	}
 	output.Snapshot = snapshot
 	output.Edges = []api.VersionPersonEdge{}
 	output.Assertions = []api.VersionPersonAssertion{}
 	output.Unresolved = []api.VersionUnresolvedName{}
-	err = pageFacts(start, total, &output.NextOffset, func(i int, add bool) {
+	err := pageFacts(start, total, &output.NextOffset, func(i int, add bool) {
 		switch {
 		case i < edges:
 			if add {

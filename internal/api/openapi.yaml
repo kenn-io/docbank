@@ -22713,7 +22713,6 @@ components:
       required:
         - state
         - precision
-        - placed_by
       type: object
       x-go-type: api.WhenV1
       x-go-type-import:

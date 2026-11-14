@@ -126,18 +126,23 @@ func TestDocumentDatesPagePreservesClaimsAndPrimaryWithinEnvelope(t *testing.T) 
 		evidenceHash := strings.Repeat("a", 64)
 		eventID := document.DocumentEventID("vault-uid-1", versionID, evidenceID, "created", "2026-03-10", "date", "omitted", evidenceHash)
 		claim := api.VersionDateClaim{EventID: eventID, DateKind: "created", DateValue: "2026-03-10", RawValue: strings.Repeat("\\\"", 30000), Precision: "date", TimezoneKind: "omitted", AxisKey: axis, ClaimBasis: "source_asserted", ParseConfidence: "exact", EvidenceKind: "source_metadata", EvidenceID: evidenceID,
-			When: api.WhenV1{State: "date", Precision: "date", Date: "2026-03-10", PlacedBy: api.WhenPlacedBy{Source: "created", Rule: document.PrimaryRuleV1, EventID: eventID, ClaimBasis: "source_asserted"}}}
+			When: api.WhenV1{State: "date", Precision: "date", Date: "2026-03-10"}}
 		dates.Claims = append(dates.Claims, claim)
 	}
 	dates.Claims[0].Primary = true
+	dates.Claims[0].When.PlacedBy = &api.WhenPlacedBy{Source: "created", Rule: document.PrimaryRuleV1, EventID: dates.Claims[0].EventID, ClaimBasis: "source_asserted"}
 	dates.Primary = &api.VersionDatePrimary{EventID: dates.Claims[0].EventID, Reason: "created_date", RuleID: document.PrimaryRuleV1, Disclosure: "safe"}
 	dates.Diagnostics = []api.FactDiagnostic{{Code: "warning", Detail: "synthetic"}}
 	var claims []api.VersionDateClaim
 	var diagnostics []api.FactDiagnostic
+	snapshot, err := factsSnapshot(dates)
+	require.NoError(t, err)
 	offset := 0
 	for {
-		page, err := documentDatesPage(dates, offset)
+		page, err := documentDatesPage(dates, offset, snapshot)
 		require.NoError(t, err)
+		_, outputSchema := getDocumentDatesSchemas()
+		assertSchemaAccepts(t, outputSchema, structuredMap(t, page))
 		size, err := toolEnvelopeBytes(page, nil)
 		require.NoError(t, err)
 		require.Less(t, size, maxToolResponseBytes)
@@ -158,7 +163,7 @@ func TestDocumentDatesPagePreservesClaimsAndPrimaryWithinEnvelope(t *testing.T) 
 	require.Positive(t, offset)
 	dates.Diagnostics = []api.FactDiagnostic{{Code: "warning", Detail: strings.Repeat("x", maxToolResponseBytes)}}
 	dates.Claims = nil
-	_, err = documentDatesPage(dates, 0)
+	_, err = documentDatesPage(dates, 0, snapshot)
 	require.ErrorIs(t, err, errToolResultTooLarge)
 }
 
@@ -176,8 +181,10 @@ func TestDocumentPeoplePagePreservesAllArraysWithinEnvelope(t *testing.T) {
 	var edges []api.VersionPersonEdge
 	var assertions []api.VersionPersonAssertion
 	var unresolved []api.VersionUnresolvedName
+	snapshot, err := factsSnapshot(people)
+	require.NoError(t, err)
 	for offset := 0; ; {
-		page, err := documentPeoplePage(people, offset)
+		page, err := documentPeoplePage(people, offset, snapshot)
 		require.NoError(t, err)
 		size, err := toolEnvelopeBytes(page, nil)
 		require.NoError(t, err)

@@ -12,19 +12,18 @@ import (
 func TestWhenFieldTable(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name     string
-		claim    document.DocumentEventV1
-		want     string
-		fallback bool
+		name  string
+		claim document.DocumentEventV1
+		want  string
 	}{
-		{"offset", document.DocumentEventV1{DateKind: "sent", Precision: "minute", DateValue: "2026-03-10T09:12", TimezoneKind: "offset", ZoneText: "-04:00", UTCKey: "2026-03-10T13:12:00.000000000Z", OffsetSeconds: new(-14400)}, `{"state":"exact","precision":"minute","at":"2026-03-10T13:12:00Z","local":"2026-03-10T09:12:00","zone_state":"offset","source_zone":"-04:00","source_offset_seconds":-14400}`, false},
-		{"producer UTC", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T23:50:00", TimezoneKind: "utc", ZoneText: "Z", UTCKey: "2026-03-10T23:50:00.000000000Z"}, `{"state":"exact","precision":"second","at":"2026-03-10T23:50:00Z","local":"2026-03-10T23:50:00","zone_state":"utc","source_zone":"Z","source_offset_seconds":0}`, false},
-		{"omitted", document.DocumentEventV1{Precision: "minute", DateValue: "2026-03-10T09:12", TimezoneKind: "omitted", ZoneText: "-0000"}, `{"state":"floating","precision":"minute","local":"2026-03-10T09:12:00","zone_state":"omitted"}`, false},
-		{"named zone", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T09:12:00", TimezoneKind: "named", ZoneText: "America/New_York"}, `{"state":"floating","precision":"second","local":"2026-03-10T09:12:00","zone_state":"named","source_zone":"America/New_York"}`, false},
-		{"hour", document.DocumentEventV1{Precision: "hour", DateValue: "2026-03-10T09", TimezoneKind: "omitted"}, `{"state":"floating","precision":"hour","local":"2026-03-10T09:00:00","zone_state":"omitted"}`, false},
-		{"missing named zone", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T09:12:00", TimezoneKind: "named"}, `{"state":"floating","precision":"second","local":"2026-03-10T09:12:00","zone_state":"omitted"}`, false},
-		{"date", document.DocumentEventV1{Precision: "date", DateValue: "2026-03-10"}, `{"state":"date","precision":"date","date":"2026-03-10"}`, false},
-		{"month", document.DocumentEventV1{DateKind: "imported", Precision: "month", DateValue: "2026-03"}, `{"state":"coarse","precision":"month","period":"2026-03"}`, true},
+		{"offset", document.DocumentEventV1{DateKind: "sent", Precision: "minute", DateValue: "2026-03-10T09:12", TimezoneKind: "offset", ZoneText: "-04:00", UTCKey: "2026-03-10T13:12:00.000000000Z", OffsetSeconds: new(-14400)}, `{"state":"exact","precision":"minute","at":"2026-03-10T13:12:00Z","local":"2026-03-10T09:12:00","zone_state":"offset","source_zone":"-04:00","source_offset_seconds":-14400}`},
+		{"producer UTC", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T23:50:00", TimezoneKind: "utc", ZoneText: "Z", UTCKey: "2026-03-10T23:50:00.000000000Z"}, `{"state":"exact","precision":"second","at":"2026-03-10T23:50:00Z","local":"2026-03-10T23:50:00","zone_state":"utc","source_zone":"Z","source_offset_seconds":0}`},
+		{"omitted", document.DocumentEventV1{Precision: "minute", DateValue: "2026-03-10T09:12", TimezoneKind: "omitted", ZoneText: "-0000"}, `{"state":"floating","precision":"minute","local":"2026-03-10T09:12:00","zone_state":"omitted"}`},
+		{"named zone", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T09:12:00", TimezoneKind: "named", ZoneText: "America/New_York"}, `{"state":"floating","precision":"second","local":"2026-03-10T09:12:00","zone_state":"named","source_zone":"America/New_York"}`},
+		{"hour", document.DocumentEventV1{Precision: "hour", DateValue: "2026-03-10T09", TimezoneKind: "omitted"}, `{"state":"floating","precision":"hour","local":"2026-03-10T09:00:00","zone_state":"omitted"}`},
+		{"missing named zone", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T09:12:00", TimezoneKind: "named"}, `{"state":"floating","precision":"second","local":"2026-03-10T09:12:00","zone_state":"omitted"}`},
+		{"date", document.DocumentEventV1{Precision: "date", DateValue: "2026-03-10"}, `{"state":"date","precision":"date","date":"2026-03-10"}`},
+		{"month", document.DocumentEventV1{DateKind: "imported", Precision: "month", DateValue: "2026-03"}, `{"state":"coarse","precision":"month","period":"2026-03"}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -41,7 +40,6 @@ func TestWhenFieldTable(t *testing.T) {
 			if err := json.Unmarshal([]byte(tc.want), &want); err != nil {
 				t.Fatal(err)
 			}
-			want["placed_by"] = map[string]any{"source": string(tc.claim.DateKind), "rule": "primary-rule/v1", "fallback": tc.fallback, "event_id": tc.claim.EventID, "claim_basis": tc.claim.ClaimBasis}
 			if !reflect.DeepEqual(got, want) {
 				t.Errorf("got %s; want %s", raw, tc.want)
 			}
@@ -61,6 +59,28 @@ func TestVersionDatesProjectionUsesSelectedDisclosure(t *testing.T) {
 	full := versionDatesAPI(f, "full")
 	if len(full.Claims) != 2 || !full.Claims[0].Primary {
 		t.Fatalf("full = %+v", full)
+	}
+	if safe.Claims[0].When.PlacedBy == nil || safe.Claims[0].When.PlacedBy.EventID != "created" || full.Claims[0].When.PlacedBy == nil || full.Claims[0].When.PlacedBy.EventID != "sent" || full.Claims[1].When.PlacedBy != nil {
+		t.Fatalf("primary placement: safe=%+v full=%+v", safe.Claims, full.Claims)
+	}
+	raw, err := json.Marshal(full.Claims[1].When)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := fields["placed_by"]; ok {
+		t.Fatalf("non-primary placement in %s", raw)
+	}
+	for _, kind := range []document.DateKind{"imported", "vault_recorded"} {
+		event := document.DocumentEventV1{EventID: "fallback", DateKind: kind, Precision: "date", DateValue: "2026-03-09"}
+		facts := store.DocumentDateFacts{State: "published", View: store.DocumentEventView{Events: document.DocumentEventsV1{Events: []document.DocumentEventV1{event}, Primaries: []document.DocumentEventPrimaryV1{{EventID: "fallback", ScopeClass: "vault", Disclosure: "safe", RuleID: "primary-rule/v1"}}}}}
+		placed := versionDatesAPI(facts, "safe").Claims[0].When.PlacedBy
+		if placed == nil || !placed.Fallback || placed.Source != kind || placed.Rule != "primary-rule/v1" {
+			t.Fatalf("%s placement = %+v", kind, placed)
+		}
 	}
 }
 

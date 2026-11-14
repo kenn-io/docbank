@@ -9202,7 +9202,7 @@ export interface WhenV1 {
   date?: string;
   local?: string;
   period?: string;
-  placed_by: WhenPlacedBy;
+  placed_by?: WhenPlacedBy;
   precision: string;
   source_offset_seconds?: number;
   source_zone?: string;
