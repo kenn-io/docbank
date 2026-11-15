@@ -393,17 +393,13 @@ func (client *Client) submit(run *rendering, fields [][2]string) (taskResponse, 
 		},
 	})
 	if err != nil {
-		return taskResponse{}, err
+		return taskResponse{}, workerResponseError(run, providerutil.StageSubmission, response, err)
 	}
 	if err := validateWorkerResponse(run, response); err != nil {
 		return taskResponse{}, err
 	}
 	if response.Status != http.StatusOK && response.Status != http.StatusAccepted {
-		err := doclingStatusError(run, providerutil.StageSubmission, response)
-		if run.workerProtocol && response.Status == http.StatusRequestEntityTooLarge {
-			err = provider.Classified(document.RenditionErrorTransient, "worker source limit can be corrected", err)
-		}
-		return taskResponse{}, err
+		return taskResponse{}, doclingStatusError(run, providerutil.StageSubmission, response)
 	}
 	task, err := parseTaskForProtocol(response.Body, run.workerProtocol)
 	if err != nil {
@@ -548,7 +544,7 @@ func (client *Client) poll(run *rendering, taskID string) (taskResponse, error) 
 		Stage: providerutil.StageJob, Method: http.MethodGet, Path: pollPath + taskID,
 	})
 	if err != nil {
-		return taskResponse{}, workerResponseError(run, response, err)
+		return taskResponse{}, workerResponseError(run, providerutil.StageJob, response, err)
 	}
 	if err := validateWorkerResponse(run, response); err != nil {
 		return taskResponse{}, err
@@ -572,7 +568,7 @@ func (client *Client) result(run *rendering, taskID string) (doclingResult, erro
 		MaxResponseBytes: int64(run.authorization.MaxTotalResultBytes),
 	})
 	if err != nil {
-		return doclingResult{}, workerResponseError(run, response, err)
+		return doclingResult{}, workerResponseError(run, providerutil.StageJob, response, err)
 	}
 	if err := validateWorkerResponse(run, response); err != nil {
 		return doclingResult{}, err

@@ -327,7 +327,7 @@ func (client *Client) workerRequest(ctx context.Context, run *rendering, request
 	}
 	response, err := client.executor.Do(run.operation, &run.usage, request)
 	if err != nil {
-		return response, err
+		return response, workerResponseError(run, request.Stage, response, err)
 	}
 	return response, validateWorkerResponse(run, response)
 }
@@ -340,16 +340,21 @@ func validateWorkerResponse(run *rendering, response providerutil.Response) erro
 
 var errWorkerCredentials = errors.New("worker credentials rejected")
 
-func workerResponseError(run *rendering, response providerutil.Response, err error) error {
-	if run.workerProtocol && response.Status == http.StatusUnauthorized && validateWorkerResponse(run, response) == nil {
-		return provider.Classified(document.RenditionErrorTransient, "worker credentials can be corrected", errors.Join(errWorkerCredentials, err))
+func workerResponseError(run *rendering, stage providerutil.Stage, response providerutil.Response, err error) error {
+	if run.workerProtocol && validateWorkerResponse(run, response) == nil {
+		if response.Status == http.StatusUnauthorized {
+			return provider.Classified(document.RenditionErrorTransient, "worker credentials can be corrected", errors.Join(errWorkerCredentials, err))
+		}
+		if stage == providerutil.StageSubmission && response.Status == http.StatusRequestEntityTooLarge {
+			return provider.Classified(document.RenditionErrorTransient, "worker source limit can be corrected", err)
+		}
 	}
 	return err
 }
 
 func doclingStatusError(run *rendering, stage providerutil.Stage, response providerutil.Response) error {
 	err := provider.StatusError(stage, response.Status, response.RetryAfter, nil)
-	return workerResponseError(run, response, err)
+	return workerResponseError(run, stage, response, err)
 }
 func (client *Client) lookupWorker(ctx context.Context, run *rendering, key string) (taskResponse, bool, error) {
 	response, err := client.workerRequest(ctx, run, providerutil.Request{Stage: providerutil.StageJob, Method: http.MethodGet, Path: workerprotocol.LookupPath + key, MaxResponseBytes: 16 << 10})

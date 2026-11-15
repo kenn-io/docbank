@@ -161,11 +161,16 @@ func TestWorkerRetriesCorrectedGatewaySettingsWithSameKey(t *testing.T) {
 	for _, test := range []struct {
 		name, path string
 		status     int
+		unreadable bool
 	}{
-		{"lookup key", workerprotocol.LookupPath, http.StatusUnauthorized},
-		{"readiness key", workerprotocol.ReadyPath, http.StatusUnauthorized},
-		{"submission key", workerprotocol.SubmitPath, http.StatusUnauthorized},
-		{"submission size", workerprotocol.SubmitPath, http.StatusRequestEntityTooLarge},
+		{"lookup key", workerprotocol.LookupPath, http.StatusUnauthorized, false},
+		{"readiness key", workerprotocol.ReadyPath, http.StatusUnauthorized, false},
+		{"submission key", workerprotocol.SubmitPath, http.StatusUnauthorized, false},
+		{"submission size", workerprotocol.SubmitPath, http.StatusRequestEntityTooLarge, false},
+		{"lookup unreadable key", workerprotocol.LookupPath, http.StatusUnauthorized, true},
+		{"readiness unreadable key", workerprotocol.ReadyPath, http.StatusUnauthorized, true},
+		{"submission unreadable key", workerprotocol.SubmitPath, http.StatusUnauthorized, true},
+		{"submission unreadable size", workerprotocol.SubmitPath, http.StatusRequestEntityTooLarge, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := workerFixture(t)
@@ -173,6 +178,7 @@ func TestWorkerRetriesCorrectedGatewaySettingsWithSameKey(t *testing.T) {
 			base := transport.Transport
 			var keys, lookupCredentials []string
 			corrected := false
+			readErr := errors.New("synthetic response read failure")
 			transport.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
 				if after, ok := strings.CutPrefix(request.URL.Path, workerprotocol.LookupPath); ok {
 					keys = append(keys, after)
@@ -181,7 +187,11 @@ func TestWorkerRetriesCorrectedGatewaySettingsWithSameKey(t *testing.T) {
 					keys = append(keys, request.Header.Get("Idempotency-Key"))
 				}
 				if !corrected && strings.HasPrefix(request.URL.Path, test.path) {
-					return &http.Response{Request: request, StatusCode: test.status, Header: http.Header{workerprotocol.ProtocolHeader: []string{workerprotocol.Contract}}, Body: io.NopCloser(strings.NewReader("rejected"))}, nil
+					var body io.Reader = strings.NewReader("rejected")
+					if test.unreadable {
+						body = readerFunc(func([]byte) (int, error) { return 0, readErr })
+					}
+					return &http.Response{Request: request, StatusCode: test.status, Header: http.Header{workerprotocol.ProtocolHeader: []string{workerprotocol.Contract}}, Body: io.NopCloser(body)}, nil
 				}
 				return base.RoundTrip(request)
 			})
@@ -190,6 +200,9 @@ func TestWorkerRetriesCorrectedGatewaySettingsWithSameKey(t *testing.T) {
 			require.NoError(t, err)
 			_, err = document.RenderRendition(t.Context(), client, f.upload(), f.authorization)
 			require.True(t, document.IsRenditionProviderErrorRetryable(err), "%v", err)
+			if test.unreadable {
+				require.ErrorIs(t, err, readErr)
+			}
 			corrected = true
 			secrets["worker"] = "synthetic-corrected-key"
 			result, err := document.RenderRendition(t.Context(), client, f.upload(), f.authorization)
