@@ -52,6 +52,19 @@ func TestWorkerCommandRejectsZeroLimits(t *testing.T) {
 			require.ErrorContains(t, err, field+" must be between")
 		})
 	}
+	for _, key := range []string{"DOCBANK_WORKER_API_KEY", "DOCBANK_WORKER_BACKEND_KEY"} {
+		t.Run(key, func(t *testing.T) {
+			spool := filepath.Join(t.TempDir(), "spool")
+			environment := func(name string) string {
+				if name == key {
+					return "synthetic-invalid\nkey"
+				}
+				return workerCommandEnvironment(name)
+			}
+			err := run(t.Context(), []string{"--directory", spool, "--backend", "http://127.0.0.1:5001"}, environment, io.Discard)
+			require.ErrorContains(t, err, key)
+		})
+	}
 }
 
 func TestWorkerCommandCancellationReleasesSpool(t *testing.T) {

@@ -257,7 +257,6 @@ describe("processing dialog", () => {
           { headers: { "Content-Type": "application/x-ndjson" } },
         ),
     );
-    expect(await screen.findByText(/to the worker on your network/)).toBeTruthy();
     await fireEvent.click(await enabledRun());
     expect(await screen.findByText("Failed: the worker couldn't process this file.")).toBeTruthy();
     expect(

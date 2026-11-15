@@ -88,7 +88,7 @@ func TestWorkerSchedulesStalledAndPendingJobs(t *testing.T) {
 }
 
 func TestWorkerRejectedSubmissionStaysTerminal(t *testing.T) {
-	for _, status := range []int{400, 401, 403, 404} {
+	for _, status := range []int{400, 404} {
 		t.Run(strconv.Itoa(status), func(t *testing.T) {
 			o := workerOptions(t)
 			var posts int

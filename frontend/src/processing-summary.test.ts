@@ -23,6 +23,21 @@ describe("processing summary", () => {
     expect(whereSentences(hosted)).toEqual([
       "Sends this file and its name to Docling (docling.example.com).",
     ]);
+    const worker = plan("worker", {
+      flow: [
+        hop({
+          provider_id: "docbank.conversion-worker-v1",
+          trust_boundary: "operator_network",
+          runtime_disclosure: {
+            ...doclingHop.runtime_disclosure,
+            endpoint: "http://127.0.0.1:5002",
+          },
+        }),
+      ],
+    });
+    expect(whereSentences(worker)).toEqual([
+      "Sends this file to the worker on your network (127.0.0.1:5002).",
+    ]);
     expect(consentLabel("docling", hosted)).toBe(
       "Allow “docling” to send documents from this vault to Docling",
     );
