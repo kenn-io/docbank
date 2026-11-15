@@ -158,3 +158,37 @@ func TestPhotoQualityDismissedFaceExcluded(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, faces)
 }
+
+func TestPhotoQualityGroupRejectionThenDismissInvalidatesFaces(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	pair := faceCandidatePair(t, s)
+	require.NoError(t, s.ReplaceFaceSuggestions(ctx, faceMatchingSnapshot(t, s), []PersonMatchCandidate{pair.group}))
+	groups, _, err := s.FaceCandidates(ctx, nil, 24, 0)
+	require.NoError(t, err)
+	require.Len(t, groups, 1)
+	_, err = s.DecidePersonCandidate(ctx, nil, CandidateDecision{CandidateID: groups[0].CandidateID, ExpectedRevision: groups[0].Revision, Action: "reject", FaceOnly: true})
+	require.NoError(t, err)
+	_, before, err := s.PhotoQualityFaces(ctx, pair.node.CurrentVersionID)
+	require.NoError(t, err)
+	reports := []document.PhotoFaceReport{{FaceID: pair.first.FaceID, Sharpness: new(0.8), Prominence: 0.25}, {FaceID: pair.second.FaceID, Sharpness: new(0.7), Prominence: 0.25}}
+	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(pair.node), document.PhotoQualitySignals{Focus: 0.7, FaceReports: reports}, before))
+	read, err := s.photoQualityForVersions(ctx, s.db, []string{pair.node.CurrentVersionID})
+	require.NoError(t, err)
+	require.Len(t, read.signals[pair.node.CurrentVersionID].FaceReports, 2)
+	decideFaceForTest(t, s, pair.node, pair.first.FaceID, "", "dismiss")
+	faces, after, err := s.PhotoQualityFaces(ctx, pair.node.CurrentVersionID)
+	require.NoError(t, err)
+	require.Len(t, faces, 1)
+	if before == after {
+		t.Error("individual dismissal must change the quality signature after group rejection")
+	}
+	read, err = s.photoQualityForVersions(ctx, s.db, []string{pair.node.CurrentVersionID})
+	require.NoError(t, err)
+	for _, report := range read.signals[pair.node.CurrentVersionID].FaceReports {
+		if report.FaceID == pair.first.FaceID {
+			t.Error("cached quality still reports the dismissed face")
+		}
+	}
+}

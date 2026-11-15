@@ -1,4 +1,4 @@
-// Package store implements the SQLite-backed virtual tree.
+// Package store implements the metadata catalog and virtual tree.
 package store
 
 import (

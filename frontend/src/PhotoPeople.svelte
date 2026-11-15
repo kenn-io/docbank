@@ -1,17 +1,21 @@
 <script lang="ts">
-  import { Button, Modal, Notice, RadioGroup, Typeahead } from "@kenn-io/kit-ui";
+  import { Button, Notice, Typeahead } from "@kenn-io/kit-ui";
   import {
-    listPeople,
-    listPersonFacePreviews,
     type PhotoFace,
     type PersonSummary,
     type PhotoPersonAssertion,
   } from "./generated/docbank.js";
   import type { PhotoFaces } from "./photoFaces.svelte.js";
-  import { faceCrop, type PhotoPreviewCache } from "./photoPreviewCache.js";
+  import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import { APIError } from "./api-transport.js";
+  import { readNamePage } from "./people.svelte.js";
   import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
-  import { personDetail as detail } from "./personLabel.js";
+  import PersonNamesakes, {
+    groupKey,
+    namesakeGroup,
+    namesakeOptions,
+    personKey as key,
+  } from "./PersonNamesakes.svelte";
   let {
     faces,
     session,
@@ -57,46 +61,8 @@
     people: PersonSummary[];
   }>();
   let selection = $state("");
-  let expanded = $state("");
-  let previews = $state.raw<
-    Record<
-      string,
-      {
-        images: { url: string; style: string; wholePhoto: boolean }[];
-        loading: boolean;
-        failed: boolean;
-      }
-    >
-  >({});
-  let previewController: AbortController | undefined;
-  let releases: (() => void)[] = [];
-  const groupKey = (name: string) => `\0group:${name}`;
-  const groups = $derived.by(() => {
-    const grouped = new Map<string, PersonSummary[]>();
-    for (const person of searchState.people)
-      grouped.set(person.display_name_folded, [
-        ...(grouped.get(person.display_name_folded) ?? []),
-        person,
-      ]);
-    return [...grouped]
-      .filter(([name]) => name !== searchState.incompleteName)
-      .map(([name, members]) => ({
-        name: members.length > 1 ? groupKey(name) : key(members[0]!.person_id),
-        label:
-          members.length > 1
-            ? `${members[0]!.display_name} · ${members.length} people`
-            : members[0]!.display_name,
-      }));
-  });
-  function closePreviews() {
-    previewController?.abort();
-    for (const release of releases) release();
-    releases = [];
-    previews = {};
-    expanded = "";
-  }
+  const groups = $derived(namesakeOptions(searchState.people, searchState.incompleteName));
   function closeChooser() {
-    closePreviews();
     duplicate = undefined;
     selection = "";
   }
@@ -107,102 +73,17 @@
     ) {
       closeChooser();
       faces.onauthfailure(cause);
+      return true;
     }
-  }
-  async function loadPreviews(
-    person: PersonSummary,
-    request: AbortController,
-    members: PersonSummary[],
-  ) {
-    try {
-      request.signal.throwIfAborted();
-      const tied = members.some(
-        (other) => other.person_id !== person.person_id && detail(other) === detail(person),
-      );
-      let failed = false;
-      const page = await listPersonFacePreviews(
-        person.person_id,
-        { hidden: faces.hidden },
-        { session, signal: request.signal },
-      );
-      request.signal.throwIfAborted();
-      for (const row of page.items) {
-        if ((tied && !row.box) || !cache) {
-          failed = true;
-          continue;
-        }
-        try {
-          const image = await faceCrop(
-            cache,
-            row,
-            { id: person.person_id, hidden: faces.hidden, size: 64 },
-            request.signal,
-            (release) => releases.push(release),
-          );
-          if (!image) {
-            failed = true;
-            continue;
-          }
-          const state = previews[person.person_id]!;
-          previews = {
-            ...previews,
-            [person.person_id]: {
-              ...state,
-              images: [...state.images, { ...image, wholePhoto: !row.box }],
-            },
-          };
-        } catch (cause) {
-          if (request.signal.aborted) return;
-          previewFailure(cause);
-          if (request.signal.aborted) return;
-          failed = true;
-        }
-      }
-      if (!request.signal.aborted)
-        previews = {
-          ...previews,
-          [person.person_id]: {
-            ...previews[person.person_id]!,
-            loading: false,
-            failed: !previews[person.person_id]!.images.length && (failed || tied),
-          },
-        };
-    } catch (cause) {
-      if (request.signal.aborted) return;
-      previewFailure(cause);
-      if (!request.signal.aborted)
-        previews = {
-          ...previews,
-          [person.person_id]: { ...previews[person.person_id]!, loading: false, failed: true },
-        };
-    }
+    return false;
   }
   function openChooser(face: PhotoFace | undefined, name: string) {
     closeChooser();
-    const members = searchState.people.filter((person) => person.display_name_folded === name);
-    // Search matches word prefixes, so keep the typed spelling only when it is the whole name.
-    const typed = searchState.query.trim();
-    const folded = typed.normalize("NFKC").toLowerCase().split(/\s+/).join(" ");
-    duplicate = {
-      face: face ? { ...face } : undefined,
-      name: members[0]!.display_name,
-      newName: typed && folded === name ? typed : members[0]!.display_name,
-      people: members,
-    };
+    const group = namesakeGroup(searchState.people, name, searchState.query);
+    duplicate = { face: face ? { ...face } : undefined, ...group };
     selection =
-      members.find((person) => person.person_id === (face && faces.person(face)?.person_id))
+      group.people.find((person) => person.person_id === (face && faces.person(face)?.person_id))
         ?.person_id ?? "";
-  }
-  async function expandPreviews(person: PersonSummary) {
-    const previous = expanded;
-    closePreviews();
-    if (previous === person.person_id || !duplicate) return;
-    expanded = person.person_id;
-    previews = { [person.person_id]: { images: [], loading: true, failed: false } };
-    const request = (previewController = new AbortController());
-    const members = duplicate.people;
-    const load = () => loadPreviews(person, request, members);
-    await (faces.hiddenAccess ? faces.hiddenAccess.run(load) : load());
   }
   async function assignSelection() {
     const selected = duplicate;
@@ -248,7 +129,6 @@
       if (faces.version === version) await faces.clearMark(captured);
     }
   }
-  const key = (id: string) => `\0${id}`;
   $effect(() => {
     void faces.version;
     void faces.hiddenAccess?.scope;
@@ -277,55 +157,17 @@
       !request.signal.aborted &&
       faces.version === pending.version &&
       (faces.hiddenAccess?.scope ?? 0) === pending.scope;
-    if (new TextEncoder().encode(pending.query.trim()).length > 200) {
-      searchState = { ...pending, status: "invalid", error: "Name must be 200 bytes or fewer." };
-      return;
-    }
-    try {
-      const fetch = () => {
-        request.signal.throwIfAborted();
-        return listPeople(
-          {
-            query: pending.query.trim(),
-            limit: 100,
-            recent_first: true,
-            ...(cursor ? { cursor } : {}),
-          },
-          { session, signal: request.signal },
-        );
-      };
-      const page = await (faces.hiddenAccess ? faces.hiddenAccess.run(fetch) : fetch());
-      if (owns())
-        searchState = {
-          ...pending,
-          // A falling rank can repeat a person; dedupe those rows. A rising
-          // rank can move a group ahead of the cursor and skip it until restart.
-          people: [
-            ...new Map(
-              [...pending.people, ...page.items].map((person) => [person.person_id, person]),
-            ).values(),
-          ],
-          nextCursor: page.next_cursor,
-          incompleteName:
-            page.next_cursor && page.same_name_continues
-              ? page.items.at(-1)!.display_name_folded
-              : "",
-          status: "ready",
-        };
-    } catch (cause) {
-      if (owns()) {
-        previewFailure(cause);
-        const expired = cause instanceof APIError && cause.code === "cursor_expired";
-        searchState = {
-          ...pending,
-          ...(expired
-            ? { people: [], pendingCursor: undefined, nextCursor: undefined, incompleteName: "" }
-            : {}),
-          status: "error",
-          error: cause instanceof Error ? cause.message : String(cause),
-        };
-      }
-    }
+    const next = await readNamePage(pending, {
+      session,
+      face: pending.face,
+      signal: request.signal,
+      run: (read) => (faces.hiddenAccess ? faces.hiddenAccess.run(read) : read()),
+      failure: (cause) => {
+        if (owns()) previewFailure(cause);
+        return cause instanceof Error ? cause.message : String(cause);
+      },
+    });
+    if (owns()) searchState = { ...pending, ...next };
   }
   async function search(faceID: string, value: string) {
     searchState.controller?.abort();
@@ -501,95 +343,23 @@
 
 <PhotoCullConfirmation bind:this={confirmation} />
 {#if duplicate}
-  <Modal title={`Choose ${duplicate.name}`} onclose={closeChooser}>
-    <RadioGroup
-      legend="Matching people"
-      name="person"
-      value={selection || undefined}
-      options={[
-        ...duplicate.people.map((person) => ({
-          value: person.person_id,
-          label: `${person.display_name} ${detail(person)} ${person.person_id}`,
-        })),
-        ...(duplicate.face
-          ? [{ value: "new", label: `New person named ${duplicate.newName}` }]
-          : []),
-      ]}
-      onchange={(value) => {
-        selection = value ?? "";
-      }}
-    />
-    <div class="duplicate-list">
-      {#each duplicate.people as person (person.person_id)}
-        {@const preview = previews[person.person_id]}
-        <div class="duplicate-person" data-person={person.person_id}>
-          <span>{person.display_name}</span>
-          <Button
-            size="sm"
-            ariaExpanded={expanded === person.person_id}
-            onclick={() => expandPreviews(person)}>Photos</Button
-          >
-          {#if expanded === person.person_id}
-            <div class="candidate-previews">
-              {#each preview?.images ?? [] as image}<span class="person-preview"
-                  ><img
-                    src={image.url}
-                    alt={`Photos of ${person.display_name}`}
-                    style={image.style}
-                  />{#if image.wholePhoto}<small class="whole-photo">Whole photo</small>{/if}</span
-                >{/each}
-              {#if preview?.loading}<span>Loading photos…</span>
-              {:else if preview?.failed}<span>Preview unavailable</span>
-              {:else if !preview?.images.length}<span>No photos you can see.</span>{/if}
-            </div>
-          {/if}
-        </div>
-      {/each}
-    </div>
-    {#snippet footer()}
-      <Button onclick={closeChooser}>Cancel</Button>
-      <Button disabled={!selection} onclick={assignSelection}
-        >{duplicate?.face ? "Name face" : "Mark person in photo"}</Button
-      >
-    {/snippet}
-  </Modal>
+  {#key duplicate}<PersonNamesakes
+      name={duplicate.name}
+      people={duplicate.people}
+      newName={duplicate.face ? duplicate.newName : undefined}
+      confirmLabel={duplicate.face ? "Name face" : "Mark person in photo"}
+      bind:selection
+      hidden={faces.hidden}
+      {session}
+      {cache}
+      run={faces.hiddenAccess ? (load) => faces.hiddenAccess!.run(load) : undefined}
+      onfailure={previewFailure}
+      onclose={closeChooser}
+      onconfirm={assignSelection}
+    />{/key}
 {/if}
 
 <style>
-  .duplicate-list {
-    max-height: 55vh;
-    overflow-y: auto;
-  }
-  .candidate-previews {
-    display: flex;
-    flex-basis: 100%;
-    gap: var(--space-2);
-  }
-  .duplicate-person {
-    flex-wrap: wrap;
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    margin-bottom: var(--space-3);
-  }
-  .person-preview {
-    position: relative;
-    width: 64px;
-    height: 64px;
-    flex-shrink: 0;
-    overflow: hidden;
-  }
-  .person-preview img {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    max-width: none;
-  }
-  .whole-photo {
-    position: absolute;
-    bottom: 0;
-    background: var(--bg-inset);
-  }
   .people {
     display: flex;
     flex-direction: column;

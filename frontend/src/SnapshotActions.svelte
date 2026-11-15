@@ -10,13 +10,15 @@
 <script lang="ts">
   import { onDestroy, untrack } from "svelte";
   import CheckIcon from "@lucide/svelte/icons/check";
-  import { Button, Modal, SegmentedControl, Spinner } from "@kenn-io/kit-ui";
+  import { Button, Disclosure, Modal, SegmentedControl, Spinner, Table } from "@kenn-io/kit-ui";
   import TagPicker from "./TagPicker.svelte";
   import type { Tag } from "./generated/docbank.js";
   import { randomUUID } from "./crypto.js";
   import type { SelectionTarget } from "./selection.js";
   import { ACTION_MAX_BYTES } from "./actionRecovery.js";
-  import type { BatchTagReceipt } from "./batch-tags.js";
+  import type { BatchTagRequest, BatchTagReceipt } from "./batch-tags.js";
+  import { APIError } from "./api-transport.js";
+  import { checkTagResults, type TagResult } from "./checkTagResults.js";
   import { TagChangeRun } from "./tagChangeRun.svelte.js";
   import { documentCount, tagChangeConsequence, tagChangeDone } from "./tagChangeText.js";
 
@@ -33,10 +35,9 @@
     preparing?: boolean;
     onstart?: (choice: SnapshotActionChoice) => void;
     onchanged?: (receipt: BatchTagReceipt) => void;
-    onunknown?: () => void;
     oncreated?: () => void;
     onimport?: (bytes: Uint8Array) => void;
-    onclose: () => void;
+    onclose: (recovered: boolean) => void;
     onauthfailure: (cause: unknown) => void;
     errorMessage?: string;
   }
@@ -51,7 +52,6 @@
     preparing = false,
     onstart,
     onchanged,
-    onunknown,
     oncreated,
     onimport,
     onclose,
@@ -63,32 +63,53 @@
   let reading = $state(false);
   let readFailure = $state("");
   let receipt = $state<BatchTagReceipt>();
+  let request = $state<BatchTagRequest & { nodes: SelectionTarget[] }>();
+  let recovering = $state(false);
+  let checking = $state(false);
+  let checked = $state(0);
+  let results = $state<TagResult[]>();
+  let tagMissing = $state(false);
+  let checkController: AbortController | undefined;
+  let offset = $state(0);
+  const remaining = $derived(results?.filter((row) => row.status === "remaining") ?? []);
+  const unavailable = $derived(results?.filter((row) => row.status === "unavailable").length ?? 0);
+  const matched = $derived(results?.filter((row) => row.status === "matched").length ?? 0);
   const run = new TagChangeRun({
     session: untrack(() => session),
     onauthfailure: (cause) => onauthfailure(cause),
     onconfirmed: (confirmed) => {
       receipt = confirmed;
-      onchanged?.(confirmed);
+      if (!recovering) onchanged?.(confirmed);
     },
-    onunknown: () => onunknown?.(),
+    onunknown: () => {
+      recovering = true;
+    },
     unknownMessage:
       "Docbank couldn't confirm the tag change. Check the documents' tags before trying again.",
-    staleMessage: "Some documents changed. Close and select them again.",
   });
   const applying = $derived(run.pending);
   const stale = $derived(run.stale);
-  const failure = $derived(readFailure || run.failure);
+  const failure = $derived(
+    readFailure ||
+      (run.stale && run.failure
+        ? recovering
+          ? "Some documents changed. Check their tags again."
+          : "Some documents changed. Close, refresh, and select them again."
+        : run.failure),
+  );
   let fileInput = $state<HTMLInputElement>();
   // The selection is captured when the dialog opens; later clicks on the page do not change it.
   const captured = untrack(() => targets.map((target) => ({ ...target })));
   let alive = true;
   onDestroy(() => {
     alive = false;
+    checkController?.abort();
     run.destroy();
   });
 
-  const busy = $derived(disabled || preparing || applying || reading);
-  const locked = $derived(busy || stale || receipt !== undefined);
+  const busy = $derived(disabled || preparing || applying || reading || checking);
+  const recoveryBusy = $derived(applying || checking);
+  const locked = $derived(busy || stale || recovering || receipt !== undefined);
   const consequence = $derived(
     tag
       ? tagChangeConsequence(assign, tag.name, count)
@@ -103,11 +124,56 @@
       onstart?.({ scope, tagID: tag.id, assign });
       return;
     }
-    void run.submit({
+    request = {
       operation_id: randomUUID(),
       tag_id: tag.id,
       assign,
       nodes: captured.map((target) => ({ ...target })),
+    };
+    void run.submit(request);
+  }
+
+  async function check(): Promise<void> {
+    if (!recovering || !request || checking || applying) return;
+    checking = true;
+    checked = 0;
+    results = undefined;
+    run.failure = "";
+    readFailure = "";
+    const controller = (checkController = new AbortController());
+    try {
+      const result = await checkTagResults(
+        session,
+        request,
+        (value) => {
+          if (alive) checked = value;
+        },
+        controller.signal,
+      );
+      if (!alive) return;
+      tag = result.tag;
+      results = result.rows;
+      offset = 0;
+    } catch (cause) {
+      if (!alive) return;
+      if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
+      else if (cause instanceof APIError && cause.status === 404) {
+        tagMissing = true;
+        readFailure = cause.message;
+      } else readFailure = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      if (alive) checking = false;
+    }
+  }
+
+  async function retry(): Promise<void> {
+    if (!request || !remaining.length || recoveryBusy) return;
+    const nodes = remaining.map((row) => ({ node_id: row.node_id, revision: row.revision! }));
+    results = undefined;
+    await run.submit({
+      ...request,
+      operation_id: randomUUID(),
+      nodes,
     });
   }
 
@@ -133,7 +199,7 @@
 
   function close(): void {
     if (applying) return;
-    onclose();
+    onclose(recovering);
   }
 </script>
 
@@ -152,7 +218,7 @@
         class="tag-change__picker"
         {session}
         value={tag?.id ?? ""}
-        tags={catalog}
+        tags={tag ? [tag, ...catalog.filter((item) => item.id !== tag?.id)] : catalog}
         title="Tag"
         placeholder="Tag name"
         disabled={locked}
@@ -176,26 +242,71 @@
       />
     </div>
 
+    {#if results && tag}
+      <p class="consequence">Last check</p>
+      <p class="status">
+        {`${matched} matched · ${recovering && request && remaining.length ? "" : `${remaining.length} remaining · `}${unavailable} couldn't be checked`}
+      </p>
+    {:else if !receipt}
+      <p class="consequence" class:pending={!tag}>{consequence}</p>
+    {/if}
     {#if receipt}
       <p class="status done" role="status">
         <CheckIcon size={14} aria-hidden="true" />
-        {tagChangeDone(
+        {recovering ? "Earlier retry: " : ""}{tagChangeDone(
           receipt.assign,
           tag?.name ?? "",
           receipt.nodes.filter((node) => node.changed).length,
           receipt.nodes.length,
         )}
       </p>
-    {:else}
-      <p class="consequence" class:pending={!tag}>{consequence}</p>
     {/if}
-    {#if applying || preparing}
+    {#if applying || preparing || checking}
       <p class="status" role="status">
         <Spinner size={14} />
-        {preparing ? `Preparing ${documentCount(count)}…` : "Applying…"}
+        {checking
+          ? `Checked ${checked} of ${request?.nodes.length} documents…`
+          : preparing
+            ? `Preparing ${documentCount(count)}…`
+            : "Applying…"}
       </p>
     {/if}
     {#if failure || errorMessage}<p class="alert" role="alert">{failure || errorMessage}</p>{/if}
+    {#if results && tag}
+      <Disclosure variant="plain" title="Review documents">
+        <div class="target-list">
+          <Table unsorted ariaLabel="Tag results" class="target-table" zebra={false} scroll="page">
+            {#snippet header()}<th scope="col">Document</th><th scope="col">Status</th>{/snippet}
+            {#snippet children()}
+              {#each (results ?? []).slice(offset, offset + 50) as row (row.node_id)}
+                <tr
+                  ><td>{row.name}</td><td
+                    >{row.status === "unavailable"
+                      ? "Couldn't check"
+                      : (row.status === "matched") === assign
+                        ? `Has “${tag?.name}”`
+                        : `Doesn't have “${tag?.name}”`}</td
+                  ></tr
+                >
+              {/each}
+            {/snippet}
+          </Table>
+        </div>
+        {#if results.length > 50}
+          <nav class="pager" aria-label="Document pages">
+            <span>{offset + 1}–{Math.min(offset + 50, results.length)} of {results.length}</span>
+            <Button size="sm" disabled={offset === 0} onclick={() => (offset -= 50)}
+              >Previous</Button
+            >
+            <Button
+              size="sm"
+              disabled={offset + 50 >= results.length}
+              onclick={() => (offset += 50)}>Next</Button
+            >
+          </nav>
+        {/if}
+      </Disclosure>
+    {/if}
   </div>
   {#snippet footer()}
     {#if scope === "query" && !receipt}
@@ -215,8 +326,32 @@
         />
       </span>
     {/if}
-    {#if receipt}
-      <Button tone="info" surface="solid" onclick={onclose}>Done</Button>
+    {#if receipt && !recovering}
+      <Button tone="info" surface="solid" onclick={close}>Done</Button>
+    {:else if recovering && request}
+      {#if results}<span class="footer-start"
+          ><Button size="sm" surface="soft" disabled={recoveryBusy} onclick={() => void check()}
+            >Check again</Button
+          ></span
+        >{/if}
+      <Button surface="soft" disabled={applying} onclick={close}
+        >{results && !remaining.length && !unavailable ? "Done" : "Close"}</Button
+      >
+      {#if results && remaining.length}
+        <Button tone="info" surface="solid" disabled={recoveryBusy} onclick={() => void retry()}
+          >{assign ? "Add" : "Remove"} “{tag?.name}” {assign ? "to" : "from"}
+          {documentCount(remaining.length)}</Button
+        >
+      {:else if !results && !tagMissing}
+        <Button
+          tone="info"
+          surface="solid"
+          disabled={checking || applying}
+          onclick={() => void check()}>Check tag results</Button
+        >
+      {/if}
+    {:else if stale}
+      <Button surface="soft" disabled={applying} onclick={close}>Close</Button>
     {:else}
       <Button surface="soft" disabled={applying} onclick={close}>Cancel</Button>
       <Button tone="info" surface="solid" disabled={locked || !tag || count === 0} onclick={apply}
@@ -267,6 +402,28 @@
   }
   .footer-start {
     margin-inline-end: auto;
+  }
+  .target-list {
+    overflow: auto;
+    max-height: 240px;
+  }
+  .target-list :global(.target-table .kit-table) {
+    table-layout: fixed;
+    font-size: var(--font-size-xs);
+  }
+  .target-list :global(.target-table th),
+  .target-list :global(.target-table td) {
+    padding: var(--space-2);
+    text-align: left;
+    overflow-wrap: anywhere;
+    border-bottom: 1px solid var(--border-default);
+  }
+  .pager {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    font-size: var(--font-size-sm);
   }
   .file {
     position: absolute;

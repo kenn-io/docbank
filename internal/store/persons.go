@@ -308,6 +308,8 @@ type PersonPhotoSummary struct {
 }
 
 type PeopleSearchOptions struct {
+	FaceID     string
+	FaceReader RenditionBlobReader
 	// RecentFirst orders name groups by their newest visible depicted
 	// evidence, then by folded name and ID. AfterRecent continues that order.
 	RecentFirst  bool
@@ -358,13 +360,13 @@ func (s *Store) personHasPhotoSQL(unlocked bool, walkerAlias string) string {
 // or nil when the page doesn't depend on it.
 func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, afterID string, limit int, visibleOnly bool, options PeopleSearchOptions) ([]PersonSearchResult, *PhotoHiddenState, error) {
 	if !utf8.ValidString(query) || len(query) > document.MaxPersonDisplayNameBytes || limit < 1 || limit > 251 ||
-		(afterName == "") != (afterID == "") || (!options.RecentFirst && options.AfterRecent != "") {
+		(afterName == "") != (afterID == "") || (!options.RecentFirst && options.FaceID == "" && options.AfterRecent != "") {
 		return nil, nil, ErrInvalidPerson
 	}
 	people := []PersonSearchResult{}
 	var scope *PhotoHiddenState
 	err := s.withReadTx(ctx, func(tx *sql.Tx) (err error) {
-		if visibleOnly || options.PhotoSummary || options.RecentFirst {
+		if visibleOnly || options.PhotoSummary || options.RecentFirst || options.FaceID != "" {
 			if scope, err = s.photoHiddenStateTx(ctx, tx); err != nil {
 				return err
 			}
@@ -401,7 +403,9 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 			candidates += personVisibleSQL("persons.person_id", len(args)+1) + " AND "
 			args = append(args, 1, boolInt(hideLocked))
 		}
-		if options.RecentFirst {
+		if options.FaceID != "" {
+			people, err = s.peopleForFaceTx(ctx, tx, options, candidates, args, afterName, afterID, limit, visibleOnly, hideLocked, prefix)
+		} else if options.RecentFirst {
 			people, err = s.peopleRecentTx(ctx, tx, candidates, args, afterName, afterID, options.AfterRecent, limit, visibleOnly, hideLocked, options.PhotoSummary, prefix)
 		} else {
 			people, err = s.peopleByDisplayNameTx(ctx, tx, candidates, args, afterName, afterID, limit, visibleOnly, hideLocked)
@@ -535,13 +539,14 @@ func (s *Store) peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates strin
 			continue
 		}
 		people = append(people, person)
-		slices.SortFunc(people, comparePeopleRecent)
-		if len(people) > limit {
-			people = people[:limit]
-		}
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return nil, err
+	}
+	// The walk already orders ranks. Finish the boundary's ties before paging.
+	slices.SortFunc(people, comparePeopleRecent)
+	if len(people) > limit {
+		people = people[:limit]
 	}
 	if len(people) > 0 {
 		ids := make([]string, len(people))

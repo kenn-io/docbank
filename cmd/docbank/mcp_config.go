@@ -23,8 +23,7 @@ func newMCPConfigCommand() *cobra.Command {
 		Use:   "config",
 		Short: "Print MCP client configuration",
 		Long: "Print client configuration without editing client files.\n" +
-			"For Codex 0.164.0, run once to persist MCP protocol support in config.toml:\n" +
-			"  codex features enable mcp_2026_07_28\nThen launch with plain codex for either transport.",
+			"For automatic setup, run docbank agent setup.",
 		Example: `  docbank mcp config --client claude-code
   docbank mcp config --client codex --allow-processing`,
 		Args: cobra.NoArgs,
@@ -41,13 +40,22 @@ func newMCPConfigCommand() *cobra.Command {
 		default:
 			return errors.New("--client must be claude-code or codex")
 		}
-		server, err := mcpConfigServer(cmd, agent)
+		var extraArgs []string
+		cmd.InheritedFlags().VisitAll(func(flag *pflag.Flag) {
+			if strings.HasPrefix(flag.Name, "allow-") && flag.Value.String() == "true" {
+				extraArgs = append(extraArgs, "--"+flag.Name)
+			}
+		})
+		server, err := mcpConfigServer(agent, mcpTransport, mcpListen, extraArgs)
 		if err != nil {
 			return err
 		}
 		data, err := agentmcp.MarshalConfig(agent, "docbank", server)
 		if err != nil {
 			return fmt.Errorf("rendering MCP configuration: %w", err)
+		}
+		if agent == agentmcp.AgentCodex {
+			data = append([]byte("# Run once first: codex features enable mcp_2026_07_28 (or run docbank agent setup). Codex then shows an under-development feature notice each session.\n"), data...)
 		}
 		if _, err := cmd.OutOrStdout().Write(data); err != nil {
 			return fmt.Errorf("writing MCP configuration: %w", err)
@@ -57,25 +65,20 @@ func newMCPConfigCommand() *cobra.Command {
 	return cmd
 }
 
-func mcpConfigServer(cmd *cobra.Command, agent agentmcp.Agent) (agentmcp.Server, error) {
-	if err := validateMCPCommandOptions(mcpTransport, mcpListen); err != nil {
+func mcpConfigServer(agent agentmcp.Agent, transport, listen string, extraArgs []string) (agentmcp.Server, error) {
+	if err := validateMCPCommandOptions(transport, listen); err != nil {
 		return agentmcp.Server{}, err
 	}
 	layout, err := home.Resolve()
 	if err != nil {
 		return agentmcp.Server{}, err
 	}
-	args := []string{"mcp", "--transport", "stdio"}
-	cmd.InheritedFlags().VisitAll(func(flag *pflag.Flag) {
-		if strings.HasPrefix(flag.Name, "allow-") && flag.Value.String() == "true" {
-			args = append(args, "--"+flag.Name)
-		}
-	})
-	if mcpTransport == "http" && len(args) > 3 {
+	args := append([]string{"mcp", "--transport", "stdio"}, extraArgs...)
+	if transport == "http" && len(args) > 3 {
 		return agentmcp.Server{}, errors.New("--allow-* flags belong on the HTTP listener's startup command")
 	}
-	if mcpTransport == "http" {
-		host, port, _ := net.SplitHostPort(mcpListen)
+	if transport == "http" {
+		host, port, _ := net.SplitHostPort(listen)
 		if strings.TrimLeft(port, "0") == "" {
 			return agentmcp.Server{}, errors.New("--listen requires a nonzero port for client configuration")
 		}

@@ -139,6 +139,39 @@ it("names the face selected by its numbered picker title", async () => {
   faces.dispose();
 });
 
+it("keeps a face's ranking through picker continuation", async () => {
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue(
+    photoFacePage({ faces: [face], assertions: [], people: [] }),
+  );
+  const search = vi.spyOn(api, "listPeople").mockResolvedValue({
+    items: [personSummary("near", { display_name: "Near" }), personSummary("far")],
+    next_cursor: "next",
+  });
+  const faces = new PhotoFaces("session", vi.fn());
+  await faces.load("version-a");
+  render(PhotoPeople, { faces, session: "session" });
+  await fireEvent.click(screen.getByTitle("Name face 1"));
+  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "" } });
+  await waitFor(() =>
+    expect(search).toHaveBeenLastCalledWith(
+      expect.objectContaining({ face_id: face.face_id }),
+      expect.anything(),
+    ),
+  );
+  // The server's order stands, and Load more keeps the face's ranking.
+  expect(
+    (await screen.findAllByRole("option")).map((option) => option.textContent?.trim()),
+  ).toEqual(["Near", "far", "Load more"]);
+  search.mockClear();
+  await fireEvent.mouseDown(screen.getByRole("option", { name: "Load more" }));
+  await waitFor(() =>
+    expect(search).toHaveBeenLastCalledWith(
+      expect.objectContaining({ face_id: face.face_id }),
+      expect.anything(),
+    ),
+  );
+  faces.dispose();
+});
 it("resets validated person search input on reopen", async () => {
   vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [], people: [] });
   const search = vi.spyOn(api, "listPeople").mockResolvedValue({ items: [] });
@@ -405,7 +438,7 @@ it.each(["distinct", "tied-whole", "tied-empty", "empty", "image500", "switch"])
               "grid-current",
               expect.anything(),
               false,
-              id,
+              { person_id: id },
             );
           }
         }

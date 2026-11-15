@@ -3,6 +3,7 @@ package pdfproduction
 import (
 	"context"
 	"errors"
+	"runtime"
 	"runtime/metrics"
 	"sync/atomic"
 	"testing"
@@ -77,6 +78,30 @@ func TestRSSAdmissionFreesMemoryBeforeRefusing(t *testing.T) {
 	cause, ok := errors.AsType[*RSSLimitError](err)
 	require.True(t, ok, "%v", err)
 	require.Equal(t, uint64(2048), cause.ObservedBytes)
+}
+
+// Memory an earlier job used and the runtime has handed back must not count
+// against the next job. macOS keeps returned pages in resident_size, so a
+// worker that read that value refused every job after one large page.
+func TestRSSAdmissionIgnoresMemoryReturnedToOS(t *testing.T) {
+	baseline, err := readProcessRSS(t.Context())
+	require.NoError(t, err)
+	const garbage = 256 << 20
+	touched := func() uint64 {
+		chunks := make([][]byte, garbage/(8<<20))
+		for i := range chunks {
+			chunks[i] = make([]byte, 8<<20)
+			for j := 0; j < len(chunks[i]); j += 4096 {
+				chunks[i][j] = 1
+			}
+		}
+		measured, err := readProcessRSS(t.Context())
+		require.NoError(t, err)
+		runtime.KeepAlive(chunks)
+		return measured
+	}()
+	require.Greater(t, touched, baseline+garbage*3/4, "the reader must count memory the process is using")
+	require.NoError(t, admitRSS(t.Context(), int64(baseline)+garbage/2, readProcessRSS))
 }
 
 func TestRSSMonitorFreesMemoryBeforeCancelling(t *testing.T) {

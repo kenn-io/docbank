@@ -7,7 +7,7 @@ export interface BatchTagRequest {
   operation_id: string;
   tag_id: string;
   assign: boolean;
-  nodes: SelectionTarget[];
+  nodes: { node_id: number; revision: number }[];
 }
 export interface BatchTagNodeResult {
   node_id: number;
@@ -46,7 +46,9 @@ function validUUID(value: unknown): value is string {
   return typeof value === "string" && uuidV4.test(value);
 }
 
-function canonicalTargets(nodes: readonly SelectionTarget[]): SelectionTarget[] {
+function canonicalTargets(
+  nodes: readonly { node_id: number; revision: number }[],
+): { node_id: number; revision: number }[] {
   if (!Array.isArray(nodes) || nodes.length < 1 || nodes.length > 1000) {
     throw new Error("Choose between 1 and 1,000 documents.");
   }
@@ -165,7 +167,7 @@ export type BatchTagOutcome =
   | { kind: "auth"; cause: unknown }
   // The daemon refused it, so nothing committed. `stale` means a document changed.
   | { kind: "rejected"; cause: unknown; stale: boolean }
-  // No answer arrived, so the change may have committed; retry the same request.
+  // No answer arrived, so the change may have committed.
   | { kind: "unknown"; cause: unknown };
 
 export async function runBatchTagChange(
@@ -189,11 +191,12 @@ export async function runBatchTagChange(
 export async function previewBatchTags(
   session: string,
   tagID: string,
-  targets: readonly SelectionTarget[],
+  targets: readonly Pick<SelectionTarget, "node_id" | "revision">[],
+  signal?: AbortSignal,
 ): Promise<BatchTagPreview> {
   if (!validUUID(tagID)) throw new Error("Choose a valid tag identity.");
   const nodes = canonicalTargets(targets);
-  const value = await generated.previewBatchTags({ tag_id: tagID, nodes }, { session });
+  const value = await generated.previewBatchTags({ tag_id: tagID, nodes }, { session, signal });
   const invalid = () =>
     new Error("The daemon returned an incomplete or invalid tag membership preview.");
   if (

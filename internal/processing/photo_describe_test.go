@@ -38,6 +38,8 @@ import (
 // photoDescriptionFixture is a vault with one photo, a synthetic vision
 // endpoint, and a service configured with one description profile.
 type photoDescriptionFixture struct {
+	databasePath string
+
 	catalog *store.Store
 	blobs   *blob.Store
 	written blob.WriteReceipt
@@ -64,10 +66,20 @@ type photoDescriptionFixture struct {
 
 func newPhotoDescriptionFixture(t *testing.T) *photoDescriptionFixture {
 	t.Helper()
+	databasePath := filepath.Join(t.TempDir(), "vault.db")
+	catalog, err := store.Open(t.Context(), databasePath)
+	require.NoError(t, err)
+	f := photoDescriptionFixtureWithStore(t, catalog)
+	f.databasePath = databasePath
+	return f
+}
+
+type photoDescriptionFixtureFactory func(*testing.T) *photoDescriptionFixture
+
+func photoDescriptionFixtureWithStore(t *testing.T, catalog *store.Store) *photoDescriptionFixture {
+	t.Helper()
 	f := &photoDescriptionFixture{reply: `{"caption":"A white panorama.","tags":["panorama","harbor"],"visible_text":"HELLO"}`}
 	ctx := t.Context()
-	catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "vault.db"))
-	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(t.TempDir(), "blobs"))
 	require.NoError(t, err)
@@ -256,7 +268,12 @@ func (f *photoDescriptionFixture) suggestions(t *testing.T) []store.PhotoSuggest
 
 func TestPhotoDescriptionProfileCoverageHasNoRenditionClass(t *testing.T) {
 	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
+	checkPhotoDescriptionProfileCoverageHasNoRenditionClass(t, newPhotoDescriptionFixture)
+}
+
+func checkPhotoDescriptionProfileCoverageHasNoRenditionClass(t *testing.T, makeFixture photoDescriptionFixtureFactory) {
+	t.Helper()
+	f := makeFixture(t)
 	fence := SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{f.node.CurrentVersionID}}
 
 	coverage, err := f.service.Coverage(t.Context(), "vision", fence)
@@ -267,7 +284,12 @@ func TestPhotoDescriptionProfileCoverageHasNoRenditionClass(t *testing.T) {
 
 func TestPhotoDescriptionFlow(t *testing.T) {
 	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
+	checkPhotoDescriptionFlow(t, newPhotoDescriptionFixture)
+}
+
+func checkPhotoDescriptionFlow(t *testing.T, makeFixture photoDescriptionFixtureFactory) {
+	t.Helper()
+	f := makeFixture(t)
 	ctx := t.Context()
 	selector := f.selector("vision")
 
@@ -308,7 +330,12 @@ func TestPhotoDescriptionFlow(t *testing.T) {
 
 func TestPhotoDescriptionPlanDuringPreviewPublication(t *testing.T) {
 	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
+	checkPhotoDescriptionPlanDuringPreviewPublication(t, newPhotoDescriptionFixture)
+}
+
+func checkPhotoDescriptionPlanDuringPreviewPublication(t *testing.T, makeFixture photoDescriptionFixtureFactory) {
+	t.Helper()
+	f := makeFixture(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	preview, reason, err := photoDescriptionPreview(ctx, f.catalog, f.node.CurrentVersionID)
@@ -344,7 +371,12 @@ func TestPhotoDescriptionPlanDuringPreviewPublication(t *testing.T) {
 
 func TestPhotoDescriptionJobFailureIsLogged(t *testing.T) {
 	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
+	checkPhotoDescriptionJobFailureIsLogged(t, newPhotoDescriptionFixture)
+}
+
+func checkPhotoDescriptionJobFailureIsLogged(t *testing.T, makeFixture photoDescriptionFixtureFactory) {
+	t.Helper()
+	f := makeFixture(t)
 	// Provider authorization uses real time; only retry scheduling moves ahead.
 	for _, runtime := range f.service.renditions.runtimes {
 		provider, ok := runtime.(*providerRenditionRuntime)
@@ -383,7 +415,12 @@ func TestPhotoDescriptionJobFailureIsLogged(t *testing.T) {
 
 func TestPhotoDescriptionBackfillLoopAdmitsAndStops(t *testing.T) {
 	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
+	checkPhotoDescriptionBackfillLoopAdmitsAndStops(t, newPhotoDescriptionFixture)
+}
+
+func checkPhotoDescriptionBackfillLoopAdmitsAndStops(t *testing.T, makeFixture photoDescriptionFixtureFactory) {
+	t.Helper()
+	f := makeFixture(t)
 	f.grant(t, f.service, "vision")
 	// The commit cancels the loop; elapsed time must not select a different exit.
 	drain, cancel := context.WithCancel(t.Context())
@@ -662,7 +699,12 @@ func TestPhotoDescriptionOverlappingReadinessChecksShareOneProbe(t *testing.T) {
 
 func TestPhotoDescriptionStartRefusesHiddenPhotoBeforeSavingConsent(t *testing.T) {
 	t.Parallel()
-	hidden := newPhotoDescriptionFixture(t)
+	checkPhotoDescriptionStartRefusesHiddenPhotoBeforeSavingConsent(t, newPhotoDescriptionFixture)
+}
+
+func checkPhotoDescriptionStartRefusesHiddenPhotoBeforeSavingConsent(t *testing.T, makeFixture photoDescriptionFixtureFactory) {
+	t.Helper()
+	hidden := makeFixture(t)
 	require.NoError(t, hidden.catalog.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
 	_, err := hidden.catalog.SetPhotoAssetHidden(t.Context(), hidden.asset.ID, hidden.asset.Revision, true)
 	require.NoError(t, err)
@@ -679,7 +721,12 @@ func TestPhotoDescriptionStartRefusesHiddenPhotoBeforeSavingConsent(t *testing.T
 
 func TestPhotoDescriptionAutomaticAndExplicitRequestsShareOneProviderCall(t *testing.T) {
 	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
+	checkPhotoDescriptionAutomaticAndExplicitRequestsShareOneProviderCall(t, newPhotoDescriptionFixture)
+}
+
+func checkPhotoDescriptionAutomaticAndExplicitRequestsShareOneProviderCall(t *testing.T, makeFixture photoDescriptionFixtureFactory) {
+	t.Helper()
+	f := makeFixture(t)
 	ctx := t.Context()
 	f.grant(t, f.service, "vision")
 	targets, err := f.service.photoVisionTargets(ctx, nil, "", 50, 4, vision.ProviderID)
@@ -700,7 +747,12 @@ func TestPhotoDescriptionAutomaticAndExplicitRequestsShareOneProviderCall(t *tes
 
 func TestPhotoDescriptionHiddenAtPublishRetriesOnceVisible(t *testing.T) {
 	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
+	checkPhotoDescriptionHiddenAtPublishRetriesOnceVisible(t, newPhotoDescriptionFixture)
+}
+
+func checkPhotoDescriptionHiddenAtPublishRetriesOnceVisible(t *testing.T, makeFixture photoDescriptionFixtureFactory) {
+	t.Helper()
+	f := makeFixture(t)
 	ctx := t.Context()
 	require.NoError(t, f.catalog.SetupPhotoHidden(ctx, "synthetic-passcode"))
 	token, _, err := f.catalog.UnlockPhotoHidden(ctx, "synthetic-passcode")
@@ -728,10 +780,15 @@ func TestPhotoDescriptionHiddenAtPublishRetriesOnceVisible(t *testing.T) {
 
 func TestPhotoDescriptionLimitUsesFinalUpload(t *testing.T) {
 	t.Parallel()
+	checkPhotoDescriptionLimitUsesFinalUpload(t, newPhotoDescriptionFixture)
+}
+
+func checkPhotoDescriptionLimitUsesFinalUpload(t *testing.T, makeFixture photoDescriptionFixtureFactory) {
+	t.Helper()
 	for _, automatic := range []bool{false, true} {
 		for _, oversized := range []bool{false, true} {
 			t.Run(fmt.Sprintf("automatic=%t/oversized=%t", automatic, oversized), func(t *testing.T) {
-				f := newPhotoDescriptionFixture(t)
+				f := makeFixture(t)
 				ctx := t.Context()
 				img := image.NewRGBA(image.Rect(0, 0, 511, 353))
 				rng := rand.New(rand.NewPCG(5, 2)) //nolint:gosec // Repeatable synthetic pixels exercise JPEG size changes.

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-04
+last_edited: 2026-11-13
 title: CLI reference
 description: Every docbank command, with its flags, output formats, and error behavior.
 ---
@@ -1303,6 +1303,7 @@ version 1 request format, date choices, counts, and retention limits.
 ```
 docbank processing vision-fingerprints [--task <descriptor-id>] --model <model> --trust-boundary <boundary> --endpoint <origin> --deployment-fingerprint <sha256>
 docbank processing local [--server auto|local]
+docbank processing faces
 docbank processing profiles [--json]
 docbank processing probe --profile <name> --seeds <dir> [--overwrite]
 docbank processing coverage <version-uuid> --profile <name> [--json]
@@ -1316,6 +1317,8 @@ docbank processing status <job-id> [--json]
 `probe` runs Mistral capability checks locally with the processing profile's policy, credential, and egress settings. It writes the manifest to the rendition runtime's configured `capability_manifest` path. Supply five synthetic native seeds and use `--overwrite` to replace an existing manifest. After saving, it prints the profile's `descriptor_fingerprint` and `disclosure_fingerprint`. See [Mistral OCR configuration](configuration.md#document-ocr-with-mistral).
 
 `local` previews text indexing for this vault and future imports, including provider disclosures, then enables it without a prompt and downloads any missing server and model files. An indexed compatible Nomic profile keeps its extractor, chunks, and vectors when it moves to the shared server; setup previews a rebuild when another model requires a new built-in index. It saves the selected profile and server outside `config.toml`, then restarts and reconnects the daemon. Both `auto` and `local` select Kit's shared per-user server. See [Local text search](usage/document-processing.md#set-up-local-text-search).
+
+`faces` previews local face suggestions, downloads any missing runtime and model assets, and enables suggestions without a prompt. Faces in Hidden photos are included. If an older text embeddings server needs a restart, stop the reported server and rerun the command. See [People](usage/people.md).
 
 `profiles` lists names the daemon can execute, their rendition and embedding
 bindings, and profile fingerprints. The default configuration lists none.
@@ -1515,6 +1518,14 @@ See [Model Context Protocol](usage/mcp.md) for client setup, tool and resource
 catalogs, transport limits, caching, and unsupported capabilities. For read-only
 HTTP hosting in the daemon process, see [docbank daemon](#docbank-daemon).
 
+### docbank agent setup
+
+```text
+docbank agent setup [--agent claude|codex] [--check] [--json] [--print]
+```
+
+Registers the selected vault with installed Claude Code and Codex clients. `--check` reports readiness without installing; `--print` prints manual commands. Setup enables Codex's MCP feature, which causes an under-development feature notice each session. Re-running setup registers the read-only tools and replaces extra arguments, including `--allow-*`; use `docbank mcp config` for write tools.
+
 ### docbank mcp config
 
 ```text
@@ -1535,7 +1546,7 @@ secret stays unresolved. With no selected binding, printing uses the listener's
 conventional `DOCBANK_MCP_HTTP_TOKEN` variable. HTTP write flags belong on a standalone listener's
 startup command.
 
-Clients must support MCP `2026-07-28`. With Codex 0.164.0, run
+Clients must support MCP `2026-07-28`. The Codex snippet includes a reminder to run
 `codex features enable mcp_2026_07_28` once to persist the client's MCP protocol
 support in `config.toml` for either transport. Then launch with plain `codex`.
 Generated Codex stdio configuration also sets

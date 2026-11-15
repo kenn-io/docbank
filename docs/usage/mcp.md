@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-10
+last_edited: 2026-11-13
 title: Model Context Protocol
 description: Connect a local MCP client to Docbank's read-mostly document tools through the daemon.
 ---
@@ -38,7 +38,16 @@ docbank mcp
 # equivalent to: docbank mcp --transport stdio
 ```
 
-Print configuration for your client:
+Register Docbank with installed Claude Code and Codex clients:
+
+```bash
+docbank agent setup
+docbank agent setup --check
+```
+
+Setup enables Codex's `mcp_2026_07_28` feature. Codex then shows an under-development feature notice each session. Re-running setup registers the read-only tools and replaces extra arguments, including `--allow-*`; use `docbank mcp config` for write tools.
+
+For manual setup, print configuration for your client:
 
 ```bash
 docbank mcp config --client claude-code
@@ -63,7 +72,7 @@ client files untouched. Your client must support MCP `2026-07-28` and
 `server/discover`; configuration alone cannot add protocol support.
 
 Tested clients are Claude Code 2.1.301 and Codex 0.164.0.
-For Codex, run this once to persist the client's MCP protocol support in
+The Codex snippet includes this command to persist the client's MCP protocol support in
 `config.toml` for either transport:
 
 ```bash

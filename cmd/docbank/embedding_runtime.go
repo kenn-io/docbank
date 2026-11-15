@@ -126,9 +126,7 @@ func configureEmbeddingRuntimeBundle(cfg config.Config) (embeddingRuntimeBundle,
 			classify = classifyBridgeEmbeddingError
 		case openAIEmbeddingAdapter:
 			if config.ManagedEmbedding(configured) {
-				profile, profileErr := config.ManagedEmbeddingProfile(configured, func(ctx context.Context) (string, error) {
-					return localEmbeddingOrigin(ctx, nil)
-				})
+				profile, profileErr := config.ManagedEmbeddingProfile(configured, func(ctx context.Context) (string, error) { return localEmbeddingOrigin(ctx, embedlocal.TextModel, nil) })
 				if profileErr != nil {
 					return bundle, profileErr
 				}
@@ -433,20 +431,21 @@ func classifyVoyageEmbeddingError(err error) (processing.EmbeddingProviderFailur
 	return processing.EmbeddingProviderPermanent, 0
 }
 
-func localEmbeddingOrigin(ctx context.Context, confirm func(context.Context, int64) (bool, error)) (string, error) {
-	return localEmbeddingOriginWithRuntime(ctx, confirm, embedlocal.Endpoint, embedlocal.Install)
+func localEmbeddingOrigin(ctx context.Context, model string, confirm func(context.Context, int64) (bool, error)) (string, error) {
+	return localEmbeddingOriginWithRuntime(ctx, model, confirm, embedlocal.Endpoint, embedlocal.Install)
 }
 
-func localEmbeddingOriginWithRuntime(ctx context.Context, confirm func(context.Context, int64) (bool, error),
+func localEmbeddingOriginWithRuntime(ctx context.Context, model string, confirm func(context.Context, int64) (bool, error),
 	endpoint func(context.Context, embedlocal.Options) (string, error),
 	install func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error),
 ) (string, error) {
-	opts := embedlocal.Options{SkipOllama: true}
+	opts := embedlocal.Options{SkipOllama: true, Model: model}
 	origin, err := endpoint(ctx, opts)
 	if err == nil {
 		return strings.TrimSuffix(origin, "/v1"), nil
 	}
-	if !errors.Is(err, embedlocal.ErrNotFound) {
+	var restart *embedlocal.RestartRequiredError
+	if !errors.Is(err, embedlocal.ErrNotFound) && !errors.As(err, &restart) {
 		return "", fmt.Errorf("discover local embeddings: %w", err)
 	}
 	dir, err := embedlocal.DefaultDir()
@@ -454,9 +453,12 @@ func localEmbeddingOriginWithRuntime(ctx context.Context, confirm func(context.C
 		return "", fmt.Errorf("find local embeddings directory: %w", err)
 	}
 	// A nil Confirm allows installed-file reuse without approving a download.
-	installation, err := install(ctx, embedlocal.InstallOptions{DataDir: dir, Confirm: confirm})
+	installation, err := install(ctx, embedlocal.InstallOptions{DataDir: dir, Model: model, Confirm: confirm})
 	if err != nil {
 		return "", fmt.Errorf("reuse local embeddings installation: %w", err)
+	}
+	if restart != nil {
+		return "", restart
 	}
 	opts.DataDir, opts.Executable = installation.DataDir, installation.Executable
 	origin, err = endpoint(ctx, opts)

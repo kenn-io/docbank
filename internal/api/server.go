@@ -60,6 +60,7 @@ type PublishEmailDocumentsFunc func(context.Context, *store.Store, *blob.Store, 
 type Deps struct {
 	LocalTextStatus       func(context.Context) (LocalTextStatus, error)
 	LocalText             *processing.LocalTextSetup
+	Faces                 *processing.FaceSetup
 	Store                 *store.Store
 	Blobs                 *blob.Store
 	VaultRoot             string // live vault root; backup restore must remain disjoint

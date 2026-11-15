@@ -36,7 +36,7 @@ func TestMetadataRoundTripsPersonAuthority(t *testing.T) {
 					ContentVersionID: file.CurrentVersionID, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "claim",
 				}}))
 				if kind == "rejected_candidate" {
-					_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: candidate.CandidateID, Action: "reject", ExpectedRevision: candidate.Revision})
+					_, err = s.DecidePersonCandidate(ctx, nil, CandidateDecision{CandidateID: candidate.CandidateID, Action: "reject", ExpectedRevision: candidate.Revision})
 				}
 			case "person":
 				_, err = s.CreatePerson(ctx, "Example Person", "operator")

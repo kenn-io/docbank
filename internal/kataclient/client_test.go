@@ -28,6 +28,29 @@ func realClient(t *testing.T) (*Client, *client.Client, int64) {
 	return New(config.KataConnection{Endpoint: server.Endpoint, APIKey: "synthetic-key", Project: "docbank"}), api, project.Project.ID
 }
 
+func TestClientRefusesRedirects(t *testing.T) {
+	var redirected atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/health":
+			_, _ = fmt.Fprint(w, `{"api_schema_version":"0.41.0"}`)
+		case "/api/v1/projects":
+			http.Redirect(w, r, "/redirected", http.StatusFound)
+		default:
+			redirected.Add(1)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+	c := New(config.KataConnection{Endpoint: server.URL, APIKey: "synthetic-key", Project: "docbank"})
+	_, err := c.projectID(t.Context(), "docbank")
+	failure, ok := errors.AsType[*Error](err)
+	require.True(t, ok, "%v", err)
+	require.Equal(t, http.StatusFound, failure.Status)
+	require.Zero(t, redirected.Load())
+}
+
 func TestCreateAndCommentReplay(t *testing.T) {
 	c, api, projectID := realClient(t)
 	issue, err := c.Create(t.Context(), "create-key", "Synthetic issue", "Details", map[string]jsontext.Value{"docbank.action": jsontext.Value(`"marker"`)})

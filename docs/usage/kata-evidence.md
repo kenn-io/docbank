@@ -39,8 +39,17 @@ Kata rejects requests carrying this token. Alternatively, replace `api_key_env` 
 configuration are rejected. Key files must be regular, private files owned by the daemon user and at most
 4,096 bytes; credentials are read when an operation runs.
 
-The endpoint accepts HTTPS or loopback HTTP. Remote plain HTTP, credentials
-in the URL, query strings, fragments and endpoint path prefixes are rejected.
+The endpoint accepts HTTPS or loopback HTTP by default. To connect over a
+private container network, set `endpoint = "http://kata:7777"` and
+`trust_private_network = true` in this section. This opt-in also permits private,
+link-local, unspecified and carrier-grade NAT IP addresses. Public IP literals
+remain rejected over plain HTTP. DNS names are accepted on your statement that
+their network is trusted. HTTP sends the token and document evidence in plaintext,
+so enable this only on a network you trust. The setting defaults to `false` and
+is independent of `[web]` trust.
+
+Credentials in the URL, query strings, fragments and endpoint path prefixes
+are rejected, and redirects are refused even with the opt-in.
 The integration is off by default. Only Kata operations validate this section;
 an invalid field or missing credential does not prevent ordinary vault work.
 Restart an existing daemon after changing its connection configuration.

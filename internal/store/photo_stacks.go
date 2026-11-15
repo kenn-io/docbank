@@ -550,7 +550,7 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 func (s *Store) decidePhotoStack(ctx context.Context, request PhotoStackDecision, vectors *photoStackVectorReader) (PhotoAuthoredReceipt, error) {
 	var result PhotoAuthoredReceipt
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		heads, err := photoStackVectorHeads(ctx, tx)
+		heads, err := vectorHeads(ctx, tx, "image")
 		if err != nil {
 			return err
 		}
