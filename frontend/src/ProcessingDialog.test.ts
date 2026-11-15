@@ -239,7 +239,7 @@ describe("processing dialog", () => {
     );
     await fireEvent.click(await enabledRun());
     expect(
-      await screen.findByText(/API key.*source size limit.*backend task.*try again/i),
+      await screen.findByText(/API key.*source size limit.*backend task.*run processing again/i),
     ).toBeTruthy();
   });
 

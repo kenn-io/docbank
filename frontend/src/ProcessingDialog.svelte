@@ -417,7 +417,7 @@
         {:else if failed}
           <p class="error">
             {status?.failure_code === "provider_task_failed"
-              ? "The worker couldn't process this file. Check its API key, source size limit, and backend task, then try again."
+              ? "The worker couldn't process this file. Check its API key, source size limit, and backend task, then run processing again."
               : `Failed${status?.failure_code ? `: ${status.failure_code.replaceAll("_", " ")}` : "."}`}
           </p>
         {:else if done}

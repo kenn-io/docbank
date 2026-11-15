@@ -70,8 +70,9 @@ func TestProcessingServiceRejectsWorkerDescriptorWithNativeAdapter(t *testing.T)
 	require.Error(t, err)
 	profile.Rendition.AdapterContract = workerprotocol.DocumentAdapter
 	config.Profiles["worker"] = ProfileConfig{Profile: profile, RenditionProvider: provider, RenditionDisclosure: RuntimeDisclosure{Endpoint: "http://127.0.0.1:5002"}}
-	_, err = NewService(t.Context(), config)
+	service, err := NewService(t.Context(), config)
 	require.NoError(t, err)
+	t.Cleanup(service.Stop)
 }
 
 func TestProcessingServiceRefusesUnsupportedFormatBeforeEnqueue(t *testing.T) {
