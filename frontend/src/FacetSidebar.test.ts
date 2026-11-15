@@ -726,7 +726,7 @@ it.each([
       { key: mara, label: "Jory Pellham", count: 0, selected: true, selected_person_ids: [jory] },
     ],
     person: jory,
-    remaining: [{ person_id: typed, roles: ["custodian"] }],
+    remaining: [{ person_id: typed, roles: ["custodian" as const] }],
   },
 ])(
   "clears an unavailable person filter using $label",
