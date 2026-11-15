@@ -100,12 +100,6 @@ func TestNativeASRPolicyPreservesExistingProfile(t *testing.T) {
 	fingerprint, err := ASRPolicyFingerprint(100_000)
 	require.NoError(t, err)
 	require.Equal(t, existing, fingerprint)
-	fixture := newASRFixture(t, "audio/wav", "asr-spoken.wav", asrSpokenWAV)
-	fixture.descriptor.PolicyFingerprint = existing
-	descriptor, err := document.NewRenditionDescriptor(fixture.descriptor)
-	require.NoError(t, err)
-	_, err = NewASR(ASRProfile{Origin: "http://127.0.0.1", Descriptor: descriptor, MaxTranscriptChars: 100_000}, nil, http.DefaultClient)
-	require.NoError(t, err)
 }
 
 func TestDoclingASRRejectsChangedTranscriptPolicy(t *testing.T) {

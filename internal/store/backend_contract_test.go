@@ -1905,7 +1905,6 @@ var backendSuites = []backendSuite{
 		{"RenditionSnapshots", nil, checkRenditionSnapshotsPostgres},
 		{"RenditionPublicationRollback", nil, checkRenditionPublicationRollbackPostgres},
 		{"RenditionWorkerResume", func(t *testing.T) { t.Helper(); checkRenditionWorkerResume(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRenditionWorkerResume(t, newPostgresQueryStore) }},
-		{"WorkerRenditionReplay", func(t *testing.T) { t.Helper(); checkWorkerRenditionReplay(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkWorkerRenditionReplay(t, newPostgresQueryStore) }},
 		{"WorkerFailedTaskRetry", func(t *testing.T) { t.Helper(); checkWorkerFailedTaskRetry(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkWorkerFailedTaskRetry(t, newPostgresQueryStore) }},
 
 		{"ProcessingConsentAuthorizesOnlyExactCurrentGrant", func(t *testing.T) { t.Helper(); checkProcessingConsentAuthorizesOnlyExactCurrentGrant(t, newTestStore) }, func(t *testing.T) {

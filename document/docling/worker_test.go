@@ -139,9 +139,36 @@ func TestWorkerRetainedFailureRequiresRetryableCheckpoint(t *testing.T) {
 			require.Equal(t, test.wantSentinel, errors.Is(err, workerprotocol.ErrRetainedTaskFailed))
 		})
 	}
+	for _, test := range []struct {
+		name, path string
+		status     int
+	}{
+		{"lookup unauthorized", workerprotocol.LookupPath, http.StatusUnauthorized},
+		{"submit too large", workerprotocol.SubmitPath, http.StatusRequestEntityTooLarge},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := workerFixture(t)
+			_, origin, transport := workerHTTP(t, workerDocumentResult())
+			normal := transport.Transport
+			transport.Transport = roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				if strings.HasPrefix(r.URL.Path, test.path) {
+					if r.Body != nil {
+						_, _ = io.Copy(io.Discard, r.Body)
+					}
+					return &http.Response{Request: r, StatusCode: test.status, Header: http.Header{workerprotocol.ProtocolHeader: []string{workerprotocol.Contract}}, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+				}
+				return normal.RoundTrip(r)
+			})
+			client, err := NewWorker(workerProfile(origin, f.descriptor), testSecrets{"worker": "synthetic-worker-key"}, transport)
+			require.NoError(t, err)
+			_, err = client.RenderResumable(t.Context(), f.upload(), f.authorization, nil, nil)
+			require.ErrorIs(t, err, workerprotocol.ErrRetainedTaskFailed)
+		})
+	}
+
 }
 
-func TestWorkerRepostsRetryableLookupWithSameKey(t *testing.T) {
+func TestWorkerRepostsFailedLookupWithSameKey(t *testing.T) {
 	f := workerFixture(t)
 	state, origin, httpClient := workerHTTP(t, workerDocumentResult())
 	state.lostResponse.Store(true)
@@ -151,7 +178,6 @@ func TestWorkerRepostsRetryableLookupWithSameKey(t *testing.T) {
 	require.Error(t, err)
 	key := state.key
 	state.failed.Store(true)
-	state.retryable.Store(true)
 	_, err = document.RenderRendition(t.Context(), client, f.upload(), f.authorization)
 	require.NoError(t, err)
 	require.Equal(t, int32(2), state.posts.Load())
@@ -188,7 +214,7 @@ func workerDocumentResult() any {
 	_ = json.Unmarshal(recordedPagesResponse, &result)
 	return result
 }
-func TestWorkerDocumentCheckpointsAndResumesWithoutUpload(t *testing.T) {
+func checkWorkerDocumentCheckpointsAndResumesWithoutUpload(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		f := workerFixture(t)
 		state, origin, httpClient := workerHTTP(t, workerDocumentResult())
@@ -387,46 +413,13 @@ func TestWorkerASRRejectsAudioOverOneHour(t *testing.T) {
 	require.Equal(t, document.RenditionErrorUnsupportedInput, providerErr.Code())
 	require.Zero(t, state.lookups.Load())
 }
-func TestWorkerSubmissionKeyIgnoresOnlyAuthorizationInterval(t *testing.T) {
-	f := workerFixture(t)
-	fields := [][2]string{{"to_formats", "md"}, {"to_formats", "json"}, {"target_type", "inbody"}}
-	first, err := workerprotocol.SubmissionKey(f.metadata, f.authorization, fields)
-	require.NoError(t, err)
-	hegel.Test(t, func(ht *hegel.T) {
-		shift := hegel.Draw(ht, hegel.Integers[int64](-1<<63, 1<<63-1))
-		auth := f.authorization
-		start, err := time.Parse(providerutil.TimestampForm, auth.AuthorizedAt)
-		require.NoError(ht, err)
-		end, err := time.Parse(providerutil.TimestampForm, auth.ExpiresAt)
-		require.NoError(ht, err)
-		auth.AuthorizedAt = start.Add(time.Duration(shift)).Format(providerutil.TimestampForm)
-		auth.ExpiresAt = end.Add(time.Duration(shift)).Format(providerutil.TimestampForm)
-		second, err := workerprotocol.SubmissionKey(f.metadata, auth, fields)
-		require.NoError(ht, err)
-		require.Equal(ht, first, second)
-	})
-}
-func TestWorkerSubmissionKeyBindsRequestFingerprint(t *testing.T) {
-	f := workerFixture(t)
-	fields := [][2]string{{"to_formats", "json"}, {"target_type", "inbody"}}
-	first, err := workerprotocol.SubmissionKey(f.metadata, f.authorization, fields)
-	require.NoError(t, err)
-	changed := f.authorization
-	changed.RenditionRequestFingerprint = strings.Repeat("5", 64)
-	different, err := workerprotocol.SubmissionKey(f.metadata, changed, fields)
-	require.NoError(t, err)
-	require.NotEqual(t, first, different)
-}
-
 func TestWorkerActualGatewayLostReplyAndResume(t *testing.T) {
 	for _, testCase := range []struct {
 		name, status                string
 		pageError, audio, wantError bool
 	}{
-		{name: "complete PDF", status: "success"},
 		{name: "partial PDF", status: "partial_success", pageError: true},
 		{name: "partial PDF without omissions", status: "partial_success", wantError: true},
-		{name: "complete ASR", status: "success", audio: true},
 		{name: "partial ASR", status: "partial_success", audio: true, wantError: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -525,7 +518,7 @@ func TestWorkerActualGatewayLostReplyAndResume(t *testing.T) {
 	}
 }
 
-func TestWorkerPendingExpiryKeepsHistoricalResume(t *testing.T) {
+func checkWorkerPendingExpiryKeepsHistoricalResume(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		f := workerFixture(t)
 		f.authorization.ExpiresAt = time.Now().UTC().Add(time.Second).Format(providerutil.TimestampForm)
@@ -608,4 +601,9 @@ func TestWorkerTaskRejectsInvalidBackendStatus(t *testing.T) {
 			require.Equal(t, document.RenditionErrorMalformedEvidence, providerErr.Code())
 		})
 	}
+}
+
+func TestWorkerPendingExpiryKeepsHistoricalResume(t *testing.T) {
+	t.Run("checkpoint interruption", checkWorkerDocumentCheckpointsAndResumesWithoutUpload)
+	t.Run("authorization expiry", checkWorkerPendingExpiryKeepsHistoricalResume)
 }

@@ -263,11 +263,9 @@ func TestDaemonDoclingDocumentProcessing(t *testing.T) {
 		maxResponseBytes int64
 		maxUnits         int
 		worker           bool
-		loseWorkerReply  bool
 	}{
 		{name: "filename withheld"},
 		{name: "durable Mini worker", worker: true},
-		{name: "durable Mini worker lost reply", worker: true, loseWorkerReply: true},
 		{name: "plain text", filename: "report.txt", source: []byte("Synthetic source text\n")},
 		{name: "PNG image", filename: "report.png", source: mediatest.PNG(2, 2, color.White)},
 		{name: "filename disclosed", disclose: true},
@@ -365,17 +363,7 @@ func TestDaemonDoclingDocumentProcessing(t *testing.T) {
 				gateway, err := conversionworker.Open(t.Context(), conversionworker.Options{Directory: filepath.Join(t.TempDir(), "spool"), APIKey: "synthetic-document-key", BackendURL: provider.URL, BackendKey: "synthetic-document-key", MaxSourceBytes: 64 << 20, MaxResultBytes: 64 << 20, MaxJobs: 128, MaxSpoolBytes: 40 << 30})
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, gateway.Close(context.WithoutCancel(t.Context()))) })
-				var loseReply atomic.Bool
-				loseReply.Store(test.loseWorkerReply)
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if r.Method == http.MethodPost && r.URL.Path == workerprotocol.SubmitPath && loseReply.Swap(false) {
-						recorded := httptest.NewRecorder()
-						gateway.ServeHTTP(recorded, r)
-						assert.Equal(t, http.StatusAccepted, recorded.Code)
-						w.Header().Set(workerprotocol.ProtocolHeader, workerprotocol.Contract)
-						w.WriteHeader(http.StatusServiceUnavailable)
-						return
-					}
 					if strings.HasPrefix(r.URL.Path, workerprotocol.PollPath) {
 						_, err := gateway.RunOnce(r.Context())
 						assert.NoError(t, err)

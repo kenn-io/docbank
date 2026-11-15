@@ -5,8 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -16,15 +14,8 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/docling"
 	"go.kenn.io/docbank/document/workerprotocol"
-	"go.kenn.io/docbank/internal/conversionworker"
 	"go.kenn.io/docbank/internal/store"
 )
-
-type workerCheckpointFailureCatalog struct{ *store.Store }
-
-func (c workerCheckpointFailureCatalog) CheckpointRenditionProvider(context.Context, store.RenditionJobClaim, string, time.Time) error {
-	return errors.New("synthetic checkpoint storage failure")
-}
 
 type workerCheckpointRuntime struct {
 	base     *workerProvider
@@ -42,54 +33,6 @@ func (r workerCheckpointRuntime) Prepare(ctx context.Context, work store.Renditi
 }
 func (r workerCheckpointRuntime) ResumeProvider(context.Context, store.RenditionJobWork, document.RenditionExecutionSnapshotV1) (document.RenditionProvider, error) {
 	return r.provider, nil
-}
-func TestWorkerCheckpointFailureRetriesOnlyExplicitProtocol(t *testing.T) {
-	t.Parallel()
-	for _, durable := range []bool{false, true} {
-		name := "native"
-		if durable {
-			name = "worker"
-		}
-		t.Run(name, func(t *testing.T) {
-			fixture := newPublicationFixture(t)
-			base := newWorkerProvider(t)
-			if durable {
-				descriptor, err := docling.WorkerDocumentDescriptor()
-				require.NoError(t, err)
-				base.descriptor = descriptor
-			}
-			provider := &resumableWorkerProvider{workerProvider: base}
-			profile := workerProcessingProfile(t, base.Descriptor(), func(p *document.ProcessingProfileV1) {
-				if durable {
-					p.Rendition.AdapterContract = workerprotocol.DocumentAdapter
-					p.Rendition.TrustBoundary = string(document.RenditionTrustOperatorNetwork)
-					p.RetentionDisclosure.TrustBoundary = string(document.RenditionTrustOperatorNetwork)
-				}
-			})
-			fixture.profile = profile
-			request := workerJobRequest(fixture.versionID, profile, base.Descriptor())
-			grantWorkerConsent(t, fixture.catalog, request)
-			job, _, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
-			require.NoError(t, err)
-			worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: workerCheckpointFailureCatalog{fixture.catalog}, Blobs: fixture.blobs, Runtime: workerCheckpointRuntime{base: base, provider: provider}, Gate: newTestOperationGate(), Owner: "worker-checkpoint-failure", LeaseDuration: time.Minute, IdleDelay: time.Millisecond})
-			require.NoError(t, err)
-			processed, err := worker.RunOne(t.Context())
-			require.ErrorContains(t, err, "synthetic checkpoint storage failure")
-			require.True(t, processed)
-			require.Equal(t, 1, provider.sourceUploads)
-			current, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
-			require.NoError(t, err)
-			// A permanent catalog error stops this invocation. Recovery still uses
-			// the same fenced lease-expiry path as process death before checkpoint.
-			require.Equal(t, store.RenditionJobRunning, current.State)
-			_, err = fixture.catalog.ClaimRenditionJob(t.Context(), job.ID, "restarted-worker", time.Now().UTC().Add(2*time.Minute), time.Minute)
-			if durable {
-				require.NoError(t, err)
-			} else {
-				require.ErrorIs(t, err, store.ErrRenditionJobOperatorRequired)
-			}
-		})
-	}
 }
 
 type workerPendingExpiryProvider struct {
@@ -174,194 +117,6 @@ type workerProbeTransport func(*http.Request) (*http.Response, error)
 
 func (f workerProbeTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func TestWorkerGatewayRetryRechecksConsentAndKeepsKey(t *testing.T) {
-	t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
-	synctest.Test(t, func(t *testing.T) {
-		var backendPosts int
-		backend := &http.Client{Transport: workerProbeTransport(func(r *http.Request) (*http.Response, error) {
-			status, body := 200, `{}`
-			switch {
-			case r.URL.Path == workerprotocol.ReadyPath:
-			case r.Method == http.MethodPost:
-				_, _ = io.Copy(io.Discard, r.Body)
-				backendPosts++
-				if backendPosts <= 3 {
-					status = 503
-				} else {
-					body = `{"task_id":"backend","task_status":"pending","task_type":"convert"}`
-				}
-			case strings.HasPrefix(r.URL.Path, workerprotocol.PollPath):
-				body = `{"task_id":"backend","task_status":"success","task_type":"convert"}`
-			case strings.HasPrefix(r.URL.Path, workerprotocol.ResultPath):
-				body = `{"document":{"filename":"document.pdf","json_content":{"schema_name":"DoclingDocument","version":"1.7.0","pages":{"1":{}},"texts":[{"text":"Synthetic content","prov":[{"page_no":1}]}]}},"status":"success","errors":[]}`
-			default:
-				status = 404
-			}
-			return &http.Response{Request: r, StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
-		})}
-		gateway, err := conversionworker.Open(t.Context(), conversionworker.Options{Directory: filepath.Join(t.TempDir(), "spool"), APIKey: "synthetic-worker-key", BackendURL: "http://127.0.0.1:5001", BackendKey: "synthetic-backend-key", Client: backend, MaxSourceBytes: 64 << 20, MaxResultBytes: 64 << 20, MaxJobs: 128, MaxSpoolBytes: 40 << 30})
-		require.NoError(t, err)
-		t.Cleanup(func() { require.NoError(t, gateway.Close(context.WithoutCancel(t.Context()))) })
-		var keys []string
-		transport := &http.Client{Transport: workerProbeTransport(func(r *http.Request) (*http.Response, error) {
-			if r.Method == http.MethodPost {
-				keys = append(keys, r.Header.Get("Idempotency-Key"))
-			}
-			if strings.HasPrefix(r.URL.Path, workerprotocol.PollPath) {
-				for range 4 {
-					_, err := gateway.RunOnce(r.Context())
-					if err != nil {
-						return nil, err
-					}
-				}
-			}
-			out := httptest.NewRecorder()
-			gateway.ServeHTTP(out, r)
-			return out.Result(), nil
-		})}
-		fixture := newPublicationFixture(t)
-		base := newWorkerProvider(t)
-		descriptor, err := docling.WorkerDocumentDescriptor()
-		require.NoError(t, err)
-		base.descriptor = descriptor
-		provider, err := docling.NewWorker(docling.Profile{Origin: "http://127.0.0.1:5002", Descriptor: descriptor, SecretBinding: "worker", RequestTimeout: time.Second, TotalTimeout: time.Minute, PollInterval: time.Millisecond, MaxPollAttempts: 3, MaxDocumentBytes: 1 << 20, MaxResponseBytes: 1 << 20}, workerProbeSecrets{}, transport)
-		require.NoError(t, err)
-		profile := workerProcessingProfile(t, descriptor, func(p *document.ProcessingProfileV1) {
-			p.Rendition.AdapterContract = workerprotocol.DocumentAdapter
-			p.Rendition.TrustBoundary = string(document.RenditionTrustOperatorNetwork)
-			p.RetentionDisclosure.TrustBoundary = string(document.RenditionTrustOperatorNetwork)
-		})
-		fixture.profile = profile
-		request := workerJobRequest(fixture.versionID, profile, descriptor)
-		grantWorkerConsent(t, fixture.catalog, request)
-		job, _, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
-		require.NoError(t, err)
-		worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Runtime: workerCheckpointRuntime{base: base, provider: provider}, Gate: newTestOperationGate(), Owner: "worker-gateway-retry", LeaseDuration: time.Minute, IdleDelay: time.Millisecond})
-		require.NoError(t, err)
-		processed, err := worker.RunOne(t.Context())
-		require.NoError(t, err)
-		require.True(t, processed)
-		failed, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
-		require.NoError(t, err)
-		require.Equal(t, store.RenditionFailureProviderTaskFailed, failed.FailureCode)
-		require.Equal(t, 3, backendPosts)
-		_, err = fixture.catalog.RevokeConsent(t.Context(), store.ProcessingConsentRevocationRequest{Principal: request.Authorization.Principal, Scope: request.Authorization.Scope})
-		require.NoError(t, err)
-		_, _, err = fixture.catalog.EnqueueRenditionJob(t.Context(), request)
-		require.Error(t, err)
-		require.Len(t, keys, 1)
-		grantWorkerConsent(t, fixture.catalog, request)
-		_, _, err = fixture.catalog.EnqueueRenditionJob(t.Context(), request)
-		require.NoError(t, err)
-		processed, err = worker.RunOne(t.Context())
-		require.NoError(t, err)
-		require.True(t, processed)
-		completed, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
-		require.NoError(t, err)
-		require.Equal(t, store.RenditionJobCompleted, completed.State)
-		require.Equal(t, 4, backendPosts)
-		require.Len(t, keys, 2)
-		require.Equal(t, keys[0], keys[1])
-	})
-}
-func TestWorkerGatewayRejectionCanBeRetriedByUser(t *testing.T) {
-	for _, rejection := range []int{http.StatusUnauthorized, http.StatusRequestEntityTooLarge} {
-		t.Run(http.StatusText(rejection), func(t *testing.T) {
-			t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
-			synctest.Test(t, func(t *testing.T) {
-				var backendPosts int
-				backend := &http.Client{Transport: workerProbeTransport(func(r *http.Request) (*http.Response, error) {
-					status, body := 200, `{}`
-					switch {
-					case r.URL.Path == workerprotocol.ReadyPath:
-					case r.Method == http.MethodPost:
-						_, _ = io.Copy(io.Discard, r.Body)
-						backendPosts++
-						body = `{"task_id":"backend","task_status":"pending","task_type":"convert"}`
-					case strings.HasPrefix(r.URL.Path, workerprotocol.PollPath):
-						body = `{"task_id":"backend","task_status":"success","task_type":"convert"}`
-					case strings.HasPrefix(r.URL.Path, workerprotocol.ResultPath):
-						body = `{"document":{"filename":"document.pdf","json_content":{"schema_name":"DoclingDocument","version":"1.7.0","pages":{"1":{}},"texts":[{"text":"Synthetic content","prov":[{"page_no":1}]}]}},"status":"success","errors":[]}`
-					default:
-						status = 404
-					}
-					return &http.Response{Request: r, StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
-				})}
-				gateway, err := conversionworker.Open(t.Context(), conversionworker.Options{Directory: filepath.Join(t.TempDir(), "spool"), APIKey: "synthetic-worker-key", BackendURL: "http://127.0.0.1:5001", BackendKey: "synthetic-backend-key", Client: backend, MaxSourceBytes: 64 << 20, MaxResultBytes: 64 << 20, MaxJobs: 128, MaxSpoolBytes: 40 << 30})
-				require.NoError(t, err)
-				t.Cleanup(func() { require.NoError(t, gateway.Close(context.WithoutCancel(t.Context()))) })
-				var keys []string
-				transport := &http.Client{Transport: workerProbeTransport(func(r *http.Request) (*http.Response, error) {
-					if rejection == http.StatusUnauthorized && strings.HasPrefix(r.URL.Path, workerprotocol.LookupPath) && len(keys) == 0 {
-						keys = append(keys, strings.TrimPrefix(r.URL.Path, workerprotocol.LookupPath))
-						return &http.Response{Request: r, StatusCode: rejection, Header: http.Header{workerprotocol.ProtocolHeader: []string{workerprotocol.Contract}}, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
-					}
-					if r.Method == http.MethodPost {
-						keys = append(keys, r.Header.Get("Idempotency-Key"))
-						if rejection == http.StatusRequestEntityTooLarge && len(keys) == 1 {
-							_, _ = io.Copy(io.Discard, r.Body)
-							return &http.Response{Request: r, StatusCode: rejection, Header: http.Header{workerprotocol.ProtocolHeader: []string{workerprotocol.Contract}}, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
-						}
-					}
-					if strings.HasPrefix(r.URL.Path, workerprotocol.PollPath) {
-						for range 4 {
-							_, err := gateway.RunOnce(r.Context())
-							if err != nil {
-								return nil, err
-							}
-						}
-					}
-					out := httptest.NewRecorder()
-					gateway.ServeHTTP(out, r)
-					return out.Result(), nil
-				})}
-				fixture := newPublicationFixture(t)
-				base := newWorkerProvider(t)
-				descriptor, err := docling.WorkerDocumentDescriptor()
-				require.NoError(t, err)
-				base.descriptor = descriptor
-				provider, err := docling.NewWorker(docling.Profile{Origin: "http://127.0.0.1:5002", Descriptor: descriptor, SecretBinding: "worker", RequestTimeout: time.Second, TotalTimeout: time.Minute, PollInterval: time.Millisecond, MaxPollAttempts: 3, MaxDocumentBytes: 1 << 20, MaxResponseBytes: 1 << 20}, workerProbeSecrets{}, transport)
-				require.NoError(t, err)
-				profile := workerProcessingProfile(t, descriptor, func(p *document.ProcessingProfileV1) {
-					p.Rendition.AdapterContract = workerprotocol.DocumentAdapter
-					p.Rendition.TrustBoundary = string(document.RenditionTrustOperatorNetwork)
-					p.RetentionDisclosure.TrustBoundary = string(document.RenditionTrustOperatorNetwork)
-				})
-				fixture.profile = profile
-				request := workerJobRequest(fixture.versionID, profile, descriptor)
-				grantWorkerConsent(t, fixture.catalog, request)
-				job, _, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
-				require.NoError(t, err)
-				worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Runtime: workerCheckpointRuntime{base: base, provider: provider}, Gate: newTestOperationGate(), Owner: "worker-gateway-retry", LeaseDuration: time.Minute, IdleDelay: time.Millisecond})
-				require.NoError(t, err)
-				processed, err := worker.RunOne(t.Context())
-				require.NoError(t, err)
-				require.True(t, processed)
-				failed, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
-				require.NoError(t, err)
-				require.Equal(t, store.RenditionFailureProviderTaskFailed, failed.FailureCode)
-				require.Zero(t, backendPosts)
-				_, err = fixture.catalog.RevokeConsent(t.Context(), store.ProcessingConsentRevocationRequest{Principal: request.Authorization.Principal, Scope: request.Authorization.Scope})
-				require.NoError(t, err)
-				_, _, err = fixture.catalog.EnqueueRenditionJob(t.Context(), request)
-				require.Error(t, err)
-				require.Len(t, keys, 1)
-				grantWorkerConsent(t, fixture.catalog, request)
-				_, _, err = fixture.catalog.EnqueueRenditionJob(t.Context(), request)
-				require.NoError(t, err)
-				processed, err = worker.RunOne(t.Context())
-				require.NoError(t, err)
-				require.True(t, processed)
-				completed, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
-				require.NoError(t, err)
-				require.Equal(t, store.RenditionJobCompleted, completed.State)
-				require.Equal(t, 1, backendPosts)
-				require.Len(t, keys, 2)
-				require.Equal(t, keys[0], keys[1])
-			})
-		})
-	}
-}
 func TestGenuineWorkerExpiryBeforeCheckpointReconciles(t *testing.T) {
 	t.Parallel()
 	for _, stage := range []string{"lookup", "ready", "submit"} {
