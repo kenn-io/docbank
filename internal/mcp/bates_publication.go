@@ -28,7 +28,9 @@ type numberedPublicationError struct{ code string }
 func (e *numberedPublicationError) Error() string { return e.code }
 
 var numberedPublicationMessages = map[string]string{
-	"bates_outcome_unknown":         "The PDF may already be published. Query get_bates_export for this allocation or repeat publish_numbered_pdf with the identical allocation, review digest and files. Do not reserve new numbers.",
+	"bates_outcome_unknown": "The PDF may already be published. Query get_bates_export for this allocation. " +
+		"If HTTP MCP timed out, retry over stdio with the identical allocation, review digest and files; " +
+		"otherwise repeat publish_numbered_pdf with those same inputs. Do not reserve new numbers.",
 	"redaction_busy":                "Another native PDF operation is running in the daemon; retry this allocation when it finishes.",
 	"redaction_limit":               "Publication exceeds its size or work limit.",
 	"redaction_unsupported":         "The reserved source cannot be processed by the native PDF renderer.",

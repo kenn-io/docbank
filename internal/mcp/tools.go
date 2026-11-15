@@ -163,7 +163,8 @@ var publishNumberedPDFToolDefinition = toolDefinition{
 	description: "Publish one reviewed PDF into an operator-created numbered allocation. " +
 		"Supply the three saved review paths and the review object SHA-256. " +
 		"The operator must reserve through the browser or CLI first; this tool cannot consent " +
-		"to retention or allocate numbers. Repeat the identical allocation and review after " +
+		"to retention or allocate numbers. HTTP MCP cancels rendering after two minutes; " +
+		"use stdio for longer calls. Repeat the identical allocation and review after " +
 		"an uncertain reply; download through export_bates_file with the saved review for full checking.",
 	schemas: publishNumberedPDFSchemas, write: true, idempotent: true,
 }
