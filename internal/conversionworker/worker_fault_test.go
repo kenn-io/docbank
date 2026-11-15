@@ -168,6 +168,7 @@ func TestWorkerRejectsWrongBackendTaskType(t *testing.T) {
 			require.NoError(t, err)
 			if stage == "submit" {
 				require.Zero(t, polls)
+				require.Contains(t, getRequest(t.Context(), w, "/v1/status/poll/"+id).Body.String(), `"task_status":"pending"`)
 			} else {
 				require.Contains(t, getRequest(t.Context(), w, "/v1/status/poll/"+id).Body.String(), "failure")
 			}
