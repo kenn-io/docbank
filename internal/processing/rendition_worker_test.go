@@ -507,18 +507,30 @@ func TestRenditionWorkerPersistsAmbiguousOutcomeWithoutResubmission(t *testing.T
 func TestRenditionWorkerClassifiesRetainedTaskFailure(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
-		name, provider string
-		cause          error
-		want           store.RenditionFailureCode
+		name   string
+		worker bool
+		cause  error
+		want   store.RenditionFailureCode
 	}{
-		{"recoverable worker", workerprotocol.ProviderID, workerprotocol.ErrRetainedTaskFailed, store.RenditionFailureProviderTaskFailed},
-		{"other provider", "other", workerprotocol.ErrRetainedTaskFailed, store.RenditionFailureTerminal},
-		{"terminal worker", workerprotocol.ProviderID, errors.New("terminal"), store.RenditionFailureTerminal},
+		{"recoverable worker", true, workerprotocol.ErrRetainedTaskFailed, store.RenditionFailureProviderTaskFailed},
+		{"other provider", false, workerprotocol.ErrRetainedTaskFailed, store.RenditionFailureTerminal},
+		{"terminal worker", true, errors.New("terminal"), store.RenditionFailureTerminal},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newPublicationFixture(t)
 			provider := newWorkerProvider(t)
-			profile := workerProcessingProfile(t, provider.Descriptor())
+			if test.worker {
+				descriptor, err := workerprotocol.DocumentDescriptor()
+				require.NoError(t, err)
+				provider.descriptor = descriptor
+			}
+			profile := workerProcessingProfile(t, provider.Descriptor(), func(p *document.ProcessingProfileV1) {
+				if test.worker {
+					p.Rendition.AdapterContract = workerprotocol.DocumentAdapter
+					p.Rendition.TrustBoundary = string(document.RenditionTrustOperatorNetwork)
+					p.RetentionDisclosure.TrustBoundary = string(document.RenditionTrustOperatorNetwork)
+				}
+			})
 			request := workerJobRequest(fixture.versionID, profile, provider.Descriptor())
 			grantWorkerConsent(t, fixture.catalog, request)
 			job, waiter, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
@@ -542,7 +554,6 @@ func TestRenditionWorkerClassifiesRetainedTaskFailure(t *testing.T) {
 			require.NoError(t, err)
 			providerErr, err := document.NewRenditionProviderError(document.RenditionErrorMalformedEvidence, 0, test.cause)
 			require.NoError(t, err)
-			work.ExecutionIdentity.Authorization.ProviderID = test.provider
 			require.NoError(t, worker.classifyProviderError(t.Context(), claim, work, providerErr, true, 1))
 			current, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
 			require.NoError(t, err)
