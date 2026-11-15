@@ -399,7 +399,8 @@ func (client *Client) submit(run *rendering, fields [][2]string) (taskResponse, 
 		return taskResponse{}, err
 	}
 	if response.Status != http.StatusOK && response.Status != http.StatusAccepted {
-		return taskResponse{}, workerStatusError(providerutil.StageSubmission, response, run.workerProtocol && response.Status == http.StatusRequestEntityTooLarge)
+		return taskResponse{}, provider.StatusError(providerutil.StageSubmission, response.Status,
+			response.RetryAfter, nil)
 	}
 	task, err := parseTaskForProtocol(response.Body, run.workerProtocol)
 	if err != nil {

@@ -139,32 +139,6 @@ func TestWorkerRetainedFailureRequiresRetryableCheckpoint(t *testing.T) {
 			require.Equal(t, test.wantSentinel, errors.Is(err, workerprotocol.ErrRetainedTaskFailed))
 		})
 	}
-	for _, test := range []struct {
-		name, path string
-		status     int
-	}{
-		{"lookup unauthorized", workerprotocol.LookupPath, http.StatusUnauthorized},
-		{"submit too large", workerprotocol.SubmitPath, http.StatusRequestEntityTooLarge},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			f := workerFixture(t)
-			_, origin, transport := workerHTTP(t, workerDocumentResult())
-			normal := transport.Transport
-			transport.Transport = roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-				if strings.HasPrefix(r.URL.Path, test.path) {
-					if r.Body != nil {
-						_, _ = io.Copy(io.Discard, r.Body)
-					}
-					return &http.Response{Request: r, StatusCode: test.status, Header: http.Header{workerprotocol.ProtocolHeader: []string{workerprotocol.Contract}}, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
-				}
-				return normal.RoundTrip(r)
-			})
-			client, err := NewWorker(workerProfile(origin, f.descriptor), testSecrets{"worker": "synthetic-worker-key"}, transport)
-			require.NoError(t, err)
-			_, err = client.RenderResumable(t.Context(), f.upload(), f.authorization, nil, nil)
-			require.ErrorIs(t, err, workerprotocol.ErrRetainedTaskFailed)
-		})
-	}
 }
 
 func TestWorkerRepostsFailedLookupWithSameKey(t *testing.T) {

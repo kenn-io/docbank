@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -84,6 +85,37 @@ func TestWorkerSchedulesStalledAndPendingJobs(t *testing.T) {
 			require.Equal(t, 3, posts, "completion releases the hold before the stall limit")
 		})
 	})
+}
+
+func TestWorkerRejectedSubmissionStaysTerminal(t *testing.T) {
+	for _, status := range []int{400, 401, 403, 404} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			o := workerOptions(t)
+			var posts int
+			normal := o.Client.Transport
+			o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
+				if r.Method == http.MethodPost {
+					posts++
+					if posts < 3 {
+						return backendResponse(r, 503, `{}`), nil
+					}
+					return backendResponse(r, status, `{}`), nil
+				}
+				return normal.RoundTrip(r)
+			})}
+			w := openWorker(t, o)
+			key := strings.Repeat("a", 64)
+			id := taskID(t, submitRequest(t, w, key, []byte("source")))
+			for range 3 {
+				_, err := w.RunOnce(t.Context())
+				require.NoError(t, err)
+			}
+			out := getRequest(t.Context(), w, "/v1/status/poll/"+id)
+			require.Contains(t, out.Body.String(), "failure")
+			response := submitRequest(t, w, key, []byte("source"))
+			require.Contains(t, response.Body.String(), "failure")
+		})
+	}
 }
 
 func TestWorkerOpenRejectsInvalidKeys(t *testing.T) {
