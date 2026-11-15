@@ -1,7 +1,6 @@
 package docling
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -142,30 +141,21 @@ func TestWorkerRetainedFailureRequiresRetryableCheckpoint(t *testing.T) {
 	}
 }
 
-func TestWorkerFailedLookupOnlyRepostsRetryableTask(t *testing.T) {
-	for _, retryable := range []bool{false, true} {
-		t.Run(map[bool]string{false: "terminal", true: "retryable"}[retryable], func(t *testing.T) {
-			f := workerFixture(t)
-			state, origin, httpClient := workerHTTP(t, workerDocumentResult())
-			state.lostResponse.Store(true)
-			client, err := NewWorker(workerProfile(origin, f.descriptor), testSecrets{"worker": "synthetic-worker-key"}, httpClient)
-			require.NoError(t, err)
-			_, err = document.RenderRendition(t.Context(), client, f.upload(), f.authorization)
-			require.Error(t, err)
-			state.failed.Store(true)
-			state.retryable.Store(retryable)
-			source := bytes.NewReader(f.source)
-			_, err = document.RenderRendition(t.Context(), client, &testUpload{Reader: source, metadata: f.metadata}, f.authorization)
-			if retryable {
-				require.NoError(t, err)
-				require.Equal(t, int32(2), state.posts.Load())
-			} else {
-				require.Error(t, err)
-				require.Equal(t, len(f.source), source.Len())
-				require.Equal(t, int32(1), state.posts.Load())
-			}
-		})
-	}
+func TestWorkerRepostsRetryableLookupWithSameKey(t *testing.T) {
+	f := workerFixture(t)
+	state, origin, httpClient := workerHTTP(t, workerDocumentResult())
+	state.lostResponse.Store(true)
+	client, err := NewWorker(workerProfile(origin, f.descriptor), testSecrets{"worker": "synthetic-worker-key"}, httpClient)
+	require.NoError(t, err)
+	_, err = document.RenderRendition(t.Context(), client, f.upload(), f.authorization)
+	require.Error(t, err)
+	key := state.key
+	state.failed.Store(true)
+	state.retryable.Store(true)
+	_, err = document.RenderRendition(t.Context(), client, f.upload(), f.authorization)
+	require.NoError(t, err)
+	require.Equal(t, int32(2), state.posts.Load())
+	require.Equal(t, key, state.key)
 }
 func workerFixture(t *testing.T) fixture {
 	t.Helper()

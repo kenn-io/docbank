@@ -342,15 +342,9 @@ func (client *Client) lookupWorker(ctx context.Context, run *rendering, key stri
 	if response.Status != 200 {
 		return taskResponse{}, false, workerStatusError(providerutil.StageJob, response, response.Status == http.StatusUnauthorized)
 	}
-	return workerLookupTask(response.Body)
-}
-func workerLookupTask(body []byte) (taskResponse, bool, error) {
-	task, err := parseTaskForProtocol(body, true)
+	task, err := parseTaskForProtocol(response.Body, true)
 	if err != nil {
 		return taskResponse{}, false, provider.Malformed("worker lookup is invalid", err)
-	}
-	if task.status == "failure" && !task.retryable {
-		return taskResponse{}, false, taskStatusError(task.status)
 	}
 	return task, true, nil
 }
