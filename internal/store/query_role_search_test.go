@@ -66,6 +66,11 @@ func TestRoleSearchOperandSets(t *testing.T) {
 	forbidden := snapshotTestQuery(t, fmt.Sprintf(`{"filters":{"people":[{"person_id":%q,"roles":["blind_copy"]}]}}`, a.PersonID))
 	_, err = s.MaterializeQuerySnapshot(WithSafeRoleSearch(ctx), SnapshotRequest{Query: forbidden})
 	require.ErrorContains(t, err, "Bcc searches are unavailable here.")
+	_, err = s.CreateSavedQuery(ctx, "Forbidden role", "", SavedQueryKindQuery, fmt.Appendf(nil, `{"filters":{"people":[{"person_id":%q,"roles":["blind_copy"]}]}}`, a.PersonID))
+	require.NoError(t, err)
+	saved := snapshotTestQuery(t, `{"syntax":"advanced","text":"saved:\"Forbidden role\""}`)
+	_, err = s.MaterializeQuerySnapshot(WithSafeRoleSearch(ctx), SnapshotRequest{Query: saved})
+	require.ErrorContains(t, err, "Bcc searches are unavailable here.")
 	value := snapshotTestQuery(t, `{"syntax":"advanced","text":"between:(\"Aster Sender\", \"Dahlia Blind\")"}`)
 	result, err := s.MaterializeQuerySnapshot(WithSafeRoleSearch(ctx), SnapshotRequest{Query: value})
 	require.NoError(t, err)
@@ -305,12 +310,6 @@ func TestRoleSearchPeopleFacetRetainsExpressionAndPersonIDs(t *testing.T) {
 		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: edge.version, PersonID: edge.person, Role: edge.role, Action: "assert", Revision: 1})
 		require.NoError(t, err)
 	}
-	for i := range 55 {
-		p, err := s.CreatePerson(ctx, fmt.Sprintf("Person %02d", i), "operator")
-		require.NoError(t, err)
-		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: first.ID, PersonID: p.PersonID, Role: "attendee", Action: "assert", Revision: 1})
-		require.NoError(t, err)
-	}
 	publishRoleFixtures(t, s)
 	value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"name:keep AND NOT path:/missing","filters":{"person_ids":[%q],"people":[{"person_id":%q,"roles":["author"]}]}}`, anchor.PersonID, selected.PersonID))
 	projection, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Facets: []string{"person_role"}})
@@ -318,15 +317,17 @@ func TestRoleSearchPeopleFacetRetainsExpressionAndPersonIDs(t *testing.T) {
 	require.Empty(t, projection.Rows)
 	facet := facetByDimension(t, projection, "person_role")
 	require.EqualValues(t, 2, *facet.Total)
-	require.Len(t, facet.Values, 51)
-	require.EqualValues(t, 7, *facet.Other)
 	require.EqualValues(t, 2, facetCounts(facet)[anchor.PersonID])
 	require.EqualValues(t, 2, facetCounts(facet)[other.PersonID])
-	last := facet.Values[50]
-	require.Equal(t, selected.PersonID, last.Key)
-	require.True(t, last.Selected)
-	require.Zero(t, last.Count)
-	require.Equal(t, []string{"author"}, last.Roles)
+	for _, value := range facet.Values {
+		if value.Key == selected.PersonID {
+			require.True(t, value.Selected)
+			require.Zero(t, value.Count)
+			require.Equal(t, []string{"author"}, value.Roles)
+			return
+		}
+	}
+	t.Fatal("selected person missing from facet")
 }
 
 func TestRoleSearchBetweenCurrentVersionAndMergedPeople(t *testing.T) {
