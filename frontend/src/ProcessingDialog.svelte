@@ -415,11 +415,16 @@
         {#if running}
           <!-- The run button shows progress. -->
         {:else if failed}
-          <p class="error">
-            {status?.failure_code === "provider_task_failed"
-              ? "The worker couldn't process this file. Check its API key, source size limit, and backend task, then run processing again."
-              : `Failed${status?.failure_code ? `: ${status.failure_code.replaceAll("_", " ")}` : "."}`}
-          </p>
+          {#if status?.failure_code === "provider_task_failed"}
+            <p class="error">Failed: the worker couldn't process this file.</p>
+            <p>
+              Check the worker's API key, file size limit, and conversion settings, then try again.
+            </p>
+          {:else}
+            <p class="error">
+              Failed{status?.failure_code ? `: ${status.failure_code.replaceAll("_", " ")}` : "."}
+            </p>
+          {/if}
         {:else if done}
           <p>{labels.done}</p>
         {:else if job}
