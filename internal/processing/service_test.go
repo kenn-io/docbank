@@ -264,7 +264,12 @@ func TestProcessingServiceWaitsForEmbeddingRetryAndHonorsCancellation(t *testing
 
 func TestProcessingServiceCompletesEmbeddingAfterWorkerStops(t *testing.T) {
 	t.Parallel()
-	fixture, fake, worker, original := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+	checkProcessingServiceCompletesEmbeddingAfterWorkerStops(t, newPublicationFixture)
+}
+
+func checkProcessingServiceCompletesEmbeddingAfterWorkerStops(t *testing.T, makeFixture publicationFixtureFactory) {
+	t.Helper()
+	fixture, fake, worker, original := embeddingWorkerWithFixture(t, makeFixture, document.EmbeddingInputOriginalFile)
 	workerContext, stopWorker := context.WithCancel(t.Context())
 	stopWorker()
 	require.ErrorIs(t, worker.Run(workerContext), context.Canceled)
@@ -910,4 +915,29 @@ func TestImageOnlyStartRefusesMissingPreviewBeforeSavingConsent(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, plan.ConsentRequired, "an ineligible image must be refused before saving vault-wide consent")
 	require.Zero(t, x.fake.runtime.callCount(x.binding.Name))
+}
+
+func TestProcessingServiceCompletesImageEmbedding(t *testing.T) {
+	t.Parallel()
+	checkProcessingServiceCompletesImageEmbedding(t, newPhotoDescriptionFixture)
+}
+
+func checkProcessingServiceCompletesImageEmbedding(t *testing.T, makeFixture photoDescriptionFixtureFactory) {
+	t.Helper()
+	f := makeFixture(t)
+	x := newImageEmbeddingService(t, f)
+	selector := Selector{NodeID: f.node.ID, ContentVersionID: f.node.CurrentVersionID, Profile: "images"}
+	plan, err := x.service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	job, err := x.service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+	require.NoError(t, err)
+	status, err := x.service.Status(t.Context(), job.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", status.State)
+	require.Equal(t, 1, status.CompletedBindings)
+	require.Equal(t, 1, x.fake.runtime.calls())
+	space := x.service.profiles["images"].vectorSpaces[x.binding.Name]
+	generation, err := f.catalog.ActiveVectorIndexGeneration(t.Context(), space)
+	require.NoError(t, err)
+	require.Equal(t, 1, generation.RowCount)
 }

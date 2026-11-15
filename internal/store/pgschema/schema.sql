@@ -2455,7 +2455,7 @@ CREATE TABLE {{schema}}.photo_face_scans (
 CREATE INDEX visual_preview_generations_ready
     ON {{schema}}.visual_preview_generations(recipe_fingerprint, content_version_id) WHERE state='ready';
 
--- Retained image indexes used by photo review. Production remains separate.
+-- Retained image indexes and disposable native vector-index publications.
 CREATE TABLE {{schema}}.vector_index_generations (
     generation_id TEXT COLLATE "C" PRIMARY KEY,
     vector_space_id TEXT COLLATE "C" NOT NULL,
@@ -2472,6 +2472,33 @@ CREATE TABLE {{schema}}.vector_index_heads (
     vector_space_id TEXT COLLATE "C" PRIMARY KEY,
     generation_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.vector_index_generations(generation_id) DEFERRABLE INITIALLY IMMEDIATE,
     source_manifest_checksum TEXT COLLATE "C" NOT NULL
+);
+
+-- Disposable vector-index build and recovery state.
+CREATE TABLE {{schema}}.vector_index_build_jobs (
+    vector_space_id TEXT COLLATE "C" PRIMARY KEY,
+    source_manifest_checksum TEXT COLLATE "C" NOT NULL,
+    owner BYTEA NOT NULL,
+    fencing_token BIGINT NOT NULL,
+    lease_expires_at TEXT COLLATE "C" NOT NULL
+);
+CREATE TABLE {{schema}}.vector_index_reader_leases (
+    lease_id TEXT COLLATE "C" PRIMARY KEY,
+    generation_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.vector_index_generations(generation_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    owner BYTEA NOT NULL,
+    fencing_token BIGINT NOT NULL,
+    lease_expires_at TEXT COLLATE "C" NOT NULL
+);
+CREATE INDEX vector_index_reader_leases_generation
+    ON {{schema}}.vector_index_reader_leases(generation_id, lease_expires_at);
+CREATE TABLE {{schema}}.vector_index_unavailable_coverage (
+    vector_space_id TEXT COLLATE "C" NOT NULL,
+    source_manifest_checksum TEXT COLLATE "C" NOT NULL,
+    embedding_set_id TEXT COLLATE "C" NOT NULL,
+    vector_set_id TEXT COLLATE "C" NOT NULL,
+    payload_blob_hash TEXT COLLATE "C" NOT NULL,
+    external_reembedding_required BIGINT NOT NULL,
+    PRIMARY KEY (vector_space_id, source_manifest_checksum, embedding_set_id)
 );
 
 CREATE INDEX custodian_assignments_person ON {{schema}}.custodian_assignments(person_id, scope_kind);
