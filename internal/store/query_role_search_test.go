@@ -60,7 +60,6 @@ func TestRoleSearchOperandSets(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, selected.Rows, 1)
 	require.Equal(t, "email.txt", selected.Rows[0].Name)
-
 }
 
 func TestRoleSearchMatchesAndPeopleFacet(t *testing.T) {
