@@ -172,8 +172,8 @@ func TestWorkerRetriesCorrectedGatewaySettingsWithSameKey(t *testing.T) {
 			var keys, lookupCredentials []string
 			corrected := false
 			transport.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
-				if strings.HasPrefix(request.URL.Path, workerprotocol.LookupPath) {
-					keys = append(keys, strings.TrimPrefix(request.URL.Path, workerprotocol.LookupPath))
+				if after, ok := strings.CutPrefix(request.URL.Path, workerprotocol.LookupPath); ok {
+					keys = append(keys, after)
 					lookupCredentials = append(lookupCredentials, request.Header.Get("X-Api-Key"))
 				} else if request.URL.Path == workerprotocol.SubmitPath {
 					keys = append(keys, request.Header.Get("Idempotency-Key"))
