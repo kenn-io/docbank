@@ -62,7 +62,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 	stopOwner := context.AfterFunc(w.lifetime, cancel)
 	defer stopOwner()
 	if !w.runMu.TryLock() {
-		return false, nil
+		return false, errors.New("worker runner already active")
 	}
 	defer w.runMu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -110,7 +110,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 			item.Retryable = true
 			return true, w.save(ctx, item)
 		}
-		status, _, err := w.backendRequest(ctx, http.MethodGet, workerprotocol.ReadyPath, nil, "")
+		status, _, err := w.backendRequest(ctx, http.MethodGet, workerprotocol.ReadyPath, nil, "", w.options.MaxResultBytes)
 		if err != nil || status != 200 {
 			return true, nil
 		}
@@ -165,7 +165,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 			return true, err
 		}
 	}
-	status, body, err := w.backendRequest(ctx, http.MethodGet, workerprotocol.PollPath+item.BackendID, nil, "")
+	status, body, err := w.backendRequest(ctx, http.MethodGet, workerprotocol.PollPath+item.BackendID, nil, "", w.options.MaxResultBytes)
 	if err != nil {
 		if errors.Is(err, errBackendOutput) {
 			item.State = stateFailure
@@ -197,7 +197,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 		item.State = stateFailure
 		return true, w.save(ctx, item)
 	}
-	status, body, err = w.backendRequestLimit(ctx, http.MethodGet, workerprotocol.ResultPath+item.BackendID, nil, "", item.MaxResultBytes)
+	status, body, err = w.backendRequest(ctx, http.MethodGet, workerprotocol.ResultPath+item.BackendID, nil, "", item.MaxResultBytes)
 	if err != nil {
 		if errors.Is(err, errBackendOutput) {
 			item.State = stateFailure
@@ -234,10 +234,7 @@ var (
 	errBackendSourceRead = errors.New("retained worker source read failed")
 )
 
-func (w *Worker) backendRequest(ctx context.Context, method, path string, body io.Reader, contentType string) (int, []byte, error) {
-	return w.backendRequestLimit(ctx, method, path, body, contentType, w.options.MaxResultBytes)
-}
-func (w *Worker) backendRequestLimit(ctx context.Context, method, path string, body io.Reader, contentType string, limit int64) (int, []byte, error) {
+func (w *Worker) backendRequest(ctx context.Context, method, path string, body io.Reader, contentType string, limit int64) (int, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, method, w.options.BackendURL+path, body)
 	if err != nil {
 		return 0, nil, err
@@ -311,7 +308,7 @@ func (w *Worker) submitBackendStream(ctx context.Context, item job, source io.Re
 		_ = writer.CloseWithError(err)
 		done <- err
 	}()
-	status, body, requestErr := w.backendRequest(ctx, http.MethodPost, workerprotocol.SubmitPath, reader, multi.FormDataContentType())
+	status, body, requestErr := w.backendRequest(ctx, http.MethodPost, workerprotocol.SubmitPath, reader, multi.FormDataContentType(), w.options.MaxResultBytes)
 	_ = reader.Close()
 	writeErr := <-done
 	if requestErr == nil && status >= 200 && status < 300 {

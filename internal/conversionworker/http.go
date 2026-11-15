@@ -59,7 +59,7 @@ func (w *Worker) ServeHTTP(out http.ResponseWriter, r *http.Request) {
 			http.Error(out, "worker storage unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		status, _, err := w.backendRequest(ctx, http.MethodGet, workerprotocol.ReadyPath, nil, "")
+		status, _, err := w.backendRequest(ctx, http.MethodGet, workerprotocol.ReadyPath, nil, "", w.options.MaxResultBytes)
 		if err != nil || status != 200 {
 			http.Error(out, "worker backend unavailable", http.StatusServiceUnavailable)
 			return
@@ -204,7 +204,6 @@ func (w *Worker) accept(ctx context.Context, out http.ResponseWriter, r *http.Re
 			http.Error(out, "worker request key conflict", http.StatusConflict)
 			return
 		}
-		w.runMu.Lock()
 		w.mu.Lock()
 		existing = w.jobs[existingID]
 		w.mu.Unlock()
@@ -213,12 +212,10 @@ func (w *Worker) accept(ctx context.Context, out http.ResponseWriter, r *http.Re
 			existing.Submissions = 0
 			existing.Retryable = false
 			if err := w.save(ctx, existing); err != nil {
-				w.runMu.Unlock()
 				http.Error(out, "worker storage unavailable", http.StatusServiceUnavailable)
 				return
 			}
 		}
-		w.runMu.Unlock()
 		writeJSON(ctx, out, 202, w.task(existing))
 		return
 	}
@@ -228,10 +225,9 @@ func (w *Worker) accept(ctx context.Context, out http.ResponseWriter, r *http.Re
 			http.Error(out, "worker source unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		fingerprint := strings.Repeat("0", 64)
 		record, inspectErr := media.InspectCapability(ctx, f, media.InspectionPolicy{
 			Filename: item.Filename, DeclaredMediaType: item.MediaType, ExpectedBytes: item.Bytes, ExpectedSHA256: item.SHA256,
-			DescriptorFingerprint: fingerprint, ProfileFingerprint: fingerprint, DisclosureFingerprint: fingerprint,
+			DescriptorFingerprint: item.SHA256, ProfileFingerprint: item.SHA256, DisclosureFingerprint: item.SHA256,
 			InputKind: document.RenditionInputOriginalFile, MaxSourceBytes: limit, MaxExpandedBytes: 1, MaxEntryBytes: 1,
 			MaxEntries: 1, MaxNestingDepth: 1, MaxTextLines: 1, MaxCharacters: 1, MaxRecords: 1, MaxPages: 1,
 			MaxSlides: 1, MaxSheets: 1, MaxCells: 1, MaxSpineItems: 1, MaxResources: 1, MaxDurationMS: time.Hour.Milliseconds(),

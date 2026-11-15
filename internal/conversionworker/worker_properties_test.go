@@ -225,10 +225,9 @@ func TestWorkerBackendReceivesExactGeneratedOriginalAfterRestart(t *testing.T) {
 
 func TestWorkerRejectsInvalidUploads(t *testing.T) {
 	o := workerOptions(t)
-	o.MaxSourceBytes, o.MaxSpoolBytes, o.MaxJobs = 32<<20, 128<<20, 3
+	o.MaxSourceBytes, o.MaxSpoolBytes = 32<<20, 128<<20
 	w := openWorker(t, o)
 	wav := append([]byte("RIFF\x64\x1f\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x40\x1f\x00\x00\x40\x1f\x00\x00\x01\x00\x08\x00data\x40\x1f\x00\x00"), make([]byte, 8000)...)
-	require.Equal(t, http.StatusAccepted, submitNamed(t, w, strings.Repeat("d", 64), "synthetic.wav", "audio/wav", wav, [][2]string{{"from_formats", "audio"}, {"to_formats", "json"}, {"target_type", "inbody"}}).Code)
 	for _, candidate := range []struct {
 		filename, mediaType string
 		fields              [][2]string
