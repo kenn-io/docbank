@@ -67,7 +67,7 @@ func workerHTTP(t *testing.T, result any) (*workerServer, string, *http.Client) 
 			state.lookups.Add(1)
 			if state.accepted.Load() && strings.TrimPrefix(r.URL.Path, workerprotocol.LookupPath) == state.key {
 				if state.failed.Swap(false) {
-					writeJSON(t, out, doclingTask(id, "failure"))
+					writeJSON(t, out, map[string]any{"task_id": id, "task_status": "failure", "retryable": state.retryable.Load()})
 					return
 				}
 				writeJSON(t, out, doclingTask(id, "success"))
@@ -141,19 +141,28 @@ func TestWorkerRetainedFailureRequiresRetryableCheckpoint(t *testing.T) {
 	}
 }
 
-func TestWorkerRepostsFailedLookup(t *testing.T) {
-	f := workerFixture(t)
-	state, origin, httpClient := workerHTTP(t, workerDocumentResult())
-	state.lostResponse.Store(true)
-	client, err := NewWorker(workerProfile(origin, f.descriptor), testSecrets{"worker": "synthetic-worker-key"}, httpClient)
-	require.NoError(t, err)
-	_, err = document.RenderRendition(t.Context(), client, f.upload(), f.authorization)
-	require.Error(t, err)
-	state.failed.Store(true)
-	_, err = document.RenderRendition(t.Context(), client, f.upload(), f.authorization)
-	require.NoError(t, err)
-	require.Equal(t, int32(2), state.posts.Load())
-	require.Equal(t, int32(2), state.readiness.Load())
+func TestWorkerFailedLookupOnlyRepostsRetryableTask(t *testing.T) {
+	for _, retryable := range []bool{false, true} {
+		t.Run(map[bool]string{false: "terminal", true: "retryable"}[retryable], func(t *testing.T) {
+			f := workerFixture(t)
+			state, origin, httpClient := workerHTTP(t, workerDocumentResult())
+			state.lostResponse.Store(true)
+			client, err := NewWorker(workerProfile(origin, f.descriptor), testSecrets{"worker": "synthetic-worker-key"}, httpClient)
+			require.NoError(t, err)
+			_, err = document.RenderRendition(t.Context(), client, f.upload(), f.authorization)
+			require.Error(t, err)
+			state.failed.Store(true)
+			state.retryable.Store(retryable)
+			_, err = document.RenderRendition(t.Context(), client, f.upload(), f.authorization)
+			if retryable {
+				require.NoError(t, err)
+				require.Equal(t, int32(2), state.posts.Load())
+			} else {
+				require.Error(t, err)
+				require.Equal(t, int32(1), state.posts.Load())
+			}
+		})
+	}
 }
 func workerFixture(t *testing.T) fixture {
 	t.Helper()

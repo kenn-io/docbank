@@ -216,6 +216,31 @@ describe("processing dialog", () => {
     );
   });
 
+  it("tells the user how to retry a failed retained conversion", async () => {
+    setup(
+      { text: plan("text", { consent_required: false, consent_state: "active" }) },
+      async () =>
+        new Response(
+          `${JSON.stringify({ sequence: 1, type: "job", job })}\n${JSON.stringify({
+            sequence: 2,
+            type: "status",
+            status: {
+              job_id: job.id,
+              state: "failed",
+              phase: "failed",
+              failure_code: "provider_task_failed",
+              embedding_job_ids: [],
+              completed_bindings: 0,
+            },
+            terminal: true,
+          })}\n`,
+          { headers: { "Content-Type": "application/x-ndjson" } },
+        ),
+    );
+    await fireEvent.click(await enabledRun());
+    expect(await screen.findByText(/try again|retry/i)).toBeTruthy();
+  });
+
   it("keeps the job after a truncated status stream", async () => {
     let stream!: ReadableStreamDefaultController<Uint8Array>;
     const body = new ReadableStream<Uint8Array>({
