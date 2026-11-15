@@ -95,6 +95,19 @@ func TestDoclingASRRejectsMissingTranscriptRetentionBeforeReading(t *testing.T) 
 	assert.Zero(t, requests)
 }
 
+func TestNativeASRPolicyPreservesExistingProfile(t *testing.T) {
+	const existing = "4ba382a79b92197618690ece585479aba1b499cacfc4028a65c4a7b2c830f7d6"
+	fingerprint, err := ASRPolicyFingerprint(100_000)
+	require.NoError(t, err)
+	require.Equal(t, existing, fingerprint)
+	fixture := newASRFixture(t, "audio/wav", "asr-spoken.wav", asrSpokenWAV)
+	fixture.descriptor.PolicyFingerprint = existing
+	descriptor, err := document.NewRenditionDescriptor(fixture.descriptor)
+	require.NoError(t, err)
+	_, err = NewASR(ASRProfile{Origin: "http://127.0.0.1", Descriptor: descriptor, MaxTranscriptChars: 100_000}, nil, http.DefaultClient)
+	require.NoError(t, err)
+}
+
 func TestDoclingASRRejectsChangedTranscriptPolicy(t *testing.T) {
 	fixture := newASRFixture(t, "audio/wav", "asr-spoken.wav", asrSpokenWAV)
 	_, err := NewASR(ASRProfile{

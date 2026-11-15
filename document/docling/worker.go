@@ -273,11 +273,6 @@ func (client *Client) renderWorker(ctx context.Context, upload document.Authoriz
 				return document.RenditionResult{}, err
 			}
 		}
-		if !workerHex(task.id, 32) {
-			run.operation.Cancel()
-			clear(run.source)
-			return document.RenditionResult{}, provider.Malformed("worker issued an invalid task ID", nil)
-		}
 		run.completed = time.Now().UTC()
 		if err := run.operation.Check(); err != nil {
 			run.operation.Cancel()
@@ -348,7 +343,7 @@ func (client *Client) lookupWorker(ctx context.Context, run *rendering, key stri
 		return taskResponse{}, false, provider.StatusError(providerutil.StageJob, response.Status, response.RetryAfter, nil)
 	}
 	task, err := parseTaskForProtocol(response.Body, true)
-	if err != nil || !workerHex(task.id, 32) {
+	if err != nil {
 		return taskResponse{}, false, provider.Malformed("worker lookup is invalid", err)
 	}
 	return task, true, nil

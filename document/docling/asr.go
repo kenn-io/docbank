@@ -12,7 +12,6 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/internal/providerutil"
 	"go.kenn.io/docbank/document/mediatranscript"
-	"go.kenn.io/docbank/document/workerprotocol"
 	"go.kenn.io/docbank/internal/canonical"
 )
 
@@ -54,19 +53,11 @@ func asrPolicyFingerprint(maxTranscriptChars int, contract string) (string, erro
 		SchemaVersion   string                          `json:"schema_version"`
 		ProviderVersion string                          `json:"provider_version"`
 		EvidencePolicy  document.EvidencePolicyIdentity `json:"evidence_policy"`
-		MaxDurationMS   int64                           `json:"max_duration_ms,omitempty"`
-	}{contract, qualifiedASRSchemaVersion, qualifiedASRProviderVersion, policy.Identity(), workerASRDurationLimit(contract)})
+	}{contract, qualifiedASRSchemaVersion, qualifiedASRProviderVersion, policy.Identity()})
 	if err != nil {
 		return "", err
 	}
 	return providerutil.SHA256Hex(identity), nil
-}
-
-func workerASRDurationLimit(contract string) int64 {
-	if contract == workerprotocol.ASRAdapter {
-		return time.Hour.Milliseconds()
-	}
-	return 0
 }
 
 // ASRDisclosureFingerprint binds a portable ASR profile to its exact endpoint and
