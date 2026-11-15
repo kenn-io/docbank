@@ -18,9 +18,6 @@ func TestSubmissionKeyV1Golden(t *testing.T) {
 	require.Equal(t, "75f0a709ed770a727db6b825466e446a8df15f5b2a2fba5ec8ba1a0e10eddb7c", key)
 	authorization.AuthorizedAt = "2026-01-01T00:00:00.000000000Z"
 	authorization.ExpiresAt = "2026-01-01T01:00:00.000000000Z"
-	shifted, err := SubmissionKey(metadata, authorization, [][2]string{{"to_formats", "json"}})
-	require.NoError(t, err)
-	require.Equal(t, key, shifted)
 	hegel.Test(t, func(ht *hegel.T) {
 		shift := hegel.Draw(ht, hegel.Integers[int64](-1<<63, 1<<63-1))
 		start, err := time.Parse(time.RFC3339Nano, authorization.AuthorizedAt)

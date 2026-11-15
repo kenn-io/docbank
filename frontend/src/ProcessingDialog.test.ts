@@ -218,27 +218,7 @@ describe("processing dialog", () => {
 
   it("tells the user how to retry a failed retained conversion", async () => {
     setup(
-      {
-        worker: plan("worker", {
-          flow: [
-            {
-              ...doclingHop,
-              provider_id: "docbank.conversion-worker-v1",
-              trust_boundary: "operator_network",
-              input_classes: ["original_file"],
-              disclose_filename: false,
-              runtime_disclosure: {
-                ...doclingHop.runtime_disclosure,
-                immediate_processor: "docbank-worker-document/v1",
-                ultimate_processor: "docbank.conversion-worker-v1",
-                endpoint: "http://127.0.0.1:5002",
-              },
-            },
-          ],
-          consent_required: false,
-          consent_state: "active",
-        }),
-      },
+      { worker: plan("worker", { consent_required: false, consent_state: "active" }) },
       async () =>
         new Response(
           `${JSON.stringify({ sequence: 1, type: "job", job })}\n${JSON.stringify({
