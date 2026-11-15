@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/docling"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/store"
@@ -44,6 +46,26 @@ func TestRenditionReadinessPreservesMalformedJSONForPlaintext(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, capability.Eligible)
 	require.Equal(t, media.CapabilityReasonMalformed, capability.Reason)
+}
+
+func TestProcessingServiceRejectsWorkerDescriptorWithNativeAdapter(t *testing.T) {
+	fixture := newPublicationFixture(t)
+	descriptor, err := docling.WorkerDocumentDescriptor()
+	require.NoError(t, err)
+	provider, err := docling.NewWorker(docling.Profile{Origin: "http://127.0.0.1:5002", Descriptor: descriptor, SecretBinding: "worker", RequestTimeout: time.Second, TotalTimeout: time.Minute, PollInterval: time.Millisecond, MaxPollAttempts: 3, MaxDocumentBytes: 1 << 20, MaxResponseBytes: 1 << 20}, workerProbeSecrets{}, &http.Client{})
+	require.NoError(t, err)
+	stored := workerProcessingProfile(t, descriptor, func(p *document.ProcessingProfileV1) {
+		p.Rendition.AdapterContract = docling.DocumentAdapterContract
+		p.Rendition.TrustBoundary = string(descriptor.TrustBoundary)
+		p.RetentionDisclosure.TrustBoundary = string(descriptor.TrustBoundary)
+	})
+	var profile document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(stored.CanonicalProfile, &profile))
+	_, err = NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+		Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(),
+		Profiles: map[string]ProfileConfig{"worker": {Profile: profile, RenditionProvider: provider, RenditionDisclosure: RuntimeDisclosure{Endpoint: "http://127.0.0.1:5002"}}},
+	})
+	require.Error(t, err)
 }
 
 func TestProcessingServiceRefusesUnsupportedFormatBeforeEnqueue(t *testing.T) {
