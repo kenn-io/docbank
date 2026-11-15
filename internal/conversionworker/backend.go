@@ -148,7 +148,6 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 		}
 		if status != 200 && status != 202 {
 			item.State = stateFailure
-			item.Retryable = status == 401 || status == 403 || status == 404
 			return true, w.save(ctx, item)
 		}
 		var task struct {

@@ -102,10 +102,9 @@ A confirmed missing Docling task can be recomputed from retained input. The
 worker persists a lifetime limit of three accepted or possibly accepted
 backend submissions per job. A definite HTTP 429 refusal releases its reserved
 attempt and waits. An ambiguous transport or server failure keeps it charged.
-After exhaustion, the job fails and retains its input. The same recovery applies
-when the backend refuses a submission with HTTP 401, 403, or 404. Fix the backend
-configuration, then rerun the Docbank job to retry under the same worker ID.
-Other rejected submissions and failed backend tasks remain failed. After two
+After exhaustion, the job fails and retains its input. Rerun the Docbank job to
+retry under the same worker ID. Rejected submissions and failed backend tasks
+remain failed. After two
 hours, a started backend task no longer holds up pending jobs. The worker
 rotates through stalled tasks and pending jobs, including when the backend
 refuses new submissions.

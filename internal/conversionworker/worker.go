@@ -137,8 +137,6 @@ func Open(ctx context.Context, options Options) (_ *Worker, retErr error) {
 		return nil, errors.New("max-spool-bytes must be between 4096 and 42949672960")
 	case options.PollInterval <= 0 || options.PollInterval > time.Minute:
 		return nil, errors.New("poll interval must be positive and at most one minute")
-	case options.StallAfter <= 0:
-		return nil, errors.New("stall interval must be positive")
 	}
 	if _, err := os.Lstat(options.Directory); err == nil {
 		if err := safefileio.ValidatePrivateDir(options.Directory); err != nil {

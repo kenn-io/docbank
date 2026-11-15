@@ -31,5 +31,5 @@ func TestWorkerReportsRetainedSourceStorageFailureAsUnavailable(t *testing.T) {
 	require.NoError(t, syscall.Setrlimit(syscall.RLIMIT_FSIZE, &restricted))
 
 	response := submitRequest(t, w, strings.Repeat("a", 64), []byte("synthetic source"))
-	require.Contains(t, []int{http.StatusServiceUnavailable, http.StatusInsufficientStorage}, response.Code, response.Body.String())
+	require.Equal(t, http.StatusInsufficientStorage, response.Code, response.Body.String())
 }

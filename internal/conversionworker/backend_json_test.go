@@ -30,7 +30,7 @@ func TestWorkerDuplicateBackendIdentityNeverBecomesIssuedHandle(t *testing.T) {
 		options.Client.Transport = backendTransport(func(r *http.Request) (*http.Response, error) {
 			if r.Method == http.MethodPost {
 				_, _ = io.Copy(io.Discard, r.Body)
-				return backendResponse(r, http.StatusAccepted, fmt.Sprintf(`{"task_id":%q,"task_id":%q,"task_status":"pending"}`, first, second)), nil
+				return backendResponse(r, http.StatusAccepted, fmt.Sprintf(`{"task_id":%q,"task_id":%q,"task_status":"pending","task_type":"convert"}`, first, second)), nil
 			}
 			if strings.HasPrefix(r.URL.Path, "/v1/status/poll/") {
 				polls.Add(1)

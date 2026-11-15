@@ -187,14 +187,7 @@ func (w *Worker) accept(ctx context.Context, out http.ResponseWriter, r *http.Re
 			status = http.StatusInsufficientStorage
 		}
 		message := "invalid bounded worker upload"
-		switch {
-		case errors.Is(err, errSourceTooLarge) || errors.As(err, &tooLarge):
-			message = "worker source exceeds the byte limit"
-		case errors.Is(err, errInvalidFile):
-			message = "worker file must have a supported media type and a basename"
-		case errors.Is(err, errInvalidFields):
-			message = "worker upload must contain one file and supported conversion fields"
-		case status == http.StatusInsufficientStorage:
+		if status == http.StatusInsufficientStorage {
 			message = "worker source storage unavailable"
 		}
 		http.Error(out, message, status)
@@ -285,8 +278,6 @@ func (w *Worker) accept(ctx context.Context, out http.ResponseWriter, r *http.Re
 var (
 	errSourceTooLarge = errors.New("source exceeds bound")
 	errSourceStorage  = errors.New("retained source storage failed")
-	errInvalidFile    = errors.New("invalid worker file")
-	errInvalidFields  = errors.New("invalid worker fields")
 )
 
 type retainedSourceWriter struct {
@@ -333,11 +324,11 @@ func (w *Worker) receive(ctx context.Context, r *http.Request, stage string, lim
 			_, parameters, parseErr := mime.ParseMediaType(part.Header.Get("Content-Disposition"))
 			if parseErr != nil || parameters["filename"] != part.FileName() {
 				_ = part.Close()
-				return job{}, errInvalidFile
+				return job{}, errors.New("worker filename must be a basename")
 			}
 			if fileSeen || !validFile(part.FileName(), part.Header.Get("Content-Type")) {
 				_ = part.Close()
-				return job{}, errInvalidFile
+				return job{}, errors.New("invalid worker file")
 			}
 			fileSeen = true
 			item.Filename = part.FileName()
@@ -391,7 +382,7 @@ func (w *Worker) receive(ctx context.Context, r *http.Request, stage string, lim
 		}
 	}
 	if !fileSeen || item.Bytes <= 0 || !validSubmission(item.MediaType, item.Fields) {
-		return job{}, errInvalidFields
+		return job{}, errors.New("worker upload is incomplete")
 	}
 	return item, nil
 }

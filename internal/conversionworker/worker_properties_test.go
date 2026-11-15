@@ -137,7 +137,7 @@ func TestWorkerDoesNotServeCorruptedRetainedResult(t *testing.T) {
 func TestWorkerNumericBoundsHoldAcrossConfiguration(t *testing.T) {
 	hegel.Test(t, func(ht *hegel.T) {
 		value := hegel.Draw(ht, hegel.Integers[int64](math.MinInt64, math.MaxInt64))
-		field := hegel.Draw(ht, hegel.Integers(0, 3))
+		field := hegel.Draw(ht, hegel.Integers(0, 4))
 		o := workerOptions(t)
 		var maximum, minimum int64
 		switch field {
@@ -157,6 +157,10 @@ func TestWorkerNumericBoundsHoldAcrossConfiguration(t *testing.T) {
 			o.PollInterval = time.Duration(value)
 			minimum = 1
 			maximum = int64(time.Minute)
+		case 4:
+			o.MaxJobs = int(value)
+			minimum = 1
+			maximum = 128
 		}
 		w, err := Open(t.Context(), o)
 		valid := value >= minimum && value <= maximum || field == 3 && value == 0
@@ -167,23 +171,6 @@ func TestWorkerNumericBoundsHoldAcrossConfiguration(t *testing.T) {
 			require.Error(ht, err)
 			_, statErr := os.Stat(o.Directory)
 			require.ErrorIs(ht, statErr, os.ErrNotExist)
-			return
-		}
-		require.NoError(ht, err)
-		require.NoError(ht, w.Close(t.Context()))
-	})
-}
-func TestWorkerJobLimitConfiguration(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		limit := hegel.Draw(ht, hegel.Integers(math.MinInt, math.MaxInt))
-		o := workerOptions(t)
-		o.MaxJobs = limit
-		w, err := Open(t.Context(), o)
-		if limit <= 0 || limit > 128 {
-			if w != nil {
-				require.NoError(ht, w.Close(t.Context()))
-			}
-			require.Error(ht, err)
 			return
 		}
 		require.NoError(ht, err)
@@ -268,9 +255,6 @@ func TestWorkerRejectsInvalidUploads(t *testing.T) {
 	} {
 		out := submitNamed(t, w, strings.Repeat("a", 64), candidate.filename, candidate.mediaType, []byte("x"), candidate.fields)
 		require.Equal(t, 400, out.Code)
-		if candidate.mediaType == "text/plain" {
-			require.Contains(t, out.Body.String(), "supported media type")
-		}
 	}
 	body := "--synthetic\r\nContent-Disposition: form-data; name=\"files\"; filename=\"synthetic.pdf\"\r\nContent-Type: application/pdf\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nA\r\n--synthetic\r\nContent-Disposition: form-data; name=\"to_formats\"\r\n\r\njson\r\n--synthetic\r\nContent-Disposition: form-data; name=\"target_type\"\r\n\r\ninbody\r\n--synthetic--\r\n"
 	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/convert/file/async", strings.NewReader(body))
