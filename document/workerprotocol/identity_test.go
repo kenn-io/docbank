@@ -3,9 +3,11 @@ package workerprotocol
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"hegel.dev/go/hegel"
 )
 
 func TestSubmissionKeyV1Golden(t *testing.T) {
@@ -19,6 +21,19 @@ func TestSubmissionKeyV1Golden(t *testing.T) {
 	shifted, err := SubmissionKey(metadata, authorization, [][2]string{{"to_formats", "json"}})
 	require.NoError(t, err)
 	require.Equal(t, key, shifted)
+	hegel.Test(t, func(ht *hegel.T) {
+		shift := hegel.Draw(ht, hegel.Integers[int64](-1<<63, 1<<63-1))
+		start, err := time.Parse(time.RFC3339Nano, authorization.AuthorizedAt)
+		require.NoError(ht, err)
+		end, err := time.Parse(time.RFC3339Nano, authorization.ExpiresAt)
+		require.NoError(ht, err)
+		shiftedAuth := authorization
+		shiftedAuth.AuthorizedAt = start.Add(time.Duration(shift)).Format("2006-01-02T15:04:05.000000000Z")
+		shiftedAuth.ExpiresAt = end.Add(time.Duration(shift)).Format("2006-01-02T15:04:05.000000000Z")
+		got, err := SubmissionKey(metadata, shiftedAuth, [][2]string{{"to_formats", "json"}})
+		require.NoError(ht, err)
+		require.Equal(ht, key, got)
+	})
 	authorization.RenditionRequestFingerprint = strings.Repeat("5", 64)
 	changed, err := SubmissionKey(metadata, authorization, [][2]string{{"to_formats", "json"}})
 	require.NoError(t, err)

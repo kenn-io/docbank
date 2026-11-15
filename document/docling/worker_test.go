@@ -214,31 +214,6 @@ func workerDocumentResult() any {
 	_ = json.Unmarshal(recordedPagesResponse, &result)
 	return result
 }
-func checkWorkerDocumentCheckpointsAndResumesWithoutUpload(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		f := workerFixture(t)
-		state, origin, httpClient := workerHTTP(t, workerDocumentResult())
-		client, err := NewWorker(workerProfile(origin, f.descriptor), testSecrets{"worker": "synthetic-worker-key"}, httpClient)
-		require.NoError(t, err)
-		var handle document.RenditionResumeHandle
-		stop := errors.New("synthetic checkpoint interruption")
-		_, err = document.RenderRenditionWithResume(t.Context(), client, f.upload(), f.authorization, nil, func(h document.RenditionResumeHandle) error { handle = h; return stop })
-		require.ErrorIs(t, err, stop)
-		require.NotEmpty(t, handle.Value)
-		require.LessOrEqual(t, len(handle.Value), 512)
-		require.Zero(t, state.results.Load())
-		snapshot := workerSnapshot(t, f)
-		time.Sleep(11 * time.Minute)
-		client, err = NewWorker(workerProfile(origin, f.descriptor), testSecrets{"worker": "synthetic-worker-key"}, httpClient)
-		require.NoError(t, err)
-		result, err := document.ResumeRendition(t.Context(), client, snapshot, handle, nil)
-		require.NoError(t, err)
-		require.NoError(t, document.ValidateRenditionResult(f.descriptor, f.authorization, result))
-		require.Equal(t, int64(len(f.source)), result.Receipt.Usage.InputBytes)
-		require.Equal(t, int32(1), state.posts.Load())
-		require.Equal(t, "first page", result.Evidence.Units[0].Text)
-	})
-}
 func TestWorkerReconcilesLostResponseBeforeReadiness(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		f := workerFixture(t)
@@ -518,28 +493,6 @@ func TestWorkerActualGatewayLostReplyAndResume(t *testing.T) {
 	}
 }
 
-func checkWorkerPendingExpiryKeepsHistoricalResume(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		f := workerFixture(t)
-		f.authorization.ExpiresAt = time.Now().UTC().Add(time.Second).Format(providerutil.TimestampForm)
-		state, origin, transport := workerHTTP(t, workerDocumentResult())
-		state.pending.Store(true)
-		profile := workerProfile(origin, f.descriptor)
-		profile.PollInterval = 2 * time.Second
-		client, err := NewWorker(profile, testSecrets{"worker": "synthetic-worker-key"}, transport)
-		require.NoError(t, err)
-		var handle document.RenditionResumeHandle
-		_, err = document.RenderRenditionWithResume(t.Context(), client, f.upload(), f.authorization, nil, func(h document.RenditionResumeHandle) error { handle = h; return nil })
-		require.NotEmpty(t, handle.Value)
-		require.ErrorIs(t, err, document.ErrRenditionAuthorizationExpired)
-		state.pending.Store(false)
-		result, err := document.ResumeRendition(t.Context(), client, workerSnapshot(t, f), handle, nil)
-		require.NoError(t, err)
-		require.NoError(t, document.ValidateRenditionResult(f.descriptor, f.authorization, result))
-		require.Equal(t, int32(1), state.posts.Load())
-	})
-}
-
 func TestWorkerResumeEnvelopeRoundTrips(t *testing.T) {
 	hegel.Test(t, func(ht *hegel.T) {
 		raw := hegel.Draw(ht, hegel.Lists(hegel.Integers[byte](0, 255)))
@@ -604,6 +557,48 @@ func TestWorkerTaskRejectsInvalidBackendStatus(t *testing.T) {
 }
 
 func TestWorkerPendingExpiryKeepsHistoricalResume(t *testing.T) {
-	t.Run("checkpoint interruption", checkWorkerDocumentCheckpointsAndResumesWithoutUpload)
-	t.Run("authorization expiry", checkWorkerPendingExpiryKeepsHistoricalResume)
+	for _, interrupted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "authorization expiry", true: "checkpoint interruption"}[interrupted], func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				f := workerFixture(t)
+				if !interrupted {
+					f.authorization.ExpiresAt = time.Now().UTC().Add(time.Second).Format(providerutil.TimestampForm)
+				}
+				state, origin, transport := workerHTTP(t, workerDocumentResult())
+				state.pending.Store(!interrupted)
+				profile := workerProfile(origin, f.descriptor)
+				profile.PollInterval = 2 * time.Second
+				client, err := NewWorker(profile, testSecrets{"worker": "synthetic-worker-key"}, transport)
+				require.NoError(t, err)
+				var handle document.RenditionResumeHandle
+				stop := errors.New("synthetic checkpoint interruption")
+				_, err = document.RenderRenditionWithResume(t.Context(), client, f.upload(), f.authorization, nil, func(h document.RenditionResumeHandle) error {
+					handle = h
+					if interrupted {
+						return stop
+					}
+					return nil
+				})
+				if interrupted {
+					require.ErrorIs(t, err, stop)
+					require.Zero(t, state.results.Load())
+				} else {
+					require.ErrorIs(t, err, document.ErrRenditionAuthorizationExpired)
+				}
+				require.NotEmpty(t, handle.Value)
+				require.LessOrEqual(t, len(handle.Value), 512)
+				snapshot := workerSnapshot(t, f)
+				state.pending.Store(false)
+				if interrupted {
+					time.Sleep(11 * time.Minute)
+				}
+				result, err := document.ResumeRendition(t.Context(), client, snapshot, handle, nil)
+				require.NoError(t, err)
+				require.NoError(t, document.ValidateRenditionResult(f.descriptor, f.authorization, result))
+				require.Equal(t, int64(len(f.source)), result.Receipt.Usage.InputBytes)
+				require.Equal(t, int32(1), state.posts.Load())
+				require.Equal(t, "first page", result.Evidence.Units[0].Text)
+			})
+		})
+	}
 }
