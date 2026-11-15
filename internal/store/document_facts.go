@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"go.kenn.io/docbank/document"
 )
@@ -90,6 +91,16 @@ type DocumentPeopleFacts struct {
 	Persons    map[string]FactPerson
 }
 
+type actorOccurrence struct {
+	actorKey   string
+	occurrence PersonCandidateOccurrence
+}
+
+type occurrenceEvidence struct {
+	label     string
+	sensitive bool
+}
+
 type FactPerson struct {
 	Person   Person
 	External []PersonExternalIdentity
@@ -112,10 +123,6 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 		return DocumentPeopleFacts{}, err
 	}
 	facts.State = eventState
-	type actorOccurrence struct {
-		actorKey   string
-		occurrence PersonCandidateOccurrence
-	}
 	resolved := make(map[actorOccurrence]bool)
 	if eventState == "published" {
 		edges, head, headErr := documentPeopleForVersionTx(ctx, tx, versionID)
@@ -150,10 +157,6 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 			return DocumentPeopleFacts{}, err
 		}
 		// Candidates omit sensitivity, so match occurrences to current event actors.
-		type occurrenceEvidence struct {
-			label     string
-			sensitive bool
-		}
 		evidence := make(map[actorOccurrence]occurrenceEvidence)
 		var occurrences []actorOccurrence
 		var actorKeys []string
@@ -195,12 +198,9 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 			}
 			c.Occurrences = kept
 		}
-		for _, key := range occurrences {
-			match := evidence[key]
-			if matched[key] || safe && (key.occurrence.Role == "blind_copy" || match.sensitive) {
-				continue
-			}
-			facts.Candidates = append(facts.Candidates, VersionCandidate{ActorKey: key.actorKey, Occurrences: []VersionCandidateOccurrence{{PersonCandidateOccurrence: key.occurrence, Label: match.label}}})
+		facts.Candidates, err = appendUnretainedCandidates(ctx, tx, facts.Candidates, occurrences, evidence, matched, safe)
+		if err != nil {
+			return DocumentPeopleFacts{}, err
 		}
 	}
 	ids := map[string]bool{}
@@ -243,6 +243,26 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 		return DocumentPeopleFacts{}, err
 	}
 	return facts, nil
+}
+
+func appendUnretainedCandidates(ctx context.Context, tx *sql.Tx, candidates []VersionCandidate, occurrences []actorOccurrence, evidence map[actorOccurrence]occurrenceEvidence, matched map[actorOccurrence]bool, safe bool) ([]VersionCandidate, error) {
+	for _, key := range occurrences {
+		match := evidence[key]
+		if matched[key] || safe && (key.occurrence.Role == "blind_copy" || match.sensitive) {
+			continue
+		}
+		if !strings.HasPrefix(key.actorKey, "name_alias:") {
+			people, err := peopleBoundToActorKeyTx(ctx, tx, key.actorKey)
+			if err != nil {
+				return nil, err
+			}
+			if len(people) == 1 && people[0].State == personStateRetired {
+				continue
+			}
+		}
+		candidates = append(candidates, VersionCandidate{ActorKey: key.actorKey, Occurrences: []VersionCandidateOccurrence{{PersonCandidateOccurrence: key.occurrence, Label: match.label}}})
+	}
+	return candidates, nil
 }
 
 // factsVersionTx reads the version and applies the caller's Hidden session once.

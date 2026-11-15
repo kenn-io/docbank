@@ -7,6 +7,40 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
+func checkDocumentPeopleFactsRetiredSender(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	s := newStore(t)
+	ctx := t.Context()
+	version, target := ingestDocumentEventTarget(t, s, "retired-sender.txt", "d5")
+	record := documentEventRecord(t, s.VaultID(), version.ID, "d5")
+	record.Events[0].Actors = []document.DocumentEventActorV1{{
+		Role: "sender", ActorKey: "email:sender@example.test", Address: "sender@example.test", Claim: "sender@example.test",
+	}}
+	_, err := s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+	require.NoError(t, err)
+	input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
+	require.NoError(t, err)
+	_, err = s.PublishDocumentPeople(ctx, documentPeoplePublicationForInput(t, input))
+	require.NoError(t, err)
+	person := input.Bindings["email:sender@example.test"][0]
+	_, err = s.RetirePerson(ctx, person.PersonID, person.Revision)
+	require.NoError(t, err)
+	input, err = s.PrepareDocumentPeopleInputs(ctx, version.ID)
+	require.NoError(t, err)
+	_, err = s.PublishDocumentPeople(ctx, DocumentPeoplePublication{
+		People:     document.DocumentPeopleV1{ContractVersion: document.PersonContractV1, ContentVersionID: version.ID, EventGenerationID: input.EventGenerationID, Edges: []document.DocumentPersonEdgeV1{}},
+		Resolution: DocumentPeopleResolution{SuppressedActors: 1}, InputsSHA256: fakeHash("a5"), ResolverFingerprint: document.PersonResolverFingerprint(), NodeID: input.NodeID, BindingEpoch: input.BindingEpoch, NodeRevision: input.NodeRevision,
+	})
+	require.NoError(t, err)
+	for _, safe := range []bool{true, false} {
+		facts, err := s.DocumentPeopleFacts(ctx, version.ID, safe)
+		require.NoError(t, err)
+		require.Equal(t, "published", facts.State)
+		require.Empty(t, facts.Edges)
+		require.Empty(t, facts.Candidates)
+	}
+}
+
 func checkDocumentPeopleFactsMergeResolvesCandidate(t *testing.T, newStore func(*testing.T) *Store) {
 	t.Helper()
 	s := newStore(t)

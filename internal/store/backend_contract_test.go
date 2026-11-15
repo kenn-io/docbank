@@ -963,6 +963,7 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkDocumentPeopleFactsCandidateQueueOverflow(t, newPostgresQueryStore)
 		}},
+		{"DocumentPeopleFactsRetiredSender", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsRetiredSender(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsRetiredSender(t, newPostgresQueryStore) }},
 		{"DocumentPeopleFactsMergeResolvesCandidate", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsMergeResolvesCandidate(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()
 			checkDocumentPeopleFactsMergeResolvesCandidate(t, newPostgresQueryStore)
