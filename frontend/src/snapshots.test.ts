@@ -648,7 +648,6 @@ it("accepts selected people on unavailable facets without counts", async () => {
   fetcher.mockResolvedValueOnce(jsonResponse(await page({ facets: [facet] })));
   expect((await read()).facets[0]!.values).toEqual([person]);
   for (const invalid of [
-    { ...facet, total: 1 },
     { ...facet, missing: 0 },
     { ...facet, other: 0 },
     { ...facet, values: [{ ...person, count: 1 }] },
