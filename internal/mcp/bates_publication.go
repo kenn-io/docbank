@@ -77,13 +77,18 @@ func publishNumberedPDF(ctx context.Context, lease *daemonLease, raw []byte) (ba
 		}
 		return batesExportOutput{}, daemonAcquisitionError(err)
 	}
-	receipt, err := current.daemonconn.PublishNumberedPDF(ctx, processing.RedactionRenderRequest{
+	publication, err := current.daemonconn.TransferConnection(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return batesExportOutput{}, publicationError(ctx, err)
+		}
+		return batesExportOutput{}, sanitizedDaemonError(errDaemonUnavailable, err)
+	}
+	defer func() { _ = publication.Close() }()
+	receipt, err := publication.PublishNumberedPDF(ctx, processing.RedactionRenderRequest{
 		AllocationID: input.AllocationID, Preparation: request.Preparation, Masks: request.Masks, ReviewSHA256: input.ReviewSHA256,
 	})
 	if err != nil {
-		if errors.Is(err, daemonconn.ErrNumberedPublicationUnknown) || daemonconn.IsTransportError(err) || ctx.Err() != nil {
-			lease.discard(current)
-		}
 		return batesExportOutput{}, publicationError(ctx, err)
 	}
 	return batesExportOutput{BatesExport: receipt, privateCache: newPrivateCache()}, nil

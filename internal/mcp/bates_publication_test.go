@@ -21,6 +21,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -203,16 +205,27 @@ func TestPublishNumberedPDFPrivateInputs(t *testing.T) {
 }
 
 func TestPublishNumberedPDFConcurrencyAndCancellation(t *testing.T) {
-	t.Setenv("DOCBANK_HOME", filepath.Join(t.TempDir(), "home"))
+	root := t.TempDir()
+	t.Setenv("DOCBANK_HOME", root)
 	f := reviewedBatesInputs(t, "docbank-fresh-objects/v3")
 	f.bindPDF(t, []byte("recorded PDF identity"))
+	cfg := config.Default()
+	cfg.Server.APIKey = "synthetic-publication-key"
+	owner := api.NewServer(api.Deps{Cfg: cfg, ShutdownToken: "synthetic-publication-proof"})
+	defer owner.Close()
 	entered, canceled := make(chan struct{}), make(chan struct{})
 	var posts atomic.Int32
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/bates/exports/"+testBatesAllocationID {
+			assert.Equal(t, cfg.Server.APIKey, r.Header.Get("X-Api-Key"))
 			writeDaemonJSON(t, w, f.receipt)
 			return
 		}
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/redaction/publications" {
+			owner.Handler().ServeHTTP(w, r)
+			return
+		}
+		assert.Equal(t, cfg.Server.APIKey, r.Header.Get("X-Api-Key"))
 		if posts.Add(1) > 1 {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			writeDaemonJSON(t, w, api.Error{Status: 503, Code: "redaction_busy"})
@@ -224,7 +237,18 @@ func TestPublishNumberedPDFConcurrencyAndCancellation(t *testing.T) {
 		close(canceled)
 	}))
 	defer daemon.Close()
-	lease := exportTestLease(t, daemon.URL)
+	record := daemonconn.NewRecord(strings.TrimPrefix(daemon.URL, "http://"), cfg.Server.APIKey, "synthetic-publication-proof", "")
+	_, err := daemonconn.RuntimeStore(root).Write(record)
+	require.NoError(t, err)
+	connection, running, err := daemonconn.Running(t.Context())
+	require.NoError(t, err)
+	require.True(t, running)
+	defer func() { require.NoError(t, connection.Close()) }()
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		t.Error("publication must leave the shared proven connection usable")
+		return nil, errDaemonUnavailable
+	}, (*daemonconn.Connection).Close)
+	lease.daemonconn = connection
 	_, schema := publishNumberedPDFSchemas()
 	handler := batesWriteToolHandler(lease, "publish_numbered_pdf", mustResolveSchema(schema), slog.Default())
 	ctx, cancel := context.WithCancel(t.Context())
@@ -253,6 +277,8 @@ func TestPublishNumberedPDFConcurrencyAndCancellation(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(encoded), "bates_outcome_unknown")
 	<-canceled
+	read = callToolResult(t, server, "get_bates_export", map[string]any{"allocation_id": testBatesAllocationID})
+	require.Equal(t, f.receipt.BlobSHA256, objectField(t, read, "structuredContent")["blob_sha256"])
 }
 
 func TestPublishNumberedPDF(t *testing.T) {
