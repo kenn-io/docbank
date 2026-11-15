@@ -340,12 +340,16 @@ func validateWorkerResponse(run *rendering, response providerutil.Response) erro
 
 var errWorkerCredentials = errors.New("worker credentials rejected")
 
-func doclingStatusError(run *rendering, stage providerutil.Stage, response providerutil.Response) error {
-	err := provider.StatusError(stage, response.Status, response.RetryAfter, nil)
-	if run.workerProtocol && response.Status == http.StatusUnauthorized {
+func workerResponseError(run *rendering, response providerutil.Response, err error) error {
+	if run.workerProtocol && response.Status == http.StatusUnauthorized && validateWorkerResponse(run, response) == nil {
 		return provider.Classified(document.RenditionErrorTransient, "worker credentials can be corrected", errors.Join(errWorkerCredentials, err))
 	}
 	return err
+}
+
+func doclingStatusError(run *rendering, stage providerutil.Stage, response providerutil.Response) error {
+	err := provider.StatusError(stage, response.Status, response.RetryAfter, nil)
+	return workerResponseError(run, response, err)
 }
 func (client *Client) lookupWorker(ctx context.Context, run *rendering, key string) (taskResponse, bool, error) {
 	response, err := client.workerRequest(ctx, run, providerutil.Request{Stage: providerutil.StageJob, Method: http.MethodGet, Path: workerprotocol.LookupPath + key, MaxResponseBytes: 16 << 10})

@@ -207,15 +207,28 @@ func TestWorkerRetriesCorrectedGatewaySettingsWithSameKey(t *testing.T) {
 }
 
 func TestWorkerResumesAfterGatewayKeyCorrection(t *testing.T) {
-	for _, path := range []string{workerprotocol.PollPath, workerprotocol.ResultPath} {
-		t.Run(path, func(t *testing.T) {
+	for _, test := range []struct {
+		name, path string
+		unreadable bool
+	}{
+		{"poll", workerprotocol.PollPath, false},
+		{"result", workerprotocol.ResultPath, false},
+		{"poll unreadable body", workerprotocol.PollPath, true},
+		{"result unreadable body", workerprotocol.ResultPath, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := workerFixture(t)
 				state, origin, transport := workerHTTP(t, workerDocumentResult())
 				base := transport.Transport
+				readErr := errors.New("synthetic response read failure")
 				transport.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
-					if strings.HasPrefix(request.URL.Path, path) && request.Header.Get("X-Api-Key") == "synthetic-old-key" {
-						return &http.Response{Request: request, StatusCode: http.StatusUnauthorized, Header: http.Header{workerprotocol.ProtocolHeader: []string{workerprotocol.Contract}}, Body: io.NopCloser(strings.NewReader("rejected"))}, nil
+					if strings.HasPrefix(request.URL.Path, test.path) && request.Header.Get("X-Api-Key") == "synthetic-old-key" {
+						var body io.Reader = strings.NewReader("rejected")
+						if test.unreadable {
+							body = readerFunc(func([]byte) (int, error) { return 0, readErr })
+						}
+						return &http.Response{Request: request, StatusCode: http.StatusUnauthorized, Header: http.Header{workerprotocol.ProtocolHeader: []string{workerprotocol.Contract}}, Body: io.NopCloser(body)}, nil
 					}
 					return base.RoundTrip(request)
 				})
@@ -228,12 +241,46 @@ func TestWorkerResumesAfterGatewayKeyCorrection(t *testing.T) {
 					return nil
 				})
 				require.True(t, document.IsRenditionProviderErrorRetryable(err), "%v", err)
+				if test.unreadable {
+					require.ErrorIs(t, err, readErr)
+				}
 				require.NotEmpty(t, handle.Value)
 				secrets["worker"] = "synthetic-corrected-key"
 				result, err := document.ResumeRendition(t.Context(), client, workerSnapshot(t, f), handle, nil)
 				require.NoError(t, err)
 				require.Equal(t, "first page", result.Evidence.Units[0].Text)
 				require.Equal(t, int32(1), state.posts.Load())
+			})
+		})
+	}
+}
+
+func TestNativeDoclingUnreadableUnauthorizedResponse(t *testing.T) {
+	for _, path := range []string{pollPath, resultPath} {
+		t.Run(path, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t, "pdf", "application/pdf", "report.pdf", []byte("synthetic PDF source"))
+				readErr := errors.New("synthetic response read failure")
+				origin, transport := inMemoryServer(t, http.HandlerFunc(func(out http.ResponseWriter, request *http.Request) {
+					if request.URL.Path == convertPath {
+						writeJSON(t, out, doclingTask("native-job", "pending"))
+						return
+					}
+					writeJSON(t, out, doclingTask("native-job", "success"))
+				}))
+				base := transport.Transport
+				transport.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+					if strings.HasPrefix(request.URL.Path, path) {
+						return &http.Response{Request: request, StatusCode: http.StatusUnauthorized, Header: make(http.Header), Body: io.NopCloser(readerFunc(func([]byte) (int, error) { return 0, readErr }))}, nil
+					}
+					return base.RoundTrip(request)
+				})
+				client := newClient(t, origin, f.descriptor, nil, transport)
+				_, err := document.RenderRendition(t.Context(), client, f.upload(), f.authorization)
+				providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+				require.True(t, ok, "%v", err)
+				require.Equal(t, document.RenditionErrorAuthentication, providerErr.Code())
+				require.ErrorIs(t, err, readErr)
 			})
 		})
 	}

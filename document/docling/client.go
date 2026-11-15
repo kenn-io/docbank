@@ -548,7 +548,7 @@ func (client *Client) poll(run *rendering, taskID string) (taskResponse, error) 
 		Stage: providerutil.StageJob, Method: http.MethodGet, Path: pollPath + taskID,
 	})
 	if err != nil {
-		return taskResponse{}, err
+		return taskResponse{}, workerResponseError(run, response, err)
 	}
 	if err := validateWorkerResponse(run, response); err != nil {
 		return taskResponse{}, err
@@ -572,7 +572,7 @@ func (client *Client) result(run *rendering, taskID string) (doclingResult, erro
 		MaxResponseBytes: int64(run.authorization.MaxTotalResultBytes),
 	})
 	if err != nil {
-		return doclingResult{}, err
+		return doclingResult{}, workerResponseError(run, response, err)
 	}
 	if err := validateWorkerResponse(run, response); err != nil {
 		return doclingResult{}, err
