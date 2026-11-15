@@ -386,7 +386,10 @@ also use shared operations for explicit asset selections. Quality scores, hidden
 sessions and photo settings have native Store contracts as well.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
-operations still open SQLite. Photo-derived and embedding-worker execution,
+operations still open SQLite. Direct embedding-worker publication/recovery, photo
+descriptions and face detection have qualification below. Foreground embedding
+through the processing service fails at its vector-index rebuild after publishing
+vectors. Face embedding/matching workers,
 remote-media acquisition, search and PostgreSQL-target backup recovery remain unqualified.
 Native multi-store catalog operations are qualified below; deployment adapters
 and filesystem workers remain separate from public PostgreSQL vault opening.
@@ -953,9 +956,40 @@ consent records against managed blob files.
 
 `make test-pg` runs `TestProcessingWorkersPostgres` after the Store and backup
 lanes on both PostgreSQL versions. The SQLite entry points call the same shared
-scenarios and keep their existing parallelism. Checks that validate inputs without querying the database
-stay in their existing unit tests. These scenarios do not qualify
-remote-media acquisition, embedding-worker execution or photo-derived workers.
+scenarios and keep their existing parallelism. The named scenarios define the
+qualified coverage; other database-backed scenarios and checks that validate
+inputs without querying the database keep their existing SQLite/unit entry points.
+Remote-media acquisition remains separate.
+
+#### Embedding and photo workers
+
+`TestEmbeddingPhotoWorkersPostgres` runs the native embedding worker against
+canonical PostgreSQL schemas with the same runtime grants as the Store tests.
+Shared scenarios cover original-file and rendition-chunk vector publication,
+consent and source fencing, replaced renditions, cancellation, recoverable
+catalog/blob failures, renewed provider authorization and reconciliation after
+consent changes. Published vectors and heads are retained in the real Store
+and managed blob files; the embedding provider stays injected.
+
+The embedding scenarios call `EmbeddingWorker` directly. Foreground embedding
+through the processing service still fails on PostgreSQL after publishing the
+vectors, when it rebuilds the vector index. That rebuild reads membership through
+`captureVectorIndexSourceTx`, which still uses SQLite-only SQL. Worker coverage
+does not establish successful service completion. Vector-index construction
+belongs to the unqualified search work.
+
+Photo service scenarios use a local synthetic vision endpoint and real preview
+bytes. They cover description consent and admission, preview publication,
+explicit/automatic coalescing, hidden-source refusal and retry, upload limits,
+face detection, detector changes, and audit refusal before provider execution.
+Publication failures leave the shared worker available for other jobs. Image
+embedding runtime preparation also validates the selected preview. This does not qualify face embedding/matching workers,
+photo similarity search or a live provider deployment.
+
+The existing SQLite test entry points call the same scenarios and retain their
+parallelism. Unit tests with fake catalogs remain independent of PostgreSQL.
+The listed scenarios establish operation coverage, not exhaustive qualification
+of every worker branch or producer.
 
 #### Backup capture and SQLite recovery
 
@@ -1613,7 +1647,10 @@ their producers or restore. Native people curation has its own contract below.
 The two worker tables (explicit waiters
 and completed scans) are disposable. Suggestion IDs use a PostgreSQL identity
 sequence; a future metadata importer must advance it past imported IDs.
-Provider network execution and public PostgreSQL vault opening remain unqualified. Quality scoring and hidden sessions use the contracts below.
+Description and detection worker execution is qualified above with a local
+synthetic provider endpoint. Live-provider deployment and public PostgreSQL
+vault opening remain separate. Quality scoring and hidden sessions use the
+contracts below.
 
 #### Photo quality and hidden sessions
 

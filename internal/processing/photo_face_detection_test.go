@@ -16,7 +16,12 @@ const detectedFaceReply = `{"faces":[{"box":{"x":0.1,"y":0.2,"width":0.2,"height
 
 func TestPhotoFaceDetectionProfilesPlanAndFirstReadyTarget(t *testing.T) {
 	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
+	checkPhotoFaceDetectionProfilesPlanAndFirstReadyTarget(t, newPhotoDescriptionFixture)
+}
+
+func checkPhotoFaceDetectionProfilesPlanAndFirstReadyTarget(t *testing.T, makeFixture photoDescriptionFixtureFactory) {
+	t.Helper()
+	f := makeFixture(t)
 	ctx := t.Context()
 	service := f.newVisionServiceWith(t, map[string]string{"first": "detector-1", "second": "detector-2"}, document.FaceDetectionProviderID)
 	require.False(t, f.service.HasPhotoFaceDetectionProfiles())
@@ -41,6 +46,11 @@ func TestPhotoFaceDetectionProfilesPlanAndFirstReadyTarget(t *testing.T) {
 
 func TestPhotoFaceDetectionFlow(t *testing.T) {
 	t.Parallel()
+	checkPhotoFaceDetectionFlow(t, newPhotoDescriptionFixture)
+}
+
+func checkPhotoFaceDetectionFlow(t *testing.T, makeFixture photoDescriptionFixtureFactory) {
+	t.Helper()
 	now := time.Now()
 	for _, tc := range []struct {
 		name, reply string
@@ -53,7 +63,7 @@ func TestPhotoFaceDetectionFlow(t *testing.T) {
 			// An empty target scan pauses in proportion to its query time; the bubble keeps that pause off the real clock.
 			synctest.Test(t, func(t *testing.T) {
 				time.Sleep(time.Until(now))
-				f := newPhotoDescriptionFixture(t)
+				f := makeFixture(t)
 				ctx := t.Context()
 				service := f.newVisionServiceWith(t, map[string]string{"faces": "detector-1"}, document.FaceDetectionProviderID)
 				targets, err := service.photoVisionTargets(ctx, nil, "", 50, 4, document.FaceDetectionProviderID)
@@ -106,9 +116,14 @@ func TestPhotoFaceDetectionFlow(t *testing.T) {
 
 func TestPhotoFaceDetectionPublicationFailureKeepsWorkerRunning(t *testing.T) {
 	t.Parallel()
+	checkPhotoFaceDetectionPublicationFailureKeepsWorkerRunning(t, newPhotoDescriptionFixture)
+}
+
+func checkPhotoFaceDetectionPublicationFailureKeepsWorkerRunning(t *testing.T, makeFixture photoDescriptionFixtureFactory) {
+	t.Helper()
 	for _, mode := range []string{"capacity", "audit"} {
 		t.Run(mode, func(t *testing.T) {
-			f := newPhotoDescriptionFixture(t)
+			f := makeFixture(t)
 			ctx := t.Context()
 			service := f.newVisionServiceWith(t, map[string]string{"faces": "detector"}, document.FaceDetectionProviderID)
 			if mode == "capacity" {
@@ -161,9 +176,14 @@ func (c *auditingFaceDetectionCatalog) PublishPhotoDescription(ctx context.Conte
 
 func TestPhotoFaceDetectionAuditRefusesEgress(t *testing.T) {
 	t.Parallel()
+	checkPhotoFaceDetectionAuditRefusesEgress(t, newPhotoDescriptionFixture)
+}
+
+func checkPhotoFaceDetectionAuditRefusesEgress(t *testing.T, makeFixture photoDescriptionFixtureFactory) {
+	t.Helper()
 	for _, queued := range []bool{false, true} {
 		t.Run(map[bool]string{false: "start", true: "queued"}[queued], func(t *testing.T) {
-			f := newPhotoDescriptionFixture(t)
+			f := makeFixture(t)
 			ctx := t.Context()
 			service := f.newVisionServiceWith(t, map[string]string{"faces": "detector"}, document.FaceDetectionProviderID)
 			if queued {
