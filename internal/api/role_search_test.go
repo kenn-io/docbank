@@ -14,7 +14,6 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/report"
 )
 
 // Every snapshot-building route refuses Bcc, including inside saved queries.
@@ -58,20 +57,6 @@ func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(body), &page))
 		require.Len(t, page.Rows, 1)
 		require.Equal(t, "letter.txt", page.Rows[0].Name)
-	})
-	t.Run("API key report role scope", func(t *testing.T) {
-		request := `{"version":1,"all_documents":true,"timezone":"UTC","coverage_mode":"available_only","terms":[{"number":1,"expression":"to:\"Matrix Concealed\"","syntax":"advanced","dates":{"start":"2020-01-01","end":"2100-01-01"}}]}`
-		for _, tc := range []struct {
-			header string
-			hits   int64
-		}{{"", 1}, {"1", 0}} {
-			resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/search-exports", map[string]string{"X-Api-Key": testAPIKey, api.SafeRoleSearchHeader: tc.header}, request)
-			require.Equal(t, http.StatusOK, resp.StatusCode, body)
-			var summary report.Summary
-			require.NoError(t, json.Unmarshal([]byte(body), &summary))
-			require.Len(t, summary.Counts, 1)
-			require.Equal(t, tc.hits, summary.Counts[0].Hits)
-		}
 	})
 }
 

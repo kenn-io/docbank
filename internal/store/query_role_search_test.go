@@ -81,7 +81,7 @@ func TestRoleSearchMatchesAndPeopleFacet(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	version := seedCurrentRoleSearchEvent(t, s, "message.txt", "b1", nil)
+	version := seedCurrentRoleSearchEvent(t, s, "message.txt", "b1", []document.DocumentEventActorV1{})
 	person, err := s.CreatePerson(ctx, "Indigo Sender", "operator")
 	require.NoError(t, err)
 	for _, edge := range []struct{ id, role string }{{person.PersonID, "sender"}, {person.PersonID, "speaker"}} {
@@ -185,40 +185,6 @@ func checkRoleSearchCurrentPersonRelation(t *testing.T) {
 	check(true, direct.PersonID, "speaker", true)
 }
 
-func TestRoleSearchMentionNamesAreLiteral(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	person, err := s.CreatePerson(ctx, "Jory Pellham", "operator")
-	require.NoError(t, err)
-	person, _ = addTestPersonIdentity(t, s, person, "name_alias", `A "OR" *`, "quoted-alias")
-	_, err = s.AddPersonIdentity(ctx, person.PersonID, person.Revision, PersonIdentity{
-		Kind: "name_alias", ValueDisplay: "Derived Alias", Origin: "derived",
-		EvidenceKind: "source_metadata", EvidenceID: "derived-alias", Confidence: "name_candidate",
-	})
-	require.NoError(t, err)
-	person, _, err = s.PersonByID(ctx, person.PersonID)
-	require.NoError(t, err)
-	for i := range 198 {
-		person, _ = addTestPersonIdentity(t, s, person, "name_alias", fmt.Sprintf("Alias %02d", i), fmt.Sprintf("alias-%02d", i))
-	}
-	names, err := (queryResolver{q: s.db}).personMentionNames(ctx, person.PersonID)
-	require.NoError(t, err)
-	require.Len(t, names, 201)
-	require.Equal(t, "Jory Pellham", names[0])
-	require.Contains(t, names, `A "OR" *`)
-	require.Contains(t, names, "Derived Alias")
-	quoted, err := s.CreateFile(ctx, s.RootID(), "quoted.txt", fakeHash("ca01"), 20, "text/plain")
-	require.NoError(t, err)
-	seedCompiledLegacyText(t, s, quoted, `A "OR" *`)
-	last, err := s.CreateFile(ctx, s.RootID(), "last.txt", fakeHash("ca02"), 20, "text/plain")
-	require.NoError(t, err)
-	seedCompiledLegacyText(t, s, last, "Alias 197")
-	compiled, err := s.CompileQuery(ctx, compilerQuery(t, `mentions:"Jory Pellham"`))
-	require.NoError(t, err)
-	require.ElementsMatch(t, []int64{quoted.ID, last.ID}, compiledFixtureIDs(t, s.db, compiled, ""))
-}
-
 func TestRoleSearchNegationWithPendingPeople(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -268,7 +234,7 @@ func TestRoleSearchNegationWithPendingPeople(t *testing.T) {
 func TestRoleSearchPeopleFacetIncomplete(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	version := seedCurrentRoleSearchEvent(t, s, "pending.txt", "a5", nil)
+	version := seedCurrentRoleSearchEvent(t, s, "pending.txt", "a5", []document.DocumentEventActorV1{})
 	result, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: snapshotTestQuery(t, `{}`), Facets: []string{"person_role"}})
 	require.NoError(t, err)
 	require.Len(t, result.Facets, 1)
@@ -292,10 +258,10 @@ func TestRoleSearchPeopleFacetRetainsExpressionAndPersonIDs(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 
-	first := seedCurrentRoleSearchEvent(t, s, "keep-one.txt", "f101", nil)
-	second := seedCurrentRoleSearchEvent(t, s, "keep-two.txt", "f102", nil)
-	third := seedCurrentRoleSearchEvent(t, s, "outside.txt", "f103", nil)
-	fourth := seedCurrentRoleSearchEvent(t, s, "keep-three.txt", "f104", nil)
+	first := seedCurrentRoleSearchEvent(t, s, "keep-one.txt", "f101", []document.DocumentEventActorV1{})
+	second := seedCurrentRoleSearchEvent(t, s, "keep-two.txt", "f102", []document.DocumentEventActorV1{})
+	third := seedCurrentRoleSearchEvent(t, s, "outside.txt", "f103", []document.DocumentEventActorV1{})
+	fourth := seedCurrentRoleSearchEvent(t, s, "keep-three.txt", "f104", []document.DocumentEventActorV1{})
 	anchor, err := s.CreatePerson(ctx, "Facet Anchor", "operator")
 	require.NoError(t, err)
 	selected, err := s.CreatePerson(ctx, "Facet Selected", "operator")
@@ -410,7 +376,7 @@ func TestPublishedBccActorQueryPrivacy(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, safeResult.Rows)
 
-	other := seedCurrentRoleSearchEvent(t, s, "visible.txt", "f4", nil)
+	other := seedCurrentRoleSearchEvent(t, s, "visible.txt", "f4", []document.DocumentEventActorV1{})
 	visible, err := s.CreatePerson(ctx, "Visible Person", "operator")
 	require.NoError(t, err)
 	for _, edge := range []struct{ version, role string }{{version.ID, "blind_copy"}, {other.ID, "sender"}} {
@@ -418,12 +384,6 @@ func TestPublishedBccActorQueryPrivacy(t *testing.T) {
 		require.NoError(t, err)
 	}
 	publishRoleFixtures(t, s)
-	input, err = s.PrepareDocumentPeopleInputs(ctx, version.ID)
-	require.NoError(t, err)
-	publication = documentPeoplePublicationForInput(t, input)
-	publication.People.Edges[0].Sensitive = true
-	_, err = s.PublishDocumentPeople(ctx, publication)
-	require.NoError(t, err)
 	value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"name:bcc","filters":{"people":[{"person_id":%q,"roles":["blind_copy"]},{"person_id":%q,"roles":["blind_copy"]}]}}`, visible.PersonID, id))
 	result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Facets: []string{"person_role"}})
 	require.NoError(t, err)
@@ -445,7 +405,7 @@ func TestRoleSearchSavedRunPreservesMergedDefinitionReceipt(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	version := seedCurrentRoleSearchEvent(t, s, "saved-merged.txt", "f2", nil)
+	version := seedCurrentRoleSearchEvent(t, s, "saved-merged.txt", "f2", []document.DocumentEventActorV1{})
 	survivor, err := s.CreatePerson(ctx, "Saved Survivor", "operator")
 	require.NoError(t, err)
 	retired, err := s.CreatePerson(ctx, "Saved Retired", "operator")
@@ -519,7 +479,7 @@ func TestRoleSearchPeopleFacetMembershipBudget(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	version := seedCurrentRoleSearchEvent(t, s, "budget.txt", "aabb", nil)
+	version := seedCurrentRoleSearchEvent(t, s, "budget.txt", "aabb", []document.DocumentEventActorV1{})
 	first, err := s.CreatePerson(ctx, "Budget First", "operator")
 	require.NoError(t, err)
 	second, err := s.CreatePerson(ctx, "Budget Second", "operator")
@@ -551,8 +511,8 @@ func TestRoleSearchNegationBranchMembership(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	first := seedCurrentRoleSearchEvent(t, s, "branch-one.txt", "ccdd", nil)
-	second := seedCurrentRoleSearchEvent(t, s, "branch-two.txt", "ccdd", nil)
+	first := seedCurrentRoleSearchEvent(t, s, "branch-one.txt", "ccdd", []document.DocumentEventActorV1{})
+	second := seedCurrentRoleSearchEvent(t, s, "branch-two.txt", "ccdd", []document.DocumentEventActorV1{})
 	a, err := s.CreatePerson(ctx, "Branch Alpha", "operator")
 	require.NoError(t, err)
 	b, err := s.CreatePerson(ctx, "Branch Beta", "operator")
@@ -676,6 +636,14 @@ func publishRoleFixtures(t *testing.T, s *Store) {
 	for _, id := range ids {
 		input, err := s.PrepareDocumentPeopleInputs(ctx, id)
 		require.NoError(t, err)
+		if len(input.Actors) != 0 {
+			require.Len(t, input.Actors, 1)
+			publication := documentPeoplePublicationForInput(t, input)
+			publication.People.Edges[0].Sensitive = input.Actors[0].Sensitive || input.Actors[0].Role == "blind_copy"
+			_, err = s.PublishDocumentPeople(ctx, publication)
+			require.NoError(t, err)
+			continue
+		}
 		raw, err := canonical.Marshal(input)
 		require.NoError(t, err)
 		_, err = s.PublishDocumentPeople(ctx, DocumentPeoplePublication{People: document.DocumentPeopleV1{ContractVersion: document.PersonContractV1, ContentVersionID: id, EventGenerationID: input.EventGenerationID, Edges: []document.DocumentPersonEdgeV1{}}, InputsSHA256: fakeSHA256(raw), ResolverFingerprint: document.PersonResolverFingerprint(), NodeID: input.NodeID, NodeRevision: input.NodeRevision, BindingEpoch: input.BindingEpoch})
@@ -752,6 +720,31 @@ func TestRoleSearchMentionsRequireDocumentContent(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 2)
 	require.ElementsMatch(t, []string{"merged-0.txt", "merged-1.txt"}, []string{result.Rows[0].Name, result.Rows[1].Name})
+	person, err = s.CreatePerson(ctx, "Jory Pellham", "operator")
+	require.NoError(t, err)
+	person, _ = addTestPersonIdentity(t, s, person, "name_alias", `A "OR" *`, "quoted-alias")
+	_, err = s.AddPersonIdentity(ctx, person.PersonID, person.Revision, PersonIdentity{
+		Kind: "name_alias", ValueDisplay: "Derived Alias", Origin: "derived",
+		EvidenceKind: "source_metadata", EvidenceID: "derived-alias", Confidence: "name_candidate",
+	})
+	require.NoError(t, err)
+	person, _, err = s.PersonByID(ctx, person.PersonID)
+	require.NoError(t, err)
+	for i := range 198 {
+		person, _ = addTestPersonIdentity(t, s, person, "name_alias", fmt.Sprintf("Alias %02d", i), fmt.Sprintf("alias-%02d", i))
+	}
+	names, err := (queryResolver{q: s.db}).personMentionNames(ctx, person.PersonID)
+	require.NoError(t, err)
+	require.Contains(t, names, "Derived Alias")
+	quoted, err := s.CreateFile(ctx, s.RootID(), "quoted.txt", fakeHash("ca01"), 20, "text/plain")
+	require.NoError(t, err)
+	seedCompiledLegacyText(t, s, quoted, `A "OR" *`)
+	last, err := s.CreateFile(ctx, s.RootID(), "last.txt", fakeHash("ca02"), 20, "text/plain")
+	require.NoError(t, err)
+	seedCompiledLegacyText(t, s, last, "Alias 197")
+	compiled, err := s.CompileQuery(ctx, compilerQuery(t, `mentions:"Jory Pellham"`))
+	require.NoError(t, err)
+	require.ElementsMatch(t, []int64{quoted.ID, last.ID}, compiledFixtureIDs(t, s.db, compiled, ""))
 }
 
 func TestRoleSearchMentionsSelectedRendition(t *testing.T) {

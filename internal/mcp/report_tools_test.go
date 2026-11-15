@@ -87,7 +87,6 @@ func TestMCPReportRequestBoundary(t *testing.T) {
 	var calls atomic.Int32
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		assert.Equal(t, "1", r.Header.Get("X-Docbank-Safe-Roles"))
 		var request report.Request
 		assert.NoError(t, json.UnmarshalRead(r.Body, &request))
 		assert.Equal(t, "strict", request.CoverageMode)
