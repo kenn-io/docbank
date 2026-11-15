@@ -147,10 +147,10 @@ func TestWorkerRefundsCapacityRefusals(t *testing.T) {
 					posts++
 					_, _ = io.Copy(io.Discard, r.Body)
 					if scenario == "canceled body" {
-						return &http.Response{Request: r, StatusCode: 429, Header: make(http.Header), Body: cancelingBackendResponseBody{cancel: cancel}}, nil
+						return &http.Response{Request: r, StatusCode: http.StatusTooManyRequests, Header: make(http.Header), Body: cancelingBackendResponseBody{cancel: cancel}}, nil
 					}
 					if scenario == "body error" && posts <= 3 {
-						return &http.Response{Request: r, StatusCode: 429, Header: make(http.Header), Body: backendResponseReadFailure{err: errors.New("synthetic body read failure")}}, nil
+						return &http.Response{Request: r, StatusCode: http.StatusTooManyRequests, Header: make(http.Header), Body: backendResponseReadFailure{err: errors.New("synthetic body read failure")}}, nil
 					}
 					if scenario == "response" && posts <= 5 {
 						return backendResponse(r, 429, `{}`), nil
@@ -214,7 +214,7 @@ func TestWorkerRetainsResultsAfterReopen(t *testing.T) {
 				require.Equal(t, status, task.BackendTaskStatus)
 				out = getRequest(t.Context(), w, "/v1/result/"+id)
 				require.Equal(t, http.StatusOK, out.Code)
-				require.Equal(t, result, out.Body.String())
+				require.Equal(t, []byte(result), out.Body.Bytes())
 				require.NoError(t, w.Close(t.Context()))
 				w = openWorker(t, o)
 			}

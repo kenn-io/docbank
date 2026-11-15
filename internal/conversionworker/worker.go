@@ -32,6 +32,7 @@ import (
 const protocol = workerprotocol.Contract
 const overhead = int64(4096)
 const manifestVersion = 1
+const stateFailure = "failure"
 
 // Options fixes a worker's private storage, authenticated backend and bounds.
 type Options struct {
@@ -209,7 +210,7 @@ func Open(ctx context.Context, options Options) (_ *Worker, retErr error) {
 		if err := json.Unmarshal(data, &item, json.RejectUnknownMembers(true)); err != nil {
 			return nil, errors.New("invalid committed worker manifest")
 		}
-		if item.Version != manifestVersion || item.MaxSourceBytes <= 0 || item.MaxSourceBytes > 100<<20 || item.MaxResultBytes <= 0 || item.MaxResultBytes > 128<<20 || (item.Retryable && (item.State != "failure" || item.BackendID != "")) || item.BackendOrigin != options.BackendURL || item.ID != entry.Name() || !isHex(item.Key, 64) || !isHex(item.SHA256, 64) || item.Bytes <= 0 || item.Bytes > item.MaxSourceBytes || item.Submissions < 0 || item.Submissions > 3 || !slices.Contains([]string{"pending", "started", "success", "failure"}, item.State) || !validBackendTaskStatus(item.BackendTaskStatus) || (item.BackendTaskStatus != "" && item.State != "success") || !validSubmission(item.MediaType, item.Fields) || !validFile(item.Filename, item.MediaType) || (item.BackendID != "" && (!validBackendID(item.BackendID) || item.Submissions == 0)) || (item.State == "started" && item.BackendID == "") || (item.State == "pending" && item.BackendID != "") {
+		if item.Version != manifestVersion || item.MaxSourceBytes <= 0 || item.MaxSourceBytes > 100<<20 || item.MaxResultBytes <= 0 || item.MaxResultBytes > 128<<20 || (item.Retryable && (item.State != stateFailure || item.BackendID != "")) || item.BackendOrigin != options.BackendURL || item.ID != entry.Name() || !isHex(item.Key, 64) || !isHex(item.SHA256, 64) || item.Bytes <= 0 || item.Bytes > item.MaxSourceBytes || item.Submissions < 0 || item.Submissions > 3 || !slices.Contains([]string{"pending", "started", "success", stateFailure}, item.State) || !validBackendTaskStatus(item.BackendTaskStatus) || (item.BackendTaskStatus != "" && item.State != "success") || !validSubmission(item.MediaType, item.Fields) || !validFile(item.Filename, item.MediaType) || (item.BackendID != "" && (!validBackendID(item.BackendID) || item.Submissions == 0)) || (item.State == "started" && item.BackendID == "") || (item.State == "pending" && item.BackendID != "") {
 			return nil, errors.New("worker manifest contract is invalid")
 		}
 		if _, exists := w.keys[item.Key]; exists {

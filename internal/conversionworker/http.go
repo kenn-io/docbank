@@ -215,7 +215,7 @@ func (w *Worker) accept(ctx context.Context, out http.ResponseWriter, r *http.Re
 		w.mu.Lock()
 		existing = w.jobs[existingID]
 		w.mu.Unlock()
-		if existing.State == "failure" && existing.Retryable {
+		if existing.State == stateFailure && existing.Retryable {
 			existing.State = "pending"
 			existing.Submissions = 0
 			existing.Retryable = false

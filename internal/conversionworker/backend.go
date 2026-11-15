@@ -106,7 +106,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 	}
 	if item.BackendID == "" {
 		if item.Submissions >= 3 {
-			item.State = "failure"
+			item.State = stateFailure
 			item.Retryable = true
 			return true, w.save(ctx, item)
 		}
@@ -147,7 +147,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 			return true, nil
 		}
 		if status != 200 && status != 202 {
-			item.State = "failure"
+			item.State = stateFailure
 			item.Retryable = status == 401 || status == 403 || status == 404
 			return true, w.save(ctx, item)
 		}
@@ -169,7 +169,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 	status, body, err := w.backendRequest(ctx, http.MethodGet, workerprotocol.PollPath+item.BackendID, nil, "")
 	if err != nil {
 		if errors.Is(err, errBackendOutput) {
-			item.State = "failure"
+			item.State = stateFailure
 			return true, w.save(ctx, item)
 		}
 		return true, nil
@@ -188,20 +188,20 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 		Type  string `json:"task_type"`
 	}
 	if json.Unmarshal(body, &task) != nil || task.ID != item.BackendID || task.Type != "convert" {
-		item.State = "failure"
+		item.State = stateFailure
 		return true, w.save(ctx, item)
 	}
 	if task.State == "pending" || task.State == "started" {
 		return true, nil
 	}
 	if task.State != "success" && task.State != "partial_success" {
-		item.State = "failure"
+		item.State = stateFailure
 		return true, w.save(ctx, item)
 	}
 	status, body, err = w.backendRequestLimit(ctx, http.MethodGet, workerprotocol.ResultPath+item.BackendID, nil, "", item.MaxResultBytes)
 	if err != nil {
 		if errors.Is(err, errBackendOutput) {
-			item.State = "failure"
+			item.State = stateFailure
 			return true, w.save(ctx, item)
 		}
 		return true, nil
@@ -215,7 +215,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 	if len(body) == 0 || !jsontext.Value(body).IsValid() {
-		item.State = "failure"
+		item.State = stateFailure
 		return true, w.save(ctx, item)
 	}
 	if err := atomicfile.WriteFile(w.path(item.ID, "result.json"), body, atomicfile.WithPrivate()); err != nil {
