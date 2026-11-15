@@ -183,6 +183,97 @@ func TestPublishNumberedPDFLostReply(t *testing.T) {
 	require.Equal(t, int32(2), posts.Load())
 }
 
+func TestPublishNumberedPDFDaemonRestart(t *testing.T) {
+	for _, supplied := range []bool{false, true} {
+		name := "standalone"
+		if supplied {
+			name = "supplied"
+		}
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("DOCBANK_HOME", root)
+			f := reviewedBatesInputs(t, "docbank-fresh-objects/v3")
+			f.bindPDF(t, []byte("recorded PDF identity"))
+			startDaemon := func(token string, loseReply bool) (*httptest.Server, *atomic.Int32) {
+				cfg := config.Default()
+				cfg.Server.APIKey = token + "-key"
+				owner := api.NewServer(api.Deps{Cfg: cfg, ShutdownToken: token})
+				t.Cleanup(owner.Close)
+				posts := new(atomic.Int32)
+				daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method != http.MethodPost || r.URL.Path != "/api/v1/redaction/publications" {
+						owner.Handler().ServeHTTP(w, r)
+						return
+					}
+					posts.Add(1)
+					assert.Equal(t, cfg.Server.APIKey, r.Header.Get("X-Api-Key"))
+					var request processing.RedactionRenderRequest
+					if !assert.NoError(t, json.UnmarshalRead(r.Body, &request)) {
+						return
+					}
+					assert.Equal(t, uuid.MustParse(testBatesAllocationID), request.AllocationID)
+					assert.Equal(t, f.review.SHA256, request.ReviewSHA256)
+					if loseReply {
+						hijacker, ok := w.(http.Hijacker)
+						if !assert.True(t, ok) {
+							return
+						}
+						connection, _, err := hijacker.Hijack()
+						if assert.NoError(t, err) {
+							assert.NoError(t, connection.Close())
+						}
+						return
+					}
+					writeDaemonJSON(t, w, f.receipt)
+				}))
+				t.Cleanup(daemon.Close)
+				record := daemonconn.NewRecord(strings.TrimPrefix(daemon.URL, "http://"), cfg.Server.APIKey, token, "")
+				_, err := daemonconn.RuntimeStore(root).Write(record)
+				require.NoError(t, err)
+				return daemon, posts
+			}
+			before, firstPosts := startDaemon("synthetic-before-restart", true)
+			connection, running, err := daemonconn.Running(t.Context())
+			require.NoError(t, err)
+			require.True(t, running)
+			defer func() { require.NoError(t, connection.Close()) }()
+			lease := newDaemonLease()
+			lease.daemonconn = connection
+			if supplied {
+				lease.suppliedConnection = connection
+			}
+			server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{AllowPackageWrites: true}, lease)
+			clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
+			serverSession, err := server.sdk.Connect(t.Context(), serverTransport, nil)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, serverSession.Close()) }()
+			client, err := sdkmcp.NewClient(testImplementation(), nil).Connect(t.Context(), clientTransport, nil)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, client.Close()) }()
+			params := &sdkmcp.CallToolParams{Name: "publish_numbered_pdf", Arguments: publicationArguments(f)}
+			first, err := client.CallTool(t.Context(), params)
+			require.NoError(t, err)
+			require.True(t, first.IsError)
+			require.Equal(t, "bates_outcome_unknown", structuredMap(t, first.StructuredContent)["code"])
+			require.EqualValues(t, 1, firstPosts.Load(), "publication is never replayed automatically")
+			before.CloseClientConnections()
+			before.Close()
+			_, secondPosts := startDaemon("synthetic-after-restart", false)
+			second, err := client.CallTool(t.Context(), params)
+			require.NoError(t, err)
+			if supplied {
+				require.True(t, second.IsError)
+				require.Equal(t, "daemon_unavailable", structuredMap(t, second.StructuredContent)["code"])
+				require.Zero(t, secondPosts.Load(), "a supplied connection cannot discover the replacement")
+			} else {
+				require.False(t, second.IsError)
+				require.Equal(t, f.receipt.BlobSHA256, structuredMap(t, second.StructuredContent)["blob_sha256"])
+				require.EqualValues(t, 1, secondPosts.Load())
+			}
+		})
+	}
+}
+
 func TestPublishNumberedPDFPrivateInputs(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", filepath.Join(t.TempDir(), "home"))
 	for _, scenario := range []string{"unknown member", "missing file"} {
@@ -249,6 +340,7 @@ func TestPublishNumberedPDFConcurrencyAndCancellation(t *testing.T) {
 		return nil, errDaemonUnavailable
 	}, (*daemonconn.Connection).Close)
 	lease.daemonconn = connection
+	lease.suppliedConnection = connection
 	_, schema := publishNumberedPDFSchemas()
 	handler := batesWriteToolHandler(lease, "publish_numbered_pdf", mustResolveSchema(schema), slog.Default())
 	ctx, cancel := context.WithCancel(t.Context())

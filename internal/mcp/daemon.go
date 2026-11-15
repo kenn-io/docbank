@@ -132,6 +132,29 @@ func (lease *daemonLease) acquire(ctx context.Context) (leasedDaemonClient, erro
 	return waitForDaemonAcquisition(ctx, acquiring)
 }
 
+// transferConnection discovers the current daemon or proves the supplied daemon
+// on a separate socket. It never borrows the cached read connection.
+func (lease *daemonLease) transferConnection(ctx context.Context) (*daemonconn.Connection, error) {
+	var c *daemonconn.Connection
+	var err error
+	if supplied := lease.suppliedConnection; supplied != nil {
+		c, err = supplied.TransferConnection(ctx)
+	} else {
+		c, err = lease.ensure(ctx)
+	}
+	if err != nil {
+		return nil, daemonStartupAcquisitionError(err)
+	}
+	lease.mu.Lock()
+	allowed := lease.keyPolicy == nil || lease.keyPolicy.Allows(c)
+	lease.mu.Unlock()
+	if !allowed {
+		_ = lease.close(c)
+		return nil, errDaemonCredentialReuse
+	}
+	return c, nil
+}
+
 func (lease *daemonLease) replace(
 	ctx context.Context, failed leasedDaemonClient,
 ) (leasedDaemonClient, error) {

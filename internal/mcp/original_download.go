@@ -117,21 +117,13 @@ type originalDownloadTransport struct {
 func (t originalDownloadTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	ctx, cancel := context.WithCancel(request.Context())
 	timer := time.AfterFunc(daemonAcquisitionTimeout, cancel)
-	c, err := t.acquire(ctx)
+	c, err := t.lease.transferConnection(ctx)
 	timer.Stop()
 	if err != nil {
 		cancel()
 		return nil, errDaemonUnavailable
 	}
 	closeConnection := func() { _ = t.lease.close(c) }
-	t.lease.mu.Lock()
-	allowed := t.lease.keyPolicy == nil || t.lease.keyPolicy.Allows(c)
-	t.lease.mu.Unlock()
-	if !allowed {
-		cancel()
-		closeConnection()
-		return nil, errDaemonCredentialReuse
-	}
 	timer.Reset(originalDownloadIdleTimeout)
 	response, err := c.RoundTripOriginalDownload(ctx, t.ticket)
 	timer.Stop()
@@ -142,13 +134,6 @@ func (t originalDownloadTransport) RoundTrip(request *http.Request) (*http.Respo
 	}
 	response.Body = &originalDownloadBody{ReadCloser: response.Body, closeConnection: closeConnection, cancel: cancel, timer: timer}
 	return response, nil
-}
-
-func (t originalDownloadTransport) acquire(ctx context.Context) (*daemonconn.Connection, error) {
-	if supplied := t.lease.suppliedConnection; supplied != nil {
-		return supplied.TransferConnection(ctx)
-	}
-	return t.lease.ensure(ctx)
 }
 
 type originalDownloadBody struct {

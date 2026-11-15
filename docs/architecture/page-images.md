@@ -454,6 +454,8 @@ publication receipt against the requested allocation and review. It makes one
 POST; an uncertain reply requires an explicit identical replay or artifact read.
 Each publication uses a separate ownership-proven daemon connection, leaving
 the shared connection available for reads and concurrent busy responses.
+Standalone calls rediscover the daemon before publication so retries survive a
+daemon restart. Supplied connections stay pinned to their original daemon.
 MCP performs no rendering or PDF staging for publication. Independent checking
 and local delivery use the existing reviewed `export_bates_file` path, with its
 own process-wide verifier gate. HTTP MCP retains its two-minute request limit.
