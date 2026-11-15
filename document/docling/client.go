@@ -650,9 +650,6 @@ func parseTaskForProtocol(body []byte, worker bool) (taskResponse, error) {
 	if !officialTaskStatus(wire.Status) {
 		return taskResponse{}, provider.Malformed("Docling task status is invalid", nil)
 	}
-	if wire.Retryable && (!worker || wire.Status != "failure") {
-		return taskResponse{}, provider.Malformed("worker retry state is invalid", nil)
-	}
 	if worker && wire.BackendStatus != "" {
 		if wire.Status != "success" || (wire.BackendStatus != "success" && wire.BackendStatus != "partial_success") {
 			return taskResponse{}, provider.Malformed("worker backend task status is invalid", nil)
