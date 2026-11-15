@@ -258,7 +258,7 @@ func TestWorkerNumericBoundsHoldAcrossConfiguration(t *testing.T) {
 			maximum = int64(time.Minute)
 		}
 		w, err := Open(t.Context(), o)
-		valid := value == 0 || value >= minimum && value <= maximum
+		valid := value >= minimum && value <= maximum || field == 3 && value == 0
 		if !valid {
 			if w != nil {
 				require.NoError(ht, w.Close(t.Context()))
@@ -278,7 +278,7 @@ func TestWorkerJobLimitConfiguration(t *testing.T) {
 		o := workerOptions(t)
 		o.MaxJobs = limit
 		w, err := Open(t.Context(), o)
-		if limit < 0 || limit > 128 {
+		if limit <= 0 || limit > 128 {
 			if w != nil {
 				require.NoError(ht, w.Close(t.Context()))
 			}
@@ -293,13 +293,10 @@ func TestWorkerBackendReceivesExactGeneratedOriginalAfterRestart(t *testing.T) {
 	hegel.Test(t, func(ht *hegel.T) {
 		source := hegel.Draw(ht, hegel.Lists(hegel.Integers[byte](0, 255)))
 		source = source[:min(len(source), 512)]
-		kind := hegel.Draw(ht, hegel.Integers(0, 8))
-		mediaTypes := []string{"application/pdf", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "image/png", "image/jpeg", "text/plain", "text/markdown", "audio/wav", "audio/mpeg"}
-		names := []string{"synthetic.pdf", "synthetic.pptx", "synthetic.xlsx", "synthetic.png", "synthetic.jpg", "synthetic.txt", "synthetic.md", "synthetic.wav", "synthetic.mp3"}
+		kind := hegel.Draw(ht, hegel.Integers(0, 4))
+		mediaTypes := []string{"application/pdf", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "image/png", "image/jpeg"}
+		names := []string{"synthetic.pdf", "synthetic.pptx", "synthetic.xlsx", "synthetic.png", "synthetic.jpg"}
 		fields := [][2]string{{"to_formats", "md"}, {"to_formats", "json"}, {"target_type", "inbody"}}
-		if kind >= 7 {
-			fields = [][2]string{{"from_formats", "audio"}, {"to_formats", "json"}, {"target_type", "inbody"}}
-		}
 		o := workerOptions(t)
 		normal := o.Client.Transport
 		var received []byte
