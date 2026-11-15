@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/docbank/document/docling"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/plaintext"
+	"go.kenn.io/docbank/document/workerprotocol"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -61,11 +62,16 @@ func TestProcessingServiceRejectsWorkerDescriptorWithNativeAdapter(t *testing.T)
 	})
 	var profile document.ProcessingProfileV1
 	require.NoError(t, json.Unmarshal(stored.CanonicalProfile, &profile))
-	_, err = NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+	config := ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 		Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(),
 		Profiles: map[string]ProfileConfig{"worker": {Profile: profile, RenditionProvider: provider, RenditionDisclosure: RuntimeDisclosure{Endpoint: "http://127.0.0.1:5002"}}},
-	})
+	}
+	_, err = NewService(t.Context(), config)
 	require.Error(t, err)
+	profile.Rendition.AdapterContract = workerprotocol.DocumentAdapter
+	config.Profiles["worker"] = ProfileConfig{Profile: profile, RenditionProvider: provider, RenditionDisclosure: RuntimeDisclosure{Endpoint: "http://127.0.0.1:5002"}}
+	_, err = NewService(t.Context(), config)
+	require.NoError(t, err)
 }
 
 func TestProcessingServiceRefusesUnsupportedFormatBeforeEnqueue(t *testing.T) {

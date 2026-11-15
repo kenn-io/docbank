@@ -416,7 +416,9 @@
           <!-- The run button shows progress. -->
         {:else if failed}
           <p class="error">
-            Failed{status?.failure_code ? `: ${status.failure_code.replaceAll("_", " ")}` : "."}
+            {status?.failure_code === "provider_task_failed"
+              ? "The worker couldn't process this file. Check its API key, source size limit, and backend task, then try again."
+              : `Failed${status?.failure_code ? `: ${status.failure_code.replaceAll("_", " ")}` : "."}`}
           </p>
         {:else if done}
           <p>{labels.done}</p>

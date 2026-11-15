@@ -238,7 +238,9 @@ describe("processing dialog", () => {
         ),
     );
     await fireEvent.click(await enabledRun());
-    expect(await screen.findByText(/try again|retry/i)).toBeTruthy();
+    expect(
+      await screen.findByText(/API key.*source size limit.*backend task.*try again/i),
+    ).toBeTruthy();
   });
 
   it("keeps the job after a truncated status stream", async () => {

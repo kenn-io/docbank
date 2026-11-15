@@ -31,6 +31,7 @@ import (
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/pdftext"
 	"go.kenn.io/docbank/document/upload"
+	"go.kenn.io/docbank/document/workerprotocol"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/formatcoverage"
 	"go.kenn.io/docbank/internal/jobs"
@@ -526,10 +527,8 @@ func NewService(ctx context.Context, config ServiceConfig) (*Service, error) {
 				return nil, fmt.Errorf("processing profile %q requires a rendition provider", name)
 			}
 			descriptor := supplied.RenditionProvider.Descriptor()
-			if descriptor.ID != profile.Rendition.Descriptor.ID ||
-				descriptor.Fingerprint != profile.Rendition.Descriptor.Fingerprint ||
-				string(descriptor.TrustBoundary) != profile.Rendition.TrustBoundary {
-				return nil, fmt.Errorf("processing profile %q rendition provider differs from its descriptor", name)
+			if !renditionDescriptorMatches(*profile.Rendition, descriptor) {
+				return nil, fmt.Errorf("processing profile %q rendition provider or adapter differs from its descriptor", name)
 			}
 			switch descriptor.TrustBoundary {
 			case document.RenditionTrustLocalProcess, document.RenditionTrustOperatorNetwork, document.RenditionTrustHostedProvider:
@@ -2722,6 +2721,17 @@ func sameProvider(existing, candidate any) bool {
 		return false
 	}
 	return existing == candidate
+}
+
+func renditionDescriptorMatches(binding document.RenditionBindingV1, descriptor document.RenditionDescriptor) bool {
+	if descriptor.ID != binding.Descriptor.ID || descriptor.Fingerprint != binding.Descriptor.Fingerprint || string(descriptor.TrustBoundary) != binding.TrustBoundary {
+		return false
+	}
+	workerAdapter := binding.AdapterContract == workerprotocol.DocumentAdapter || binding.AdapterContract == workerprotocol.ASRAdapter
+	if (descriptor.ID == workerprotocol.ProviderID) != workerAdapter {
+		return false
+	}
+	return !workerAdapter || (binding.AdapterContract == workerprotocol.DocumentAdapter) == descriptor.ReturnsMarkdown
 }
 
 func renditionRuntimeDisclosure(supplied RuntimeDisclosure, binding document.RenditionBindingV1,

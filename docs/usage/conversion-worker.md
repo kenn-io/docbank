@@ -194,6 +194,11 @@ After Docling completes, `backend_task_status` preserves Docling `success` or
 `partial_success`; `partial_success` remains readable from
 `GET /v1/result/<id>`. `GET /ready` checks backend readiness for new work.
 Existing-key recovery precedes readiness.
+A rejected gateway API key or an upload above the gateway's source-size limit
+ends the processing job. Correct the key or limit, then run processing again;
+Docbank rechecks consent and uses the same request key. A retained task marked
+retryable can also be run again after fixing the backend issue. A terminal
+backend task failure stays terminal and is not resubmitted.
 
 The gateway does not select or process vault files automatically. A client must
 implement the stable-key protocol. An ordinary native Docling endpoint does

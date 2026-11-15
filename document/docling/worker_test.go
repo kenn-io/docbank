@@ -1,6 +1,7 @@
 package docling
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -153,12 +154,14 @@ func TestWorkerFailedLookupOnlyRepostsRetryableTask(t *testing.T) {
 			require.Error(t, err)
 			state.failed.Store(true)
 			state.retryable.Store(retryable)
-			_, err = document.RenderRendition(t.Context(), client, f.upload(), f.authorization)
+			source := bytes.NewReader(f.source)
+			_, err = document.RenderRendition(t.Context(), client, &testUpload{Reader: source, metadata: f.metadata}, f.authorization)
 			if retryable {
 				require.NoError(t, err)
 				require.Equal(t, int32(2), state.posts.Load())
 			} else {
 				require.Error(t, err)
+				require.Equal(t, len(f.source), source.Len())
 				require.Equal(t, int32(1), state.posts.Load())
 			}
 		})

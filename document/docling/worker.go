@@ -340,14 +340,29 @@ func (client *Client) lookupWorker(ctx context.Context, run *rendering, key stri
 		return taskResponse{}, false, nil
 	}
 	if response.Status != 200 {
-		return taskResponse{}, false, provider.StatusError(providerutil.StageJob, response.Status, response.RetryAfter, nil)
+		return taskResponse{}, false, workerStatusError(providerutil.StageJob, response, response.Status == http.StatusUnauthorized)
 	}
-	task, err := parseTaskForProtocol(response.Body, true)
+	return workerLookupTask(response.Body)
+}
+func workerLookupTask(body []byte) (taskResponse, bool, error) {
+	task, err := parseTaskForProtocol(body, true)
 	if err != nil {
 		return taskResponse{}, false, provider.Malformed("worker lookup is invalid", err)
 	}
+	if task.status == "failure" && !task.retryable {
+		return taskResponse{}, false, taskStatusError(task.status)
+	}
 	return task, true, nil
 }
+
+func workerStatusError(stage providerutil.Stage, response providerutil.Response, retryable bool) error {
+	var cause error
+	if retryable {
+		cause = workerprotocol.ErrRetainedTaskFailed
+	}
+	return provider.StatusError(stage, response.Status, response.RetryAfter, cause)
+}
+
 func (client *Client) readyWorker(ctx context.Context, run *rendering) error {
 	response, err := client.workerRequest(ctx, run, providerutil.Request{Stage: providerutil.StageJob, Method: http.MethodGet, Path: workerprotocol.ReadyPath, MaxResponseBytes: 4096})
 	if err != nil {
