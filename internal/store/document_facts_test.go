@@ -9,36 +9,78 @@ import (
 
 func checkDocumentPeopleFactsRetiredSender(t *testing.T, newStore func(*testing.T) *Store) {
 	t.Helper()
-	s := newStore(t)
-	ctx := t.Context()
-	version, target := ingestDocumentEventTarget(t, s, "retired-sender.txt", "d5")
-	record := documentEventRecord(t, s.VaultID(), version.ID, "d5")
-	record.Events[0].Actors = []document.DocumentEventActorV1{{
-		Role: "sender", ActorKey: "email:sender@example.test", Address: "sender@example.test", Claim: "sender@example.test",
-	}}
-	_, err := s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
-	require.NoError(t, err)
-	input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
-	require.NoError(t, err)
-	_, err = s.PublishDocumentPeople(ctx, documentPeoplePublicationForInput(t, input))
-	require.NoError(t, err)
-	person := input.Bindings["email:sender@example.test"][0]
-	_, err = s.RetirePerson(ctx, person.PersonID, person.Revision)
-	require.NoError(t, err)
-	input, err = s.PrepareDocumentPeopleInputs(ctx, version.ID)
-	require.NoError(t, err)
-	_, err = s.PublishDocumentPeople(ctx, DocumentPeoplePublication{
-		People:     document.DocumentPeopleV1{ContractVersion: document.PersonContractV1, ContentVersionID: version.ID, EventGenerationID: input.EventGenerationID, Edges: []document.DocumentPersonEdgeV1{}},
-		Resolution: DocumentPeopleResolution{SuppressedActors: 1}, InputsSHA256: fakeHash("a5"), ResolverFingerprint: document.PersonResolverFingerprint(), NodeID: input.NodeID, BindingEpoch: input.BindingEpoch, NodeRevision: input.NodeRevision,
-	})
-	require.NoError(t, err)
-	for _, safe := range []bool{true, false} {
-		facts, err := s.DocumentPeopleFacts(ctx, version.ID, safe)
-		require.NoError(t, err)
-		require.Equal(t, "published", facts.State)
-		require.Empty(t, facts.Edges)
-		require.Empty(t, facts.Candidates)
+	for _, external := range []bool{false, true} {
+		name := "email"
+		if external {
+			name = "external UID"
+		}
+		t.Run(name, func(t *testing.T) {
+			s := newStore(t)
+			ctx := t.Context()
+			key := "email:sender@example.test"
+			if external {
+				person, err := s.CreatePerson(ctx, "Synthetic Sender", "transfer")
+				require.NoError(t, err)
+				identity := PersonExternalIdentity{PersonID: person.PersonID, System: "msgvault", ArchiveID: "synthetic", UID: "person-1", UIDKind: "vcard_uid", UIDState: "current", DisplayNameSnapshot: person.DisplayName}
+				_, err = s.LinkExternalIdentity(ctx, identity, person.Revision)
+				require.NoError(t, err)
+				key, err = document.ExternalPersonActorKey(identity.System, identity.ArchiveID, identity.UID)
+				require.NoError(t, err)
+			}
+			version, target := ingestDocumentEventTarget(t, s, "retired-sender.txt", "d5")
+			record := documentEventRecord(t, s.VaultID(), version.ID, "d5")
+			record.Events[0].Actors = []document.DocumentEventActorV1{{
+				Role: "sender", ActorKey: key, DisplayName: "Synthetic Sender", Claim: "Synthetic Sender",
+			}}
+			_, err := s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+			require.NoError(t, err)
+			input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
+			require.NoError(t, err)
+			require.Len(t, input.Bindings[key], 1)
+			person := input.Bindings[key][0]
+			_, err = s.RetirePerson(ctx, person.PersonID, person.Revision)
+			require.NoError(t, err)
+			input, err = s.PrepareDocumentPeopleInputs(ctx, version.ID)
+			require.NoError(t, err)
+			_, err = s.PublishDocumentPeople(ctx, DocumentPeoplePublication{
+				People:     document.DocumentPeopleV1{ContractVersion: document.PersonContractV1, ContentVersionID: version.ID, EventGenerationID: input.EventGenerationID, Edges: []document.DocumentPersonEdgeV1{}},
+				Resolution: DocumentPeopleResolution{SuppressedActors: 1}, InputsSHA256: fakeHash("a5"), ResolverFingerprint: document.PersonResolverFingerprint(), NodeID: input.NodeID, BindingEpoch: input.BindingEpoch, NodeRevision: input.NodeRevision,
+			})
+			require.NoError(t, err)
+			for _, safe := range []bool{true, false} {
+				facts, err := s.DocumentPeopleFacts(ctx, version.ID, safe)
+				require.NoError(t, err)
+				require.Equal(t, "published", facts.State)
+				require.Empty(t, facts.Edges)
+				require.Empty(t, facts.Candidates)
+			}
+		})
 	}
+	t.Run("operator suppression", func(t *testing.T) {
+		s := newStore(t)
+		ctx := t.Context()
+		version, target := ingestDocumentEventTarget(t, s, "suppressed-sender.txt", "d6")
+		record := documentEventRecord(t, s.VaultID(), version.ID, "d6")
+		record.Events[0].Actors = []document.DocumentEventActorV1{{Role: "sender", ActorKey: "email:sender@example.test", Address: "sender@example.test", Claim: "sender@example.test"}}
+		_, err := s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+		require.NoError(t, err)
+		input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
+		require.NoError(t, err)
+		person := input.Bindings["email:sender@example.test"][0]
+		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: person.PersonID, Role: "sender", Action: "suppress", Revision: 1})
+		require.NoError(t, err)
+		input, err = s.PrepareDocumentPeopleInputs(ctx, version.ID)
+		require.NoError(t, err)
+		_, err = s.PublishDocumentPeople(ctx, DocumentPeoplePublication{
+			People:       document.DocumentPeopleV1{ContractVersion: document.PersonContractV1, ContentVersionID: version.ID, EventGenerationID: input.EventGenerationID, Edges: []document.DocumentPersonEdgeV1{}},
+			InputsSHA256: fakeHash("a6"), ResolverFingerprint: document.PersonResolverFingerprint(), NodeID: input.NodeID, BindingEpoch: input.BindingEpoch, NodeRevision: input.NodeRevision,
+		})
+		require.NoError(t, err)
+		facts, err := s.DocumentPeopleFacts(ctx, version.ID, false)
+		require.NoError(t, err)
+		require.Len(t, facts.Assertions, 1)
+		require.Empty(t, facts.Candidates)
+	})
 }
 
 func checkDocumentPeopleFactsMergeResolvesCandidate(t *testing.T, newStore func(*testing.T) *Store) {
