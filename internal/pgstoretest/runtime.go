@@ -193,6 +193,13 @@ func RuntimeConfig(tb testing.TB, setup *sql.DB, cfg pgschema.Config) *pgx.ConnC
 		"; GRANT INSERT,UPDATE(published,base_held,observed_identity,observed_hash,observed_size,observed_mtime,observed_since,working_state,version_id,blob_hash,size) ON "+schema+".photo_checkout_entries TO "+quotedRole)
 	require.NoError(tb, err)
 
+	_, err = setup.ExecContext(ctx, "GRANT INSERT,DELETE ON "+schema+".vector_index_generations TO "+quotedRole+
+		"; GRANT INSERT,DELETE,UPDATE(generation_id,source_manifest_checksum) ON "+schema+".vector_index_heads TO "+quotedRole+
+		"; GRANT INSERT,UPDATE(source_manifest_checksum,owner,fencing_token,lease_expires_at) ON "+schema+".vector_index_build_jobs TO "+quotedRole+
+		"; GRANT DELETE ON "+schema+".vector_index_reader_leases TO "+quotedRole+
+		"; GRANT INSERT,DELETE ON "+schema+".vector_index_unavailable_coverage TO "+quotedRole)
+	require.NoError(tb, err)
+
 	config, err := pgx.ParseConfig(os.Getenv("DOCBANK_TEST_POSTGRES_DSN"))
 	require.NoError(tb, err)
 	require.NoError(tb, setup.QueryRowContext(ctx, `SELECT current_database()`).Scan(&config.Database))

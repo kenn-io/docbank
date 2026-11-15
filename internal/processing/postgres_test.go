@@ -149,3 +149,31 @@ func TestEmbeddingPhotoWorkersPostgres(t *testing.T) {
 		})
 	}
 }
+
+func TestVectorIndexWorkersPostgres(t *testing.T) {
+	t.Parallel()
+	t.Run("ProcessingServiceCompletesImageEmbedding", func(t *testing.T) {
+		t.Parallel()
+		checkProcessingServiceCompletesImageEmbedding(t, postgresPhotoDescriptionFixture)
+	})
+	t.Run("VectorIndexRestoresRetainedVectors", func(t *testing.T) {
+		t.Parallel()
+		checkVectorIndexRestoresRetainedVectors(t, postgresPublicationFixture)
+	})
+	t.Run("ProcessingServiceCompletesEmbeddingAfterWorkerStops", func(t *testing.T) {
+		t.Parallel()
+		checkProcessingServiceCompletesEmbeddingAfterWorkerStops(t, postgresPublicationFixture)
+	})
+	t.Run("VectorIndexFailedReadReleasesBuildClaim", func(t *testing.T) {
+		t.Parallel()
+		checkVectorIndexFailedReadReleasesBuildClaim(t, postgresPublicationFixture)
+	})
+	t.Run("VectorIndexWorkerRetiresTrashedSource", func(t *testing.T) {
+		t.Parallel()
+		checkVectorIndexWorkerRetiresTrashedSource(t, postgresPublicationFixture)
+	})
+	t.Run("VectorIndexMaintenanceCanRunDuringPayloadRead", func(t *testing.T) {
+		t.Parallel()
+		checkVectorIndexMaintenanceCanRunDuringPayloadRead(t, postgresPublicationFixture)
+	})
+}

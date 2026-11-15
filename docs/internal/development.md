@@ -387,9 +387,8 @@ sessions and photo settings have native Store contracts as well.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Direct embedding-worker publication/recovery, photo
-descriptions and face detection have qualification below. Foreground embedding
-through the processing service fails at its vector-index rebuild after publishing
-vectors. Face embedding/matching workers,
+descriptions and face detection have qualification below. Foreground direct-file
+and image embedding can publish a vector index before returning. Face embedding/matching workers,
 remote-media acquisition, search and PostgreSQL-target backup recovery remain unqualified.
 Native multi-store catalog operations are qualified below; deployment adapters
 and filesystem workers remain separate from public PostgreSQL vault opening.
@@ -629,6 +628,13 @@ GRANT INSERT, UPDATE(failure_code, failed_at, fencing_token, attachment_id)
 GRANT INSERT, UPDATE(state, claim_owner, claim_epoch, claim_count, lease_expires_at,
     available_at, failure_code, receipt_json, updated_at)
     ON documents.embedding_jobs TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.vector_index_generations TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(generation_id, source_manifest_checksum)
+    ON documents.vector_index_heads TO docbank_runtime;
+GRANT INSERT, UPDATE(source_manifest_checksum, owner, fencing_token, lease_expires_at)
+    ON documents.vector_index_build_jobs TO docbank_runtime;
+GRANT DELETE ON documents.vector_index_reader_leases TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.vector_index_unavailable_coverage TO docbank_runtime;
 GRANT INSERT ON documents.page_documents, documents.page_frames,
     documents.page_recipes, documents.page_images, documents.email_generations,
     documents.email_part_artifacts, documents.email_attachments,
@@ -971,12 +977,9 @@ catalog/blob failures, renewed provider authorization and reconciliation after
 consent changes. Published vectors and heads are retained in the real Store
 and managed blob files; the embedding provider stays injected.
 
-The embedding scenarios call `EmbeddingWorker` directly. Foreground embedding
-through the processing service still fails on PostgreSQL after publishing the
-vectors, when it rebuilds the vector index. That rebuild reads membership through
-`captureVectorIndexSourceTx`, which still uses SQLite-only SQL. Worker coverage
-does not establish successful service completion. Vector-index construction
-belongs to the unqualified search work.
+The embedding scenarios in this group call `EmbeddingWorker` directly.
+Foreground service completion and vector-index construction have their own
+native scenarios below; worker coverage alone does not qualify those paths.
 
 Photo service scenarios use a local synthetic vision endpoint and real preview
 bytes. They cover description consent and admission, preview publication,
@@ -990,6 +993,39 @@ The existing SQLite test entry points call the same scenarios and retain their
 parallelism. Unit tests with fake catalogs remain independent of PostgreSQL.
 The listed scenarios establish operation coverage, not exhaustive qualification
 of every worker branch or producer.
+
+#### Vector-index publication and recovery
+
+The Store captures current original-file, rendition-chunk and image membership,
+claims a build, stages immutable index bytes, and publishes the head under the
+same writer admission on both backends. A changed source or superseded claim
+cannot replace the prior head. A failed publication rolls back the head and
+claim changes together. Reading an active generation keeps its head and bytes
+in one repeatable-read snapshot, including when a concurrent publication and
+cleanup delete the old generation.
+
+`TestVectorIndexWorkersPostgres` exercises foreground direct-file and image
+embedding through `Service.Start`: completion includes a published vector index.
+The native index worker also retries a failed payload read, retires indexes for
+trashed sources, and leaves maintenance admission free while reading payloads.
+Index reconstruction reads retained original/chunk vectors without invoking the
+provider. Missing payloads produce unavailable coverage and cannot publish an
+index; restoring their bytes allows reconstruction to finish.
+
+The PostgreSQL schema includes the disposable build, lease and unavailable
+coverage catalogs. Generations are insert/delete only for the runtime role;
+heads and build claims get only their required update columns. Build owners
+retain accepted NUL and backslash characters through byte bindings. These
+catalogs remain outside portable metadata; index reconstruction uses retained
+embedding authority and bytes.
+
+Reader-lease acquisition, membership-epoch memoization, semantic result
+resolution and ranked/lexical search remain unqualified on PostgreSQL. The
+reader-lease table supports cleanup's pin checks, but the runtime fixture cannot
+insert leases. SQLite retains its existing per-space membership epochs and
+memoization; this port adds no PostgreSQL scan fallback to those query paths.
+Public PostgreSQL vault opening and PostgreSQL-target physical restore remain
+separate.
 
 #### Backup capture and SQLite recovery
 

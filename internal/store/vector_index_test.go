@@ -21,9 +21,9 @@ import (
 	"go.kenn.io/kit/packstore"
 )
 
-func TestVectorIndexSourceCapturesExactEligibleMembership(t *testing.T) {
-	t.Parallel()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+func checkVectorIndexSourceCapturesExactEligibleMembership(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
@@ -35,8 +35,10 @@ func TestVectorIndexSourceCapturesExactEligibleMembership(t *testing.T) {
 		ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
 	}))
 
+	revision := s.WriteRevision()
 	source, err := s.CaptureVectorIndexSource(t.Context(), record.VectorSpace.ID)
 	require.NoError(t, err)
+	assert.Equal(t, revision, s.WriteRevision(), "capturing membership must not wake mutation observers")
 	assert.Equal(t, record.VectorSpace.ID, source.VectorSpaceID)
 	assert.Equal(t, []VectorIndexMember{{
 		EmbeddingSetID: record.ID, VectorSetID: record.VectorSet.ID,
@@ -44,11 +46,8 @@ func TestVectorIndexSourceCapturesExactEligibleMembership(t *testing.T) {
 	}}, source.Members)
 	assert.Equal(t, vectorIndexSourceChecksum(source.Members), source.ManifestChecksum)
 
-	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(t.Context(), `UPDATE nodes SET trashed_at=? WHERE current_version_id=?`,
-			embeddingCatalogTime, versionID)
-		return err
-	}))
+	_, _, trashErr := s.TrashPath(t.Context(), "/synthetic-source-a.pdf")
+	require.NoError(t, trashErr)
 	_, err = s.CaptureVectorIndexSource(t.Context(), record.VectorSpace.ID)
 	require.ErrorIs(t, err, ErrNotFound)
 }
@@ -78,7 +77,7 @@ func TestImageEmbeddingEligibilityUsesVersionIndex(t *testing.T) {
 	record, _ := f.publish(t)
 	fingerprints, err := document.CurrentPhotoQualityFingerprints()
 	require.NoError(t, err)
-	plan := explainQueryPlan(t, f.s, `SELECT `+imageEmbeddingPreviewEligibilitySQL("embedding_generation_inputs", "?")+` FROM embedding_input_generations g WHERE g.generation_id=?`, fingerprints.GridRecipe, record.InputGeneration.ID)
+	plan := explainQueryPlan(t, f.s, `SELECT `+f.s.imageEmbeddingPreviewEligibilitySQL("embedding_generation_inputs", "?")+` FROM embedding_input_generations g WHERE g.generation_id=?`, fingerprints.GridRecipe, record.InputGeneration.ID)
 	require.Contains(t, plan, "SEARCH n USING INTEGER PRIMARY KEY", plan)
 }
 
@@ -136,9 +135,9 @@ func TestOpenBootstrapsMissingVectorMembershipEpochs(t *testing.T) {
 	require.Equal(t, source.ManifestChecksum, memoVectorSourceChecksum(t, reopened, source.VectorSpaceID))
 }
 
-func TestVectorIndexPublicationFencesMembershipDriftAndKeepsPriorHead(t *testing.T) {
-	t.Parallel()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+func checkVectorIndexPublicationFencesMembershipDriftAndKeepsPriorHead(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 	first := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), first))
@@ -165,11 +164,8 @@ func TestVectorIndexPublicationFencesMembershipDriftAndKeepsPriorHead(t *testing
 	require.True(t, claimed)
 	stale := vectorIndexGenerationFixture("stale", source, []byte("stale-generation"), now)
 	require.NoError(t, s.StageVectorIndexGeneration(t.Context(), staleClaim, stale, now.Add(2*time.Minute)))
-	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(t.Context(), `UPDATE nodes SET trashed_at=? WHERE current_version_id=?`,
-			"2026-08-26T12:01:00.000000000Z", versionID)
-		return err
-	}))
+	_, _, trashErr := s.TrashPath(t.Context(), "/synthetic-source-a.pdf")
+	require.NoError(t, trashErr)
 
 	err = s.PublishVectorIndexGeneration(t.Context(), staleClaim, stale.ID, now.Add(2*time.Minute))
 	require.ErrorIs(t, err, ErrVectorIndexSourceStale)
@@ -238,9 +234,9 @@ func TestVectorIndexProjectionStateIsExcludedFromPortableMetadata(t *testing.T) 
 	}
 }
 
-func TestVectorIndexCandidateCanBeRestagedAfterCrashedClaimExpires(t *testing.T) {
-	t.Parallel()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+func checkVectorIndexCandidateCanBeRestagedAfterCrashedClaimExpires(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
@@ -254,7 +250,7 @@ func TestVectorIndexCandidateCanBeRestagedAfterCrashedClaimExpires(t *testing.T)
 	require.NoError(t, err)
 	now := time.Date(2026, 8, 26, 15, 0, 0, 0, time.UTC)
 	firstClaim, claimed, err := s.ClaimVectorIndexBuild(t.Context(), source.VectorSpaceID,
-		source.ManifestChecksum, "crashed-worker", now, time.Minute)
+		source.ManifestChecksum, "crashed\\worker\x00", now, time.Minute)
 	require.NoError(t, err)
 	require.True(t, claimed)
 	candidate := vectorIndexGenerationFixture("crash-retry", source, []byte("same-candidate"), now)
@@ -359,9 +355,9 @@ func vectorIndexGenerationExistsForTest(t *testing.T, s *Store, generationID str
 	return present
 }
 
-func TestVectorIndexChangedMembershipSupersedesLiveBuildClaim(t *testing.T) {
-	t.Parallel()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+func checkVectorIndexChangedMembershipSupersedesLiveBuildClaim(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 	first := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), first))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
@@ -410,7 +406,12 @@ func TestVectorIndexChangedMembershipSupersedesLiveBuildClaim(t *testing.T) {
 
 func newPublishedVectorIndexFixture(tb testing.TB) (*Store, EmbeddingSetRecord, VectorIndexSource) {
 	tb.Helper()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(tb)
+	return publishedVectorIndexFixture(tb, newTestStore(tb))
+}
+
+func publishedVectorIndexFixture(tb testing.TB, catalog *Store) (*Store, EmbeddingSetRecord, VectorIndexSource) {
+	tb.Helper()
+	s, versionID, profile, _ := seedEmbeddingCatalog(tb, catalog)
 	record := embeddingSetFixture(tb.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(tb, s.StageEmbeddingSet(tb.Context(), record))
 	require.NoError(tb, s.PublishEmbeddingHead(tb.Context(), EmbeddingHeadRecord{
@@ -526,9 +527,10 @@ func TestVectorIndexAcquireRejectsHeadReplacedBeforeLease(t *testing.T) {
 	require.Zero(t, count)
 }
 
-func TestVectorIndexSourceCaptureMatchesPerMemberRule(t *testing.T) {
-	t.Parallel()
-	f, image := newMixedVectorIndexFixture(t)
+func checkVectorIndexSourceCaptureMatchesPerMemberRule(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	f := seedImageEmbeddingCatalog(t, open(t), document.EmbeddingInputOriginalFile, document.EmbeddingInputRenditionChunk, document.EmbeddingInputImage)
+	image, _ := f.publish(t)
 	s := f.s
 	var err error
 	space := image.VectorSpace.ID
@@ -599,7 +601,7 @@ func TestVectorIndexSourceCaptureMatchesPerMemberRule(t *testing.T) {
 		}
 	}
 	check("mixed space with visible hidden and trashed photos", image.ID, originals[0].ID, chunk.ID)
-	_, err = s.db.ExecContext(t.Context(), `DELETE FROM rendition_heads WHERE attachment_id=?`, attachment.ID)
+	_, err = s.db.ExecContext(t.Context(), `DELETE FROM rendition_heads WHERE attachment_id=$1`, attachment.ID)
 	require.NoError(t, err)
 	check("removed rendition head", image.ID, originals[0].ID)
 }
@@ -910,7 +912,7 @@ func TestVectorIndexSourceMemoKeepsNewerSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, s.withReadTx(t.Context(), func(tx *sql.Tx) error {
 		// Pin the old snapshot before the membership write and newer search.
-		old, err := captureVectorIndexSourceTx(t.Context(), tx, image.VectorSpace.ID)
+		old, err := s.captureVectorIndexSourceTx(t.Context(), tx, image.VectorSpace.ID)
 		require.NoError(t, err)
 		require.Equal(t, before.ManifestChecksum, old.ManifestChecksum)
 		_, _, err = s.Trash(t.Context(), f.node.ID, UnconditionalRev)

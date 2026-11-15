@@ -22,6 +22,56 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
+	{name: "vector-index-publication", postgres: "native operations", scope: "Source membership, fenced build claims, immutable generation publication, crash retry and garbage collection; excludes reader-lease acquisition, membership memoization and ranked search; native worker/service completion and reconstruction run in internal/processing.", scenarios: []backendScenario{
+		{"VectorIndexSourceCapturesExactEligibleMembership", func(t *testing.T) {
+			t.Helper()
+			t.Parallel()
+			checkVectorIndexSourceCapturesExactEligibleMembership(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			t.Parallel()
+			checkVectorIndexSourceCapturesExactEligibleMembership(t, newPostgresQueryStore)
+		}},
+		{"VectorIndexPublicationFencesMembershipDriftAndKeepsPriorHead", func(t *testing.T) {
+			t.Helper()
+			t.Parallel()
+			checkVectorIndexPublicationFencesMembershipDriftAndKeepsPriorHead(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			t.Parallel()
+			checkVectorIndexPublicationFencesMembershipDriftAndKeepsPriorHead(t, newPostgresQueryStore)
+		}},
+		{"VectorIndexCandidateCanBeRestagedAfterCrashedClaimExpires", func(t *testing.T) {
+			t.Helper()
+			t.Parallel()
+			checkVectorIndexCandidateCanBeRestagedAfterCrashedClaimExpires(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			t.Parallel()
+			checkVectorIndexCandidateCanBeRestagedAfterCrashedClaimExpires(t, newPostgresQueryStore)
+		}},
+		{"VectorIndexChangedMembershipSupersedesLiveBuildClaim", func(t *testing.T) {
+			t.Helper()
+			t.Parallel()
+			checkVectorIndexChangedMembershipSupersedesLiveBuildClaim(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			t.Parallel()
+			checkVectorIndexChangedMembershipSupersedesLiveBuildClaim(t, newPostgresQueryStore)
+		}},
+		{"VectorIndexSourceCaptureMatchesPerMemberRule", func(t *testing.T) {
+			t.Helper()
+			t.Parallel()
+			checkVectorIndexSourceCaptureMatchesPerMemberRule(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			t.Parallel()
+			checkVectorIndexSourceCaptureMatchesPerMemberRule(t, newPostgresQueryStore)
+		}},
+		{"VectorIndexPublicationRollback", nil, checkVectorIndexPublicationRollbackPostgres},
+		{"VectorIndexGenerationSnapshot", nil, checkVectorIndexGenerationSnapshotPostgres},
+	}},
+
 	{name: "metadata-import", postgres: "native operations", scope: "Owner-only logical import into fresh PostgreSQL, SQLite round trips and derived-state recovery; excludes blob-byte verification, physical pack recovery and public opening.", scenarios: []backendScenario{
 		{"MetadataImportCatalogs", nil, checkMetadataImportCatalogsPostgres},
 		{"RetainedStringNativeWrites", nil, checkRetainedStringNativeWritesPostgres},
@@ -2231,7 +2281,7 @@ var backendSuites = []backendSuite{
 			checkOlderCompleteReceiptCanCoexistWithNewerPendingCurrentCoverage(t, newPostgresQueryStore)
 		}},
 	}},
-	{name: "processing-publication", postgres: "native rendition/embedding/photo workers", scope: "internal/processing tests qualify shared-build publication, durable resume, consent/source fencing, email-PDF receipt/export, supplied-media continuation, direct original/chunk embedding-worker recovery, photo descriptions and face detection. Foreground embedding through the processing service still fails after vector publication at the vector-index rebuild. Face embedding/matching workers, remote acquisition and search remain unqualified."},
+	{name: "processing-publication", postgres: "native rendition/embedding/photo workers", scope: "internal/processing tests qualify shared-build publication, durable resume, consent/source fencing, email-PDF receipt/export, supplied-media continuation, direct original/chunk embedding-worker recovery, photo descriptions and face detection. Foreground direct-file/image completion and index recovery use vector-index-publication and internal/processing scenarios. Face embedding/matching workers, remote acquisition and search remain unqualified."},
 	{name: "photo-editing", postgres: "unqualified", scope: "Query-driven photo review remains unqualified. Explicit decisions use photo-review; people edits use people-curation; query selection stays with search."},
 	{name: "search", postgres: "unqualified", scope: "Lexical/vector search and query execution remain unqualified; matching metadata columns do not establish ranking or index parity."},
 	{name: "transfer-and-recovery", postgres: "native backup capture and SQLite recovery", scope: "internal/backupapp tests qualify repository capture, loose/packed bytes, audited and photo recovery, source loss and missing-byte failure. PostgreSQL-target restore remains unqualified; metadata-export and metadata-import cover native logical transfer."},
