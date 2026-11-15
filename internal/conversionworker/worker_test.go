@@ -57,6 +57,13 @@ func submitRequest(t *testing.T, w *Worker, key string, source []byte) *httptest
 }
 func submitNamed(t *testing.T, w *Worker, key, filename, mediaType string, source []byte, fields [][2]string) *httptest.ResponseRecorder {
 	t.Helper()
+	req := newSubmitNamedRequest(t, key, filename, mediaType, source, fields)
+	out := httptest.NewRecorder()
+	w.ServeHTTP(out, req)
+	return out
+}
+func newSubmitNamedRequest(t *testing.T, key, filename, mediaType string, source []byte, fields [][2]string) *http.Request {
+	t.Helper()
 	var body bytes.Buffer
 	m := multipart.NewWriter(&body)
 	header := make(textproto.MIMEHeader)
@@ -76,9 +83,7 @@ func submitNamed(t *testing.T, w *Worker, key, filename, mediaType string, sourc
 	req.Header.Set("Idempotency-Key", key)
 	sum := sha256.Sum256(source)
 	req.Header.Set("X-Docbank-Source-Sha256", hex.EncodeToString(sum[:]))
-	out := httptest.NewRecorder()
-	w.ServeHTTP(out, req)
-	return out
+	return req
 }
 func getRequest(ctx context.Context, w *Worker, path string) *httptest.ResponseRecorder {
 	r := httptest.NewRequestWithContext(ctx, http.MethodGet, path, nil)

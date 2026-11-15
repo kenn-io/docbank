@@ -431,12 +431,15 @@ func TestWorkerRunOnceSkipsConcurrentRetry(t *testing.T) {
 	item.State, item.Retryable, item.Submissions = stateFailure, true, 3
 	require.NoError(t, w.save(t.Context(), item))
 
+	request := newSubmitNamedRequest(t, key, "synthetic.pdf", "application/pdf", []byte("source"), [][2]string{{"to_formats", "md"}, {"to_formats", "json"}, {"target_type", "inbody"}})
 	w.runMu.Lock()
 	retryStarted := make(chan struct{})
 	retryDone := make(chan *httptest.ResponseRecorder, 1)
+	out := httptest.NewRecorder()
 	go func() {
 		close(retryStarted)
-		retryDone <- submitRequest(t, w, key, []byte("source"))
+		w.ServeHTTP(out, request)
+		retryDone <- out
 	}()
 	<-retryStarted
 	worked, err := w.RunOnce(t.Context())
