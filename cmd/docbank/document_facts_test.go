@@ -47,6 +47,20 @@ func TestDocumentFactsTableEscapesAndTimezones(t *testing.T) {
 		require.NotContains(t, output.String(), "\x1b")
 	})
 
+	t.Run("people controls", func(t *testing.T) {
+		escaped := &api.VersionPeople{State: "published",
+			Edges:      []api.VersionPersonEdge{{Role: "author", DisplayName: "edge\n\x1b[31m", Basis: "operator_assigned"}},
+			Assertions: []api.VersionPersonAssertion{{Role: "sender", DisplayName: "assertion\n\x1b[31m", Action: "suppress"}},
+			Unresolved: []api.VersionUnresolvedName{{Role: "recipient", RawLabel: "unresolved\n\x1b[31m"}},
+		}
+		var escapedOutput strings.Builder
+		require.NoError(t, writeVersionPeopleTable(&escapedOutput, escaped))
+		require.Contains(t, escapedOutput.String(), `"edge\n\x1b[31m"`)
+		require.Contains(t, escapedOutput.String(), `"assertion\n\x1b[31m"`)
+		require.Contains(t, escapedOutput.String(), `"unresolved\n\x1b[31m"`)
+		require.NotContains(t, escapedOutput.String(), "\x1b")
+	})
+
 	t.Run("published claim", func(t *testing.T) {
 		result := &api.VersionDates{State: "published", Claims: []api.VersionDateClaim{{
 			Primary: true, DateKind: "vault_recorded", DateValue: "2024-03-15", Precision: "date", ClaimBasis: "source_asserted", When: api.WhenV1{State: "date"},
@@ -105,17 +119,7 @@ func TestDocumentPeopleTableBccLabels(t *testing.T) {
 	require.Contains(t, table.String(), "From package")
 	require.Contains(t, table.String(), `Last editor  "Editor"`)
 	require.Contains(t, table.String(), "From transfer")
-	escaped := &api.VersionPeople{State: "published",
-		Edges:      []api.VersionPersonEdge{{Role: "author", DisplayName: "edge\n\x1b[31m", Basis: "operator_assigned"}},
-		Assertions: []api.VersionPersonAssertion{{Role: "sender", DisplayName: "assertion\n\x1b[31m", Action: "suppress"}},
-		Unresolved: []api.VersionUnresolvedName{{Role: "recipient", RawLabel: "unresolved\n\x1b[31m"}},
-	}
-	var escapedOutput strings.Builder
-	require.NoError(t, writeVersionPeopleTable(&escapedOutput, escaped))
-	require.Contains(t, escapedOutput.String(), `"edge\n\x1b[31m"`)
-	require.Contains(t, escapedOutput.String(), `"assertion\n\x1b[31m"`)
-	require.Contains(t, escapedOutput.String(), `"unresolved\n\x1b[31m"`)
-	require.NotContains(t, escapedOutput.String(), "\x1b")
+
 }
 
 func TestDocumentPeopleTableAssertionSupport(t *testing.T) {
