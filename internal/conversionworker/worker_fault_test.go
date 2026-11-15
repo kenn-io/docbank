@@ -452,3 +452,36 @@ func TestWorkerRunOnceSkipsConcurrentRetry(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, getRequest(t.Context(), w, "/v1/result/"+id).Code)
 }
+
+func TestWorkerRetriesAfterBackendKeyCorrection(t *testing.T) {
+	o := workerOptions(t)
+	o.BackendKey = "synthetic-old-backend-key"
+	normal := o.Client.Transport
+	var submittedKeys []string
+	o.Client.Transport = backendTransport(func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodPost {
+			submittedKeys = append(submittedKeys, r.Header.Get("X-Api-Key"))
+			if r.Header.Get("X-Api-Key") != "synthetic-corrected-backend-key" {
+				_, _ = io.Copy(io.Discard, r.Body)
+				return backendResponse(r, http.StatusUnauthorized, `{}`), nil
+			}
+		}
+		return normal.RoundTrip(r)
+	})
+	w := openWorker(t, o)
+	key := strings.Repeat("a", 64)
+	id := taskID(t, submitRequest(t, w, key, []byte("source")))
+	_, err := w.RunOnce(t.Context())
+	require.NoError(t, err)
+	require.Contains(t, getRequest(t.Context(), w, "/v1/status/poll/"+id).Body.String(), `"task_status":"failure"`)
+	require.NoError(t, w.Close(t.Context()))
+	o.BackendKey = "synthetic-corrected-backend-key"
+	w = openWorker(t, o)
+	retry := submitRequest(t, w, key, []byte("source"))
+	require.Equal(t, id, taskID(t, retry))
+	require.Contains(t, retry.Body.String(), `"task_status":"pending"`)
+	_, err = w.RunOnce(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, getRequest(t.Context(), w, "/v1/result/"+id).Code)
+	require.Equal(t, []string{"synthetic-old-backend-key", "synthetic-corrected-backend-key"}, submittedKeys)
+}

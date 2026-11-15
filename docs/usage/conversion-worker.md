@@ -99,15 +99,16 @@ before success is reported, and reading a result does not delete it. Lookup
 and result recovery work when the spool is full or Docling is offline.
 
 A confirmed missing Docling task can be recomputed from retained input. The
-worker persists a lifetime limit of three accepted or possibly accepted
-backend submissions per job. A definite HTTP 429 refusal releases its reserved
-attempt and waits. An ambiguous transport or server failure keeps it charged.
-After exhaustion, the job fails and retains its input. Rerun the Docbank job to
-retry under the same worker ID. Rejected submissions and failed backend tasks
-remain failed. After two
-hours, a started backend task no longer holds up pending jobs. The worker
-rotates through stalled tasks and pending jobs, including when the backend
-refuses new submissions.
+worker allows up to three accepted or possibly accepted backend submissions
+per retry cycle. A definite HTTP 429 refusal releases its reserved attempt and
+waits. An ambiguous transport or server failure keeps it charged. After the
+limit is exhausted, the job fails and retains its input. A backend HTTP 401
+failure can be retried after correcting the backend key. To retry a failure
+marked `retryable`, repeat the upload with the same key, source, and options.
+The worker keeps the job ID and resets the submission count. Other permanent
+backend refusals and failed backend tasks stay failed. After two hours, a started
+backend task no longer holds up pending jobs. The worker rotates through stalled
+tasks and pending jobs, including when the backend refuses new submissions.
 Crashes can repeat compute; publication in Docbank remains separately fenced.
 
 There is no automatic expiry or garbage collection. At the storage or job
@@ -131,9 +132,9 @@ lowercase hexadecimal `Idempotency-Key`, and the exact input digest in
 `X-Docbank-Source-SHA256`. Only fixed in-body document or audio conversion
 options are accepted. The gateway returns a random 32-character hexadecimal
 task ID. `GET /v1/jobs/by-key/<key>` recovers that ID without contacting Docling.
-`GET /v1/status/poll/<id>` returns the worker lifecycle `task_status`; a
-recoverable failure also returns `retryable: true`. After
-Docling completes, `backend_task_status` preserves Docling `success` or
+`GET /v1/status/poll/<id>` returns the worker lifecycle `task_status`. Both
+lookup and status responses include `retryable: true` for a recoverable failure.
+After Docling completes, `backend_task_status` preserves Docling `success` or
 `partial_success`; `partial_success` remains readable from
 `GET /v1/result/<id>`. `GET /ready` checks backend readiness for new work.
 Existing-key recovery precedes readiness.
