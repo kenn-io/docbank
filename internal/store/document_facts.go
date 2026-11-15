@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 
 	"go.kenn.io/docbank/document"
 )
@@ -246,17 +245,23 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 }
 
 func appendUnretainedCandidates(ctx context.Context, tx *sql.Tx, candidates []VersionCandidate, occurrences []actorOccurrence, evidence map[actorOccurrence]occurrenceEvidence, matched map[actorOccurrence]bool, safe bool) ([]VersionCandidate, error) {
+	suppressed := make(map[string]bool)
 	for _, key := range occurrences {
 		match := evidence[key]
 		if matched[key] || safe && (key.occurrence.Role == "blind_copy" || match.sensitive) {
 			continue
 		}
-		if !strings.HasPrefix(key.actorKey, "name_alias:") {
-			people, err := peopleBoundToActorKeyTx(ctx, tx, key.actorKey)
-			if err != nil {
-				return nil, err
+		if actorKeyAutoProvisionEligible(key.actorKey) {
+			retired, seen := suppressed[key.actorKey]
+			if !seen {
+				people, err := peopleBoundToActorKeyTx(ctx, tx, key.actorKey)
+				if err != nil {
+					return nil, err
+				}
+				retired = len(people) == 1 && people[0].State == personStateRetired
+				suppressed[key.actorKey] = retired
 			}
-			if len(people) == 1 && people[0].State == personStateRetired {
+			if retired {
 				continue
 			}
 		}
