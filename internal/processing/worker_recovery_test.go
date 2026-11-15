@@ -199,7 +199,7 @@ func TestWorkerGatewayRetryRechecksConsentAndKeepsKey(t *testing.T) {
 			}
 			return &http.Response{Request: r, StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
 		})}
-		gateway, err := conversionworker.Open(t.Context(), conversionworker.Options{Directory: filepath.Join(t.TempDir(), "spool"), APIKey: "synthetic-worker-key", BackendURL: "http://127.0.0.1:5001", BackendKey: "synthetic-backend-key", Client: backend})
+		gateway, err := conversionworker.Open(t.Context(), conversionworker.Options{Directory: filepath.Join(t.TempDir(), "spool"), APIKey: "synthetic-worker-key", BackendURL: "http://127.0.0.1:5001", BackendKey: "synthetic-backend-key", Client: backend, MaxSourceBytes: 64 << 20, MaxResultBytes: 64 << 20, MaxJobs: 128, MaxSpoolBytes: 40 << 30})
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, gateway.Close(context.WithoutCancel(t.Context()))) })
 		var keys []string

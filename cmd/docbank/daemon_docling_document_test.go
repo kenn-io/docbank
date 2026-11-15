@@ -362,7 +362,7 @@ func TestDaemonDoclingDocumentProcessing(t *testing.T) {
 			t.Cleanup(provider.Close)
 			endpoint := provider.URL
 			if test.worker {
-				gateway, err := conversionworker.Open(t.Context(), conversionworker.Options{Directory: filepath.Join(t.TempDir(), "spool"), APIKey: "synthetic-document-key", BackendURL: provider.URL, BackendKey: "synthetic-document-key"})
+				gateway, err := conversionworker.Open(t.Context(), conversionworker.Options{Directory: filepath.Join(t.TempDir(), "spool"), APIKey: "synthetic-document-key", BackendURL: provider.URL, BackendKey: "synthetic-document-key", MaxSourceBytes: 64 << 20, MaxResultBytes: 64 << 20, MaxJobs: 128, MaxSpoolBytes: 40 << 30})
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, gateway.Close(context.WithoutCancel(t.Context()))) })
 				var loseReply atomic.Bool

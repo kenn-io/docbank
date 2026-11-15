@@ -463,7 +463,7 @@ func TestWorkerActualGatewayLostReplyAndResume(t *testing.T) {
 				}
 			}))
 			t.Cleanup(backend.Close)
-			options := conversionworker.Options{Directory: filepath.Join(t.TempDir(), "spool"), APIKey: "synthetic-worker-key", BackendURL: backend.URL, BackendKey: "synthetic-backend-key", Client: backend.Client()}
+			options := conversionworker.Options{Directory: filepath.Join(t.TempDir(), "spool"), APIKey: "synthetic-worker-key", BackendURL: backend.URL, BackendKey: "synthetic-backend-key", Client: backend.Client(), MaxSourceBytes: 64 << 20, MaxResultBytes: 64 << 20, MaxJobs: 128, MaxSpoolBytes: 40 << 30}
 			gateway, err := conversionworker.Open(t.Context(), options)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, gateway.Close(context.WithoutCancel(t.Context()))) })
