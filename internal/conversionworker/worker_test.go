@@ -214,7 +214,7 @@ func TestWorkerRetainsResultsAfterReopen(t *testing.T) {
 				require.Equal(t, status, task.BackendTaskStatus)
 				out = getRequest(t.Context(), w, "/v1/result/"+id)
 				require.Equal(t, http.StatusOK, out.Code)
-				require.Equal(t, []byte(result), out.Body.Bytes())
+				require.JSONEq(t, result, out.Body.String())
 				require.NoError(t, w.Close(t.Context()))
 				w = openWorker(t, o)
 			}
