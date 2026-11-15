@@ -330,7 +330,7 @@ func TestWorkerBackendRequestsCarryHopMarker(t *testing.T) {
 }
 
 func TestWorkerSubmissionBudget(t *testing.T) {
-	for _, scenario := range []string{"503 response", "lost response", "400 rejection"} {
+	for _, scenario := range []string{"503 response", "lost response", "400 rejection", "400 body error"} {
 		t.Run(scenario, func(t *testing.T) {
 			o := workerOptions(t)
 			normal := o.Client.Transport
@@ -343,8 +343,13 @@ func TestWorkerSubmissionBudget(t *testing.T) {
 						if scenario == "lost response" {
 							return nil, errors.New("synthetic lost response")
 						}
-						if scenario == "400 rejection" && posts == 3 {
-							return backendResponse(r, http.StatusBadRequest, `{}`), nil
+						if posts == 3 {
+							if scenario == "400 body error" {
+								return &http.Response{Request: r, StatusCode: http.StatusBadRequest, Header: make(http.Header), Body: backendResponseReadFailure{err: errors.New("synthetic body read failure")}}, nil
+							}
+							if strings.HasPrefix(scenario, "400 ") {
+								return backendResponse(r, http.StatusBadRequest, `{}`), nil
+							}
 						}
 						return backendResponse(r, 503, `{}`), nil
 					}
@@ -369,7 +374,7 @@ func TestWorkerSubmissionBudget(t *testing.T) {
 			require.NoError(t, w.Close(t.Context()))
 			w = openWorker(t, o)
 			response := submitRequest(t, w, key, []byte("source"))
-			if scenario == "400 rejection" {
+			if strings.HasPrefix(scenario, "400 ") {
 				require.Contains(t, response.Body.String(), "failure")
 				return
 			}
@@ -415,4 +420,32 @@ func TestWorkerReopensAfterLimitsLowered(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWorkerRunOnceSkipsConcurrentRetry(t *testing.T) {
+	o := workerOptions(t)
+	w := openWorker(t, o)
+	key := strings.Repeat("a", 64)
+	id := taskID(t, submitRequest(t, w, key, []byte("source")))
+	item := w.jobs[id]
+	item.State, item.Retryable, item.Submissions = stateFailure, true, 3
+	require.NoError(t, w.save(t.Context(), item))
+
+	w.runMu.Lock()
+	retryStarted := make(chan struct{})
+	retryDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		close(retryStarted)
+		retryDone <- submitRequest(t, w, key, []byte("source"))
+	}()
+	<-retryStarted
+	worked, err := w.RunOnce(t.Context())
+	w.runMu.Unlock()
+	retry := <-retryDone
+	require.NoError(t, err)
+	require.False(t, worked)
+	require.Equal(t, id, taskID(t, retry))
+	_, err = w.RunOnce(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, getRequest(t.Context(), w, "/v1/result/"+id).Code)
 }

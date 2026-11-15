@@ -62,7 +62,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 	stopOwner := context.AfterFunc(w.lifetime, cancel)
 	defer stopOwner()
 	if !w.runMu.TryLock() {
-		return false, errors.New("worker runner already active")
+		return false, nil
 	}
 	defer w.runMu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -143,7 +143,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 		if ctx.Err() != nil {
 			return true, ctx.Err()
 		}
-		if err != nil || status >= 500 || status == 408 {
+		if errors.Is(err, errBackendSourceRead) || status == 0 || status >= 500 || status == 408 || ((status == 200 || status == 202) && err != nil) {
 			return true, nil
 		}
 		if status != 200 && status != 202 {

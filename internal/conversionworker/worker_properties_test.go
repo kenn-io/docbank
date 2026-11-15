@@ -225,8 +225,10 @@ func TestWorkerBackendReceivesExactGeneratedOriginalAfterRestart(t *testing.T) {
 
 func TestWorkerRejectsInvalidUploads(t *testing.T) {
 	o := workerOptions(t)
-	o.MaxSourceBytes, o.MaxSpoolBytes = 32<<20, 128<<20
+	o.MaxSourceBytes, o.MaxSpoolBytes, o.MaxJobs = 32<<20, 128<<20, 3
 	w := openWorker(t, o)
+	wav := append([]byte("RIFF\x64\x1f\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x40\x1f\x00\x00\x40\x1f\x00\x00\x01\x00\x08\x00data\x40\x1f\x00\x00"), make([]byte, 8000)...)
+	require.Equal(t, http.StatusAccepted, submitNamed(t, w, strings.Repeat("d", 64), "synthetic.wav", "audio/wav", wav, [][2]string{{"from_formats", "audio"}, {"to_formats", "json"}, {"target_type", "inbody"}}).Code)
 	for _, candidate := range []struct {
 		filename, mediaType string
 		fields              [][2]string
@@ -235,7 +237,11 @@ func TestWorkerRejectsInvalidUploads(t *testing.T) {
 		{"synthetic.pdf", "application/pdf", [][2]string{{"from_formats", "audio"}, {"to_formats", "json"}, {"target_type", "inbody"}}},
 		{"synthetic.wav", "audio/wav", [][2]string{{"to_formats", "md"}, {"to_formats", "json"}, {"target_type", "inbody"}}},
 	} {
-		out := submitNamed(t, w, strings.Repeat("a", 64), candidate.filename, candidate.mediaType, []byte("x"), candidate.fields)
+		source := []byte("x")
+		if candidate.mediaType == "audio/wav" {
+			source = wav
+		}
+		out := submitNamed(t, w, strings.Repeat("a", 64), candidate.filename, candidate.mediaType, source, candidate.fields)
 		require.Equal(t, 400, out.Code)
 	}
 	body := "--synthetic\r\nContent-Disposition: form-data; name=\"files\"; filename=\"synthetic.pdf\"\r\nContent-Type: application/pdf\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nA\r\n--synthetic\r\nContent-Disposition: form-data; name=\"to_formats\"\r\n\r\njson\r\n--synthetic\r\nContent-Disposition: form-data; name=\"target_type\"\r\n\r\ninbody\r\n--synthetic--\r\n"
