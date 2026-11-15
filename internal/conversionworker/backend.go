@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -96,10 +97,16 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 		}
 	}
 	if !found {
-		for _, id := range ids {
+		start := sort.SearchStrings(ids, w.lastStalled)
+		if start < len(ids) && ids[start] == w.lastStalled {
+			start++
+		}
+		for offset := range ids {
+			id := ids[(start+offset)%len(ids)]
 			j := w.jobs[id]
 			if j.State == "started" {
 				item, found = j, true
+				w.lastStalled = id
 				break
 			}
 		}
@@ -111,6 +118,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 	if item.BackendID == "" {
 		if item.Submissions >= 3 {
 			item.State = "failure"
+			item.Retryable = true
 			return true, w.save(ctx, item)
 		}
 		status, _, err := w.backendRequest(ctx, http.MethodGet, workerprotocol.ReadyPath, nil, "")
@@ -151,6 +159,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 		}
 		if status != 200 && status != 202 {
 			item.State = "failure"
+			item.Retryable = status == 401 || status == 403 || status == 404
 			return true, w.save(ctx, item)
 		}
 		var task struct {
@@ -200,7 +209,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 		item.State = "failure"
 		return true, w.save(ctx, item)
 	}
-	status, body, err = w.backendRequest(ctx, http.MethodGet, workerprotocol.ResultPath+item.BackendID, nil, "")
+	status, body, err = w.backendRequestLimit(ctx, http.MethodGet, workerprotocol.ResultPath+item.BackendID, nil, "", item.MaxResultBytes)
 	if err != nil {
 		if errors.Is(err, errBackendOutput) {
 			item.State = "failure"
@@ -238,6 +247,9 @@ var (
 )
 
 func (w *Worker) backendRequest(ctx context.Context, method, path string, body io.Reader, contentType string) (int, []byte, error) {
+	return w.backendRequestLimit(ctx, method, path, body, contentType, w.options.MaxResultBytes)
+}
+func (w *Worker) backendRequestLimit(ctx context.Context, method, path string, body io.Reader, contentType string, limit int64) (int, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, method, w.options.BackendURL+path, body)
 	if err != nil {
 		return 0, nil, err
@@ -253,9 +265,8 @@ func (w *Worker) backendRequest(ctx context.Context, method, path string, body i
 		return 0, nil, err
 	}
 	defer func() { _ = response.Body.Close() }()
-	limit := w.options.MaxResultBytes
 	if path == workerprotocol.ReadyPath || method == http.MethodPost || strings.HasPrefix(path, workerprotocol.PollPath) {
-		limit = min(limit, 16<<10)
+		limit = 16 << 10
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil {

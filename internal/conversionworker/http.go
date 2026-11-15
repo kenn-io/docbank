@@ -187,7 +187,14 @@ func (w *Worker) accept(ctx context.Context, out http.ResponseWriter, r *http.Re
 			status = http.StatusInsufficientStorage
 		}
 		message := "invalid bounded worker upload"
-		if status == http.StatusInsufficientStorage {
+		switch {
+		case errors.Is(err, errSourceTooLarge) || errors.As(err, &tooLarge):
+			message = "worker source exceeds the byte limit"
+		case errors.Is(err, errInvalidFile):
+			message = "worker file must have a supported media type and a basename"
+		case errors.Is(err, errInvalidFields):
+			message = "worker upload must contain one file and supported conversion fields"
+		case status == http.StatusInsufficientStorage:
 			message = "worker source storage unavailable"
 		}
 		http.Error(out, message, status)
@@ -208,9 +215,10 @@ func (w *Worker) accept(ctx context.Context, out http.ResponseWriter, r *http.Re
 		w.mu.Lock()
 		existing = w.jobs[existingID]
 		w.mu.Unlock()
-		if existing.State == "failure" && existing.BackendID == "" && existing.Submissions == 3 {
+		if existing.State == "failure" && existing.Retryable {
 			existing.State = "pending"
 			existing.Submissions = 0
+			existing.Retryable = false
 			if err := w.save(ctx, existing); err != nil {
 				w.runMu.Unlock()
 				http.Error(out, "worker storage unavailable", http.StatusServiceUnavailable)
@@ -248,6 +256,8 @@ func (w *Worker) accept(ctx context.Context, out http.ResponseWriter, r *http.Re
 	}
 	item.ID = hex.EncodeToString(id)
 	item.Version = manifestVersion
+	item.MaxSourceBytes = w.options.MaxSourceBytes
+	item.MaxResultBytes = w.options.MaxResultBytes
 	item.State = "pending"
 	manifest, err := json.Marshal(item)
 	if err == nil {
@@ -275,6 +285,8 @@ func (w *Worker) accept(ctx context.Context, out http.ResponseWriter, r *http.Re
 var (
 	errSourceTooLarge = errors.New("source exceeds bound")
 	errSourceStorage  = errors.New("retained source storage failed")
+	errInvalidFile    = errors.New("invalid worker file")
+	errInvalidFields  = errors.New("invalid worker fields")
 )
 
 type retainedSourceWriter struct {
@@ -321,11 +333,11 @@ func (w *Worker) receive(ctx context.Context, r *http.Request, stage string, lim
 			_, parameters, parseErr := mime.ParseMediaType(part.Header.Get("Content-Disposition"))
 			if parseErr != nil || parameters["filename"] != part.FileName() {
 				_ = part.Close()
-				return job{}, errors.New("worker filename must be a basename")
+				return job{}, errInvalidFile
 			}
 			if fileSeen || !validFile(part.FileName(), part.Header.Get("Content-Type")) {
 				_ = part.Close()
-				return job{}, errors.New("invalid worker file")
+				return job{}, errInvalidFile
 			}
 			fileSeen = true
 			item.Filename = part.FileName()
@@ -379,7 +391,7 @@ func (w *Worker) receive(ctx context.Context, r *http.Request, stage string, lim
 		}
 	}
 	if !fileSeen || item.Bytes <= 0 || !validSubmission(item.MediaType, item.Fields) {
-		return job{}, errors.New("worker upload is incomplete")
+		return job{}, errInvalidFields
 	}
 	return item, nil
 }

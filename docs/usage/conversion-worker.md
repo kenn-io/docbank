@@ -89,8 +89,8 @@ are 100 MiB and 128 MiB. Admission reserves space for source, result staging
 and bounded metadata before receiving a new job. One upload and one backend
 conversion run at a time. Polling and retained result reads remain available
 while an upload is in progress.
-Lowering a limit keeps accepted jobs and their reserved capacity. New jobs wait
-until the spool is within the configured limits.
+Lowering a limit keeps accepted jobs, their original byte limits, and their
+reserved capacity. New jobs wait until the spool is within the configured limits.
 
 The worker acknowledges input only after committing it to the spool. A stable
 request key returns the same issued job ID after a connection loss or restart.
@@ -102,9 +102,12 @@ A confirmed missing Docling task can be recomputed from retained input. The
 worker persists a lifetime limit of three accepted or possibly accepted
 backend submissions per job. A definite HTTP 429 refusal releases its reserved
 attempt and waits. An ambiguous transport or server failure keeps it charged.
-After exhaustion, the job fails and retains its input. Rerun the Docbank job
-to retry it under the same worker ID. After two hours, a started backend task
-no longer holds up pending jobs; the worker keeps its handle and polls it later.
+After exhaustion, the job fails and retains its input. The same recovery applies
+when the backend refuses a submission with HTTP 401, 403, or 404. Fix the backend
+configuration, then rerun the Docbank job to retry under the same worker ID.
+Other rejected submissions and failed backend tasks remain failed. After two
+hours, a started backend task no longer holds up pending jobs. The worker keeps
+stalled handles and polls them in turn.
 Crashes can repeat compute; publication in Docbank remains separately fenced.
 
 There is no automatic expiry or garbage collection. At the storage or job
@@ -128,7 +131,8 @@ lowercase hexadecimal `Idempotency-Key`, and the exact input digest in
 `X-Docbank-Source-SHA256`. Only fixed in-body document or audio conversion
 options are accepted. The gateway returns a random 32-character hexadecimal
 task ID. `GET /v1/jobs/by-key/<key>` recovers that ID without contacting Docling.
-`GET /v1/status/poll/<id>` returns the worker lifecycle `task_status`. After
+`GET /v1/status/poll/<id>` returns the worker lifecycle `task_status`; a
+recoverable failure also returns `retryable: true`. After
 Docling completes, `backend_task_status` preserves Docling `success` or
 `partial_success`; `partial_success` remains readable from
 `GET /v1/result/<id>`. `GET /ready` checks backend readiness for new work.

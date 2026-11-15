@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -52,6 +53,7 @@ func TestWorkerStalledTaskLetsPendingJobStart(t *testing.T) {
 		o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
 			if r.Method == http.MethodPost {
 				posts++
+				_, _ = io.Copy(io.Discard, r.Body)
 				return backendResponse(r, 202, `{"task_id":"backend-1","task_status":"pending","task_type":"convert"}`), nil
 			}
 			if strings.HasPrefix(r.URL.Path, "/v1/status/poll/") {
@@ -69,6 +71,113 @@ func TestWorkerStalledTaskLetsPendingJobStart(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 2, posts)
 	})
+}
+
+func TestWorkerPollsEveryStalledTask(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		o := workerOptions(t)
+		o.StallAfter = time.Hour
+		var posts int
+		var polls []string
+		o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
+			if r.Method == http.MethodPost {
+				posts++
+				_, _ = io.Copy(io.Discard, r.Body)
+				id := "first"
+				if posts == 2 {
+					id = "second"
+				}
+				return backendResponse(r, 202, `{"task_id":"`+id+`","task_status":"pending","task_type":"convert"}`), nil
+			}
+			if id, ok := strings.CutPrefix(r.URL.Path, "/v1/status/poll/"); ok {
+				polls = append(polls, id)
+				return backendResponse(r, 200, `{"task_id":"`+id+`","task_status":"started","task_type":"convert"}`), nil
+			}
+			return backendResponse(r, 200, `{}`), nil
+		})}
+		w := openWorker(t, o)
+		taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("first")))
+		_, err := w.RunOnce(t.Context())
+		require.NoError(t, err)
+		taskID(t, submitRequest(t, w, strings.Repeat("b", 64), []byte("second")))
+		time.Sleep(time.Hour)
+		_, err = w.RunOnce(t.Context())
+		require.NoError(t, err)
+		time.Sleep(time.Hour)
+		polls = nil
+		for range 2 {
+			_, err = w.RunOnce(t.Context())
+			require.NoError(t, err)
+		}
+		require.ElementsMatch(t, []string{"first", "second"}, polls)
+	})
+}
+
+func TestWorkerHardRejectionDoesNotBecomeRetryable(t *testing.T) {
+	for _, status := range []int{400, 401, 403, 404} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			o := workerOptions(t)
+			var posts int
+			normal := o.Client.Transport
+			o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
+				if r.Method == http.MethodPost {
+					posts++
+					if posts < 3 {
+						return backendResponse(r, 503, `{}`), nil
+					}
+					return backendResponse(r, status, `{}`), nil
+				}
+				return normal.RoundTrip(r)
+			})}
+			w := openWorker(t, o)
+			key := strings.Repeat("a", 64)
+			id := taskID(t, submitRequest(t, w, key, []byte("source")))
+			for range 3 {
+				_, err := w.RunOnce(t.Context())
+				require.NoError(t, err)
+			}
+			out := getRequest(t.Context(), w, "/v1/status/poll/"+id)
+			require.Contains(t, out.Body.String(), "failure")
+			response := submitRequest(t, w, key, []byte("source"))
+			if status == 400 {
+				require.Contains(t, response.Body.String(), "failure")
+			} else {
+				require.Contains(t, response.Body.String(), "pending")
+			}
+		})
+	}
+}
+
+func TestWorkerPreservesAdmissionLimitsAfterReopen(t *testing.T) {
+	o := workerOptions(t)
+	w := openWorker(t, o)
+	id := taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("source")))
+	require.NoError(t, w.Close(t.Context()))
+	o.MaxSourceBytes = 1
+	o.MaxResultBytes = 1
+	o.MaxSpoolBytes = 18000
+	w = openWorker(t, o)
+	_, err := w.RunOnce(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, 200, getRequest(t.Context(), w, "/v1/result/"+id).Code)
+	taskID(t, submitRequest(t, w, strings.Repeat("b", 64), []byte("x")))
+}
+
+func TestWorkerConfigurationAndUploadErrorsNameRequirement(t *testing.T) {
+	o := workerOptions(t)
+	o.MaxJobs = 129
+	_, err := Open(t.Context(), o)
+	require.ErrorContains(t, err, "max-jobs")
+	o = workerOptions(t)
+	o.APIKey = "short"
+	_, err = Open(t.Context(), o)
+	require.ErrorContains(t, err, "DOCBANK_WORKER_API_KEY")
+	require.NotContains(t, err.Error(), "short")
+	o = workerOptions(t)
+	w := openWorker(t, o)
+	response := submitNamed(t, w, strings.Repeat("a", 64), "notes.txt", "text/plain", []byte("hello"), [][2]string{{"to_formats", "json"}, {"target_type", "inbody"}})
+	require.Equal(t, 400, response.Code)
+	require.Contains(t, response.Body.String(), "supported media type")
 }
 
 func TestWorkerKeepsJobsAfterLimitsLowered(t *testing.T) {

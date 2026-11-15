@@ -48,6 +48,9 @@ type Options struct {
 
 type job struct {
 	Version           int         `json:"version"`
+	MaxSourceBytes    int64       `json:"max_source_bytes"`
+	MaxResultBytes    int64       `json:"max_result_bytes"`
+	Retryable         bool        `json:"retryable,omitempty"`
 	StartedAt         time.Time   `json:"started_at"`
 	BackendOrigin     string      `json:"backend_origin"`
 	ID                string      `json:"id"`
@@ -68,21 +71,22 @@ type job struct {
 // Worker serves retained jobs while one runner performs conversion.
 // Close must join all users before relinquishing the private spool lock.
 type Worker struct {
-	lifetime context.Context
-	cancel   context.CancelFunc
-	options  Options
-	client   *http.Client
-	lock     *home.Lock
-	mu       sync.Mutex
-	jobs     map[string]job
-	keys     map[string]string
-	used     int64
-	reserved int64
-	fault    error
-	closed   bool
-	active   sync.WaitGroup
-	runMu    sync.Mutex
-	uploadMu sync.Mutex
+	lifetime    context.Context
+	cancel      context.CancelFunc
+	options     Options
+	client      *http.Client
+	lock        *home.Lock
+	mu          sync.Mutex
+	jobs        map[string]job
+	keys        map[string]string
+	used        int64
+	reserved    int64
+	fault       error
+	closed      bool
+	active      sync.WaitGroup
+	runMu       sync.Mutex
+	lastStalled string
+	uploadMu    sync.Mutex
 }
 
 // Open locks and validates a private spool before accepting any request.
@@ -125,8 +129,25 @@ func Open(ctx context.Context, options Options) (_ *Worker, retErr error) {
 	if err != nil || !address.IsLoopback() {
 		return nil, errors.New("worker backend must be loopback")
 	}
-	if !filepath.IsAbs(options.Directory) || len(options.APIKey) < 16 || len(options.APIKey) > 4096 || options.BackendKey == "" || options.MaxSourceBytes <= 0 || options.MaxSourceBytes > 100<<20 || options.MaxResultBytes <= 0 || options.MaxResultBytes > 128<<20 || options.MaxJobs < 1 || options.MaxJobs > 128 || options.MaxSpoolBytes < overhead || options.MaxSpoolBytes > 40<<30 || options.PollInterval <= 0 || options.PollInterval > time.Minute || options.StallAfter <= 0 {
-		return nil, errors.New("worker configuration is outside bounds")
+	switch {
+	case !filepath.IsAbs(options.Directory):
+		return nil, errors.New("worker directory must be absolute")
+	case len(options.APIKey) < 16 || len(options.APIKey) > 4096:
+		return nil, errors.New("DOCBANK_WORKER_API_KEY must be 16 to 4096 bytes")
+	case options.BackendKey == "":
+		return nil, errors.New("DOCBANK_WORKER_BACKEND_KEY is required")
+	case options.MaxSourceBytes <= 0 || options.MaxSourceBytes > 100<<20:
+		return nil, errors.New("max-source-bytes must be between 1 and 104857600")
+	case options.MaxResultBytes <= 0 || options.MaxResultBytes > 128<<20:
+		return nil, errors.New("max-result-bytes must be between 1 and 134217728")
+	case options.MaxJobs < 1 || options.MaxJobs > 128:
+		return nil, errors.New("max-jobs must be between 1 and 128")
+	case options.MaxSpoolBytes < overhead || options.MaxSpoolBytes > 40<<30:
+		return nil, errors.New("max-spool-bytes must be between 4096 and 42949672960")
+	case options.PollInterval <= 0 || options.PollInterval > time.Minute:
+		return nil, errors.New("poll interval must be positive and at most one minute")
+	case options.StallAfter <= 0:
+		return nil, errors.New("stall interval must be positive")
 	}
 	if _, err := os.Lstat(options.Directory); err == nil {
 		if err := safefileio.ValidatePrivateDir(options.Directory); err != nil {
@@ -198,7 +219,7 @@ func Open(ctx context.Context, options Options) (_ *Worker, retErr error) {
 		if err := json.Unmarshal(data, &item, json.RejectUnknownMembers(true)); err != nil {
 			return nil, errors.New("invalid committed worker manifest")
 		}
-		if item.Version != manifestVersion || item.BackendOrigin != options.BackendURL || item.ID != entry.Name() || !isHex(item.Key, 64) || !isHex(item.SHA256, 64) || item.Bytes <= 0 || item.Bytes > 100<<20 || item.Submissions < 0 || item.Submissions > 3 || !slices.Contains([]string{"pending", "started", "success", "failure"}, item.State) || !validBackendTaskStatus(item.BackendTaskStatus) || (item.BackendTaskStatus != "" && item.State != "success") || !validSubmission(item.MediaType, item.Fields) || !validFile(item.Filename, item.MediaType) || (item.BackendID != "" && (!validBackendID(item.BackendID) || item.Submissions == 0)) || (item.State == "started" && item.BackendID == "") || (item.State == "pending" && item.BackendID != "") {
+		if item.Version != manifestVersion || item.MaxSourceBytes <= 0 || item.MaxSourceBytes > 100<<20 || item.MaxResultBytes <= 0 || item.MaxResultBytes > 128<<20 || (item.Retryable && (item.State != "failure" || item.BackendID != "")) || item.BackendOrigin != options.BackendURL || item.ID != entry.Name() || !isHex(item.Key, 64) || !isHex(item.SHA256, 64) || item.Bytes <= 0 || item.Bytes > item.MaxSourceBytes || item.Submissions < 0 || item.Submissions > 3 || !slices.Contains([]string{"pending", "started", "success", "failure"}, item.State) || !validBackendTaskStatus(item.BackendTaskStatus) || (item.BackendTaskStatus != "" && item.State != "success") || !validSubmission(item.MediaType, item.Fields) || !validFile(item.Filename, item.MediaType) || (item.BackendID != "" && (!validBackendID(item.BackendID) || item.Submissions == 0)) || (item.State == "started" && item.BackendID == "") || (item.State == "pending" && item.BackendID != "") {
 			return nil, errors.New("worker manifest contract is invalid")
 		}
 		if _, exists := w.keys[item.Key]; exists {
@@ -208,7 +229,7 @@ func Open(ctx context.Context, options Options) (_ *Worker, retErr error) {
 			return nil, err
 		}
 		if item.State == "success" {
-			if item.ResultBytes <= 0 || item.ResultBytes > 128<<20 {
+			if item.ResultBytes <= 0 || item.ResultBytes > item.MaxResultBytes {
 				return nil, errors.New("worker result size is invalid")
 			}
 			if err := verifyPrivate(ctx, filepath.Join(path, "result.json"), item.ResultBytes, item.ResultSHA256); err != nil {
@@ -220,8 +241,7 @@ func Open(ctx context.Context, options Options) (_ *Worker, retErr error) {
 		}
 		w.jobs[item.ID] = item
 		w.keys[item.Key] = item.ID
-		// The original limits are not stored, so retain the hard-cap reservation.
-		w.used += (100 << 20) + 2*(128<<20) + overhead
+		w.used += item.MaxSourceBytes + 2*item.MaxResultBytes + overhead
 	}
 	return w, nil
 }
@@ -373,8 +393,11 @@ func copyContext(ctx context.Context, dst io.Writer, src io.Reader, limit int64)
 		}
 	}
 }
-func (w *Worker) task(item job) map[string]string {
-	task := map[string]string{"task_id": item.ID, "task_status": item.State}
+func (w *Worker) task(item job) map[string]any {
+	task := map[string]any{"task_id": item.ID, "task_status": item.State}
+	if item.Retryable {
+		task["retryable"] = true
+	}
 	if item.BackendTaskStatus != "" {
 		task["backend_task_status"] = item.BackendTaskStatus
 	}
