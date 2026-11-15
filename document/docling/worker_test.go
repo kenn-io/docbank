@@ -165,7 +165,6 @@ func TestWorkerRetainedFailureRequiresRetryableCheckpoint(t *testing.T) {
 			require.ErrorIs(t, err, workerprotocol.ErrRetainedTaskFailed)
 		})
 	}
-
 }
 
 func TestWorkerRepostsFailedLookupWithSameKey(t *testing.T) {
@@ -372,7 +371,7 @@ func TestWorkerASRRejectsAudioOverOneHour(t *testing.T) {
 	// MPEG-1 Layer III frames each carry 1152 samples at 44.1 kHz.
 	source := make([]byte, 140_200*417)
 	for offset := 0; offset < len(source); offset += 417 {
-		source[offset], source[offset+1], source[offset+2] = 0xff, 0xfb, 0x90
+		copy(source[offset:], []byte{0xff, 0xfb, 0x90})
 	}
 	descriptor, err := WorkerASRDescriptor(100_000)
 	require.NoError(t, err)

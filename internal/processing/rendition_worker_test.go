@@ -505,6 +505,7 @@ func TestRenditionWorkerPersistsAmbiguousOutcomeWithoutResubmission(t *testing.T
 }
 
 func TestRenditionWorkerClassifiesRetainedTaskFailure(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name, provider string
 		cause          error

@@ -50,6 +50,7 @@ func TestRenditionReadinessPreservesMalformedJSONForPlaintext(t *testing.T) {
 }
 
 func TestProcessingServiceRejectsWorkerDescriptorWithNativeAdapter(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	descriptor, err := docling.WorkerDocumentDescriptor()
 	require.NoError(t, err)
