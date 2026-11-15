@@ -399,7 +399,7 @@ func (client *Client) submit(run *rendering, fields [][2]string) (taskResponse, 
 		return taskResponse{}, err
 	}
 	if response.Status != http.StatusOK && response.Status != http.StatusAccepted {
-		err := provider.StatusError(providerutil.StageSubmission, response.Status, response.RetryAfter, nil)
+		err := doclingStatusError(run, providerutil.StageSubmission, response)
 		if run.workerProtocol && response.Status == http.StatusRequestEntityTooLarge {
 			err = provider.Classified(document.RenditionErrorTransient, "worker source limit can be corrected", err)
 		}
@@ -554,7 +554,7 @@ func (client *Client) poll(run *rendering, taskID string) (taskResponse, error) 
 		return taskResponse{}, err
 	}
 	if response.Status != http.StatusOK && response.Status != http.StatusAccepted {
-		return taskResponse{}, provider.StatusError(providerutil.StageJob, response.Status, response.RetryAfter, nil)
+		return taskResponse{}, doclingStatusError(run, providerutil.StageJob, response)
 	}
 	task, err := parseTaskForProtocol(response.Body, run.workerProtocol)
 	if err != nil {
@@ -578,7 +578,7 @@ func (client *Client) result(run *rendering, taskID string) (doclingResult, erro
 		return doclingResult{}, err
 	}
 	if response.Status != http.StatusOK {
-		return doclingResult{}, provider.StatusError(providerutil.StageJob, response.Status, response.RetryAfter, nil)
+		return doclingResult{}, doclingStatusError(run, providerutil.StageJob, response)
 	}
 	return parseResult(response.Body)
 }

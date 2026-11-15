@@ -163,6 +163,8 @@ func TestWorkerRetriesCorrectedGatewaySettingsWithSameKey(t *testing.T) {
 		status     int
 	}{
 		{"lookup key", workerprotocol.LookupPath, http.StatusUnauthorized},
+		{"readiness key", workerprotocol.ReadyPath, http.StatusUnauthorized},
+		{"submission key", workerprotocol.SubmitPath, http.StatusUnauthorized},
 		{"submission size", workerprotocol.SubmitPath, http.StatusRequestEntityTooLarge},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -200,6 +202,39 @@ func TestWorkerRetriesCorrectedGatewaySettingsWithSameKey(t *testing.T) {
 			for _, key := range keys[1:] {
 				require.Equal(t, keys[0], key)
 			}
+		})
+	}
+}
+
+func TestWorkerResumesAfterGatewayKeyCorrection(t *testing.T) {
+	for _, path := range []string{workerprotocol.PollPath, workerprotocol.ResultPath} {
+		t.Run(path, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				f := workerFixture(t)
+				state, origin, transport := workerHTTP(t, workerDocumentResult())
+				base := transport.Transport
+				transport.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+					if strings.HasPrefix(request.URL.Path, path) && request.Header.Get("X-Api-Key") == "synthetic-old-key" {
+						return &http.Response{Request: request, StatusCode: http.StatusUnauthorized, Header: http.Header{workerprotocol.ProtocolHeader: []string{workerprotocol.Contract}}, Body: io.NopCloser(strings.NewReader("rejected"))}, nil
+					}
+					return base.RoundTrip(request)
+				})
+				secrets := testSecrets{"worker": "synthetic-old-key"}
+				client, err := NewWorker(workerProfile(origin, f.descriptor), secrets, transport)
+				require.NoError(t, err)
+				var handle document.RenditionResumeHandle
+				_, err = document.RenderRenditionWithResume(t.Context(), client, f.upload(), f.authorization, nil, func(h document.RenditionResumeHandle) error {
+					handle = h
+					return nil
+				})
+				require.True(t, document.IsRenditionProviderErrorRetryable(err), "%v", err)
+				require.NotEmpty(t, handle.Value)
+				secrets["worker"] = "synthetic-corrected-key"
+				result, err := document.ResumeRendition(t.Context(), client, workerSnapshot(t, f), handle, nil)
+				require.NoError(t, err)
+				require.Equal(t, "first page", result.Evidence.Units[0].Text)
+				require.Equal(t, int32(1), state.posts.Load())
+			})
 		})
 	}
 }

@@ -298,6 +298,9 @@ func (client *Client) renderWorker(ctx context.Context, upload document.Authoriz
 	defer clear(run.source)
 	task, err = client.awaitTask(run, task)
 	if err != nil {
+		if checkpointed && errors.Is(err, errWorkerCredentials) {
+			return document.RenditionResult{}, provider.Classified(document.RenditionErrorTransient, "worker credentials can be corrected", err)
+		}
 		if checkpointed && task.retryable {
 			return document.RenditionResult{}, provider.Malformed("worker task can be retried", workerprotocol.ErrRetainedTaskFailed)
 		}
@@ -305,6 +308,9 @@ func (client *Client) renderWorker(ctx context.Context, upload document.Authoriz
 	}
 	result, err := client.awaitResult(run, task.id)
 	if err != nil {
+		if checkpointed && errors.Is(err, errWorkerCredentials) {
+			return document.RenditionResult{}, provider.Classified(document.RenditionErrorTransient, "worker credentials can be corrected", err)
+		}
 		return document.RenditionResult{}, err
 	}
 	if task.status == "success" && result.status == "success" && len(result.errors) > 0 {
@@ -331,6 +337,16 @@ func validateWorkerResponse(run *rendering, response providerutil.Response) erro
 	}
 	return nil
 }
+
+var errWorkerCredentials = errors.New("worker credentials rejected")
+
+func doclingStatusError(run *rendering, stage providerutil.Stage, response providerutil.Response) error {
+	err := provider.StatusError(stage, response.Status, response.RetryAfter, nil)
+	if run.workerProtocol && response.Status == http.StatusUnauthorized {
+		return provider.Classified(document.RenditionErrorTransient, "worker credentials can be corrected", errors.Join(errWorkerCredentials, err))
+	}
+	return err
+}
 func (client *Client) lookupWorker(ctx context.Context, run *rendering, key string) (taskResponse, bool, error) {
 	response, err := client.workerRequest(ctx, run, providerutil.Request{Stage: providerutil.StageJob, Method: http.MethodGet, Path: workerprotocol.LookupPath + key, MaxResponseBytes: 16 << 10})
 	if err != nil {
@@ -340,11 +356,7 @@ func (client *Client) lookupWorker(ctx context.Context, run *rendering, key stri
 		return taskResponse{}, false, nil
 	}
 	if response.Status != 200 {
-		err := provider.StatusError(providerutil.StageJob, response.Status, response.RetryAfter, nil)
-		if response.Status == http.StatusUnauthorized {
-			err = provider.Classified(document.RenditionErrorTransient, "worker lookup credentials can be corrected", err)
-		}
-		return taskResponse{}, false, err
+		return taskResponse{}, false, doclingStatusError(run, providerutil.StageJob, response)
 	}
 	task, err := parseTaskForProtocol(response.Body, true)
 	if err != nil {
@@ -359,7 +371,7 @@ func (client *Client) readyWorker(ctx context.Context, run *rendering) error {
 		return err
 	}
 	if response.Status != 200 {
-		return provider.StatusError(providerutil.StageJob, response.Status, response.RetryAfter, nil)
+		return doclingStatusError(run, providerutil.StageJob, response)
 	}
 	var ready struct {
 		Protocol string `json:"protocol"`
