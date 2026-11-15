@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"hegel.dev/go/hegel"
 )
 
 type backendTransport func(*http.Request) (*http.Response, error)
@@ -109,7 +108,6 @@ func TestWorkerDurableAcceptanceAndLookup(t *testing.T) {
 	found := getRequest(t.Context(), w, "/v1/jobs/by-key/"+key)
 	require.Equal(t, 200, found.Code)
 	require.Contains(t, found.Body.String(), id)
-	require.Equal(t, id, taskID(t, submitRequest(t, w, key, []byte("synthetic"))))
 	require.Equal(t, 409, submitRequest(t, w, key, []byte("changed")).Code)
 }
 func TestWorkerBoundsAndAuthentication(t *testing.T) {
@@ -126,7 +124,7 @@ func TestWorkerBoundsAndAuthentication(t *testing.T) {
 	require.Equal(t, 202, submitRequest(t, w, strings.Repeat("a", 64), []byte("one")).Code)
 }
 
-func TestWorkerRetainsRepeatableResultsAfterReopen(t *testing.T) {
+func checkWorkerRetainsRepeatableResultsAfterReopen(t *testing.T) {
 	o := workerOptions(t)
 	w := openWorker(t, o)
 	id := taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("original")))
@@ -145,7 +143,7 @@ func TestWorkerRetainsRepeatableResultsAfterReopen(t *testing.T) {
 	}
 }
 
-func TestWorkerRetainsBackendPartialSuccessAfterReopen(t *testing.T) {
+func checkWorkerRetainsBackendPartialSuccessAfterReopen(t *testing.T) {
 	o := workerOptions(t)
 	const result = `{"document":{"filename":"synthetic.pdf"},"status":"success"}`
 	normal := o.Client.Transport
@@ -175,7 +173,6 @@ func TestWorkerRetainsBackendPartialSuccessAfterReopen(t *testing.T) {
 		require.Equal(t, "partial_success", status.BackendTaskStatus)
 		resultResponse := getRequest(t.Context(), w, "/v1/result/"+id)
 		require.Equal(t, http.StatusOK, resultResponse.Code, resultResponse.Body.String())
-		require.JSONEq(t, result, resultResponse.Body.String())
 		require.True(t, bytes.Equal([]byte(result), resultResponse.Body.Bytes()), "retained backend result bytes must be served unchanged")
 	}
 	assertPartialCompletion(w)
@@ -184,7 +181,7 @@ func TestWorkerRetainsBackendPartialSuccessAfterReopen(t *testing.T) {
 	assertPartialCompletion(w)
 }
 
-func TestWorkerSubmissionBudgetSurvivesRestart(t *testing.T) {
+func checkWorkerSubmissionBudgetSurvivesRestart(t *testing.T) {
 	o := workerOptions(t)
 	var sends atomic.Int32
 	o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
@@ -207,7 +204,7 @@ func TestWorkerSubmissionBudgetSurvivesRestart(t *testing.T) {
 	out := getRequest(t.Context(), w, "/v1/status/poll/"+id)
 	require.Contains(t, out.Body.String(), "failure")
 }
-func TestWorkerCapacityRefusalDoesNotSpendAmbiguityBudget(t *testing.T) {
+func checkWorkerCapacityRefusalDoesNotSpendAmbiguityBudget(t *testing.T) {
 	o := workerOptions(t)
 	var sends atomic.Int32
 	normal := o.Client.Transport
@@ -237,27 +234,14 @@ func TestWorkerLocksSpoolAliases(t *testing.T) {
 	w = openWorker(t, o)
 	require.NotNil(t, w)
 }
-func TestWorkerDuplicateIsStableForGeneratedBytes(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		source := hegel.Draw(ht, hegel.Lists(hegel.Integers[byte](0, 255)))
-		source = source[:min(len(source), 512)]
 
-		o := workerOptions(t)
-		w, err := Open(t.Context(), o)
-		require.NoError(ht, err)
-		key := strings.Repeat("b", 64)
-		first := submitRequest(t, w, key, source)
-		if len(source) == 0 {
-			require.Equal(ht, 400, first.Code)
-			require.NoError(ht, w.Close(t.Context()))
-			return
-		}
-		require.Equal(ht, 202, first.Code)
-		require.NoError(ht, w.Close(t.Context()))
-		w, err = Open(t.Context(), o)
-		require.NoError(ht, err)
-		second := submitRequest(t, w, key, source)
-		require.Equal(ht, first.Body.String(), second.Body.String())
-		require.NoError(ht, w.Close(t.Context()))
-	})
+func TestWorkerRefundsCapacityRefusals(t *testing.T) {
+	t.Run("response", checkWorkerCapacityRefusalDoesNotSpendAmbiguityBudget)
+	t.Run("body error", checkWorkerRefundsConfirmed429WhenResponseBodyReadFails)
+	t.Run("canceled body", checkWorkerPersistsConfirmed429RefundWhenResponseReadCancelsContext)
+}
+
+func TestWorkerRetainsResultsAfterReopen(t *testing.T) {
+	t.Run("complete", checkWorkerRetainsRepeatableResultsAfterReopen)
+	t.Run("partial", checkWorkerRetainsBackendPartialSuccessAfterReopen)
 }

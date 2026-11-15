@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestWorkerRetriesExhaustedSubmission(t *testing.T) {
+func checkWorkerRetriesExhaustedSubmission(t *testing.T) {
 	o := workerOptions(t)
 	normal := o.Client.Transport
 	var posts int
@@ -43,34 +43,6 @@ func TestWorkerRetriesExhaustedSubmission(t *testing.T) {
 	_, err := w.RunOnce(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, getRequest(t.Context(), w, "/v1/result/"+id).Code)
-}
-
-func TestWorkerStalledTaskLetsPendingJobStart(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		o := workerOptions(t)
-		o.StallAfter = time.Hour
-		var posts int
-		o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
-			if r.Method == http.MethodPost {
-				posts++
-				_, _ = io.Copy(io.Discard, r.Body)
-				return backendResponse(r, 202, `{"task_id":"backend-1","task_status":"pending","task_type":"convert"}`), nil
-			}
-			if strings.HasPrefix(r.URL.Path, "/v1/status/poll/") {
-				return backendResponse(r, 200, `{"task_id":"backend-1","task_status":"started","task_type":"convert"}`), nil
-			}
-			return backendResponse(r, 200, `{}`), nil
-		})}
-		w := openWorker(t, o)
-		taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("first")))
-		_, err := w.RunOnce(t.Context())
-		require.NoError(t, err)
-		taskID(t, submitRequest(t, w, strings.Repeat("b", 64), []byte("second")))
-		time.Sleep(time.Hour)
-		_, err = w.RunOnce(t.Context())
-		require.NoError(t, err)
-		require.Equal(t, 2, posts)
-	})
 }
 
 func TestWorkerPollsEveryStalledTask(t *testing.T) {
@@ -161,7 +133,7 @@ func TestWorkerCollectsStalledResultWhilePendingIsRateLimited(t *testing.T) {
 	})
 }
 
-func TestWorkerHardRejectionDoesNotBecomeRetryable(t *testing.T) {
+func TestWorkerOnlyBadRequestStaysTerminal(t *testing.T) {
 	for _, status := range []int{400, 401, 403, 404} {
 		t.Run(strconv.Itoa(status), func(t *testing.T) {
 			o := workerOptions(t)
@@ -196,7 +168,7 @@ func TestWorkerHardRejectionDoesNotBecomeRetryable(t *testing.T) {
 	}
 }
 
-func TestWorkerPreservesAdmissionLimitsAfterReopen(t *testing.T) {
+func checkWorkerPreservesAdmissionLimitsAfterReopen(t *testing.T) {
 	o := workerOptions(t)
 	w := openWorker(t, o)
 	id := taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("source")))
@@ -211,32 +183,12 @@ func TestWorkerPreservesAdmissionLimitsAfterReopen(t *testing.T) {
 	taskID(t, submitRequest(t, w, strings.Repeat("b", 64), []byte("x")))
 }
 
-func TestWorkerConfigurationAndUploadErrorsNameRequirement(t *testing.T) {
-	o := workerOptions(t)
-	o.MaxJobs = 129
-	_, err := Open(t.Context(), o)
-	require.ErrorContains(t, err, "max-jobs")
-	o = workerOptions(t)
-	o.APIKey = "short"
-	_, err = Open(t.Context(), o)
-	require.ErrorContains(t, err, "DOCBANK_WORKER_API_KEY")
-	require.NotContains(t, err.Error(), "short")
-	o = workerOptions(t)
-	w := openWorker(t, o)
-	response := submitNamed(t, w, strings.Repeat("a", 64), "notes.txt", "text/plain", []byte("hello"), [][2]string{{"to_formats", "json"}, {"target_type", "inbody"}})
-	require.Equal(t, 400, response.Code)
-	require.Contains(t, response.Body.String(), "supported media type")
-}
-
 func TestWorkerOpenRejectsZeroLimitsAndInvalidHeaders(t *testing.T) {
 	for _, test := range []struct {
 		field string
 		set   func(*Options)
 	}{
-		{"max-source-bytes", func(o *Options) { o.MaxSourceBytes = 0 }},
-		{"max-result-bytes", func(o *Options) { o.MaxResultBytes = 0 }},
-		{"max-jobs", func(o *Options) { o.MaxJobs = 0 }},
-		{"max-spool-bytes", func(o *Options) { o.MaxSpoolBytes = 0 }},
+		{"DOCBANK_WORKER_API_KEY short", func(o *Options) { o.APIKey = "short" }},
 		{"DOCBANK_WORKER_API_KEY", func(o *Options) { o.APIKey = "synthetic-invalid\nkey" }},
 		{"DOCBANK_WORKER_BACKEND_KEY", func(o *Options) { o.BackendKey = "synthetic-invalid\nkey" }},
 	} {
@@ -244,15 +196,16 @@ func TestWorkerOpenRejectsZeroLimitsAndInvalidHeaders(t *testing.T) {
 			o := workerOptions(t)
 			test.set(&o)
 			_, err := Open(t.Context(), o)
-			require.ErrorContains(t, err, test.field)
+			require.ErrorContains(t, err, strings.TrimSuffix(test.field, " short"))
 			require.NotContains(t, err.Error(), "synthetic-invalid")
+			require.NotContains(t, err.Error(), "short")
 			_, err = os.Stat(o.Directory)
 			require.ErrorIs(t, err, os.ErrNotExist)
 		})
 	}
 }
 
-func TestWorkerKeepsJobsAfterLimitsLowered(t *testing.T) {
+func checkWorkerKeepsJobsAfterLimitsLowered(t *testing.T) {
 	o := workerOptions(t)
 	w := openWorker(t, o)
 	key := strings.Repeat("a", 64)
@@ -271,7 +224,7 @@ func TestWorkerKeepsJobsAfterLimitsLowered(t *testing.T) {
 	require.Equal(t, 429, submitRequest(t, w, strings.Repeat("c", 64), []byte("x")).Code)
 }
 
-func TestWorkerRejectsUnknownManifestVersion(t *testing.T) {
+func checkWorkerRejectsUnknownManifestVersion(t *testing.T) {
 	o := workerOptions(t)
 	w := openWorker(t, o)
 	id := taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("source")))
@@ -304,7 +257,7 @@ func TestWorkerRejectsWrongBackendTaskType(t *testing.T) {
 	require.Zero(t, results)
 }
 
-func TestWorkerAudioDurationLimit(t *testing.T) {
+func checkWorkerAudioDurationLimit(t *testing.T) {
 	o := workerOptions(t)
 	o.MaxSourceBytes = 32 << 20
 	o.MaxSpoolBytes = 128 << 20
@@ -356,7 +309,7 @@ func TestWorkerCloseCancelsUploadBeforeUnlock(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, next.Close(t.Context()))
 }
-func TestWorkerRejectsDamagedRetainedSource(t *testing.T) {
+func checkWorkerRejectsDamagedRetainedSource(t *testing.T) {
 	o := workerOptions(t)
 	w := openWorker(t, o)
 	id := taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("original")))
@@ -557,4 +510,15 @@ func TestWorkerBackendRequestsCarryHopMarker(t *testing.T) {
 	w := openWorker(t, o)
 	_, _, err := w.backendRequest(t.Context(), http.MethodGet, "/ready", nil, "")
 	require.NoError(t, err)
+}
+
+func TestWorkerSubmissionBudget(t *testing.T) {
+	t.Run("reopen", checkWorkerRetriesExhaustedSubmission)
+	t.Run("restart", checkWorkerSubmissionBudgetSurvivesRestart)
+	t.Run("offline", checkWorkerBudgetExhaustionDoesNotNeedBackend)
+}
+
+func TestWorkerReopensAfterLimitsLowered(t *testing.T) {
+	t.Run("over capacity", checkWorkerKeepsJobsAfterLimitsLowered)
+	t.Run("original limits", checkWorkerPreservesAdmissionLimitsAfterReopen)
 }

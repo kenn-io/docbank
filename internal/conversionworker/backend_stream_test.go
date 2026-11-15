@@ -66,7 +66,7 @@ func TestBackendRejectionDoesNotMaskRetainedSourceReadFailure(t *testing.T) {
 	}
 }
 
-func TestWorkerRefundsConfirmed429WhenResponseBodyReadFails(t *testing.T) {
+func checkWorkerRefundsConfirmed429WhenResponseBodyReadFails(t *testing.T) {
 	o := workerOptions(t)
 	normal := o.Client.Transport
 	posts := 0
@@ -97,7 +97,7 @@ func TestWorkerRefundsConfirmed429WhenResponseBodyReadFails(t *testing.T) {
 	require.Equal(t, http.StatusOK, getRequest(t.Context(), w, "/v1/result/"+id).Code)
 }
 
-func TestWorkerPersistsConfirmed429RefundWhenResponseReadCancelsContext(t *testing.T) {
+func checkWorkerPersistsConfirmed429RefundWhenResponseReadCancelsContext(t *testing.T) {
 	o := workerOptions(t)
 	normal := o.Client.Transport
 	ctx, cancel := context.WithCancel(t.Context())

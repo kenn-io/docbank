@@ -69,7 +69,7 @@ func TestWorkerReconcilesAtomicCrashStaging(t *testing.T) {
 		require.NoError(ht, w.Close(t.Context()))
 	})
 }
-func TestWorkerBudgetExhaustionDoesNotNeedBackend(t *testing.T) {
+func checkWorkerBudgetExhaustionDoesNotNeedBackend(t *testing.T) {
 	o := workerOptions(t)
 	var offline atomic.Bool
 	var sends atomic.Int32
@@ -110,7 +110,7 @@ func TestWorkerSpoolCreationSyncsEveryNewParent(t *testing.T) {
 	require.Contains(t, synced, filepath.Join(parent, "level-a", "level-b"))
 	require.NoError(t, w.Close(t.Context()))
 }
-func TestWorkerRejectsUnsafeRetainedProtocolState(t *testing.T) {
+func checkWorkerRejectsUnsafeRetainedProtocolState(t *testing.T) {
 	for _, change := range []func([]byte) []byte{
 		func(data []byte) []byte { return append(data, []byte("\n{}")...) },
 		func(data []byte) []byte {
@@ -143,20 +143,24 @@ func TestWorkerRejectsUnsafeRetainedProtocolState(t *testing.T) {
 		require.NoError(t, next.Close(t.Context()))
 	}
 }
-func TestWorkerRejectsMismatchedAudioMode(t *testing.T) {
+func checkWorkerRejectsMismatchedAudioMode(t *testing.T) {
 	for _, candidate := range []struct {
 		filename, mediaType string
 		fields              [][2]string
 	}{
+		{"synthetic.txt", "text/plain", [][2]string{{"to_formats", "json"}, {"target_type", "inbody"}}},
 		{"synthetic.pdf", "application/pdf", [][2]string{{"from_formats", "audio"}, {"to_formats", "json"}, {"target_type", "inbody"}}},
 		{"synthetic.wav", "audio/wav", [][2]string{{"to_formats", "md"}, {"to_formats", "json"}, {"target_type", "inbody"}}},
 	} {
 		w := openWorker(t, workerOptions(t))
 		out := submitNamed(t, w, strings.Repeat("a", 64), candidate.filename, candidate.mediaType, []byte("x"), candidate.fields)
 		require.Equal(t, 400, out.Code)
+		if candidate.mediaType == "text/plain" {
+			require.Contains(t, out.Body.String(), "supported media type")
+		}
 	}
 }
-func TestWorkerRejectsEncodedFileTransfer(t *testing.T) {
+func checkWorkerRejectsEncodedFileTransfer(t *testing.T) {
 	w := openWorker(t, workerOptions(t))
 	body := "--synthetic\r\nContent-Disposition: form-data; name=\"files\"; filename=\"synthetic.pdf\"\r\nContent-Type: application/pdf\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nA\r\n--synthetic\r\nContent-Disposition: form-data; name=\"to_formats\"\r\n\r\njson\r\n--synthetic\r\nContent-Disposition: form-data; name=\"target_type\"\r\n\r\ninbody\r\n--synthetic--\r\n"
 	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/convert/file/async", strings.NewReader(body))
@@ -206,7 +210,7 @@ func TestWorkerRejectsAmbiguousBackendOrigins(t *testing.T) {
 		require.Error(t, err, origin)
 	}
 }
-func TestWorkerSpoolBindsBackendOrigin(t *testing.T) {
+func checkWorkerSpoolBindsBackendOrigin(t *testing.T) {
 	o := workerOptions(t)
 	w := openWorker(t, o)
 	taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("source")))
@@ -344,10 +348,24 @@ func TestWorkerBackendReceivesExactGeneratedOriginalAfterRestart(t *testing.T) {
 		w, err := Open(t.Context(), o)
 		require.NoError(ht, err)
 		defer func() { require.NoError(t, w.Close(context.WithoutCancel(t.Context()))) }()
+		require.Equal(ht, out.Body.String(), submitNamed(t, w, strings.Repeat("a", 64), names[kind], mediaTypes[kind], source, fields).Body.String())
 		_, err = w.RunOnce(t.Context())
 		require.NoError(ht, err)
 		require.Equal(ht, source, received)
 		require.Equal(ht, names[kind], filename)
 		require.Equal(ht, mediaTypes[kind], mediaType)
 	})
+}
+
+func TestWorkerRejectsInvalidUploads(t *testing.T) {
+	t.Run("media type and fields", checkWorkerRejectsMismatchedAudioMode)
+	t.Run("encoded source", checkWorkerRejectsEncodedFileTransfer)
+	t.Run("duration", checkWorkerAudioDurationLimit)
+}
+
+func TestWorkerRejectsInvalidRetainedState(t *testing.T) {
+	t.Run("manifest version", checkWorkerRejectsUnknownManifestVersion)
+	t.Run("source damage", checkWorkerRejectsDamagedRetainedSource)
+	t.Run("protocol state", checkWorkerRejectsUnsafeRetainedProtocolState)
+	t.Run("backend origin", checkWorkerSpoolBindsBackendOrigin)
 }
