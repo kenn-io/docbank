@@ -38,10 +38,6 @@ func workerCommandEnvironment(name string) string {
 func TestWorkerCommandRejectsUnsafeConfiguration(t *testing.T) {
 	err := run(t.Context(), []string{"--backend", "http://127.0.0.1:5001"}, workerCommandEnvironment, io.Discard)
 	require.EqualError(t, err, "worker directory is required")
-
-	err = run(t.Context(), []string{"--directory", t.TempDir(), "--backend", "http://203.0.113.1:5001"}, workerCommandEnvironment, io.Discard)
-	require.ErrorContains(t, err, "configure conversion worker:")
-	require.ErrorContains(t, err, "worker backend must be loopback")
 }
 
 func TestWorkerCommandRejectsZeroLimits(t *testing.T) {

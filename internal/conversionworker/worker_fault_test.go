@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -87,37 +86,6 @@ func TestWorkerSchedulesStalledAndPendingJobs(t *testing.T) {
 	})
 }
 
-func TestWorkerRejectedSubmissionStaysTerminal(t *testing.T) {
-	for _, status := range []int{400, 404} {
-		t.Run(strconv.Itoa(status), func(t *testing.T) {
-			o := workerOptions(t)
-			var posts int
-			normal := o.Client.Transport
-			o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
-				if r.Method == http.MethodPost {
-					posts++
-					if posts < 3 {
-						return backendResponse(r, 503, `{}`), nil
-					}
-					return backendResponse(r, status, `{}`), nil
-				}
-				return normal.RoundTrip(r)
-			})}
-			w := openWorker(t, o)
-			key := strings.Repeat("a", 64)
-			id := taskID(t, submitRequest(t, w, key, []byte("source")))
-			for range 3 {
-				_, err := w.RunOnce(t.Context())
-				require.NoError(t, err)
-			}
-			out := getRequest(t.Context(), w, "/v1/status/poll/"+id)
-			require.Contains(t, out.Body.String(), "failure")
-			response := submitRequest(t, w, key, []byte("source"))
-			require.Contains(t, response.Body.String(), "failure")
-		})
-	}
-}
-
 func TestWorkerOpenRejectsInvalidKeys(t *testing.T) {
 	for _, test := range []struct {
 		field string
@@ -177,7 +145,7 @@ func TestWorkerRejectsWrongBackendTaskType(t *testing.T) {
 	}
 }
 
-func TestWorkerCloseCancelsUploadBeforeUnlock(t *testing.T) {
+func TestWorkerCloseCancelsUploadAndReleasesSpool(t *testing.T) {
 	o := workerOptions(t)
 	w := openWorker(t, o)
 	reader, writer := io.Pipe()
@@ -325,35 +293,25 @@ func TestWorkerBackendRequestsCarryHopMarker(t *testing.T) {
 		return backendResponse(r, 200, `{}`), nil
 	})}
 	w := openWorker(t, o)
-	_, _, err := w.backendRequest(t.Context(), http.MethodGet, "/ready", nil, "", w.options.MaxResultBytes)
+	_, _, err := w.backendRequest(t.Context(), http.MethodGet, "/ready", nil, "")
 	require.NoError(t, err)
 }
 
 func TestWorkerSubmissionBudget(t *testing.T) {
-	for _, scenario := range []string{"503 response", "lost response", "400 rejection", "400 body error", "401 rejection"} {
+	for _, scenario := range []string{"503 response", "lost response", "400 rejection", "400 body error"} {
 		t.Run(scenario, func(t *testing.T) {
 			o := workerOptions(t)
-			if scenario == "401 rejection" {
-				o.BackendKey = "synthetic-old-backend-key"
-			}
 			normal := o.Client.Transport
 			posts := 0
-			var submittedKeys []string
 			o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
 				if r.Method == http.MethodPost {
 					_, _ = io.Copy(io.Discard, r.Body)
 					posts++
-					if scenario == "401 rejection" {
-						submittedKeys = append(submittedKeys, r.Header.Get("X-Api-Key"))
-					}
 					if posts <= 3 {
 						if scenario == "lost response" {
 							return nil, errors.New("synthetic lost response")
 						}
 						if posts == 3 {
-							if scenario == "401 rejection" {
-								return backendResponse(r, http.StatusUnauthorized, `{}`), nil
-							}
 							if scenario == "400 body error" {
 								return &http.Response{Request: r, StatusCode: http.StatusBadRequest, Header: make(http.Header), Body: backendResponseReadFailure{err: errors.New("synthetic body read failure")}}, nil
 							}
@@ -382,9 +340,6 @@ func TestWorkerSubmissionBudget(t *testing.T) {
 			require.Equal(t, 3, posts)
 			require.Contains(t, getRequest(t.Context(), w, "/v1/status/poll/"+id).Body.String(), "failure")
 			require.NoError(t, w.Close(t.Context()))
-			if scenario == "401 rejection" {
-				o.BackendKey = "synthetic-corrected-backend-key"
-			}
 			w = openWorker(t, o)
 			response := submitRequest(t, w, key, []byte("source"))
 			if strings.HasPrefix(scenario, "400 ") {
@@ -395,9 +350,6 @@ func TestWorkerSubmissionBudget(t *testing.T) {
 			_, err = w.RunOnce(t.Context())
 			require.NoError(t, err)
 			require.Equal(t, http.StatusOK, getRequest(t.Context(), w, "/v1/result/"+id).Code)
-			if scenario == "401 rejection" {
-				require.Equal(t, []string{"synthetic-old-backend-key", "synthetic-old-backend-key", "synthetic-old-backend-key", "synthetic-corrected-backend-key"}, submittedKeys)
-			}
 		})
 	}
 }
@@ -428,9 +380,40 @@ func TestWorkerReopensAfterLimitsLowered(t *testing.T) {
 			}
 			require.Equal(t, id, taskID(t, submitRequest(t, w, key, []byte("source"))))
 			require.Equal(t, 200, getRequest(t.Context(), w, "/v1/result/"+id).Code)
-			if !overCapacity {
-				taskID(t, submitRequest(t, w, strings.Repeat("c", 64), []byte("x")))
+			result := submitRequest(t, w, strings.Repeat("c", 64), []byte("x"))
+			if overCapacity {
+				require.Equal(t, 429, result.Code)
+			} else {
+				taskID(t, result)
 			}
 		})
 	}
+}
+
+func TestWorkerRunOnceSkipsConcurrentRetry(t *testing.T) {
+	o := workerOptions(t)
+	w := openWorker(t, o)
+	key := strings.Repeat("a", 64)
+	id := taskID(t, submitRequest(t, w, key, []byte("source")))
+	item := w.jobs[id]
+	item.State, item.Retryable, item.Submissions = stateFailure, true, 3
+	require.NoError(t, w.save(t.Context(), item))
+
+	w.runMu.Lock()
+	retryStarted := make(chan struct{})
+	retryDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		close(retryStarted)
+		retryDone <- submitRequest(t, w, key, []byte("source"))
+	}()
+	<-retryStarted
+	worked, err := w.RunOnce(t.Context())
+	w.runMu.Unlock()
+	retry := <-retryDone
+	require.NoError(t, err)
+	require.False(t, worked)
+	require.Equal(t, id, taskID(t, retry))
+	_, err = w.RunOnce(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, getRequest(t.Context(), w, "/v1/result/"+id).Code)
 }

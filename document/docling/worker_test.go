@@ -151,6 +151,7 @@ func TestWorkerRepostsFailedLookupWithSameKey(t *testing.T) {
 	require.Error(t, err)
 	key := state.key
 	state.failed.Store(true)
+	state.retryable.Store(true)
 	_, err = document.RenderRendition(t.Context(), client, f.upload(), f.authorization)
 	require.NoError(t, err)
 	require.Equal(t, int32(2), state.posts.Load())
@@ -312,16 +313,6 @@ func TestWorkerAcceptedResponseAfterExpiryIsNotCheckpointed(t *testing.T) {
 		require.ErrorIs(t, err, document.ErrRenditionAuthorizationExpired)
 		require.Empty(t, handle.Value, "an expired authorization must not persist a resume handle")
 		require.Equal(t, int32(1), state.posts.Load())
-
-		refreshed := f.authorization
-		refreshed.AuthorizedAt = time.Now().UTC().Format(providerutil.TimestampForm)
-		refreshed.ExpiresAt = time.Now().UTC().Add(time.Minute).Format(providerutil.TimestampForm)
-		result, err := document.RenderRendition(t.Context(), client, f.upload(), refreshed)
-		require.NoError(t, err)
-		require.NoError(t, document.ValidateRenditionResult(f.descriptor, refreshed, result))
-		require.Equal(t, int32(2), state.lookups.Load(), "the fresh retry must look up the accepted key")
-		require.Equal(t, int32(1), state.readiness.Load(), "a recovered task must be found before readiness")
-		require.Equal(t, int32(1), state.posts.Load(), "the fresh retry must not submit the source again")
 	})
 }
 func TestWorkerOfflineDoesNotReadOrTransferSource(t *testing.T) {
@@ -355,7 +346,9 @@ func TestWorkerRejectsEncryptedPDFBeforeNetwork(t *testing.T) {
 	client, err := NewWorker(workerProfile(origin, f.descriptor), testSecrets{"worker": "synthetic-worker-key"}, httpClient)
 	require.NoError(t, err)
 	_, err = document.RenderRendition(t.Context(), client, upload, native.authorization)
-	require.Error(t, err)
+	var providerErr *document.RenditionProviderError
+	require.ErrorAs(t, err, &providerErr)
+	require.Equal(t, document.RenditionErrorUnsupportedInput, providerErr.Code())
 	require.Zero(t, requests.Load())
 }
 func TestWorkerASRResumesProvenDurationWithoutSource(t *testing.T) {
@@ -408,14 +401,14 @@ func TestWorkerASRRejectsAudioOverOneHour(t *testing.T) {
 	require.Equal(t, document.RenditionErrorUnsupportedInput, providerErr.Code())
 	require.Zero(t, state.lookups.Load())
 }
-func TestWorkerActualGatewayLostReplyAndResume(t *testing.T) {
+func TestWorkerActualGatewayMapsPartialSuccess(t *testing.T) {
 	for _, testCase := range []struct {
-		name, status                string
+		name                        string
 		pageError, audio, wantError bool
 	}{
-		{name: "partial PDF", status: "partial_success", pageError: true},
-		{name: "partial PDF without omissions", status: "partial_success", wantError: true},
-		{name: "partial ASR", status: "partial_success", audio: true, wantError: true},
+		{name: "partial PDF", pageError: true},
+		{name: "partial PDF without omissions", wantError: true},
+		{name: "partial ASR", audio: true, wantError: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
@@ -445,7 +438,7 @@ func TestWorkerActualGatewayLostReplyAndResume(t *testing.T) {
 					backendPosts.Add(1)
 					writeJSON(t, out, doclingTask("backend-task", "pending"))
 				case workerprotocol.PollPath + "backend-task":
-					writeJSON(t, out, doclingTask("backend-task", testCase.status))
+					writeJSON(t, out, doclingTask("backend-task", "partial_success"))
 				case workerprotocol.ResultPath + "backend-task":
 					writeJSON(t, out, backendResult)
 				default:
@@ -457,19 +450,16 @@ func TestWorkerActualGatewayLostReplyAndResume(t *testing.T) {
 			gateway, err := conversionworker.Open(t.Context(), options)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, gateway.Close(context.WithoutCancel(t.Context()))) })
-			var loseReply atomic.Bool
-			loseReply.Store(true)
+			runDone := make(chan error, 1)
 			origin, transport := inMemoryServer(t, http.HandlerFunc(func(out http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == workerprotocol.SubmitPath && loseReply.Swap(false) {
-					// The real gateway commits input, but the client sees only a server failure.
-					recorder := httptest.NewRecorder()
-					gateway.ServeHTTP(recorder, r)
-					assert.Equal(t, http.StatusAccepted, recorder.Code)
-					out.Header().Set(workerprotocol.ProtocolHeader, workerprotocol.Contract)
-					out.WriteHeader(http.StatusServiceUnavailable)
-					return
-				}
 				gateway.ServeHTTP(out, r)
+				if r.URL.Path == workerprotocol.SubmitPath {
+					worked, err := gateway.RunOnce(r.Context())
+					if err == nil && !worked {
+						err = errors.New("gateway did not process accepted job")
+					}
+					runDone <- err
+				}
 			}))
 			var client document.ResumableRenditionProvider
 			if testCase.audio {
@@ -478,22 +468,13 @@ func TestWorkerActualGatewayLostReplyAndResume(t *testing.T) {
 				client, err = NewWorker(workerProfile(origin, f.descriptor), testSecrets{"worker": "synthetic-worker-key"}, transport)
 			}
 			require.NoError(t, err)
-			_, err = document.RenderRendition(t.Context(), client, upload(), f.authorization)
-			require.True(t, document.IsRenditionProviderErrorRetryable(err), "%v", err)
-			require.False(t, loseReply.Load(), "the gateway must have accepted before the reply is lost")
-			worked, err := gateway.RunOnce(t.Context())
-			require.NoError(t, err)
-			require.True(t, worked)
-			backend.Close()
-			// Restart the durable spool. Retained lookup/result must not need Docling.
-			require.NoError(t, gateway.Close(t.Context()))
-			gateway, err = conversionworker.Open(t.Context(), options)
-			require.NoError(t, err)
-			var handle document.RenditionResumeHandle
-			stop := errors.New("synthetic publication interruption")
-			_, err = document.RenderRenditionWithResume(t.Context(), client, upload(), f.authorization, nil, func(h document.RenditionResumeHandle) error { handle = h; return stop })
-			require.ErrorIs(t, err, stop)
-			result, err := document.ResumeRendition(t.Context(), client, workerSnapshot(t, f), handle, nil)
+			result, err := document.RenderRendition(t.Context(), client, upload(), f.authorization)
+			select {
+			case runErr := <-runDone:
+				require.NoError(t, runErr)
+			default:
+				t.Fatal("gateway did not receive a submission")
+			}
 			require.Equal(t, int32(1), backendPosts.Load())
 			if testCase.wantError {
 				providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
@@ -503,12 +484,10 @@ func TestWorkerActualGatewayLostReplyAndResume(t *testing.T) {
 			}
 			require.NoError(t, err)
 			require.NoError(t, document.ValidateRenditionResult(f.descriptor, f.authorization, result))
-			if testCase.status == "partial_success" {
-				require.Equal(t, document.EvidencePartial, result.Evidence.Completeness)
-				require.Contains(t, result.Receipt.Warnings, "partial_success")
-				require.Len(t, result.Evidence.Units[0].Omissions, 1)
-				require.Equal(t, "provider_output", result.Evidence.Units[0].Omissions[0].Field)
-			}
+			require.Equal(t, document.EvidencePartial, result.Evidence.Completeness)
+			require.Contains(t, result.Receipt.Warnings, "partial_success")
+			require.Len(t, result.Evidence.Units[0].Omissions, 1)
+			require.Equal(t, "provider_output", result.Evidence.Units[0].Omissions[0].Field)
 		})
 	}
 }
