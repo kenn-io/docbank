@@ -623,6 +623,43 @@ it("retains photo ranking status on snapshot continuation pages", async () => {
   expect(fetcher.mock.calls[0]?.[0]).toBe(`/api/v1/workspace/queries/${snapshotID}/pages`);
 });
 
+it("accepts selected people on unavailable facets without counts", async () => {
+  const person = {
+    key: tagID,
+    label: "Synthetic",
+    count: 0,
+    selected: true,
+    selected_person_ids: [tagID],
+  };
+  const facet = {
+    dimension: "person_role",
+    available: false,
+    reason: "people_evidence_incomplete",
+    values: [person],
+  };
+  const fetcher = vi.spyOn(globalThis, "fetch");
+  const read = () =>
+    createSnapshot(
+      "session",
+      query,
+      { page_size: 50, facets: ["person_role"] },
+      new AbortController().signal,
+    );
+  fetcher.mockResolvedValueOnce(jsonResponse(await page({ facets: [facet] })));
+  expect((await read()).facets[0]!.values).toEqual([person]);
+  for (const invalid of [
+    { ...facet, total: 1 },
+    { ...facet, missing: 0 },
+    { ...facet, other: 0 },
+    { ...facet, values: [{ ...person, count: 1 }] },
+    { ...facet, values: [{ ...person, selected: false }] },
+    { ...facet, dimension: "tags" },
+  ]) {
+    fetcher.mockResolvedValueOnce(jsonResponse(await page({ facets: [invalid] })));
+    await expect(read()).rejects.toThrow("facets[0] fabricates unavailable counts");
+  }
+});
+
 it("parses people evidence and rejects an invalid matched role", async () => {
   const safeRoles = [
     "author",

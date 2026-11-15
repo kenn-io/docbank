@@ -511,16 +511,8 @@ function parseFacet(
   if (raw.available) {
     if (reason !== undefined && reason !== "")
       malformed(`facets[${index}] has an unavailable reason`);
-    if (
-      total === undefined ||
-      total === null ||
-      missing === undefined ||
-      missing === null ||
-      other === undefined ||
-      other === null
-    ) {
+    if (total == null || missing == null || other == null)
       malformed(`facets[${index}] lacks available counts`);
-    }
     if (counts) {
       for (const value of values) {
         try {
@@ -533,7 +525,15 @@ function parseFacet(
       if (!Number.isSafeInteger(counted) || counted !== total || other !== 0)
         malformed(`facets[${index}] has inconsistent capture-day counts`);
     }
-  } else if (!reason || values.length !== 0 || total != null || missing != null || other != null) {
+  } else if (
+    !reason ||
+    (dimension === "person_role"
+      ? values.some((value) => !value.selected || value.count !== 0)
+      : values.length !== 0) ||
+    total != null ||
+    missing != null ||
+    other != null
+  ) {
     malformed(`facets[${index}] fabricates unavailable counts`);
   }
   return {
