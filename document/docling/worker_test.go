@@ -156,6 +156,53 @@ func TestWorkerRepostsFailedLookupWithSameKey(t *testing.T) {
 	require.Equal(t, int32(2), state.posts.Load())
 	require.Equal(t, key, state.key)
 }
+func TestWorkerRetriesCorrectedGatewaySettingsWithSameKey(t *testing.T) {
+	for _, test := range []struct {
+		name, path string
+		status     int
+	}{
+		{"lookup key", workerprotocol.LookupPath, http.StatusUnauthorized},
+		{"submission size", workerprotocol.SubmitPath, http.StatusRequestEntityTooLarge},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := workerFixture(t)
+			state, origin, transport := workerHTTP(t, workerDocumentResult())
+			base := transport.Transport
+			var keys, lookupCredentials []string
+			corrected := false
+			transport.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+				if strings.HasPrefix(request.URL.Path, workerprotocol.LookupPath) {
+					keys = append(keys, strings.TrimPrefix(request.URL.Path, workerprotocol.LookupPath))
+					lookupCredentials = append(lookupCredentials, request.Header.Get("X-Api-Key"))
+				} else if request.URL.Path == workerprotocol.SubmitPath {
+					keys = append(keys, request.Header.Get("Idempotency-Key"))
+				}
+				if !corrected && strings.HasPrefix(request.URL.Path, test.path) {
+					return &http.Response{Request: request, StatusCode: test.status, Header: http.Header{workerprotocol.ProtocolHeader: []string{workerprotocol.Contract}}, Body: io.NopCloser(strings.NewReader("rejected"))}, nil
+				}
+				return base.RoundTrip(request)
+			})
+			secrets := testSecrets{"worker": "synthetic-old-key"}
+			client, err := NewWorker(workerProfile(origin, f.descriptor), secrets, transport)
+			require.NoError(t, err)
+			_, err = document.RenderRendition(t.Context(), client, f.upload(), f.authorization)
+			require.True(t, document.IsRenditionProviderErrorRetryable(err), "%v", err)
+			corrected = true
+			secrets["worker"] = "synthetic-corrected-key"
+			result, err := document.RenderRendition(t.Context(), client, f.upload(), f.authorization)
+			require.NoError(t, err)
+			require.Equal(t, "first page", result.Evidence.Units[0].Text)
+			require.Equal(t, int32(1), state.posts.Load())
+			require.Equal(t, []string{"synthetic-old-key", "synthetic-corrected-key"}, lookupCredentials)
+			require.GreaterOrEqual(t, len(keys), 3)
+			require.Len(t, keys[0], 64)
+			for _, key := range keys[1:] {
+				require.Equal(t, keys[0], key)
+			}
+		})
+	}
+}
+
 func workerFixture(t *testing.T) fixture {
 	t.Helper()
 	f := newFixture(t, "pdf", "application/pdf", "report.pdf", []byte("synthetic PDF source"))

@@ -399,8 +399,11 @@ func (client *Client) submit(run *rendering, fields [][2]string) (taskResponse, 
 		return taskResponse{}, err
 	}
 	if response.Status != http.StatusOK && response.Status != http.StatusAccepted {
-		return taskResponse{}, provider.StatusError(providerutil.StageSubmission, response.Status,
-			response.RetryAfter, nil)
+		err := provider.StatusError(providerutil.StageSubmission, response.Status, response.RetryAfter, nil)
+		if run.workerProtocol && response.Status == http.StatusRequestEntityTooLarge {
+			err = provider.Classified(document.RenditionErrorTransient, "worker source limit can be corrected", err)
+		}
+		return taskResponse{}, err
 	}
 	task, err := parseTaskForProtocol(response.Body, run.workerProtocol)
 	if err != nil {

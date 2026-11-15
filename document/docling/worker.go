@@ -340,7 +340,11 @@ func (client *Client) lookupWorker(ctx context.Context, run *rendering, key stri
 		return taskResponse{}, false, nil
 	}
 	if response.Status != 200 {
-		return taskResponse{}, false, provider.StatusError(providerutil.StageJob, response.Status, response.RetryAfter, nil)
+		err := provider.StatusError(providerutil.StageJob, response.Status, response.RetryAfter, nil)
+		if response.Status == http.StatusUnauthorized {
+			err = provider.Classified(document.RenditionErrorTransient, "worker lookup credentials can be corrected", err)
+		}
+		return taskResponse{}, false, err
 	}
 	task, err := parseTaskForProtocol(response.Body, true)
 	if err != nil {
