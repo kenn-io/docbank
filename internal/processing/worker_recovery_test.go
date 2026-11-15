@@ -16,7 +16,7 @@ import (
 type retryExpiryRuntime struct{ provider *workerProvider }
 
 func (r retryExpiryRuntime) Prepare(ctx context.Context, work store.RenditionJobWork, now time.Time) (RenditionExecution, error) {
-	execution, err := (workerRuntime{provider: r.provider}).Prepare(ctx, work, now)
+	execution, err := workerRuntime(r).Prepare(ctx, work, now)
 	if r.provider.calls == 0 {
 		execution.Authorization.ExpiresAt = now.Add(time.Second).Format("2006-01-02T15:04:05.000000000Z")
 	}
