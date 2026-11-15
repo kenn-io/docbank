@@ -119,7 +119,6 @@ func TestDocumentPeopleTableBccLabels(t *testing.T) {
 	require.Contains(t, table.String(), "From package")
 	require.Contains(t, table.String(), `Last editor  "Editor"`)
 	require.Contains(t, table.String(), "From transfer")
-
 }
 
 func TestDocumentPeopleTableAssertionSupport(t *testing.T) {
