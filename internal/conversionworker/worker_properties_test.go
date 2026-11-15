@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -18,7 +19,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -69,33 +69,6 @@ func TestWorkerReconcilesAtomicCrashStaging(t *testing.T) {
 		require.NoError(ht, w.Close(t.Context()))
 	})
 }
-func checkWorkerBudgetExhaustionDoesNotNeedBackend(t *testing.T) {
-	o := workerOptions(t)
-	var offline atomic.Bool
-	var sends atomic.Int32
-	o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
-		if r.Method == http.MethodPost {
-			_, _ = io.Copy(io.Discard, r.Body)
-			sends.Add(1)
-			return backendResponse(r, 503, `{}`), nil
-		}
-		if offline.Load() {
-			return nil, errors.New("synthetic offline")
-		}
-		return backendResponse(r, 200, `{}`), nil
-	})}
-	w := openWorker(t, o)
-	id := taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("source")))
-	for range 3 {
-		_, err := w.RunOnce(t.Context())
-		require.NoError(t, err)
-	}
-	offline.Store(true)
-	_, err := w.RunOnce(t.Context())
-	require.NoError(t, err)
-	require.Equal(t, int32(3), sends.Load())
-	require.Contains(t, getRequest(t.Context(), w, "/v1/status/poll/"+id).Body.String(), "failure")
-}
 func TestWorkerSpoolCreationSyncsEveryNewParent(t *testing.T) {
 	o := workerOptions(t)
 	parent := filepath.Dir(o.Directory)
@@ -109,69 +82,6 @@ func TestWorkerSpoolCreationSyncsEveryNewParent(t *testing.T) {
 	require.Contains(t, synced, filepath.Join(parent, "level-a"))
 	require.Contains(t, synced, filepath.Join(parent, "level-a", "level-b"))
 	require.NoError(t, w.Close(t.Context()))
-}
-func checkWorkerRejectsUnsafeRetainedProtocolState(t *testing.T) {
-	for _, change := range []func([]byte) []byte{
-		func(data []byte) []byte { return append(data, []byte("\n{}")...) },
-		func(data []byte) []byte {
-			var item job
-			require.NoError(t, json.Unmarshal(data, &item))
-			item.BackendID = "../ready"
-			item.State = "started"
-			item.Submissions = 1
-			out, err := json.Marshal(item)
-			require.NoError(t, err)
-			return out
-		},
-	} {
-		o := workerOptions(t)
-		w := openWorker(t, o)
-		id := taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("source")))
-		require.NoError(t, w.Close(t.Context()))
-		path := filepath.Join(o.Directory, id, "manifest.json")
-		original, err := os.ReadFile(path)
-		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(path, change(original), 0600))
-		next, err := Open(t.Context(), o)
-		if next != nil {
-			require.NoError(t, next.Close(t.Context()))
-		}
-		require.Error(t, err)
-		require.NoError(t, os.WriteFile(path, original, 0600))
-		next, err = Open(t.Context(), o)
-		require.NoError(t, err)
-		require.NoError(t, next.Close(t.Context()))
-	}
-}
-func checkWorkerRejectsMismatchedAudioMode(t *testing.T) {
-	for _, candidate := range []struct {
-		filename, mediaType string
-		fields              [][2]string
-	}{
-		{"synthetic.txt", "text/plain", [][2]string{{"to_formats", "json"}, {"target_type", "inbody"}}},
-		{"synthetic.pdf", "application/pdf", [][2]string{{"from_formats", "audio"}, {"to_formats", "json"}, {"target_type", "inbody"}}},
-		{"synthetic.wav", "audio/wav", [][2]string{{"to_formats", "md"}, {"to_formats", "json"}, {"target_type", "inbody"}}},
-	} {
-		w := openWorker(t, workerOptions(t))
-		out := submitNamed(t, w, strings.Repeat("a", 64), candidate.filename, candidate.mediaType, []byte("x"), candidate.fields)
-		require.Equal(t, 400, out.Code)
-		if candidate.mediaType == "text/plain" {
-			require.Contains(t, out.Body.String(), "supported media type")
-		}
-	}
-}
-func checkWorkerRejectsEncodedFileTransfer(t *testing.T) {
-	w := openWorker(t, workerOptions(t))
-	body := "--synthetic\r\nContent-Disposition: form-data; name=\"files\"; filename=\"synthetic.pdf\"\r\nContent-Type: application/pdf\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nA\r\n--synthetic\r\nContent-Disposition: form-data; name=\"to_formats\"\r\n\r\njson\r\n--synthetic\r\nContent-Disposition: form-data; name=\"target_type\"\r\n\r\ninbody\r\n--synthetic--\r\n"
-	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/convert/file/async", strings.NewReader(body))
-	r.Header.Set("Content-Type", "multipart/form-data; boundary=synthetic")
-	r.Header.Set("X-Api-Key", "synthetic-worker-key")
-	r.Header.Set("Idempotency-Key", strings.Repeat("a", 64))
-	sum := sha256.Sum256([]byte("A"))
-	r.Header.Set("X-Docbank-Source-Sha256", hex.EncodeToString(sum[:]))
-	out := httptest.NewRecorder()
-	w.ServeHTTP(out, r)
-	require.Equal(t, 400, out.Code)
 }
 
 type observedBody struct {
@@ -210,19 +120,6 @@ func TestWorkerRejectsAmbiguousBackendOrigins(t *testing.T) {
 		require.Error(t, err, origin)
 	}
 }
-func checkWorkerSpoolBindsBackendOrigin(t *testing.T) {
-	o := workerOptions(t)
-	w := openWorker(t, o)
-	taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("source")))
-	require.NoError(t, w.Close(t.Context()))
-	o.BackendURL = "http://127.0.0.1:5003"
-	next, err := Open(t.Context(), o)
-	if next != nil {
-		require.NoError(t, next.Close(t.Context()))
-	}
-	require.Error(t, err)
-}
-
 func TestWorkerDoesNotServeCorruptedRetainedResult(t *testing.T) {
 	o := workerOptions(t)
 	w := openWorker(t, o)
@@ -358,14 +255,91 @@ func TestWorkerBackendReceivesExactGeneratedOriginalAfterRestart(t *testing.T) {
 }
 
 func TestWorkerRejectsInvalidUploads(t *testing.T) {
-	t.Run("media type and fields", checkWorkerRejectsMismatchedAudioMode)
-	t.Run("encoded source", checkWorkerRejectsEncodedFileTransfer)
-	t.Run("duration", checkWorkerAudioDurationLimit)
+	o := workerOptions(t)
+	o.MaxSourceBytes, o.MaxSpoolBytes = 32<<20, 128<<20
+	w := openWorker(t, o)
+	for _, candidate := range []struct {
+		filename, mediaType string
+		fields              [][2]string
+	}{
+		{"synthetic.txt", "text/plain", [][2]string{{"to_formats", "json"}, {"target_type", "inbody"}}},
+		{"synthetic.pdf", "application/pdf", [][2]string{{"from_formats", "audio"}, {"to_formats", "json"}, {"target_type", "inbody"}}},
+		{"synthetic.wav", "audio/wav", [][2]string{{"to_formats", "md"}, {"to_formats", "json"}, {"target_type", "inbody"}}},
+	} {
+		out := submitNamed(t, w, strings.Repeat("a", 64), candidate.filename, candidate.mediaType, []byte("x"), candidate.fields)
+		require.Equal(t, 400, out.Code)
+		if candidate.mediaType == "text/plain" {
+			require.Contains(t, out.Body.String(), "supported media type")
+		}
+	}
+	body := "--synthetic\r\nContent-Disposition: form-data; name=\"files\"; filename=\"synthetic.pdf\"\r\nContent-Type: application/pdf\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nA\r\n--synthetic\r\nContent-Disposition: form-data; name=\"to_formats\"\r\n\r\njson\r\n--synthetic\r\nContent-Disposition: form-data; name=\"target_type\"\r\n\r\ninbody\r\n--synthetic--\r\n"
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/convert/file/async", strings.NewReader(body))
+	r.Header.Set("Content-Type", "multipart/form-data; boundary=synthetic")
+	r.Header.Set("X-Api-Key", "synthetic-worker-key")
+	r.Header.Set("Idempotency-Key", strings.Repeat("a", 64))
+	sum := sha256.Sum256([]byte("A"))
+	r.Header.Set("X-Docbank-Source-Sha256", hex.EncodeToString(sum[:]))
+	out := httptest.NewRecorder()
+	w.ServeHTTP(out, r)
+	require.Equal(t, 400, out.Code)
+	fields := [][2]string{{"from_formats", "audio"}, {"to_formats", "json"}, {"target_type", "inbody"}}
+	for i, test := range []struct{ seconds, status int }{{3600, 202}, {3601, 400}} {
+		data := make([]byte, 44+8000*test.seconds)
+		copy(data, "RIFF")
+		binary.LittleEndian.PutUint32(data[4:8], uint32(len(data)-8))
+		copy(data[8:], "WAVEfmt ")
+		binary.LittleEndian.PutUint32(data[16:20], 16)
+		binary.LittleEndian.PutUint16(data[20:22], 1)
+		binary.LittleEndian.PutUint16(data[22:24], 1)
+		binary.LittleEndian.PutUint32(data[24:28], 8000)
+		binary.LittleEndian.PutUint32(data[28:32], 8000)
+		binary.LittleEndian.PutUint16(data[32:34], 1)
+		binary.LittleEndian.PutUint16(data[34:36], 8)
+		copy(data[36:], "data")
+		binary.LittleEndian.PutUint32(data[40:44], uint32(len(data)-44))
+		response := submitNamed(t, w, strings.Repeat(string(rune('b'+i)), 64), "audio.wav", "audio/wav", data, fields)
+		require.Equal(t, test.status, response.Code, response.Body.String())
+	}
 }
 
 func TestWorkerRejectsInvalidRetainedState(t *testing.T) {
-	t.Run("manifest version", checkWorkerRejectsUnknownManifestVersion)
-	t.Run("source damage", checkWorkerRejectsDamagedRetainedSource)
-	t.Run("protocol state", checkWorkerRejectsUnsafeRetainedProtocolState)
-	t.Run("backend origin", checkWorkerSpoolBindsBackendOrigin)
+	for _, damage := range []string{"version", "source", "extra JSON", "unsafe task", "backend origin"} {
+		t.Run(damage, func(t *testing.T) {
+			o := workerOptions(t)
+			w := openWorker(t, o)
+			id := taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("source")))
+			require.NoError(t, w.Close(t.Context()))
+			manifest := filepath.Join(o.Directory, id, "manifest.json")
+			original, err := os.ReadFile(manifest)
+			require.NoError(t, err)
+			switch damage {
+			case "source":
+				require.NoError(t, os.WriteFile(filepath.Join(o.Directory, id, "source"), []byte("tampered"), 0600))
+			case "backend origin":
+				o.BackendURL = "http://127.0.0.1:5003"
+			case "extra JSON":
+				require.NoError(t, os.WriteFile(manifest, append(original, []byte("\n{}")...), 0600))
+			default:
+				var item job
+				require.NoError(t, json.Unmarshal(original, &item))
+				if damage == "version" {
+					item.Version = 2
+				} else {
+					item.BackendID, item.State, item.Submissions = "../ready", "started", 1
+				}
+				data, err := json.Marshal(item)
+				require.NoError(t, err)
+				require.NoError(t, os.WriteFile(manifest, data, 0600))
+			}
+			next, err := Open(t.Context(), o)
+			require.Error(t, err)
+			require.Nil(t, next)
+			if damage == "extra JSON" || damage == "unsafe task" {
+				require.NoError(t, os.WriteFile(manifest, original, 0600))
+				next, err = Open(t.Context(), o)
+				require.NoError(t, err)
+				require.NoError(t, next.Close(t.Context()))
+			}
+		})
+	}
 }

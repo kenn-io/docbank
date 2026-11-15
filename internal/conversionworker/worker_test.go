@@ -14,7 +14,6 @@ import (
 	"net/textproto"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -124,106 +123,6 @@ func TestWorkerBoundsAndAuthentication(t *testing.T) {
 	require.Equal(t, 202, submitRequest(t, w, strings.Repeat("a", 64), []byte("one")).Code)
 }
 
-func checkWorkerRetainsRepeatableResultsAfterReopen(t *testing.T) {
-	o := workerOptions(t)
-	w := openWorker(t, o)
-	id := taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("original")))
-	for range 3 {
-		_, err := w.RunOnce(t.Context())
-		require.NoError(t, err)
-	}
-	first := getRequest(t.Context(), w, "/v1/result/"+id)
-	require.Equal(t, 200, first.Code, first.Body.String())
-	require.NoError(t, w.Close(t.Context()))
-	w = openWorker(t, o)
-	for range 2 {
-		out := getRequest(t.Context(), w, "/v1/result/"+id)
-		require.Equal(t, 200, out.Code)
-		require.Equal(t, first.Body.String(), out.Body.String())
-	}
-}
-
-func checkWorkerRetainsBackendPartialSuccessAfterReopen(t *testing.T) {
-	o := workerOptions(t)
-	const result = `{"document":{"filename":"synthetic.pdf"},"status":"success"}`
-	normal := o.Client.Transport
-	o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
-		switch {
-		case strings.HasPrefix(r.URL.Path, "/v1/status/poll/"):
-			return backendResponse(r, http.StatusOK, `{"task_id":"backend-1","task_status":"partial_success","task_type":"convert"}`), nil
-		case strings.HasPrefix(r.URL.Path, "/v1/result/"):
-			return backendResponse(r, http.StatusOK, result), nil
-		default:
-			return normal.RoundTrip(r)
-		}
-	})}
-	w := openWorker(t, o)
-	id := taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("synthetic")))
-	_, err := w.RunOnce(t.Context())
-	require.NoError(t, err)
-	assertPartialCompletion := func(w *Worker) {
-		statusResponse := getRequest(t.Context(), w, "/v1/status/poll/"+id)
-		require.Equal(t, http.StatusOK, statusResponse.Code)
-		var status struct {
-			TaskStatus        string `json:"task_status"`
-			BackendTaskStatus string `json:"backend_task_status"`
-		}
-		require.NoError(t, json.Unmarshal(statusResponse.Body.Bytes(), &status))
-		require.Equal(t, "success", status.TaskStatus)
-		require.Equal(t, "partial_success", status.BackendTaskStatus)
-		resultResponse := getRequest(t.Context(), w, "/v1/result/"+id)
-		require.Equal(t, http.StatusOK, resultResponse.Code, resultResponse.Body.String())
-		require.True(t, bytes.Equal([]byte(result), resultResponse.Body.Bytes()), "retained backend result bytes must be served unchanged")
-	}
-	assertPartialCompletion(w)
-	require.NoError(t, w.Close(t.Context()))
-	w = openWorker(t, o)
-	assertPartialCompletion(w)
-}
-
-func checkWorkerSubmissionBudgetSurvivesRestart(t *testing.T) {
-	o := workerOptions(t)
-	var sends atomic.Int32
-	o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
-		if r.Method == http.MethodPost {
-			_, _ = io.Copy(io.Discard, r.Body)
-			sends.Add(1)
-			return nil, errors.New("synthetic lost response")
-		}
-		return backendResponse(r, 200, `{"status":"ok"}`), nil
-	})}
-	w := openWorker(t, o)
-	id := taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("original")))
-	for range 8 {
-		_, err := w.RunOnce(t.Context())
-		require.NoError(t, err)
-		require.NoError(t, w.Close(t.Context()))
-		w = openWorker(t, o)
-	}
-	require.Equal(t, int32(3), sends.Load())
-	out := getRequest(t.Context(), w, "/v1/status/poll/"+id)
-	require.Contains(t, out.Body.String(), "failure")
-}
-func checkWorkerCapacityRefusalDoesNotSpendAmbiguityBudget(t *testing.T) {
-	o := workerOptions(t)
-	var sends atomic.Int32
-	normal := o.Client.Transport
-	o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
-		if r.Method == http.MethodPost && sends.Add(1) <= 5 {
-			_, _ = io.Copy(io.Discard, r.Body)
-			return backendResponse(r, 429, `{}`), nil
-		}
-		return normal.RoundTrip(r)
-	})}
-	w := openWorker(t, o)
-	id := taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("original")))
-	for range 10 {
-		_, err := w.RunOnce(t.Context())
-		require.NoError(t, err)
-	}
-	require.Equal(t, 200, getRequest(t.Context(), w, "/v1/result/"+id).Code)
-	require.Equal(t, int32(6), sends.Load())
-}
 func TestWorkerLocksSpoolAliases(t *testing.T) {
 	o := workerOptions(t)
 	w := openWorker(t, o)
@@ -236,12 +135,89 @@ func TestWorkerLocksSpoolAliases(t *testing.T) {
 }
 
 func TestWorkerRefundsCapacityRefusals(t *testing.T) {
-	t.Run("response", checkWorkerCapacityRefusalDoesNotSpendAmbiguityBudget)
-	t.Run("body error", checkWorkerRefundsConfirmed429WhenResponseBodyReadFails)
-	t.Run("canceled body", checkWorkerPersistsConfirmed429RefundWhenResponseReadCancelsContext)
+	for _, scenario := range []string{"response", "body error", "canceled body"} {
+		t.Run(scenario, func(t *testing.T) {
+			o := workerOptions(t)
+			normal := o.Client.Transport
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			posts := 0
+			o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
+				if r.Method == http.MethodPost {
+					posts++
+					_, _ = io.Copy(io.Discard, r.Body)
+					if scenario == "canceled body" {
+						return &http.Response{Request: r, StatusCode: 429, Header: make(http.Header), Body: cancelingBackendResponseBody{cancel: cancel}}, nil
+					}
+					if scenario == "body error" && posts <= 3 {
+						return &http.Response{Request: r, StatusCode: 429, Header: make(http.Header), Body: backendResponseReadFailure{err: errors.New("synthetic body read failure")}}, nil
+					}
+					if scenario == "response" && posts <= 5 {
+						return backendResponse(r, 429, `{}`), nil
+					}
+				}
+				return normal.RoundTrip(r)
+			})}
+			w := openWorker(t, o)
+			id := taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("synthetic")))
+			if scenario == "canceled body" {
+				_, err := w.RunOnce(ctx)
+				require.ErrorIs(t, err, context.Canceled)
+				require.NoError(t, w.Close(t.Context()))
+				w = openWorker(t, o)
+				require.Equal(t, 0, w.jobs[id].Submissions)
+				require.Equal(t, "pending", w.jobs[id].State)
+				return
+			}
+			attempts := 4
+			if scenario == "response" {
+				attempts = 6
+			}
+			for range attempts {
+				_, err := w.RunOnce(t.Context())
+				require.NoError(t, err)
+			}
+			require.Equal(t, attempts, posts)
+			require.Equal(t, http.StatusOK, getRequest(t.Context(), w, "/v1/result/"+id).Code)
+		})
+	}
 }
 
 func TestWorkerRetainsResultsAfterReopen(t *testing.T) {
-	t.Run("complete", checkWorkerRetainsRepeatableResultsAfterReopen)
-	t.Run("partial", checkWorkerRetainsBackendPartialSuccessAfterReopen)
+	for _, status := range []string{"success", "partial_success"} {
+		t.Run(status, func(t *testing.T) {
+			o := workerOptions(t)
+			const result = `{"document":{"filename":"synthetic.pdf"},"status":"success"}`
+			normal := o.Client.Transport
+			o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
+				switch {
+				case strings.HasPrefix(r.URL.Path, "/v1/status/poll/"):
+					return backendResponse(r, http.StatusOK, `{"task_id":"backend-1","task_status":"`+status+`","task_type":"convert"}`), nil
+				case strings.HasPrefix(r.URL.Path, "/v1/result/"):
+					return backendResponse(r, http.StatusOK, result), nil
+				default:
+					return normal.RoundTrip(r)
+				}
+			})}
+			w := openWorker(t, o)
+			id := taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("synthetic")))
+			_, err := w.RunOnce(t.Context())
+			require.NoError(t, err)
+			for range 2 {
+				out := getRequest(t.Context(), w, "/v1/status/poll/"+id)
+				var task struct {
+					TaskStatus        string `json:"task_status"`
+					BackendTaskStatus string `json:"backend_task_status"`
+				}
+				require.NoError(t, json.Unmarshal(out.Body.Bytes(), &task))
+				require.Equal(t, "success", task.TaskStatus)
+				require.Equal(t, status, task.BackendTaskStatus)
+				out = getRequest(t.Context(), w, "/v1/result/"+id)
+				require.Equal(t, http.StatusOK, out.Code)
+				require.Equal(t, result, out.Body.String())
+				require.NoError(t, w.Close(t.Context()))
+				w = openWorker(t, o)
+			}
+		})
+	}
 }

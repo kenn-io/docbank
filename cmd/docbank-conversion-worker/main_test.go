@@ -159,26 +159,18 @@ func seedWorkerCommandJob(t *testing.T, options conversionworker.Options) {
 	require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
 }
 
-func checkWorkerCommandRejectsItsOwnBackendBeforeServing(t *testing.T) {
-	for _, pair := range [][2]string{{"127.0.0.1:5002", "http://127.0.0.1:5002"}, {"[::1]:5002", "http://[::1]:5002"}, {"127.0.0.1:80", "http://127.0.0.1"}, {"[::ffff:127.0.0.1]:5002", "http://127.0.0.1:5002"}} {
-		ctx, cancel := context.WithCancel(t.Context())
-		cancel()
-		// A canceled context ensures a missing validation cannot launch recursion.
-		err := run(ctx, []string{"--directory", t.TempDir(), "--listen", pair[0], "--backend", pair[1]}, func(string) string { return "synthetic-same-worker-key" }, io.Discard)
-		require.ErrorContains(t, err, "backend must differ from worker listener")
-	}
-}
-
-func checkWorkerCommandRejectsWildcardBeforeSpoolOwnership(t *testing.T) {
-	for _, listen := range []string{"0.0.0.0:5002", "[::]:5002"} {
-		ctx, cancel := context.WithCancel(t.Context())
-		cancel()
-		err := run(ctx, []string{"--directory", t.TempDir(), "--listen", listen, "--backend", "http://127.0.0.1:5002"}, func(string) string { return "synthetic-valid-worker-key" }, io.Discard)
-		require.ErrorContains(t, err, "listener must be an explicit")
-	}
-}
-
 func TestWorkerCommandRejectsListenerConflicts(t *testing.T) {
-	t.Run("own backend", checkWorkerCommandRejectsItsOwnBackendBeforeServing)
-	t.Run("wildcard", checkWorkerCommandRejectsWildcardBeforeSpoolOwnership)
+	for _, test := range []struct{ listen, backend, want string }{
+		{"127.0.0.1:5002", "http://127.0.0.1:5002", "backend must differ from worker listener"},
+		{"[::1]:5002", "http://[::1]:5002", "backend must differ from worker listener"},
+		{"127.0.0.1:80", "http://127.0.0.1", "backend must differ from worker listener"},
+		{"[::ffff:127.0.0.1]:5002", "http://127.0.0.1:5002", "backend must differ from worker listener"},
+		{"0.0.0.0:5002", "http://127.0.0.1:5002", "listener must be an explicit"},
+		{"[::]:5002", "http://127.0.0.1:5002", "listener must be an explicit"},
+	} {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		err := run(ctx, []string{"--directory", t.TempDir(), "--listen", test.listen, "--backend", test.backend}, func(string) string { return "synthetic-valid-worker-key" }, io.Discard)
+		require.ErrorContains(t, err, test.want)
+	}
 }
