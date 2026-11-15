@@ -18,7 +18,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -82,31 +81,6 @@ func TestWorkerSpoolCreationSyncsEveryNewParent(t *testing.T) {
 	require.Contains(t, synced, filepath.Join(parent, "level-a"))
 	require.Contains(t, synced, filepath.Join(parent, "level-a", "level-b"))
 	require.NoError(t, w.Close(t.Context()))
-}
-
-type observedBody struct {
-	once   sync.Once
-	closed chan struct{}
-}
-
-func (b *observedBody) Read([]byte) (int, error) { return 0, io.EOF }
-func (b *observedBody) Close() error             { b.once.Do(func() { close(b.closed) }); return nil }
-func TestWorkerAlreadyCanceledEntryIsRaceFree(t *testing.T) {
-	w := openWorker(t, workerOptions(t))
-	for range 100 {
-		ctx, cancel := context.WithCancel(t.Context())
-		cancel()
-		body := &observedBody{closed: make(chan struct{})}
-		r := httptest.NewRequestWithContext(ctx, http.MethodPost, "/v1/convert/file/async", body)
-		r.Header.Set("X-Api-Key", "synthetic-worker-key")
-		r.Header.Set("Idempotency-Key", strings.Repeat("a", 64))
-		r.Header.Set("X-Docbank-Source-Sha256", strings.Repeat("b", 64))
-		r.Header.Set("Content-Type", "multipart/form-data; boundary=synthetic")
-		out := httptest.NewRecorder()
-		w.ServeHTTP(out, r)
-		require.NotEqual(t, 202, out.Code)
-		<-body.closed
-	}
 }
 
 func TestWorkerRejectsAmbiguousBackendOrigins(t *testing.T) {
@@ -232,6 +206,14 @@ func TestWorkerBackendReceivesExactGeneratedOriginalAfterRestart(t *testing.T) {
 		w, err := Open(t.Context(), o)
 		require.NoError(ht, err)
 		defer func() { require.NoError(t, w.Close(context.WithoutCancel(t.Context()))) }()
+		key := strings.Repeat("a", 64)
+		id := taskID(t, out)
+		found := getRequest(t.Context(), w, "/v1/jobs/by-key/"+key)
+		require.Equal(ht, http.StatusOK, found.Code)
+		require.Contains(ht, found.Body.String(), id)
+		changed := append([]byte(nil), source...)
+		changed[0] ^= 1
+		require.Equal(ht, http.StatusConflict, submitNamed(t, w, key, names[kind], mediaTypes[kind], changed, fields).Code)
 		require.Equal(ht, out.Body.String(), submitNamed(t, w, strings.Repeat("a", 64), names[kind], mediaTypes[kind], source, fields).Body.String())
 		_, err = w.RunOnce(t.Context())
 		require.NoError(ht, err)

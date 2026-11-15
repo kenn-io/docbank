@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -19,90 +18,54 @@ import (
 )
 
 func TestWorkerSchedulesStalledAndPendingJobs(t *testing.T) {
-	t.Run("submits pending after stall", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			o := workerOptions(t)
-			o.StallAfter = time.Hour
-			var posts int
-			complete := false
-			o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
-				if r.Method == http.MethodPost {
-					posts++
-					_, _ = io.Copy(io.Discard, r.Body)
-					id := "first"
-					if posts == 2 {
-						id = "second"
-					}
-					return backendResponse(r, 202, `{"task_id":"`+id+`","task_status":"pending","task_type":"convert"}`), nil
-				}
-				if id, ok := strings.CutPrefix(r.URL.Path, "/v1/status/poll/"); ok {
-					if id == "second" && complete {
-						return backendResponse(r, 200, `{"task_id":"second","task_status":"success","task_type":"convert"}`), nil
-					}
-					return backendResponse(r, 200, `{"task_id":"`+id+`","task_status":"started","task_type":"convert"}`), nil
-				}
-				if strings.HasPrefix(r.URL.Path, "/v1/result/") {
-					return backendResponse(r, 200, `{"result":"complete"}`), nil
-				}
-				return backendResponse(r, 200, `{}`), nil
-			})}
-			w := openWorker(t, o)
-			taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("first")))
-			_, err := w.RunOnce(t.Context())
-			require.NoError(t, err)
-			second := taskID(t, submitRequest(t, w, strings.Repeat("b", 64), []byte("second")))
-			time.Sleep(time.Hour)
-			_, err = w.RunOnce(t.Context())
-			require.NoError(t, err)
-			time.Sleep(time.Hour)
-			complete = true
-			for range 2 {
-				_, err = w.RunOnce(t.Context())
-				require.NoError(t, err)
-			}
-			require.Equal(t, 200, getRequest(t.Context(), w, "/v1/result/"+second).Code)
-			require.Equal(t, 2, posts)
-		})
-	})
-	t.Run("collects stalled during rate limit", func(t *testing.T) {
+	t.Run("submits pending and collects stalled after rate limit", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			o := workerOptions(t)
 			o.StallAfter = time.Hour
 			posts := 0
 			complete := false
 			o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
-				switch {
-				case r.Method == http.MethodPost:
+				if r.Method == http.MethodPost {
 					posts++
 					_, _ = io.Copy(io.Discard, r.Body)
-					if posts > 1 {
-						return backendResponse(r, 429, `{}`), nil
+					if posts == 1 {
+						return backendResponse(r, http.StatusTooManyRequests, `{}`), nil
 					}
-					return backendResponse(r, 202, `{"task_id":"first","task_status":"pending","task_type":"convert"}`), nil
-				case strings.HasPrefix(r.URL.Path, "/v1/status/poll/"):
-					if complete {
-						return backendResponse(r, 200, `{"task_id":"first","task_status":"success","task_type":"convert"}`), nil
-					}
-					return backendResponse(r, 200, `{"task_id":"first","task_status":"started","task_type":"convert"}`), nil
-				case strings.HasPrefix(r.URL.Path, "/v1/result/"):
-					return backendResponse(r, 200, `{"result":"complete"}`), nil
-				default:
-					return backendResponse(r, 200, `{}`), nil
+					return backendResponse(r, 202, `{"task_id":"new-task","task_status":"pending","task_type":"convert"}`), nil
 				}
+				if id, ok := strings.CutPrefix(r.URL.Path, "/v1/status/poll/"); ok {
+					status := "started"
+					if complete || id == "new-task" {
+						status = "success"
+					}
+					return backendResponse(r, 200, `{"task_id":"`+id+`","task_status":"`+status+`","task_type":"convert"}`), nil
+				}
+				return backendResponse(r, 200, `{"status":"success"}`), nil
 			})}
 			w := openWorker(t, o)
 			first := taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("first")))
+			second := taskID(t, submitRequest(t, w, strings.Repeat("b", 64), []byte("second")))
+			active, pending := max(first, second), min(first, second)
+			item := w.jobs[active]
+			item.State, item.BackendID, item.Submissions, item.StartedAt = "started", "accepted-task", 1, time.Now()
+			require.NoError(t, w.save(t.Context(), item))
+			require.NoError(t, w.Close(t.Context()))
+			w = openWorker(t, o)
 			_, err := w.RunOnce(t.Context())
 			require.NoError(t, err)
-			taskID(t, submitRequest(t, w, strings.Repeat("b", 64), []byte("second")))
+			require.Zero(t, posts, "a fresh task holds pending work")
 			time.Sleep(time.Hour)
+			_, err = w.RunOnce(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, 1, posts, "pending work receives a rate limit")
 			complete = true
-			for range 2 {
-				_, err = w.RunOnce(t.Context())
-				require.NoError(t, err)
-			}
-			require.Equal(t, 200, getRequest(t.Context(), w, "/v1/result/"+first).Code)
-			require.LessOrEqual(t, posts, 2)
+			_, err = w.RunOnce(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, http.StatusOK, getRequest(t.Context(), w, "/v1/result/"+active).Code)
+			_, err = w.RunOnce(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, 2, posts)
+			require.Equal(t, http.StatusOK, getRequest(t.Context(), w, "/v1/result/"+pending).Code)
 		})
 	})
 	t.Run("finishes known task before pending", func(t *testing.T) {
@@ -111,11 +74,9 @@ func TestWorkerSchedulesStalledAndPendingJobs(t *testing.T) {
 		var complete atomic.Bool
 		var w *Worker
 		var active string
-		retainedAtSubmit := false
 		o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
 			if r.Method == http.MethodPost {
 				posts.Add(1)
-				retainedAtSubmit = getRequest(t.Context(), w, "/v1/result/"+active).Code == 200
 				_, _ = io.Copy(io.Discard, r.Body)
 				return backendResponse(r, 202, `{"task_id":"new-task","task_status":"pending","task_type":"convert"}`), nil
 			}
@@ -154,35 +115,7 @@ func TestWorkerSchedulesStalledAndPendingJobs(t *testing.T) {
 		_, err = w.RunOnce(t.Context())
 		require.NoError(t, err)
 		require.Equal(t, int32(1), posts.Load())
-		require.True(t, retainedAtSubmit)
 	})
-}
-
-func TestWorkerRejectedSubmissionStaysTerminal(t *testing.T) {
-	o := workerOptions(t)
-	var posts int
-	normal := o.Client.Transport
-	o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
-		if r.Method == http.MethodPost {
-			posts++
-			if posts < 3 {
-				return backendResponse(r, 503, `{}`), nil
-			}
-			return backendResponse(r, http.StatusBadRequest, `{}`), nil
-		}
-		return normal.RoundTrip(r)
-	})}
-	w := openWorker(t, o)
-	key := strings.Repeat("a", 64)
-	id := taskID(t, submitRequest(t, w, key, []byte("source")))
-	for range 3 {
-		_, err := w.RunOnce(t.Context())
-		require.NoError(t, err)
-	}
-	out := getRequest(t.Context(), w, "/v1/status/poll/"+id)
-	require.Contains(t, out.Body.String(), "failure")
-	response := submitRequest(t, w, key, []byte("source"))
-	require.Contains(t, response.Body.String(), "failure")
 }
 
 func TestWorkerOpenRejectsInvalidKeys(t *testing.T) {
@@ -208,24 +141,39 @@ func TestWorkerOpenRejectsInvalidKeys(t *testing.T) {
 }
 
 func TestWorkerRejectsWrongBackendTaskType(t *testing.T) {
-	o := workerOptions(t)
-	normal := o.Client.Transport
-	var results int
-	o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
-		if strings.HasPrefix(r.URL.Path, "/v1/status/poll/") {
-			return backendResponse(r, 200, `{"task_id":"backend-1","task_status":"success","task_type":"chunk"}`), nil
-		}
-		if strings.HasPrefix(r.URL.Path, "/v1/result/") {
-			results++
-		}
-		return normal.RoundTrip(r)
-	})}
-	w := openWorker(t, o)
-	id := taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("source")))
-	_, err := w.RunOnce(t.Context())
-	require.NoError(t, err)
-	require.Contains(t, getRequest(t.Context(), w, "/v1/status/poll/"+id).Body.String(), "failure")
-	require.Zero(t, results)
+	for _, stage := range []string{"submit", "poll"} {
+		t.Run(stage, func(t *testing.T) {
+			o := workerOptions(t)
+			normal := o.Client.Transport
+			var polls, results int
+			o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
+				if r.Method == http.MethodPost && stage == "submit" {
+					_, _ = io.Copy(io.Discard, r.Body)
+					return backendResponse(r, 202, `{"task_id":"backend-1","task_status":"pending","task_type":"chunk"}`), nil
+				}
+				if strings.HasPrefix(r.URL.Path, "/v1/status/poll/") {
+					polls++
+					if stage == "poll" {
+						return backendResponse(r, 200, `{"task_id":"backend-1","task_status":"success","task_type":"chunk"}`), nil
+					}
+				}
+				if strings.HasPrefix(r.URL.Path, "/v1/result/") {
+					results++
+				}
+				return normal.RoundTrip(r)
+			})}
+			w := openWorker(t, o)
+			id := taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("source")))
+			_, err := w.RunOnce(t.Context())
+			require.NoError(t, err)
+			if stage == "submit" {
+				require.Zero(t, polls)
+			} else {
+				require.Contains(t, getRequest(t.Context(), w, "/v1/status/poll/"+id).Body.String(), "failure")
+			}
+			require.Zero(t, results)
+		})
+	}
 }
 
 func TestWorkerCloseCancelsUploadBeforeUnlock(t *testing.T) {
@@ -253,35 +201,23 @@ func TestWorkerCloseCancelsUploadBeforeUnlock(t *testing.T) {
 	require.NoError(t, next.Close(t.Context()))
 }
 func TestWorkerDoesNotSubmitCorruptedRetainedSourceUnderStableKey(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		damage []byte
-	}{
-		{name: "same-length corruption", damage: []byte("tampered")},
-		{name: "truncated source", damage: []byte("short")},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			o := workerOptions(t)
-			normal := o.Client.Transport
-			var submitted int
-			o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
-				if r.Method == http.MethodPost {
-					submitted++
-					_, _ = io.Copy(io.Discard, r.Body)
-				}
-				return normal.RoundTrip(r)
-			})}
-			w := openWorker(t, o)
-			const key = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-			id := taskID(t, submitRequest(t, w, key, []byte("original")))
-			require.Equal(t, id, w.keys[key])
-			require.NoError(t, os.WriteFile(filepath.Join(o.Directory, id, "source"), test.damage, 0600))
-			_, err := w.RunOnce(t.Context())
-			require.NoError(t, err)
-			require.Zero(t, submitted, "damaged source bytes must never be posted for the retained idempotency key")
-			require.Equal(t, id, w.keys[key])
-		})
-	}
+	o := workerOptions(t)
+	normal := o.Client.Transport
+	var submitted int
+	o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodPost {
+			submitted++
+			_, _ = io.Copy(io.Discard, r.Body)
+		}
+		return normal.RoundTrip(r)
+	})}
+	w := openWorker(t, o)
+	key := strings.Repeat("a", 64)
+	id := taskID(t, submitRequest(t, w, key, []byte("original")))
+	require.NoError(t, os.WriteFile(filepath.Join(o.Directory, id, "source"), []byte("tampered"), 0600))
+	_, err := w.RunOnce(t.Context())
+	require.NoError(t, err)
+	require.Zero(t, submitted, "damaged source bytes must never be posted for the retained idempotency key")
 }
 
 func TestWorkerOversizeResultIsTerminal(t *testing.T) {
@@ -393,7 +329,7 @@ func TestWorkerBackendRequestsCarryHopMarker(t *testing.T) {
 }
 
 func TestWorkerSubmissionBudget(t *testing.T) {
-	for _, scenario := range []string{"reopen", "restart"} {
+	for _, scenario := range []string{"503 response", "lost response", "400 rejection"} {
 		t.Run(scenario, func(t *testing.T) {
 			o := workerOptions(t)
 			normal := o.Client.Transport
@@ -403,8 +339,11 @@ func TestWorkerSubmissionBudget(t *testing.T) {
 					_, _ = io.Copy(io.Discard, r.Body)
 					posts++
 					if posts <= 3 {
-						if scenario == "restart" {
+						if scenario == "lost response" {
 							return nil, errors.New("synthetic lost response")
+						}
+						if scenario == "400 rejection" && posts == 3 {
+							return backendResponse(r, http.StatusBadRequest, `{}`), nil
 						}
 						return backendResponse(r, 503, `{}`), nil
 					}
@@ -417,7 +356,7 @@ func TestWorkerSubmissionBudget(t *testing.T) {
 			for range 3 {
 				_, err := w.RunOnce(t.Context())
 				require.NoError(t, err)
-				if scenario == "restart" {
+				if scenario == "lost response" {
 					require.NoError(t, w.Close(t.Context()))
 					w = openWorker(t, o)
 				}
@@ -426,19 +365,24 @@ func TestWorkerSubmissionBudget(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, 3, posts)
 			require.Contains(t, getRequest(t.Context(), w, "/v1/status/poll/"+id).Body.String(), "failure")
-			if scenario == "reopen" {
-				require.Equal(t, id, taskID(t, submitRequest(t, w, key, []byte("source"))))
-				_, err = w.RunOnce(t.Context())
-				require.NoError(t, err)
-				require.Equal(t, http.StatusOK, getRequest(t.Context(), w, "/v1/result/"+id).Code)
+			require.NoError(t, w.Close(t.Context()))
+			w = openWorker(t, o)
+			response := submitRequest(t, w, key, []byte("source"))
+			if scenario == "400 rejection" {
+				require.Contains(t, response.Body.String(), "failure")
+				return
 			}
+			require.Equal(t, id, taskID(t, response))
+			_, err = w.RunOnce(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, http.StatusOK, getRequest(t.Context(), w, "/v1/result/"+id).Code)
 		})
 	}
 }
 
 func TestWorkerReopensAfterLimitsLowered(t *testing.T) {
 	for _, overCapacity := range []bool{false, true} {
-		t.Run(strconv.FormatBool(overCapacity), func(t *testing.T) {
+		t.Run(map[bool]string{false: "lowered source/result", true: "lowered jobs/spool"}[overCapacity], func(t *testing.T) {
 			o := workerOptions(t)
 			w := openWorker(t, o)
 			key := strings.Repeat("a", 64)

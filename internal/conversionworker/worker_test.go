@@ -97,18 +97,6 @@ func taskID(t *testing.T, r *httptest.ResponseRecorder) string {
 	require.Len(t, task.ID, 32)
 	return task.ID
 }
-func TestWorkerDurableAcceptanceAndLookup(t *testing.T) {
-	o := workerOptions(t)
-	w := openWorker(t, o)
-	key := strings.Repeat("a", 64)
-	id := taskID(t, submitRequest(t, w, key, []byte("synthetic")))
-	require.NoError(t, w.Close(t.Context()))
-	w = openWorker(t, o)
-	found := getRequest(t.Context(), w, "/v1/jobs/by-key/"+key)
-	require.Equal(t, 200, found.Code)
-	require.Contains(t, found.Body.String(), id)
-	require.Equal(t, 409, submitRequest(t, w, key, []byte("changed")).Code)
-}
 func TestWorkerBoundsAndAuthentication(t *testing.T) {
 	o := workerOptions(t)
 	o.MaxJobs = 1
@@ -123,7 +111,7 @@ func TestWorkerBoundsAndAuthentication(t *testing.T) {
 	require.Equal(t, 202, submitRequest(t, w, strings.Repeat("a", 64), []byte("one")).Code)
 }
 
-func TestWorkerLocksSpoolAliases(t *testing.T) {
+func TestWorkerRejectsConcurrentOpenOfSameSpool(t *testing.T) {
 	o := workerOptions(t)
 	w := openWorker(t, o)
 	second, err := Open(t.Context(), o)
