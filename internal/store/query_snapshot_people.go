@@ -247,6 +247,10 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
  LEFT JOIN json_each((SELECT json_group_array(json_object('person_id',edge.person_id,'role',edge.role)) FROM ` + currentDocumentPersonEdgesSQL("m.content_version_id", true) + ` edge)) e
  LEFT JOIN persons p ON p.person_id=json_extract(e.value,'$.person_id') AND p.state<>'retired'
  ORDER BY m.node_id,p.person_id,json_extract(e.value,'$.role')`
+	selectedValues, selectedRoles, err := selectedPersonFacetValues(ctx, q, compiled.Query.Filters.People)
+	if err != nil {
+		return SnapshotFacet{}, err
+	}
 	rows, err := q.QueryContext(ctx, statementSQL, args...)
 	if err != nil {
 		return SnapshotFacet{}, fmt.Errorf("materializing people facet: %w", err)
@@ -261,11 +265,11 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
 			return SnapshotFacet{}, err
 		}
 		if !current {
-			return unavailableSnapshotFacet("person_role", "people_evidence_incomplete"), nil
+			return unavailableSelectedPeopleFacet("people_evidence_incomplete", selectedValues), nil
 		}
 		observation.add("person_role", node, id, name, 1, memberLimit)
 		if observation.limited {
-			return unavailableSnapshotFacet("person_role", "member_budget_exceeded"), nil
+			return unavailableSelectedPeopleFacet("member_budget_exceeded", selectedValues), nil
 		}
 		if id == "" {
 			continue
@@ -283,26 +287,13 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
 	}
 	selected := map[string]bool{}
 	selectedIDs := map[string][]string{}
-	for _, entry := range compiled.Query.Filters.People {
-		var id, name string
-		err := q.QueryRowContext(ctx, `SELECT person_id,display_name FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=$1),$2) AND `+personVisibleSQL("persons.person_id", 3), entry.PersonID, entry.PersonID, 1, 1).Scan(&id, &name)
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
+	for _, value := range selectedValues {
+		if roles[value.Key] == nil {
+			roles[value.Key] = selectedRoles[value.Key]
 		}
-		if err != nil {
-			return SnapshotFacet{}, err
-		}
-		if roles[id] == nil {
-			roles[id] = map[string]bool{}
-			for _, role := range entry.Roles {
-				if role != "blind_copy" {
-					roles[id][role] = true
-				}
-			}
-		}
-		selected[id] = true
-		selectedIDs[id] = append(selectedIDs[id], entry.PersonID)
-		observation.labels[id] = name
+		selected[value.Key] = true
+		selectedIDs[value.Key] = value.SelectedPersonIDs
+		observation.labels[value.Key] = value.Label
 	}
 	out, other := finalizeSnapshotFacetValues(observation.counts, observation.labels, selected, false)
 	for i := range out {
@@ -314,4 +305,43 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
 		slices.Sort(out[i].Roles)
 	}
 	return SnapshotFacet{Dimension: "person_role", Available: true, Total: &observation.total, Values: out, Missing: &observation.missing, Other: &other}, nil
+}
+
+// unavailableSelectedPeopleFacet reports why people evidence is unavailable and keeps the
+// selected visible people's names so the sidebar can remove their filters.
+func unavailableSelectedPeopleFacet(reason string, values []SnapshotFacetValue) SnapshotFacet {
+	facet := unavailableSnapshotFacet("person_role", reason)
+	facet.Values = values
+	return facet
+}
+
+// selectedPersonFacetValues maps each selected person to its visible survivor, keyed by
+// survivor ID with the display name and the selected IDs that resolve to it. The roles
+// are the first entry's, minus blind copy.
+func selectedPersonFacetValues(ctx context.Context, q metadataQuerier, entries []query.PersonFilter) ([]SnapshotFacetValue, map[string]map[string]bool, error) {
+	var values []SnapshotFacetValue
+	roles := map[string]map[string]bool{}
+	for _, entry := range entries {
+		var id, name string
+		err := q.QueryRowContext(ctx, `SELECT person_id,display_name FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=$1),$2) AND `+personVisibleSQL("persons.person_id", 3), entry.PersonID, entry.PersonID, 1, 1).Scan(&id, &name)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		if roles[id] == nil {
+			roles[id] = map[string]bool{}
+			for _, role := range entry.Roles {
+				if role != "blind_copy" {
+					roles[id][role] = true
+				}
+			}
+			values = append(values, SnapshotFacetValue{Key: id, Label: name, Selected: true})
+		}
+		last := &values[slices.IndexFunc(values, func(value SnapshotFacetValue) bool { return value.Key == id })]
+		// Normalized people entries are sorted by person ID.
+		last.SelectedPersonIDs = slices.Compact(append(last.SelectedPersonIDs, entry.PersonID))
+	}
+	return values, roles, nil
 }

@@ -139,23 +139,19 @@
   const [captureAfter, captureBefore] = facetFilterFields.year;
   const [ratingMin, ratingMax] = facetFilterFields.rating;
   const [people] = facetFilterFields.person_role;
-  let knownPeople: FacetValue[] = $state([]);
-  $effect(() => {
-    const facet = facets.find((item) => item.dimension === "person_role");
-    if (facet?.available) knownPeople = facet.values;
-  });
   const unavailablePeople = $derived.by(() => {
     const selected = query.filters[people] ?? [];
     const result = new Map<string, FacetValue>();
+    const reported = facets.find((item) => item.dimension === "person_role")?.values ?? [];
     for (const entry of selected) {
-      const known = knownPeople.find(
+      const known = reported.find(
         (value) =>
           value.key === entry.person_id || value.selected_person_ids?.includes(entry.person_id),
       );
       const key = known?.key ?? entry.person_id;
       result.set(key, {
         key,
-        label: known?.label ?? "",
+        label: known?.label || "Selected person",
         count: 0,
         selected: true,
         selected_person_ids: [...(result.get(key)?.selected_person_ids ?? []), entry.person_id],

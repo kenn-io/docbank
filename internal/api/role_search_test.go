@@ -50,13 +50,14 @@ func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
 			require.Contains(t, body, "bcc searches are unavailable here")
 		})
 	}
-	t.Run("person retains its existing meaning", func(t *testing.T) {
-		resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", browser, `{"query":{"syntax":"advanced","text":"person:\"Matrix Concealed\""},"page_size":50}`)
+	t.Run("API key retains Bcc", func(t *testing.T) {
+		resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"query":{"syntax":"advanced","text":"bcc:\"Matrix Concealed\""},"page_size":50}`)
 		require.Equal(t, http.StatusOK, resp.StatusCode, body)
 		var page api.WorkspaceQueryResponse
 		require.NoError(t, json.Unmarshal([]byte(body), &page))
 		require.Len(t, page.Rows, 1)
 		require.Equal(t, "letter.txt", page.Rows[0].Name)
+		require.Equal(t, []string{"blind_copy"}, page.Rows[0].MatchedRoles)
 	})
 }
 

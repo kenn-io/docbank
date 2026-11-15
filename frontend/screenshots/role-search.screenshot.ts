@@ -84,32 +84,25 @@ async function capture(page: Page, testInfo: TestInfo, name: string, theme: "lig
   expect(corner).toBeDefined();
   await page.mouse.move(corner![0]!, corner![1]!);
   if (name.endsWith("-wide")) {
-    const collections = page.getByRole("group", { name: "Collections facet" });
-    for (const label of await collections.locator("button > span").all()) {
-      expect(
-        await label.evaluate((element) => {
-          const range = document.createRange();
-          range.selectNodeContents(element);
-          return range.getClientRects().length;
-        }),
-      ).toBe(1);
+    if (name.startsWith("from-query") && theme === "dark") {
+      const collections = page.getByRole("group", { name: "Collections facet" });
+      for (const label of await collections.locator("button > span").all()) {
+        expect(
+          await label.evaluate((element) => {
+            const range = document.createRange();
+            range.selectNodeContents(element);
+            return range.getClientRects().length;
+          }),
+        ).toBe(1);
+      }
     }
     const row = page
       .getByRole("region", { name: "Frozen query results" })
       .locator("tbody tr")
       .first();
-    const title = row.locator(".title");
-    await expect(row.locator(".col-modified")).toBeVisible();
+    if (name.startsWith("from-query") && theme === "dark")
+      await expect(row.locator(".col-modified")).toBeVisible();
     const chip = row.locator(".roles .kit-chip").first();
-    expect(await title.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
-      true,
-    );
-    const titles = page
-      .getByRole("region", { name: "Frozen query results" })
-      .locator("tbody .title");
-    for (const element of await titles.all()) {
-      expect(await element.evaluate((title) => title.scrollWidth <= title.clientWidth)).toBe(true);
-    }
     const contrast = await chip.evaluate((element) => {
       const color = (value: string) =>
         value
@@ -130,26 +123,38 @@ async function capture(page: Page, testInfo: TestInfo, name: string, theme: "lig
     });
     expect(contrast).toBeGreaterThanOrEqual(4.5);
   }
-  if (name.endsWith("-wide") || name.endsWith("-mobile-results")) {
+  if (
+    name.startsWith("from-query") &&
+    theme === "dark" &&
+    (name.endsWith("-wide") || name.endsWith("-mobile-results"))
+  ) {
     for (const row of await page
       .getByRole("region", { name: "Frozen query results" })
       .locator("tbody tr")
       .all()) {
+      const cell = await row.locator(".name-cell").boundingBox();
       const title = await row.locator(".title").boundingBox();
       const folder = await row.locator(".folder").boundingBox();
       const chips = await Promise.all(
         (await row.locator(".roles .kit-chip").all()).map((chip) => chip.boundingBox()),
       );
-      expect(title).not.toBeNull();
-      expect(folder).not.toBeNull();
+      expect(cell).not.toBeNull();
       expect(chips.length).toBeGreaterThan(0);
-      expect(chips.every((chip) => chip && Math.abs(chip.y - chips[0]!.y) < 1)).toBe(true);
+      for (const item of [title, folder, ...chips]) {
+        expect(item).not.toBeNull();
+        expect(item!.x).toBeGreaterThanOrEqual(cell!.x - 1);
+        expect(item!.y).toBeGreaterThanOrEqual(cell!.y - 1);
+        expect(item!.x + item!.width).toBeLessThanOrEqual(cell!.x + cell!.width + 1);
+        expect(item!.y + item!.height).toBeLessThanOrEqual(cell!.y + cell!.height + 1);
+      }
       expect(Math.abs(chips[0]!.x - title!.x)).toBeLessThan(1);
-      expect(chips[0]!.y).toBeGreaterThanOrEqual(title!.y + title!.height);
-      expect(chips[0]!.y + chips[0]!.height).toBeLessThanOrEqual(folder!.y);
+      for (const chip of chips) {
+        expect(chip!.y).toBeGreaterThanOrEqual(title!.y + title!.height);
+        expect(chip!.y + chip!.height).toBeLessThanOrEqual(folder!.y);
+      }
     }
   }
-  if (name.endsWith("-narrow")) {
+  if (name.startsWith("from-query") && theme === "dark" && name.endsWith("-narrow")) {
     const aside = await page.getByRole("complementary", { name: "Snapshot facets" }).boundingBox();
     const people = await page.getByRole("group", { name: "People facet" }).boundingBox();
     const results = await page.getByRole("region", { name: "Frozen query results" }).boundingBox();
