@@ -40,6 +40,7 @@ export function processingPurpose(plan: ProcessingPlan, mediaType?: string): Pro
 }
 
 const providerNames: Record<string, string> = {
+  docbank: "the worker",
   docling: "Docling",
   mistral: "Mistral",
   "openai-compatible": "an OpenAI-compatible service",
@@ -49,7 +50,6 @@ const providerNames: Record<string, string> = {
 
 /** Names a provider by the family prefix of its descriptor ID. */
 function providerName(providerID: string): string {
-  if (providerID === "docbank.conversion-worker-v1") return "a Docbank conversion worker";
   const family = providerID.split(".")[0] ?? providerID;
   return providerNames[family] ?? family;
 }

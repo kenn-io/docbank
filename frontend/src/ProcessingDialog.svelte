@@ -417,7 +417,7 @@
         {:else if failed}
           {#if status?.failure_code === "provider_task_failed"}
             <p class="error">Failed: the worker couldn't process this file.</p>
-            <p>
+            <p class="muted">
               Check the worker's API key, file size limit, and conversion settings, then try again.
             </p>
           {:else}
