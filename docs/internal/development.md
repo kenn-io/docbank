@@ -386,8 +386,10 @@ also use shared operations for explicit asset selections. Quality scores, hidden
 sessions and photo settings have native Store contracts as well.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
-operations still open SQLite. Native embedding publication/recovery, photo descriptions
-and face detection have worker qualification below. Face embedding/matching workers,
+operations still open SQLite. Direct embedding-worker publication/recovery, photo
+descriptions and face detection have qualification below. Foreground embedding
+through the processing service fails at its vector-index rebuild after publishing
+vectors. Face embedding/matching workers,
 remote-media acquisition, search and PostgreSQL-target backup recovery remain unqualified.
 Native multi-store catalog operations are qualified below; deployment adapters
 and filesystem workers remain separate from public PostgreSQL vault opening.
@@ -968,6 +970,13 @@ consent and source fencing, replaced renditions, cancellation, recoverable
 catalog/blob failures, renewed provider authorization and reconciliation after
 consent changes. Published vectors and heads are retained in the real Store
 and managed blob files; the embedding provider stays injected.
+
+The embedding scenarios call `EmbeddingWorker` directly. Foreground embedding
+through the processing service still fails on PostgreSQL after publishing the
+vectors, when it rebuilds the vector index. That rebuild reads membership through
+`captureVectorIndexSourceTx`, which still uses SQLite-only SQL. Worker coverage
+does not establish successful service completion. Vector-index construction
+belongs to the unqualified search work.
 
 Photo service scenarios use a local synthetic vision endpoint and real preview
 bytes. They cover description consent and admission, preview publication,
