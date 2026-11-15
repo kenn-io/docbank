@@ -332,10 +332,13 @@ trust_boundary = "local_process"
         const previous = current;
         await tmux(["send-keys", "-t", "similar", "]"]);
         await expect
-          .poll(async () => {
-            current = await profile();
-            return current !== undefined && current !== previous;
-          }, { timeout: 20_000 })
+          .poll(
+            async () => {
+              current = await profile();
+              return current !== undefined && current !== previous;
+            },
+            { timeout: 20_000 },
+          )
           .toBe(true);
       }
       expect(current).toBe("private_text");
