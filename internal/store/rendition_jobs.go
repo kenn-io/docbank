@@ -57,6 +57,7 @@ const (
 	RenditionFailureConsent             RenditionFailureCode = "consent"
 	RenditionFailureStaleAuthority      RenditionFailureCode = "stale_authority"
 	RenditionFailurePDFPasswordRequired RenditionFailureCode = "pdf_password_required"
+	RenditionFailureProviderTaskFailed  RenditionFailureCode = "provider_task_failed"
 )
 
 var (
@@ -375,6 +376,14 @@ func (s *Store) EnqueueRenditionJob(
 			  AND provider_resume_handle IS NOT NULL AND execution_snapshot_json IS NOT NULL
 			  AND failure_code IN ('consent','stale_authority')`, now, now, jobID); err != nil {
 			return fmt.Errorf("requeueing sealed rendition resume after authority failure: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET
+			state='queued',phase='queued',claim_owner=NULL,lease_expires_at=NULL,available_at=$1,
+			provider_started=0,provider_resume_handle=NULL,execution_snapshot_json=NULL,selected_waiter_id=NULL,
+			authorization_grant_id=NULL,authorization_incarnation_id=NULL,authorization_revocation_fence=NULL,
+			failure_code=NULL,updated_at=$2
+			WHERE job_id=$3 AND state='failed' AND phase='provider' AND failure_code='provider_task_failed'`, now, now, jobID); err != nil {
+			return fmt.Errorf("requeueing retained worker task: %w", err)
 		}
 		var state RenditionJobState
 		if err := tx.QueryRowContext(ctx,
@@ -1264,7 +1273,7 @@ func (s *Store) MarkRenditionJobFailed(
 	ctx context.Context, claim RenditionJobClaim, code RenditionFailureCode, at time.Time,
 ) error {
 	if code != RenditionFailureTerminal && code != RenditionFailureConsent &&
-		code != RenditionFailureStaleAuthority && code != RenditionFailurePDFPasswordRequired {
+		code != RenditionFailureStaleAuthority && code != RenditionFailurePDFPasswordRequired && code != RenditionFailureProviderTaskFailed {
 		return errors.New("rendition job failure class is not terminal")
 	}
 	return s.finishRenditionJobClaim(ctx, claim, at, RenditionJobFailed, code)
@@ -2098,7 +2107,7 @@ func validRenditionJobPhase(value RenditionJobPhase) bool {
 func validRenditionFailureCode(value RenditionFailureCode) bool {
 	switch value {
 	case RenditionFailureTransient, RenditionFailureTerminal, RenditionFailureAmbiguous,
-		RenditionFailureConsent, RenditionFailureStaleAuthority, RenditionFailurePDFPasswordRequired:
+		RenditionFailureConsent, RenditionFailureStaleAuthority, RenditionFailurePDFPasswordRequired, RenditionFailureProviderTaskFailed:
 		return true
 	default:
 		return false

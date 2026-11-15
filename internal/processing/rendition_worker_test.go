@@ -21,6 +21,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/document/workerprotocol"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -501,6 +502,41 @@ func TestRenditionWorkerPostEgressCatalogRetryCancelsWithoutTombstone(t *testing
 func TestRenditionWorkerPersistsAmbiguousOutcomeWithoutResubmission(t *testing.T) {
 	t.Parallel()
 	checkRenditionWorkerPersistsAmbiguousOutcomeWithoutResubmission(t, newPublicationFixture)
+}
+
+func TestRenditionWorkerClassifiesRetainedTaskFailure(t *testing.T) {
+	for _, test := range []struct {
+		name, provider string
+		cause          error
+		want           store.RenditionFailureCode
+	}{
+		{"recoverable worker", workerprotocol.ProviderID, workerprotocol.ErrRetainedTaskFailed, store.RenditionFailureProviderTaskFailed},
+		{"other provider", "other", workerprotocol.ErrRetainedTaskFailed, store.RenditionFailureTerminal},
+		{"terminal worker", workerprotocol.ProviderID, errors.New("terminal"), store.RenditionFailureTerminal},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newPublicationFixture(t)
+			provider := newWorkerProvider(t)
+			profile := workerProcessingProfile(t, provider.Descriptor())
+			request := workerJobRequest(fixture.versionID, profile, provider.Descriptor())
+			grantWorkerConsent(t, fixture.catalog, request)
+			job, _, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
+			require.NoError(t, err)
+			now := time.Now().UTC()
+			claim, err := fixture.catalog.ClaimRenditionJob(t.Context(), job.ID, "worker", now, time.Minute)
+			require.NoError(t, err)
+			worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Runtime: workerRuntime{provider: provider}, Gate: newTestOperationGate(), Owner: "worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond, Clock: func() time.Time { return now }})
+			require.NoError(t, err)
+			providerErr, err := document.NewRenditionProviderError(document.RenditionErrorMalformedEvidence, 0, test.cause)
+			require.NoError(t, err)
+			work := store.RenditionJobWork{}
+			work.ExecutionIdentity.Authorization.ProviderID = test.provider
+			require.NoError(t, worker.classifyProviderError(t.Context(), claim, work, providerErr, true, 1))
+			current, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
+			require.NoError(t, err)
+			require.Equal(t, test.want, current.FailureCode)
+		})
+	}
 }
 
 func checkRenditionWorkerPersistsAmbiguousOutcomeWithoutResubmission(t *testing.T, newFixture publicationFixtureFactory) {

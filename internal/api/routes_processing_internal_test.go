@@ -90,6 +90,10 @@ func TestProcessingTerminalEventSeparatesStatusReadFailure(t *testing.T) {
 	assert.Equal(t, "pdf_password_required", event.Status.FailureCode)
 	assert.Equal(t, "status", event.Type)
 	assert.True(t, event.Terminal)
+	event = processingTerminalEvent(job, processing.ErrRenditionFailed,
+		processing.Status{State: "failed", FailureCode: "provider_task_failed"}, nil)
+	require.NotNil(t, event.Status)
+	assert.Equal(t, "provider_task_failed", event.Status.FailureCode)
 }
 
 func TestFromProcessingCoveragePreservesPartialAndUnavailable(t *testing.T) {

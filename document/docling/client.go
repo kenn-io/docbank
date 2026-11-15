@@ -360,7 +360,10 @@ func (client *Client) convert(run *rendering, fields [][2]string) (taskResponse,
 	return task, result, nil
 }
 
-type taskResponse struct{ id, status string }
+type taskResponse struct {
+	id, status string
+	retryable  bool
+}
 
 type doclingResult struct {
 	markdown []byte
@@ -412,7 +415,7 @@ func (client *Client) awaitTask(run *rendering, task taskResponse) (taskResponse
 	delay := client.pollInterval
 	for task.status != "success" && task.status != "partial_success" {
 		if task.status != "pending" && task.status != "started" {
-			return taskResponse{}, taskStatusError(task.status)
+			return task, taskStatusError(task.status)
 		}
 		if pollAttempts >= client.maxPollAttempts {
 			return taskResponse{}, provider.AmbiguousJob(provider.Classified(
@@ -627,6 +630,7 @@ func parseTaskForProtocol(body []byte, worker bool) (taskResponse, error) {
 		Type          string `json:"task_type"`
 		Status        string `json:"task_status"`
 		BackendStatus string `json:"backend_task_status"`
+		Retryable     bool   `json:"retryable"`
 	}
 	if err := json.Unmarshal(body, &wire); err != nil {
 		return taskResponse{}, provider.Malformed("Docling task response JSON is invalid", err)
@@ -643,6 +647,9 @@ func parseTaskForProtocol(body []byte, worker bool) (taskResponse, error) {
 	if !officialTaskStatus(wire.Status) {
 		return taskResponse{}, provider.Malformed("Docling task status is invalid", nil)
 	}
+	if wire.Retryable && (!worker || wire.Status != "failure") {
+		return taskResponse{}, provider.Malformed("worker retry state is invalid", nil)
+	}
 	if worker && wire.BackendStatus != "" {
 		if wire.Status != "success" || (wire.BackendStatus != "success" && wire.BackendStatus != "partial_success") {
 			return taskResponse{}, provider.Malformed("worker backend task status is invalid", nil)
@@ -650,7 +657,7 @@ func parseTaskForProtocol(body []byte, worker bool) (taskResponse, error) {
 		// Gateway success means the result is retained, not that conversion was complete.
 		wire.Status = wire.BackendStatus
 	}
-	return taskResponse{id: wire.ID, status: wire.Status}, nil
+	return taskResponse{id: wire.ID, status: wire.Status, retryable: wire.Retryable}, nil
 }
 
 func mapEvidence(raw jsontext.Value, family string, first int64, allowBlankRange bool) (document.SourceEvidenceV1, []byte, bool) {

@@ -864,6 +864,9 @@ func (worker *RenditionWorker) classifyProviderError(
 	if isRenditionWorkerFatal(err) {
 		return err
 	}
+	if work.ExecutionIdentity.Authorization.ProviderID == workerprotocol.ProviderID && errors.Is(err, workerprotocol.ErrRetainedTaskFailed) {
+		return worker.markFailed(ctx, claim, store.RenditionFailureProviderTaskFailed, worker.clock().UTC())
+	}
 	// Expiry can precede the first issued-handle checkpoint. Only this exact
 	// durable protocol may reprepare current authority and reconcile its key.
 	if errors.Is(err, document.ErrRenditionAuthorizationExpired) && work.ExecutionIdentity.Authorization.ProviderID == workerprotocol.ProviderID {

@@ -198,6 +198,7 @@ func (client *Client) renderWorker(ctx context.Context, upload document.Authoriz
 	}
 	var run *rendering
 	var task taskResponse
+	checkpointed := resume != nil
 	if resume != nil {
 		if !providerutil.IsNil(upload) {
 			return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected, "worker resume must not receive source", nil)
@@ -295,12 +296,16 @@ func (client *Client) renderWorker(ctx context.Context, upload document.Authoriz
 				clear(run.source)
 				return document.RenditionResult{}, err
 			}
+			checkpointed = true
 		}
 	}
 	defer run.operation.Cancel()
 	defer clear(run.source)
 	task, err = client.awaitTask(run, task)
 	if err != nil {
+		if checkpointed && task.retryable {
+			return document.RenditionResult{}, provider.Malformed("worker task can be retried", workerprotocol.ErrRetainedTaskFailed)
+		}
 		return document.RenditionResult{}, err
 	}
 	result, err := client.awaitResult(run, task.id)

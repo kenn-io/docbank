@@ -31,6 +31,8 @@ type workerServer struct {
 	accepted, offline, lostResponse    atomic.Bool
 	pending                            atomic.Bool
 	failed                             atomic.Bool
+	pollFailure                        atomic.Bool
+	retryable                          atomic.Bool
 	key                                string
 	result                             any
 }
@@ -93,6 +95,10 @@ func workerHTTP(t *testing.T, result any) (*workerServer, string, *http.Client) 
 			}
 			writeJSON(t, out, doclingTask(id, "pending"))
 		case r.URL.Path == workerprotocol.PollPath+id:
+			if state.pollFailure.Load() {
+				writeJSON(t, out, map[string]any{"task_id": id, "task_status": "failure", "retryable": state.retryable.Load()})
+				return
+			}
 			if state.pending.Load() {
 				writeJSON(t, out, doclingTask(id, "pending"))
 				return
@@ -106,6 +112,33 @@ func workerHTTP(t *testing.T, result any) (*workerServer, string, *http.Client) 
 		}
 	}))
 	return state, origin, client
+}
+
+func TestWorkerRetainedFailureRequiresRetryableCheckpoint(t *testing.T) {
+	for _, test := range []struct {
+		name                                string
+		checkpoint, retryable, wantSentinel bool
+	}{
+		{"checkpointed recoverable", true, true, true},
+		{"uncheckpointed recoverable", false, true, false},
+		{"checkpointed terminal", true, false, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := workerFixture(t)
+			state, origin, transport := workerHTTP(t, workerDocumentResult())
+			state.pollFailure.Store(true)
+			state.retryable.Store(test.retryable)
+			client, err := NewWorker(workerProfile(origin, f.descriptor), testSecrets{"worker": "synthetic-worker-key"}, transport)
+			require.NoError(t, err)
+			var checkpoint document.RenditionResumeCheckpoint
+			if test.checkpoint {
+				checkpoint = func(document.RenditionResumeHandle) error { return nil }
+			}
+			_, err = client.RenderResumable(t.Context(), f.upload(), f.authorization, nil, checkpoint)
+			require.Error(t, err)
+			require.Equal(t, test.wantSentinel, errors.Is(err, workerprotocol.ErrRetainedTaskFailed))
+		})
+	}
 }
 
 func TestWorkerRepostsFailedLookup(t *testing.T) {
