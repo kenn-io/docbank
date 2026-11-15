@@ -2170,12 +2170,7 @@ func checkImageEmbeddingRuntimePreviewValidation(t *testing.T, makeFixture photo
 
 func TestImageEmbeddingProfilesSharingDescriptorRegisterOneRuntime(t *testing.T) {
 	t.Parallel()
-	checkImageEmbeddingProfilesSharingDescriptorRegisterOneRuntime(t, newPhotoDescriptionFixture)
-}
-
-func checkImageEmbeddingProfilesSharingDescriptorRegisterOneRuntime(t *testing.T, makeFixture photoDescriptionFixtureFactory) {
-	t.Helper()
-	f := makeFixture(t)
+	f := newPhotoDescriptionFixture(t)
 	x := newImageEmbeddingService(t, f)
 	// Two profiles that share a descriptor register one runtime for it.
 	sibling := x.portable

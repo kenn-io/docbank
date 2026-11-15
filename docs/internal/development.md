@@ -983,8 +983,7 @@ bytes. They cover description consent and admission, preview publication,
 explicit/automatic coalescing, hidden-source refusal and retry, upload limits,
 face detection, detector changes, and audit refusal before provider execution.
 Publication failures leave the shared worker available for other jobs. Image
-embedding runtime preparation also validates the selected preview and shared
-provider descriptors. This does not qualify face embedding/matching workers,
+embedding runtime preparation also validates the selected preview. This does not qualify face embedding/matching workers,
 photo similarity search or a live provider deployment.
 
 The existing SQLite test entry points call the same scenarios and retain their

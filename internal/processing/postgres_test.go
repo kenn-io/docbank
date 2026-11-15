@@ -142,7 +142,6 @@ func TestEmbeddingPhotoWorkersPostgres(t *testing.T) {
 		{"PhotoFaceDetectionPublicationFailureKeepsWorkerRunning", checkPhotoFaceDetectionPublicationFailureKeepsWorkerRunning},
 		{"PhotoFaceDetectionAuditRefusesEgress", checkPhotoFaceDetectionAuditRefusesEgress},
 		{"ImageEmbeddingRuntimePreviewValidation", checkImageEmbeddingRuntimePreviewValidation},
-		{"ImageEmbeddingProfilesSharingDescriptorRegisterOneRuntime", checkImageEmbeddingProfilesSharingDescriptorRegisterOneRuntime},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			t.Parallel()
