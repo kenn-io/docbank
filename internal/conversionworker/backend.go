@@ -61,9 +61,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 	defer cancel()
 	stopOwner := context.AfterFunc(w.lifetime, cancel)
 	defer stopOwner()
-	if !w.runMu.TryLock() {
-		return false, errors.New("worker runner already active")
-	}
+	w.runMu.Lock()
 	defer w.runMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return false, err
