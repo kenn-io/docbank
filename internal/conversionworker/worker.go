@@ -20,6 +20,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/net/http/httpguts"
+
 	"go.kenn.io/docbank/document/workerprotocol"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/kit/atomicfile"
@@ -71,40 +73,28 @@ type job struct {
 // Worker serves retained jobs while one runner performs conversion.
 // Close must join all users before relinquishing the private spool lock.
 type Worker struct {
-	lifetime    context.Context
-	cancel      context.CancelFunc
-	options     Options
-	client      *http.Client
-	lock        *home.Lock
-	mu          sync.Mutex
-	jobs        map[string]job
-	keys        map[string]string
-	used        int64
-	reserved    int64
-	fault       error
-	closed      bool
-	active      sync.WaitGroup
-	runMu       sync.Mutex
-	lastStalled string
-	uploadMu    sync.Mutex
+	lifetime context.Context
+	cancel   context.CancelFunc
+	options  Options
+	client   *http.Client
+	lock     *home.Lock
+	mu       sync.Mutex
+	jobs     map[string]job
+	keys     map[string]string
+	used     int64
+	reserved int64
+	fault    error
+	closed   bool
+	active   sync.WaitGroup
+	runMu    sync.Mutex
+	cursor   string
+	uploadMu sync.Mutex
 }
 
 // Open locks and validates a private spool before accepting any request.
 func Open(ctx context.Context, options Options) (_ *Worker, retErr error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
-	}
-	if options.MaxSourceBytes == 0 {
-		options.MaxSourceBytes = 64 << 20
-	}
-	if options.MaxResultBytes == 0 {
-		options.MaxResultBytes = 64 << 20
-	}
-	if options.MaxJobs == 0 {
-		options.MaxJobs = 128
-	}
-	if options.MaxSpoolBytes == 0 {
-		options.MaxSpoolBytes = 40 << 30
 	}
 	if options.PollInterval == 0 {
 		options.PollInterval = 5 * time.Second
@@ -132,10 +122,10 @@ func Open(ctx context.Context, options Options) (_ *Worker, retErr error) {
 	switch {
 	case !filepath.IsAbs(options.Directory):
 		return nil, errors.New("worker directory must be absolute")
-	case len(options.APIKey) < 16 || len(options.APIKey) > 4096:
-		return nil, errors.New("DOCBANK_WORKER_API_KEY must be 16 to 4096 bytes")
-	case options.BackendKey == "":
-		return nil, errors.New("DOCBANK_WORKER_BACKEND_KEY is required")
+	case len(options.APIKey) < 16 || len(options.APIKey) > 4096 || !httpguts.ValidHeaderFieldValue(options.APIKey):
+		return nil, errors.New("DOCBANK_WORKER_API_KEY must be a valid HTTP header value of 16 to 4096 bytes")
+	case options.BackendKey == "" || !httpguts.ValidHeaderFieldValue(options.BackendKey):
+		return nil, errors.New("DOCBANK_WORKER_BACKEND_KEY must be a nonempty valid HTTP header value")
 	case options.MaxSourceBytes <= 0 || options.MaxSourceBytes > 100<<20:
 		return nil, errors.New("max-source-bytes must be between 1 and 104857600")
 	case options.MaxResultBytes <= 0 || options.MaxResultBytes > 128<<20:

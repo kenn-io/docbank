@@ -78,7 +78,7 @@ func TestWorkerPollsEveryStalledTask(t *testing.T) {
 		o := workerOptions(t)
 		o.StallAfter = time.Hour
 		var posts int
-		var polls []string
+		complete := false
 		o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
 			if r.Method == http.MethodPost {
 				posts++
@@ -90,8 +90,13 @@ func TestWorkerPollsEveryStalledTask(t *testing.T) {
 				return backendResponse(r, 202, `{"task_id":"`+id+`","task_status":"pending","task_type":"convert"}`), nil
 			}
 			if id, ok := strings.CutPrefix(r.URL.Path, "/v1/status/poll/"); ok {
-				polls = append(polls, id)
+				if id == "second" && complete {
+					return backendResponse(r, 200, `{"task_id":"second","task_status":"success","task_type":"convert"}`), nil
+				}
 				return backendResponse(r, 200, `{"task_id":"`+id+`","task_status":"started","task_type":"convert"}`), nil
+			}
+			if strings.HasPrefix(r.URL.Path, "/v1/result/") {
+				return backendResponse(r, 200, `{"result":"complete"}`), nil
 			}
 			return backendResponse(r, 200, `{}`), nil
 		})}
@@ -99,17 +104,60 @@ func TestWorkerPollsEveryStalledTask(t *testing.T) {
 		taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("first")))
 		_, err := w.RunOnce(t.Context())
 		require.NoError(t, err)
-		taskID(t, submitRequest(t, w, strings.Repeat("b", 64), []byte("second")))
+		second := taskID(t, submitRequest(t, w, strings.Repeat("b", 64), []byte("second")))
 		time.Sleep(time.Hour)
 		_, err = w.RunOnce(t.Context())
 		require.NoError(t, err)
 		time.Sleep(time.Hour)
-		polls = nil
+		complete = true
 		for range 2 {
 			_, err = w.RunOnce(t.Context())
 			require.NoError(t, err)
 		}
-		require.ElementsMatch(t, []string{"first", "second"}, polls)
+		require.Equal(t, 200, getRequest(t.Context(), w, "/v1/result/"+second).Code)
+		require.Equal(t, 2, posts)
+	})
+}
+
+func TestWorkerCollectsStalledResultWhilePendingIsRateLimited(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		o := workerOptions(t)
+		o.StallAfter = time.Hour
+		posts := 0
+		complete := false
+		o.Client = &http.Client{Transport: backendTransport(func(r *http.Request) (*http.Response, error) {
+			switch {
+			case r.Method == http.MethodPost:
+				posts++
+				_, _ = io.Copy(io.Discard, r.Body)
+				if posts > 1 {
+					return backendResponse(r, 429, `{}`), nil
+				}
+				return backendResponse(r, 202, `{"task_id":"first","task_status":"pending","task_type":"convert"}`), nil
+			case strings.HasPrefix(r.URL.Path, "/v1/status/poll/"):
+				if complete {
+					return backendResponse(r, 200, `{"task_id":"first","task_status":"success","task_type":"convert"}`), nil
+				}
+				return backendResponse(r, 200, `{"task_id":"first","task_status":"started","task_type":"convert"}`), nil
+			case strings.HasPrefix(r.URL.Path, "/v1/result/"):
+				return backendResponse(r, 200, `{"result":"complete"}`), nil
+			default:
+				return backendResponse(r, 200, `{}`), nil
+			}
+		})}
+		w := openWorker(t, o)
+		first := taskID(t, submitRequest(t, w, strings.Repeat("a", 64), []byte("first")))
+		_, err := w.RunOnce(t.Context())
+		require.NoError(t, err)
+		taskID(t, submitRequest(t, w, strings.Repeat("b", 64), []byte("second")))
+		time.Sleep(time.Hour)
+		complete = true
+		for range 2 {
+			_, err = w.RunOnce(t.Context())
+			require.NoError(t, err)
+		}
+		require.Equal(t, 200, getRequest(t.Context(), w, "/v1/result/"+first).Code)
+		require.LessOrEqual(t, posts, 2)
 	})
 }
 
@@ -178,6 +226,30 @@ func TestWorkerConfigurationAndUploadErrorsNameRequirement(t *testing.T) {
 	response := submitNamed(t, w, strings.Repeat("a", 64), "notes.txt", "text/plain", []byte("hello"), [][2]string{{"to_formats", "json"}, {"target_type", "inbody"}})
 	require.Equal(t, 400, response.Code)
 	require.Contains(t, response.Body.String(), "supported media type")
+}
+
+func TestWorkerOpenRejectsZeroLimitsAndInvalidHeaders(t *testing.T) {
+	for _, test := range []struct {
+		field string
+		set   func(*Options)
+	}{
+		{"max-source-bytes", func(o *Options) { o.MaxSourceBytes = 0 }},
+		{"max-result-bytes", func(o *Options) { o.MaxResultBytes = 0 }},
+		{"max-jobs", func(o *Options) { o.MaxJobs = 0 }},
+		{"max-spool-bytes", func(o *Options) { o.MaxSpoolBytes = 0 }},
+		{"DOCBANK_WORKER_API_KEY", func(o *Options) { o.APIKey = "synthetic-invalid\nkey" }},
+		{"DOCBANK_WORKER_BACKEND_KEY", func(o *Options) { o.BackendKey = "synthetic-invalid\nkey" }},
+	} {
+		t.Run(test.field, func(t *testing.T) {
+			o := workerOptions(t)
+			test.set(&o)
+			_, err := Open(t.Context(), o)
+			require.ErrorContains(t, err, test.field)
+			require.NotContains(t, err.Error(), "synthetic-invalid")
+			_, err = os.Stat(o.Directory)
+			require.ErrorIs(t, err, os.ErrNotExist)
+		})
+	}
 }
 
 func TestWorkerKeepsJobsAfterLimitsLowered(t *testing.T) {

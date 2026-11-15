@@ -79,36 +79,25 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 	slices.Sort(ids)
 	var item job
 	found := false
+	fresh := false
 	for _, id := range ids {
 		j := w.jobs[id]
 		if j.State == "started" && time.Since(j.StartedAt) < w.options.StallAfter {
-			item, found = j, true
+			fresh = true
 			break
 		}
 	}
-	if !found {
-		for _, id := range ids {
-			j := w.jobs[id]
-			if j.State == "pending" {
-				item = j
-				found = true
-				break
-			}
-		}
+	start := sort.SearchStrings(ids, w.cursor)
+	if start < len(ids) && ids[start] == w.cursor {
+		start++
 	}
-	if !found {
-		start := sort.SearchStrings(ids, w.lastStalled)
-		if start < len(ids) && ids[start] == w.lastStalled {
-			start++
-		}
-		for offset := range ids {
-			id := ids[(start+offset)%len(ids)]
-			j := w.jobs[id]
-			if j.State == "started" {
-				item, found = j, true
-				w.lastStalled = id
-				break
-			}
+	for offset := range ids {
+		id := ids[(start+offset)%len(ids)]
+		j := w.jobs[id]
+		if j.State == "started" || (j.State == "pending" && !fresh) {
+			item, found = j, true
+			w.cursor = id
+			break
 		}
 	}
 	w.mu.Unlock()

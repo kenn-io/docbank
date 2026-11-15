@@ -106,8 +106,9 @@ After exhaustion, the job fails and retains its input. The same recovery applies
 when the backend refuses a submission with HTTP 401, 403, or 404. Fix the backend
 configuration, then rerun the Docbank job to retry under the same worker ID.
 Other rejected submissions and failed backend tasks remain failed. After two
-hours, a started backend task no longer holds up pending jobs. The worker keeps
-stalled handles and polls them in turn.
+hours, a started backend task no longer holds up pending jobs. The worker
+rotates through stalled tasks and pending jobs, including when the backend
+refuses new submissions.
 Crashes can repeat compute; publication in Docbank remains separately fenced.
 
 There is no automatic expiry or garbage collection. At the storage or job
