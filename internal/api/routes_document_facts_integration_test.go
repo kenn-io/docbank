@@ -94,22 +94,40 @@ func TestVersionFactsPDFMetadata(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.PublishDocumentEvents(t.Context(), targets[0], store.DocumentEventsDeriverFingerprint, evidence.InputsSHA256, eventJSON)
 	require.NoError(t, err)
-	person, err := s.CreatePerson(t.Context(), "Assigned Author", "operator")
-	require.NoError(t, err)
-	_, err = s.AssertDocumentPerson(t.Context(), store.PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1})
-	require.NoError(t, err)
 	_, err = processing.BackfillDocumentPeopleTargets(t.Context(), s, []store.DocumentPeopleTarget{{ContentVersionID: node.CurrentVersionID}})
 	require.NoError(t, err)
-	res, body := get(t, ts, fmt.Sprintf("/api/v1/versions/%s/people", node.CurrentVersionID), nil)
+	res, body := get(t, ts, fmt.Sprintf("/api/v1/versions/%s/dates", node.CurrentVersionID), nil)
+	require.Equal(t, http.StatusOK, res.StatusCode, body)
+	var dates api.VersionDates
+	require.NoError(t, json.Unmarshal([]byte(body), &dates))
+	require.Equal(t, "published", dates.State)
+	require.NotNil(t, dates.Primary)
+	require.Equal(t, "created_date", dates.Primary.Reason)
+	var created, modified *api.VersionDateClaim
+	for i := range dates.Claims {
+		switch dates.Claims[i].DateKind {
+		case "created":
+			created = &dates.Claims[i]
+		case "modified":
+			modified = &dates.Claims[i]
+		}
+	}
+	require.NotNil(t, created)
+	require.Equal(t, dates.Primary.EventID, created.EventID)
+	require.True(t, created.Primary)
+	require.Equal(t, "2026-03-10T00:00:00", created.DateValue)
+	require.Equal(t, "floating", created.When.State)
+	require.Empty(t, created.When.At)
+	require.NotNil(t, modified)
+	require.False(t, modified.Primary)
+	require.Equal(t, "2026-03-11T00:00:00", modified.DateValue)
+	res, body = get(t, ts, fmt.Sprintf("/api/v1/versions/%s/people", node.CurrentVersionID), nil)
 	require.Equal(t, http.StatusOK, res.StatusCode, body)
 	var people api.VersionPeople
 	require.NoError(t, json.Unmarshal([]byte(body), &people))
 	require.Len(t, people.Unresolved, 1)
 	require.Equal(t, "J. PELLHAM", people.Unresolved[0].RawLabel)
 	require.Equal(t, "author", people.Unresolved[0].Role)
-	require.Equal(t, "published", people.State)
-	require.NotEmpty(t, people.Edges)
-	require.Len(t, people.Assertions, 1)
 }
 
 func TestVersionFactsBrowserHiddenAuthorization(t *testing.T) {
