@@ -3,7 +3,6 @@ package processing
 import (
 	"bytes"
 	"context"
-	"go.kenn.io/docbank/internal/vectorindex"
 	"io"
 	"testing"
 	"testing/synctest"
@@ -12,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/vectorindex"
 	"go.kenn.io/docbank/internal/vectorworker"
 )
 
