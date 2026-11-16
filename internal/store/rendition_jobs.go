@@ -641,21 +641,12 @@ func (s *Store) ClaimRenditionJob(
 				return ErrRenditionJobLeaseHeld
 			}
 			if renditionJobProviderBoundaryAmbiguous(phase, providerStarted, resume.Valid) {
-				// Local descriptions and text may replay; workers need a verified binding.
-				var localReplay bool
-				if err := tx.QueryRowContext(ctx, `SELECT `+metadataJSONDialect{s.postgresSchema != ""}.text("execution_identity_json", "upload.input_kind")+`='derived_upload' OR `+metadataJSONDialect{s.postgresSchema != ""}.text("execution_identity_json", "authorization.provider_id")+`='`+document.PDFTextProviderID+`' FROM rendition_jobs WHERE job_id=$1`, jobID).Scan(&localReplay); err != nil {
+				// Photo descriptions, local text, and durable worker jobs can safely run again.
+				var repeatable bool
+				if err := tx.QueryRowContext(ctx, `SELECT `+metadataJSONDialect{s.postgresSchema != ""}.text("execution_identity_json", "upload.input_kind")+`='derived_upload' OR `+metadataJSONDialect{s.postgresSchema != ""}.text("execution_identity_json", "authorization.provider_id")+` IN ('`+document.PDFTextProviderID+`','`+workerprotocol.ProviderID+`') FROM rendition_jobs WHERE job_id=$1`, jobID).Scan(&repeatable); err != nil {
 					return fmt.Errorf("reading rendition job input kind: %w", err)
 				}
-				var canonicalProfile, identityJSON string
-				err := tx.QueryRowContext(ctx, `SELECT p.canonical_profile,j.execution_identity_json
-                  FROM rendition_jobs j JOIN rendition_job_waiters w ON w.waiter_id=j.selected_waiter_id
-                  JOIN processing_profiles p ON p.profile_fingerprint=w.profile_fingerprint WHERE j.job_id=$1`, jobID).Scan(&canonicalProfile, &identityJSON)
-				if err != nil && !errors.Is(err, sql.ErrNoRows) {
-					return fmt.Errorf("reading worker replay binding: %w", err)
-				}
-				identity, identityErr := document.ParseRenditionExecutionIdentityV1([]byte(identityJSON))
-				workerReplay := err == nil && identityErr == nil && workerprotocol.ReplaySafeBinding([]byte(canonicalProfile), identity)
-				if localReplay || workerReplay {
+				if repeatable {
 					if _, err := tx.ExecContext(ctx, `
 						UPDATE rendition_jobs SET state='queued',phase='queued',claim_owner=NULL,
 						lease_expires_at=NULL,provider_started=0,execution_snapshot_json=NULL,

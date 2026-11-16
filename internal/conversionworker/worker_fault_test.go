@@ -293,7 +293,7 @@ func TestWorkerBackendRequestsCarryHopMarker(t *testing.T) {
 		return backendResponse(r, 200, `{}`), nil
 	})}
 	w := openWorker(t, o)
-	_, _, err := w.backendRequest(t.Context(), http.MethodGet, "/ready", nil, "")
+	_, _, err := w.backendRequest(t.Context(), http.MethodGet, "/ready", nil, "", w.options.MaxResultBytes)
 	require.NoError(t, err)
 }
 
