@@ -62,6 +62,14 @@ func (c *familyMCP) stop(t *testing.T) {
 
 func (c *familyMCP) call(t *testing.T, name string, args any) jsontext.Value {
 	t.Helper()
+	structured, problem := c.exchange(t, name, args)
+	require.Empty(t, problem, string(problem))
+	require.NotEmpty(t, structured)
+	return structured
+}
+
+func (c *familyMCP) exchange(t *testing.T, name string, args any) (jsontext.Value, jsontext.Value) {
+	t.Helper()
 	c.nextID++
 	request := map[string]any{
 		"jsonrpc": "2.0", "id": c.nextID, "method": "tools/call",
@@ -85,10 +93,8 @@ func (c *familyMCP) call(t *testing.T, name string, args any) jsontext.Value {
 		} `json:"result"`
 	}
 	require.NoError(t, json.Unmarshal(line, &response))
-	require.Empty(t, response.Error, string(line))
 	require.Equal(t, c.nextID, response.ID)
-	require.NotEmpty(t, response.Result.Structured, string(line))
-	return response.Result.Structured
+	return response.Result.Structured, response.Error
 }
 
 func (c *familyMCP) captureReport(t *testing.T, request report.Request) familyReportObservation {

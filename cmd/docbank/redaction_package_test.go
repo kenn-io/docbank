@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/recipientpackage"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -34,10 +35,13 @@ func TestRecipientSelection(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "selection.json")
 			require.NoError(t, os.WriteFile(path, []byte(data), 0600))
-			selection, err := readRecipientSelection(t.Context(), path)
+			selection, err := recipientpackage.ReadSelection(t.Context(), path)
 			if name != "valid" {
 				require.Error(t, err)
-				require.Equal(t, 2, commandExitCode(err, false))
+				if name == "empty" {
+					require.ErrorIs(t, err, processing.ErrRecipientPackageInvalid)
+				}
+				require.Equal(t, 2, commandExitCode(recipientCLIError(err), false))
 				return
 			}
 			require.NoError(t, err)
@@ -75,8 +79,8 @@ func TestRecipientPackageRequiresFullPDFVerification(t *testing.T) {
 			defer server.Close()
 			client := daemonconn.New(server.URL, "synthetic-key")
 			defer func() { _ = client.Close() }()
-			selection := recipientSelection{Contract: "native-pdf-recipient-selection/v1", Documents: []recipientInput{{receipt.AllocationID, f.args[2], f.args[3], f.args[4]}}}
-			checked, err := preflightRecipientPackage(t.Context(), client, selection)
+			selection := recipientpackage.Selection{Contract: "native-pdf-recipient-selection/v1", Documents: []recipientpackage.Input{{AllocationID: receipt.AllocationID, Preparation: f.args[2], Masks: f.args[3], Review: f.args[4]}}}
+			checked, err := recipientpackage.Preflight(t.Context(), client, selection)
 			if scenario == "unsupported verifier" {
 				require.Equal(t, exitGeneral, commandExitCode(recipientCLIError(err), true))
 				require.ErrorIs(t, err, pdfproduction.ErrVerifierVersion)

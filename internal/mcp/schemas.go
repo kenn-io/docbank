@@ -19,6 +19,8 @@ const (
 	versionField              = "content_version_id"
 	personIDField             = "person_id"
 	schemaStateField          = "state"
+	destinationPathField      = "destination_path"
+	schemaSizeField           = "size"
 	schemaVaultIDField        = "vault_id"
 	schemaRevisionField       = "revision"
 	schemaLimitField          = "limit"
