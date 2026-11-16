@@ -8,6 +8,14 @@ import (
 // PrimaryRuleV1 identifies the vault primary-date policy.
 const PrimaryRuleV1 = "primary-rule/v1"
 
+var fallbackDateKinds = []DateKind{"imported", "vault_recorded"}
+
+// FallbackDateKinds returns the operational date kinds in primary order.
+func FallbackDateKinds() []DateKind { return slices.Clone(fallbackDateKinds) }
+
+// IsFallbackDateKind reports whether a date kind is an operational fallback.
+func IsFallbackDateKind(kind DateKind) bool { return slices.Contains(fallbackDateKinds, kind) }
+
 var primaryRuleOrders = map[DocumentKind][]DateKind{
 	"email":       {"sent", "received", "created", "modified"},
 	"message":     {"sent", "received", "authored", "created", "modified"},
@@ -41,12 +49,13 @@ func SelectPrimaryEvent(events []DocumentEventV1, kind DocumentKind, scopeClass,
 	}
 	order := make([]DateKind, 0, len(primaryRuleOrders[kind])+3)
 	order = append(order, primaryRuleOrders[kind]...)
-	order = append(order, "document_date", "imported", "vault_recorded")
+	order = append(order, "document_date")
+	order = append(order, fallbackDateKinds...)
 	for _, dateKind := range order {
 		var best *DocumentEventV1
 		for i := range events {
 			event := &events[i]
-			if event.DateKind != dateKind || (disclosure == "safe" && eventHasSensitiveEvidence(*event)) {
+			if event.DateKind != dateKind || (disclosure == "safe" && EventHasSensitiveEvidence(*event)) {
 				continue
 			}
 			if best == nil || comparePrimaryEvents(*event, *best) < 0 {
@@ -60,7 +69,8 @@ func SelectPrimaryEvent(events []DocumentEventV1, kind DocumentKind, scopeClass,
 	return DocumentEventPrimaryV1{}, false
 }
 
-func eventHasSensitiveEvidence(event DocumentEventV1) bool {
+// EventHasSensitiveEvidence reports whether safe disclosure must hide an event.
+func EventHasSensitiveEvidence(event DocumentEventV1) bool {
 	return event.Sensitive || slices.ContainsFunc(event.Actors, func(actor DocumentEventActorV1) bool {
 		return actor.Sensitive
 	})

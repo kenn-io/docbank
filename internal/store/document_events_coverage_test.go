@@ -55,6 +55,22 @@ func checkDocumentEventCoverageReportUsesOnlyFreshCurrentFileHeads(t *testing.T,
 	assert.Equal(t, int64(1), coverage.InvalidDates)
 	assert.Equal(t, int64(1), coverage.OperationalFallbacks)
 
+	for _, tc := range []struct {
+		kind document.DateKind
+		want int64
+	}{{"imported", 1}, {"created", 0}} {
+		t.Run(string(tc.kind), func(t *testing.T) {
+			s := open(t)
+			version, target := ingestDocumentEventTarget(t, s, "coverage.txt", "b22")
+			record := coverageDocumentEventRecord(t, s.VaultID(), version.ID, "b22", tc.kind, false)
+			_, err := s.PublishDocumentEvents(t.Context(), target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+			require.NoError(t, err)
+			coverage, err := s.DocumentEventCoverageReport(t.Context())
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, coverage.OperationalFallbacks)
+		})
+	}
+
 	_, err = s.db.ExecContext(t.Context(), `INSERT INTO document_event_dirty(content_version_id,revision,reason)
 		VALUES($1,1,'test')`, current.ID)
 	require.NoError(t, err)
