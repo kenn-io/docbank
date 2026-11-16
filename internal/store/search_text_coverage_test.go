@@ -73,7 +73,7 @@ func checkSearchTextCoverage(t *testing.T, open func(*testing.T) *Store) {
 	})
 	t.Run("unqueued pending", func(t *testing.T) {
 		t.Parallel()
-		s, _, pdfs, profile := collectionCoverageFixture(t, 2)
+		s, _, pdfs, profile := collectionCoverageFixtureWithStore(t, open(t), 2)
 		skipped := ""
 		unqueued := func(version string, size int64) bool {
 			require.Equal(t, pdfs[0].Size, size)
@@ -90,7 +90,7 @@ func checkSearchTextCoverage(t *testing.T, open func(*testing.T) *Store) {
 	})
 	t.Run("pdf waiting and terminal", func(t *testing.T) {
 		t.Parallel()
-		s := newTestStore(t)
+		s := open(t)
 		versions := seedRenditionCatalogVersions(t, s)
 		profile := catalogProcessingProfileWith(t, false, func(profile *document.ProcessingProfileV1) {
 			profile.Rendition.Descriptor.ID = document.PDFTextProviderID
