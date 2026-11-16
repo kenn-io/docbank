@@ -31,6 +31,7 @@ func TestEmptySearchHints(t *testing.T) {
 		{name: "human", pending: 1},
 		{name: "JSON", flags: []string{"--json"}, pending: 1, everyWord: true},
 		{name: "tag", filtered: true, flags: []string{"--tag", processingTestVersionID}},
+		{name: "under path", filtered: true, flags: []string{"--under", "/cases"}},
 		{name: "under", filtered: true, flags: []string{"--under", "id:42"}},
 		{name: "MIME", filtered: true, flags: []string{"--mime-type", "application/pdf"}},
 		{name: "since", filtered: true, flags: []string{"--modified-since", "2000-01-01T00:00:00Z"}},
@@ -72,6 +73,11 @@ func TestEmptySearchHints(t *testing.T) {
 					if tc.filtered {
 						assert.NotEmpty(t, lexicalFilters)
 						for key, values := range lexicalFilters {
+							if key == "under_path" {
+								assert.NotContains(t, r.URL.Query(), "under_path")
+								assert.Equal(t, "42", r.URL.Query().Get("under_node_id"))
+								continue
+							}
 							assert.Equal(t, values, r.URL.Query()[key], key)
 						}
 					}
@@ -83,8 +89,6 @@ func TestEmptySearchHints(t *testing.T) {
 				case "/api/v1/tags/" + processingTestVersionID:
 					w.Header().Set("ETag", `"1"`)
 					assert.NoError(t, json.MarshalWrite(w, api.Tag{ID: processingTestVersionID, Name: "urgent", Revision: 1}))
-				case "/api/v1/nodes/42":
-					assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 42, Kind: "dir", Path: "/cases"}))
 				case "/api/v1/search":
 					if r.Method != http.MethodGet {
 						fallback(w, r)
@@ -93,16 +97,24 @@ func TestEmptySearchHints(t *testing.T) {
 					report := api.SearchReport{Limit: 50, Hits: []api.SearchHit{}}
 					if tc.filtered {
 						params := r.URL.Query()
+						if tc.name == "under path" {
+							assert.Equal(t, "/cases", params.Get("under_path"))
+							assert.NotContains(t, params, "under_node_id")
+						}
 						lexicalFilters = params
 						for _, key := range []string{"q", "limit", "fuzzy"} {
 							lexicalFilters.Del(key)
 						}
+						report.UnderPath = params.Get("under_path")
 						report.TagID, report.MIMEType = params.Get("tag_id"), params.Get("mime_type")
 						report.PDFFilter, report.SourcePresent = params.Get("pdf_filter"), params.Get("source_present") == "true"
 						report.ModifiedSince, report.ModifiedBefore = params.Get("modified_since"), params.Get("modified_before")
 						var err error
 						report.UnderNodeID, err = strconv.ParseInt(cmp.Or(params.Get("under_node_id"), "0"), 10, 64)
 						assert.NoError(t, err)
+						if report.UnderPath != "" {
+							report.UnderNodeID = 42
+						}
 					}
 					if tc.nonempty || tc.fileHit || tc.folder {
 						report.Hits = []api.SearchHit{{Node: api.Node{ID: 42, Kind: "file", Name: "lease.txt"}, Path: "/lease.txt", Match: "name"}}

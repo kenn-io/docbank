@@ -63,3 +63,16 @@ func TestSearchFuzzyEmptyLimitedOutput(t *testing.T) {
 		}
 	}
 }
+
+func TestSearchUnderPathHumanSummary(t *testing.T) {
+	for _, tc := range []struct{ path, want string }{
+		{"/cases", `directory "/cases"`},
+		{"", "directory ID id:42"},
+	} {
+		var out bytes.Buffer
+		cmd := &cobra.Command{}
+		cmd.SetOut(&out)
+		require.NoError(t, writeSearchReport(cmd, api.SearchReport{UnderNodeID: 42}, "", tc.path))
+		require.Contains(t, out.String(), tc.want)
+	}
+}

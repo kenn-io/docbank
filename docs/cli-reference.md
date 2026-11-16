@@ -1120,9 +1120,11 @@ the match: `text/plain` includes `text/plain; charset=utf-8`. MIME filtering
 excludes directories and retained non-current versions.
 
 `--under` accepts an absolute virtual path or stable `id:N` selector for one
-live directory and searches its descendants. The CLI resolves paths before the
-request and the daemon uses the resulting stable directory ID. The directory
-itself is excluded. A file, missing node, or trashed directory is rejected.
+live directory and searches its descendants. The CLI sends paths as
+`under_path`; the daemon resolves the path and pins its stable directory ID
+for the request. JSON echoes both the authored path and `under_node_id`.
+The directory itself is excluded. A file, missing node, or trashed directory
+is rejected.
 
 `--modified-since` and `--modified-before` accept absolute RFC3339 timestamps
 and filter the live node's current modification time. The lower bound is
@@ -1152,8 +1154,9 @@ unchanged.
 
 For ordinary lexical search, the typed report contains `hits`, the applied
 `limit`, and a `truncated` boolean. A filtered report also echoes the stable
-`tag_id`, normalized `mime_type`, stable `under_node_id`, and canonical
-`modified_since` / `modified_before` bounds when supplied. An empty result uses
+`tag_id`, normalized `mime_type`, stable `under_node_id`, authored `under_path`
+when selected by path, and canonical `modified_since` / `modified_before`
+bounds when supplied. An empty result uses
 `"hits": []`.
 
 The daemon indexes current UTF-8 `text/*`, JSON, and JSONL blobs up to 16 MiB

@@ -450,6 +450,9 @@ func TestExpectedDomainErrorsAreBoundedToolResults(t *testing.T) {
 		message   string
 	}{
 		{name: "not found", err: store.ErrNotFound, code: "not_found"},
+		{name: "not directory", err: fmt.Errorf("private scope detail: %w", store.ErrNotDir),
+			code: "not_dir", redaction: "private scope detail", message: "The requested node is not a directory."},
+		{name: "daemon not directory", err: daemonProblem("not_dir"), code: "not_dir", message: "The requested node is not a directory."},
 		{name: "stale version", err: store.ErrProcessingSourceFenceStaleVersion, code: "stale_version"},
 		{name: "consent", err: daemonconn.ErrProcessingConsent, code: "consent_required"},
 		{name: "cursor", err: store.ErrDocumentCursorExpired, code: "cursor_expired", message: "The cursor expired; restart the listing from the first page."},

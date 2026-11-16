@@ -350,7 +350,7 @@ func boundedExplainedSearchExcerpt(value string) string {
 // SearchOptions selects a filter-only page or narrows ranked search without
 // changing ordinary node search ordering. TagID identifies one required
 // assignment; MIMEType selects the current file version's parameter-free base
-// media type; UnderNodeID selects
+// media type; UnderNodeID or UnderPath selects
 // descendants of one live directory. ModifiedSince is inclusive and
 // ModifiedBefore is exclusive; both accept absolute RFC3339 timestamps.
 type SearchOptions struct {
@@ -368,6 +368,7 @@ type SearchOptions struct {
 	TagID             string
 	MIMEType          string
 	UnderNodeID       int64
+	UnderPath         string
 	ModifiedSince     string
 	ModifiedBefore    string
 	ContentVersionIDs []string
@@ -2675,6 +2676,30 @@ func nameEvidenceSQL(photoLexical compiledQueryFragment) string {
 	return stale
 }
 
+// MaxSearchUnderPathBytes bounds folder paths before lookup or allocation.
+const MaxSearchUnderPathBytes = 16384
+
+// ErrInvalidSearchScope reports conflicting or malformed directory selectors.
+var ErrInvalidSearchScope = errors.New("invalid search directory scope")
+
+// ValidateSearchDirectoryScope validates selectors without resolving a path.
+// Clients use this same check while the daemon owns directory lookup.
+func ValidateSearchDirectoryScope(nodeID int64, path string) error {
+	if nodeID < 0 {
+		return fmt.Errorf("%w: search directory node ID must be positive", ErrInvalidSearchScope)
+	}
+	if path == "" {
+		return nil
+	}
+	if nodeID != 0 {
+		return fmt.Errorf("%w: under_path and under_node_id are mutually exclusive", ErrInvalidSearchScope)
+	}
+	if len(path) > MaxSearchUnderPathBytes || !strings.HasPrefix(path, "/") {
+		return fmt.Errorf("%w: under_path must start with / and be at most %d bytes", ErrInvalidSearchScope, MaxSearchUnderPathBytes)
+	}
+	return nil
+}
+
 // NormalizeSearchOptions validates scope identities and returns canonical filters.
 func (s *Store) NormalizeSearchOptions(ctx context.Context, opts SearchOptions) (SearchOptions, error) {
 	return s.normalizeSearchOptionsWithQuerier(ctx, s.db, opts)
@@ -2683,6 +2708,9 @@ func (s *Store) NormalizeSearchOptions(ctx context.Context, opts SearchOptions) 
 func (s *Store) normalizeSearchOptionsWithQuerier(
 	ctx context.Context, queryer rowQuerier, opts SearchOptions,
 ) (SearchOptions, error) {
+	if err := ValidateSearchDirectoryScope(opts.UnderNodeID, opts.UnderPath); err != nil {
+		return SearchOptions{}, err
+	}
 	if opts.PDFFilter != "" {
 		predicate, err := compilePDFFilter(ctx, opts.PDFFilter)
 		if err != nil {
@@ -2726,14 +2754,26 @@ func (s *Store) normalizeSearchOptionsWithQuerier(
 		return SearchOptions{}, err
 	}
 	opts.MIMEType = normalizedMIME
-	if opts.UnderNodeID < 0 {
-		return SearchOptions{}, errors.New("search directory node ID must be positive")
-	}
-	if opts.UnderNodeID != 0 {
-		directory, err := nodeByIDQuery(ctx, queryer, opts.UnderNodeID)
+	var directory Node
+	if opts.UnderPath != "" {
+		directory, err = s.nodeByPath(ctx, queryer, opts.UnderPath)
+		if err != nil {
+			if errors.Is(err, ErrInvalidName) {
+				return SearchOptions{}, fmt.Errorf("%w: %s", ErrInvalidSearchScope, err.Error())
+			}
+			return SearchOptions{}, err
+		}
+		opts.UnderNodeID = directory.ID
+		// Canonical options retain only the resolved identity, so downstream
+		// normalization can validate them again without conflicting selectors.
+		opts.UnderPath = ""
+	} else if opts.UnderNodeID != 0 {
+		directory, err = nodeByIDQuery(ctx, queryer, opts.UnderNodeID)
 		if err != nil {
 			return SearchOptions{}, fmt.Errorf("search directory node %d: %w", opts.UnderNodeID, err)
 		}
+	}
+	if opts.UnderNodeID != 0 {
 		if directory.TrashedAt != nil {
 			return SearchOptions{}, fmt.Errorf("search directory node %d is trashed: %w",
 				opts.UnderNodeID, ErrNotFound)

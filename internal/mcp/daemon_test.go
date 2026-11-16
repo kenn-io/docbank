@@ -628,12 +628,15 @@ func TestDaemonReadNeverRetriesAfterResponse(t *testing.T) {
 func TestDaemonBoundaryCopiesSafeProblemFactsWithoutRawCause(t *testing.T) {
 	tests := []struct {
 		name         string
+		localCause   error
 		code         string
 		observed     int
 		mapped       error
 		wantObserved int
 	}{
 		{name: "mapped domain error", code: "not_found", mapped: store.ErrNotFound},
+		{name: "local invalid search scope", localCause: fmt.Errorf("synthetic-secret /private/vault private-document: %w", store.ErrInvalidSearchScope),
+			code: "validation", mapped: store.ErrInvalidSearchScope},
 		{name: "unknown problem", code: "synthetic_unknown"},
 		{name: "scope overflow", code: "scope_too_large", observed: 4097, wantObserved: 4097},
 		{name: "one-byte code", code: "a"},
@@ -648,6 +651,9 @@ func TestDaemonBoundaryCopiesSafeProblemFactsWithoutRawCause(t *testing.T) {
 			}, func(*daemonconn.Connection) error { return nil })
 
 			_, err := daemonRead(t.Context(), lease, func(ctx context.Context, c *daemonconn.Connection) (struct{}, error) {
+				if testCase.localCause != nil {
+					return struct{}{}, testCase.localCause
+				}
 				_, err := c.API().Health(ctx)
 				return struct{}{}, err
 			})

@@ -1032,6 +1032,7 @@ type SearchOptions struct {
 	TagID          string
 	MIMEType       string
 	UnderNodeID    int64
+	UnderPath      string
 	ModifiedSince  string
 	ModifiedBefore string
 }
@@ -1042,8 +1043,14 @@ func (c *Connection) Search(ctx context.Context, query string, limit int) (api.S
 
 // SearchTextCoverage reads recoverable text gaps after an empty search.
 func (c *Connection) SearchTextCoverage(ctx context.Context, opts SearchOptions) (api.SearchTextCoverage, error) {
+	if err := store.ValidateSearchDirectoryScope(opts.UnderNodeID, opts.UnderPath); err != nil {
+		return api.SearchTextCoverage{}, err
+	}
 	params := apiclient.SearchTextCoverageQuery{PdfFilter: &opts.PDFFilter, SourcePresent: &opts.SourcePresent,
 		TagID: &opts.TagID, MimeType: &opts.MIMEType, ModifiedSince: &opts.ModifiedSince, ModifiedBefore: &opts.ModifiedBefore}
+	if opts.UnderPath != "" {
+		params.UnderPath = new(opts.UnderPath)
+	}
 	if opts.UnderNodeID != 0 {
 		params.UnderNodeID = &opts.UnderNodeID
 	}
@@ -1066,8 +1073,8 @@ func (c *Connection) SearchWithOptions(
 	if err != nil {
 		return out, err
 	}
-	if opts.UnderNodeID < 0 {
-		return out, errors.New("search directory node ID must be positive")
+	if err := store.ValidateSearchDirectoryScope(opts.UnderNodeID, opts.UnderPath); err != nil {
+		return out, err
 	}
 	modifiedSince, modifiedBefore, err := store.NormalizeSearchTimeBounds(
 		opts.ModifiedSince, opts.ModifiedBefore,
@@ -1076,6 +1083,9 @@ func (c *Connection) SearchWithOptions(
 		return out, err
 	}
 	params := apiclient.SearchQuery{}
+	if opts.UnderPath != "" {
+		params.UnderPath = new(opts.UnderPath)
+	}
 	if opts.PDFFilter != "" {
 		params.PdfFilter = new(opts.PDFFilter)
 	}
@@ -1107,8 +1117,12 @@ func (c *Connection) SearchWithOptions(
 		return out, err
 	}
 	out = *apiResponse
+	directoryMatches := out.UnderNodeID == opts.UnderNodeID
+	if opts.UnderPath != "" {
+		directoryMatches = out.UnderNodeID > 0
+	}
 	if out.PDFFilter != opts.PDFFilter || out.SourcePresent != opts.SourcePresent || out.TagID != opts.TagID || out.MIMEType != mimeType ||
-		out.UnderNodeID != opts.UnderNodeID || out.ModifiedSince != modifiedSince ||
+		!directoryMatches || out.UnderPath != opts.UnderPath || out.ModifiedSince != modifiedSince ||
 		out.ModifiedBefore != modifiedBefore {
 		return api.SearchReport{}, errors.New("search response has inconsistent filter authority")
 	}
