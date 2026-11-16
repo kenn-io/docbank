@@ -11,9 +11,10 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestSearchTextCoverage(t *testing.T) {
+func checkSearchTextCoverage(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, _, pdfs, profile := collectionCoverageFixture(t, 1)
+	s, _, pdfs, profile := collectionCoverageFixtureWithStore(t, open(t), 1)
 	_, err := s.CreateFile(t.Context(), s.RootID(), "untyped", testSHA256([]byte("untyped")), 7, "")
 	require.NoError(t, err)
 	_, err = s.CreateFile(t.Context(), s.RootID(), "message.eml", testSHA256([]byte("email")), 5, "message/rfc822")
@@ -64,7 +65,7 @@ func TestSearchTextCoverage(t *testing.T) {
 	require.Equal(t, SearchTextCoverage{NoText: 2, Families: []string{"pdf", "office"}}, got)
 	t.Run("blank_text_is_not_serving", func(t *testing.T) {
 		t.Parallel()
-		s, _, pdfs, profile := collectionCoverageFixture(t, 1)
+		s, _, pdfs, profile := collectionCoverageFixtureWithStore(t, open(t), 1)
 		collectionCoveragePublish(t, s, pdfs[0], profile, "blank_segments")
 		got, err := s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, nil, nil)
 		require.NoError(t, err)
@@ -126,7 +127,7 @@ func TestSearchTextCoverage(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			s, _, pdfs, profile := collectionCoverageFixture(t, 1)
+			s, _, pdfs, profile := collectionCoverageFixtureWithStore(t, open(t), 1)
 			if tc.active {
 				collectionCoveragePublish(t, s, pdfs[0], profile, "complete")
 			}
@@ -143,7 +144,8 @@ func TestSearchTextCoverage(t *testing.T) {
 	}
 }
 
-func TestSearchTextCoverageCandidateEvidence(t *testing.T) {
+func checkSearchTextCoverageCandidateEvidence(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, tc := range []struct {
 		name, state                     string
@@ -157,7 +159,7 @@ func TestSearchTextCoverageCandidateEvidence(t *testing.T) {
 		{"known scan", "candidate_empty", []int{1}, false, 0, 0, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s, _, pdfs, profile := collectionCoverageFixture(t, 1)
+			s, _, pdfs, profile := collectionCoverageFixtureWithStore(t, open(t), 1)
 			collectionCoveragePublish(t, s, pdfs[0], profile, tc.state)
 			got, err := s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, func(context.Context, string) ([]int, error) {
 				if tc.readError {
@@ -184,9 +186,10 @@ func TestPDFTextCandidatesFiltersExactVersions(t *testing.T) {
 	require.Equal(t, map[string]string{nodes[1].CurrentVersionID: testSHA256([]byte(nodes[1].CurrentVersionID + "candidate_serving"))}, got)
 }
 
-func TestSearchTextCoverageLimitsEvidenceReads(t *testing.T) {
+func checkSearchTextCoverageLimitsEvidenceReads(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, _, nodes, profile := collectionCoverageFixture(t, 17)
+	s, _, nodes, profile := collectionCoverageFixtureWithStore(t, open(t), 17)
 	var expected []string
 	for _, node := range nodes {
 		state := "candidate_empty"

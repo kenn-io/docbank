@@ -389,7 +389,7 @@ A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Direct embedding-worker publication/recovery, photo
 descriptions and face detection have qualification below. Foreground direct-file
 and image embedding can publish a vector index before returning. Face embedding/matching workers,
-remote-media acquisition, lexical/hybrid search and PostgreSQL-target backup recovery remain unqualified.
+remote-media acquisition, photo query compilation and PostgreSQL-target backup recovery remain unqualified.
 Native multi-store catalog operations are qualified below; deployment adapters
 and filesystem workers remain separate from public PostgreSQL vault opening.
 
@@ -519,7 +519,7 @@ GRANT UPDATE(live_entries, live_stored_bytes, live_raw_bytes,
     max_live_stored_len, max_live_raw_len) ON documents.blob_packs TO docbank_runtime;
 GRANT INSERT, UPDATE(next_attempt_at) ON documents.text_extraction_queue TO docbank_runtime;
 GRANT INSERT ON documents.text_searchable_versions TO docbank_runtime;
-GRANT INSERT, UPDATE(extractor_version, status, error, attempts, text, extracted_at)
+GRANT INSERT, UPDATE(extractor_version, status, error, attempts, text, extracted_at, search_text)
     ON documents.extracted_text TO docbank_runtime;
 GRANT INSERT, UPDATE(hidden_at, excluded_at, display_file_id,
     display_override_file_id, representative_rank, revision, updated_at)
@@ -1041,7 +1041,7 @@ metadata; a fresh Store starts with an empty cache.
 SQLite keeps its released membership triggers and receives no additional
 maintenance queries. The shared reader scenarios cover native original/chunk
 and image membership changes, leases, cleanup, warm-cache reuse and snapshots.
-Face-member capture and lexical/hybrid search remain unqualified on PostgreSQL.
+Face-member capture and photo query compilation remain unqualified on PostgreSQL.
 Public PostgreSQL vault opening and PostgreSQL-target physical restore remain
 separate.
 
@@ -1076,8 +1076,60 @@ through the real service, index worker and retrieval code. Retained chunk
 vectors remain searchable after provider consent is revoked; moving the
 provider endpoint does not re-embed documents. This qualifies document semantic
 search with the listed filters. PDF fact filters, photo query compilation,
-face-member capture and lexical/hybrid retrieval remain separate. No public
+face-member capture and photo query compilation remain separate. No public
 PostgreSQL vault opener is exposed by this internal qualification.
+
+#### Document lexical and hybrid search
+
+The internal PostgreSQL Store searches live filenames and current searchable
+text. `SearchPageWithOptions` keeps filename matches ahead of content matches;
+`SearchExplainedLexicalCandidates` also supports content-first retrieval. Both
+use the existing candidate merger, scope predicates, path resolution and
+retained-evidence checks. Hybrid retrieval combines these lexical candidates
+with the published vector index through the existing processing and retrieval
+services.
+
+PostgreSQL uses Kit's `search/postgres.BuildLexical` with its native `simple`
+text-search configuration. The shared analyzer retains stop-word decisions,
+English word forms, phrases and typed prefixes. The schema's `lexical_text`
+function decomposes accents, removes combining diacritics and splits punctuation
+before indexing and query construction. Filenames such as `invoice.pdf` remain
+searchable by `invoice`. Native tokenization and relevance scores differ from
+SQLite FTS5; ranks are not portable between engines. Equal native scores use
+byte-ordered names and node IDs.
+
+GIN expression indexes cover names, extracted text and immutable rendition
+segments. Generated `search_vector` columns cache the parsed tokens so reads
+rank stored vectors rather than rebuilding them. Byte-stored text keeps every
+original byte, including NUL. Native
+writes and metadata imports also fill a derived `search_text` column, replacing
+NUL with a space only there. They add no database round trip. Fixture copying
+rebuilds that same projection; exports keep their existing bytes. SQLite keeps
+its released FTS5 tables, triggers and SQL.
+
+PostgreSQL limits a token vector to 1 MiB. The schema's `lexical_vector` function
+omits vectors that exceed the server's limit instead of aborting a text write,
+publication or restore. Original text remains readable and exportable, and
+filename matches still work. That text contributes no lexical content matches;
+SQLite retains its existing behavior. This follows msgvault's separation of
+stored evidence from a best-effort native search index. The exception-handling
+generator runs only during writes; reads of the stored vectors remain eligible
+for parallel query. PostgreSQL's [parallel-safety rules](https://www.postgresql.org/docs/16/parallel-safety.html)
+require exception-handling functions to be parallel-unsafe.
+
+Content reads pin a lexical generation inside a read-only `REPEATABLE READ`
+transaction. Segment membership, current rendition heads, result evidence and
+paths share that snapshot. Filters apply before result bounds, including exact
+version sets, directories, MIME types, tags and modification times. Queryless
+filter pages and text-coverage counts also use the native backend.
+
+The `lexical-search` backend suite exercises these reads on both engines,
+including concurrent publication, empty and replaced content, truncation and
+text coverage. PostgreSQL plan checks use populated tables without disabling
+sequential scans. The processing suite runs hybrid retrieval with a real
+embedding publication and vector index. Photo query compilation, PDF fact
+filters and selected recording/vision retrieval are outside this qualification.
+Public PostgreSQL vault opening remains separate.
 
 #### Backup capture and SQLite recovery
 
@@ -1502,9 +1554,9 @@ writes, including terminal outcomes, scheduling, exact Unicode and empty text,
 replay, same-version replacements, purge scopes and atomic rollback. PostgreSQL
 indexes lexical generation membership by build ID for publication cleanup,
 matching SQLite. SQLite alone
-maintains its legacy FTS5 cache. PostgreSQL retains the text and rendition lexical
-catalogs; ranked search, complete metadata transfer and public vault opening remain
-unqualified.
+maintains its legacy FTS5 cache. PostgreSQL maintains a separate search-text
+projection in those same writes. See [document lexical and hybrid search](#document-lexical-and-hybrid-search)
+for its query and indexing contract. Public vault opening remains separate.
 
 #### Document embedding jobs and publication
 
@@ -2057,8 +2109,8 @@ retention again under the writer lock.
 Lexical replacement preserves surviving build membership and text. Shared index
 writes allocate their rebuildable row IDs under the store writer lock. SQLite
 continues to maintain its FTS shadow tables through its released triggers;
-PostgreSQL has only the retained lexical catalogs at this stage. Cleanup does
-not qualify PostgreSQL search or processing publication.
+Cleanup removes the retained lexical catalogs and their native search indexes
+in the same transaction. The search and processing suites qualify their own entry points.
 
 #### Physical packing and collection
 
@@ -2382,7 +2434,7 @@ schema can enroll its root without a copied fixture.
 Copying supporting catalogs qualifies their validation, not their producers.
 The [operation inventory](#backend-support-and-drift-checks) identifies native
 writes and their catalog-maintenance coverage. Public PostgreSQL opening,
-PostgreSQL-target physical restore and lexical/hybrid search remain unqualified. Logical metadata transfer
+PostgreSQL-target physical restore and photo query compilation remain unqualified. Logical metadata transfer
 uses the internal import/export entry points described above.
 
 For PostgreSQL tests, start a disposable server, never an operator database:

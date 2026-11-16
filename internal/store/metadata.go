@@ -356,7 +356,7 @@ var coreMetadataTables = []metadataRecordCodec{
 		table:  "visual_preview_generations", validate: validateVisualPreviewGenerationRecord,
 		insert: importVisualPreviewGeneration}),
 	newMetadataTable(metadataTable[metadataExtractedText]{record: metadataExtractedText{Type: "extracted_text"},
-		table: "extracted_text", validate: validateExtractedTextRecord}),
+		table: "extracted_text", validate: validateExtractedTextRecord, insert: insertExtractedTextMetadata}),
 }
 
 func importBlobRecord(ctx context.Context, tx *sql.Tx, v metadataBlob, postgres bool) error {

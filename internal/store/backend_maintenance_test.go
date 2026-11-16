@@ -50,13 +50,13 @@ var backendMaintenanceEffects = []backendMaintenance{
 	{"photo metadata recovery", "metadata_postgres.go: refreshImportedCatalogsTx", "metadata-import rebuilds fresh projections; retained source-head deletion is unsupported", `photo_xmp_unsettled_head_delete`},
 	{"people candidates", "person_candidates.go: retainPersonCandidate", "people-curation and metadata-import contracts; imported face memberships are rebuilt from retained evidence", `
  person_candidate_faces_insert person_candidate_faces_update`},
-	{"lexical indexes", "unported: search", "must preserve eligible rows and index access; schema comparison excludes FTS virtual/shadow tables", `
- nodes_fts_insert nodes_fts_delete nodes_fts_update
+	{"document lexical indexes", "PostgreSQL GIN expressions; extraction.go and search.go write derived search text", "lexical-search and metadata-import contracts; canonical bytes retained separately", `
+ nodes_fts_insert nodes_fts_delete nodes_fts_update rendition_lexical_index_insert rendition_lexical_index_delete`},
+	{"photo and tag lexical indexes", "unported: photo query compilation", "photo text and tag search remain SQLite-only", `
  photo_metadata_fts_insert photo_metadata_fts_delete
  photo_authored_fts_insert photo_authored_fts_update photo_authored_fts_delete
  photo_suggestion_fts_insert photo_suggestion_fts_update photo_suggestion_fts_delete
- tag_fts_insert tag_fts_update tag_fts_delete
- rendition_lexical_index_insert rendition_lexical_index_delete`},
+ tag_fts_insert tag_fts_update tag_fts_delete`},
 	{"processing authority", "consent.go; INSERT-only grants and revocations; setup owns incarnation", "renditions and metadata-import contracts; a restored vault keeps fresh incarnation authority", `
  current_processing_incarnation_immutable_update current_processing_incarnation_immutable_delete
  processing_incarnations_immutable_update processing_incarnations_immutable_delete
@@ -76,7 +76,7 @@ var backendMaintenanceEffects = []backendMaintenance{
  embedding_vector_spaces_immutable_update embedding_input_generations_immutable_update
  embedding_generation_inputs_immutable_update embedding_vector_sets_immutable_update
  embedding_vector_rows_immutable_update embedding_sets_immutable_update`},
-	{"vector source membership epochs", "vector_membership.go; publication, deletion, version, trash and photo writers", "vector-index-publication contracts; original/chunk/image membership only; face capture and ranked/lexical search remain unqualified", `
+	{"vector source membership epochs", "vector_membership.go; publication, deletion, version, trash and photo writers", "vector-index-publication contracts; original/chunk/image membership only; face capture remains unqualified", `
  vector_source_embedding_heads_insert vector_source_embedding_heads_update vector_source_embedding_heads_delete
  vector_source_rendition_heads_insert vector_source_rendition_heads_update vector_source_rendition_heads_delete
  vector_source_visual_preview_generations_insert vector_source_visual_preview_generations_delete

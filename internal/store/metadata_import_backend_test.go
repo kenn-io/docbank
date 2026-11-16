@@ -230,6 +230,19 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 		require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{BlobHash: node.BlobHash, Extractor: "failed\x00extractor", ExtractorVersion: 1, Status: ExtractionFailed, Error: "failure\x00detail"}))
 		return s
 	}
+	seeds["large extraction"] = func(t *testing.T) *Store {
+		t.Helper()
+		s := newTestStore(t)
+		var text strings.Builder
+		for i := range 100000 {
+			fmt.Fprintf(&text, "word%d ", i)
+		}
+		node, err := s.CreateFile(t.Context(), s.RootID(), "large.txt", testSHA256([]byte(text.String())), int64(text.Len()), "text/plain")
+		require.NoError(t, err)
+		require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{BlobHash: node.BlobHash,
+			Extractor: "synthetic", ExtractorVersion: 1, Status: ExtractionOK, Text: text.String()}))
+		return s
+	}
 	for name, text := range map[string]string{"NUL leading email text": " \x00after", "NUL email text": "before\x00after"} {
 		seeds[name] = func(t *testing.T) *Store {
 			t.Helper()
@@ -442,6 +455,7 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 		"NUL source description":       {"ingest", "provenance", "audit_record"},
 		"NUL person name":              {"person", "person_identity", "custodian_assignment", "person_external_identity"},
 		"NUL extraction":               {"extracted_text"},
+		"large extraction":             {"extracted_text"},
 		"NUL email text":               {"extracted_text", "rendition_lexical_segment", "rendition_lexical_generation"},
 		"NUL leading email text":       {"extracted_text", "rendition_lexical_segment", "rendition_lexical_generation"},
 		"NUL media occurrence":         {"media_occurrence", "media_operation"},
@@ -734,7 +748,41 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, "Renamed\x00Person", got.DisplayName)
 			}
+			if name == "large extraction" {
+				node, err := runtime.NodeByPath(ctx, "/large.txt")
+				require.NoError(t, err)
+				var original, retained string
+				require.NoError(t, source.db.QueryRowContext(ctx, `SELECT text FROM extracted_text WHERE blob_hash=$1`, node.BlobHash).Scan(&original))
+				require.NoError(t, runtime.RecordExtraction(ctx, ExtractionResult{BlobHash: node.BlobHash,
+					Extractor: "synthetic", ExtractorVersion: 2, Status: ExtractionOK, Text: original}))
+				require.NoError(t, runtime.db.QueryRowContext(ctx, `SELECT text FROM extracted_text WHERE blob_hash=$1`, node.BlobHash).Scan(&retained))
+				require.Equal(t, original, retained)
+				require.NoError(t, runtime.RecordExtraction(ctx, ExtractionResult{BlobHash: node.BlobHash,
+					Extractor: legacyPlainTextExtractor, ExtractorVersion: 1, Status: ExtractionOK, Text: original}))
+				migration, err := runtime.MigrateLegacyPlainText(ctx)
+				require.NoError(t, err)
+				active, err := runtime.ActiveRendition(ctx, node.CurrentVersionID, migration.ProfileFingerprint)
+				require.NoError(t, err)
+				var published strings.Builder
+				for _, segment := range active.Build.LexicalSegments {
+					published.WriteString(segment.Text)
+				}
+				require.Equal(t, original, published.String())
+				require.NoError(t, runtime.ValidateMetadata(ctx))
+				hits, _, err := runtime.SearchPage(ctx, "large", 10)
+				require.NoError(t, err)
+				require.Len(t, hits, 1)
+				require.Equal(t, node.ID, hits[0].Node.ID)
+			}
 			if name == "NUL extraction" {
+				// Restored search indexes must serve preserved text on both sides of NUL.
+				for _, query := range []string{"before", "after", "cafe"} {
+					hits, truncated, err := runtime.SearchPage(ctx, query, 10)
+					require.NoError(t, err)
+					require.False(t, truncated)
+					require.Len(t, hits, 1)
+					require.Equal(t, "text.txt", hits[0].Node.Name)
+				}
 				node, err := runtime.NodeByPath(ctx, "/text.txt")
 				require.NoError(t, err)
 				require.NoError(t, runtime.RecordExtraction(ctx, ExtractionResult{BlobHash: node.BlobHash, Extractor: "custom\x00extractor", ExtractorVersion: 2, Status: ExtractionOK, Text: "new\x00text"}))

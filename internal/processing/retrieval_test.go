@@ -20,7 +20,12 @@ import (
 
 func TestHybridSearcherUsesRealStoreBindingAuthority(t *testing.T) {
 	t.Parallel()
-	fixture, fake, embedding, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile, "alternate")
+	checkHybridSearcherUsesRealStoreBindingAuthority(t, newPublicationFixture)
+}
+
+func checkHybridSearcherUsesRealStoreBindingAuthority(t *testing.T, makeFixture publicationFixtureFactory) {
+	t.Helper()
+	fixture, fake, embedding, request := embeddingWorkerWithFixture(t, makeFixture, document.EmbeddingInputOriginalFile, "alternate")
 	_, err := embedding.ScanOnce(t.Context())
 	require.NoError(t, err)
 	var metadata bytes.Buffer

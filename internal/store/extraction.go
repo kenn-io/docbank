@@ -526,19 +526,24 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 		if result.Status == ExtractionOK {
 			text = storedString(s.postgresSchema != "", result.Text)
 		}
+		projectionColumn, projectionValue, projectionUpdate := "", "", ""
+		args := []any{result.BlobHash, storedString(s.postgresSchema != "", result.Extractor), result.ExtractorVersion,
+			result.Status, extractErr, text, nowRFC3339()}
+		if s.postgresSchema != "" {
+			projectionColumn, projectionValue, projectionUpdate = ",search_text", ",$8", ",search_text=excluded.search_text"
+			args = append(args, lexicalSearchText(result.Text))
+		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO extracted_text(
-			  blob_hash,extractor,extractor_version,status,error,attempts,text,extracted_at
-			) VALUES($1,$2,$3,$4,$5,1,$6,$7)
+			  blob_hash,extractor,extractor_version,status,error,attempts,text,extracted_at`+projectionColumn+`
+			) VALUES($1,$2,$3,$4,$5,1,$6,$7`+projectionValue+`)
 			ON CONFLICT(blob_hash,extractor) DO UPDATE SET
 			  extractor_version=excluded.extractor_version,
 			  status=excluded.status,
 			  error=excluded.error,
 			  attempts=extracted_text.attempts+1,
 			  text=excluded.text,
-			  extracted_at=excluded.extracted_at`,
-			result.BlobHash, storedString(s.postgresSchema != "", result.Extractor), result.ExtractorVersion,
-			result.Status, extractErr, text, nowRFC3339()); err != nil {
+			  extracted_at=excluded.extracted_at`+projectionUpdate, args...); err != nil {
 			return fmt.Errorf("recording text extraction: %w", err)
 		}
 		// FTS5 is a SQLite projection. PostgreSQL retains the same text and

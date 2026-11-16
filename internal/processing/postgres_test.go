@@ -185,3 +185,8 @@ func TestVectorIndexWorkersPostgres(t *testing.T) {
 		checkVectorIndexMaintenanceCanRunDuringPayloadRead(t, postgresPublicationFixture)
 	})
 }
+
+func TestHybridSearcherPostgres(t *testing.T) {
+	t.Parallel()
+	checkHybridSearcherUsesRealStoreBindingAuthority(t, postgresPublicationFixture)
+}

@@ -71,6 +71,20 @@ func checkBackendSchemaPostgres(t *testing.T) {
 	assert.Equal(t, backendColumn{Kind: "text", Required: true}, right["media_input_artifacts"].Columns["input_binding_json"])
 	delete(right["media_input_artifacts"].Columns, "input_binding_json")
 
+	for _, table := range []string{"extracted_text", "rendition_lexical_index"} {
+		assert.Equal(t, backendColumn{Kind: "text", Required: true}, right[table].Columns["search_text"])
+		delete(right[table].Columns, "search_text")
+		assert.Equal(t, backendColumn{Kind: "tsvector"}, right[table].Columns["search_vector"])
+		delete(right[table].Columns, "search_vector")
+	}
+	for table, index := range map[string]string{"nodes": "nodes_search", "extracted_text": "extracted_text_search", "rendition_lexical_index": "rendition_lexical_search"} {
+		column := "search_vector"
+		if table == "nodes" {
+			column = "<expression>"
+		}
+		assert.Equal(t, backendIndex{Columns: []string{column}}, right[table].Indexes[index])
+		delete(right[table].Indexes, index)
+	}
 	// Accepted provenance strings permit NUL. PostgreSQL stores bytes while
 	// SQLite retains its released TEXT; logical exports remain strings.
 	for table, columns := range backendByteStringColumns {
@@ -222,6 +236,8 @@ func describeBackendColumns(t *testing.T, s *Store, table string) map[string]bac
 			column.Kind = "text"
 		case "blob", "bytea":
 			column.Kind = "bytes"
+		case "tsvector":
+			column.Kind = "tsvector"
 		case "real", "double precision":
 			column.Kind = "real"
 		default:

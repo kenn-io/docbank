@@ -259,6 +259,10 @@ func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables 
 			columns = append(columns, "receipt_source_version_id", "receipt_operation_state")
 		}
 
+		searchable := table == "extracted_text" || table == "rendition_lexical_index"
+		if searchable {
+			columns = append(columns, "search_text")
+		}
 		insert := "INSERT INTO " + table + "(" + strings.Join(columns, ",") + ")" + override + " VALUES(" + numberedPlaceholders(len(columns), 0) + ")"
 		for rows.Next() {
 			require.NoError(t, rows.Scan(destinations...))
@@ -272,6 +276,15 @@ func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables 
 			}
 
 			args := values
+			if searchable {
+				text := ""
+				if raw := values[slices.Index(columns, "text")]; raw != nil {
+					bytes, ok := raw.([]byte)
+					require.True(t, ok)
+					text = string(bytes)
+				}
+				args = append(slices.Clone(values), lexicalSearchText(text))
+			}
 			if snapshotMember {
 				raw, ok := values[slices.Index(columns, "canonical_json")].([]byte)
 				require.True(t, ok)

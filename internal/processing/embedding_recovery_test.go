@@ -502,10 +502,16 @@ func checkEmbeddingSemanticSearchAfterSecondEndpointMove(t *testing.T, makeFixtu
 	_, err = service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
 	require.NoError(t, err)
 	f.grant(t, service, true)
-	search, err := service.Search(t.Context(), SearchRequest{Profile: "current", Fence: SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{version.ID}}, Query: "synthetic", Mode: "semantic", Limit: 1})
-	require.NoError(t, err)
-	require.Len(t, search.Results, 1)
-	require.Equal(t, version.ID, search.Results[0].Document.ContentVersionID)
+	for _, mode := range []string{"semantic", "hybrid"} {
+		search, err := service.Search(t.Context(), SearchRequest{Profile: "current", Fence: SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{version.ID}}, Query: "synthetic", Mode: mode, Limit: 1})
+		require.NoError(t, err)
+		require.Len(t, search.Results, 1)
+		require.Equal(t, version.ID, search.Results[0].Document.ContentVersionID)
+		if mode == "hybrid" {
+			require.Equal(t, 1, search.Results[0].LexicalRank)
+			require.Equal(t, 1, search.Results[0].SemanticRank)
+		}
+	}
 	require.Zero(t, second.documents.Load(), "building and searching a retained space must not re-embed its documents")
 }
 
