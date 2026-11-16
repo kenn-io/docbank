@@ -31,7 +31,7 @@ func ValidateTextOperand(field, value string) error {
 	case "extension":
 		valid = extensionPattern.MatchString(value)
 	case "media_family":
-		valid = validMediaFamily(value)
+		valid = ValidMediaFamily(value)
 	default:
 		return fmt.Errorf("unsupported text field %q", field)
 	}

@@ -104,6 +104,27 @@ describe("background jobs drawer", () => {
     ).toBeTruthy();
   });
 
+  it("shows every family route and its consent status", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      jobsResponse([
+        {
+          name: "watch:mixed",
+          lane: "watch:mixed",
+          status: "running",
+          processing_routes: [
+            { media_family: "audio_video", profile: "asr", consent_state: "required" },
+            { media_family: "document", profile: "docling", consent_state: "active" },
+            { media_family: "image", profile: "ocr", error: "Consent status unavailable" },
+          ],
+        },
+      ]),
+    );
+    render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
+    await screen.findByText("audio video: waiting on consent for asr (required)");
+    expect(screen.getByText("document: docling")).toBeTruthy();
+    expect(screen.getByText("image: ocr. Consent status unavailable")).toBeTruthy();
+  });
+
   it.each([
     {
       state: "queued in a paused lane",
