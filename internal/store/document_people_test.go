@@ -764,11 +764,15 @@ func checkDocumentPeopleMembershipChangesInvalidateOnlyAffectedDocument(t *testi
 	}
 }
 
-func seedDocumentPeopleEvent(t *testing.T, s *Store, name, seed string, actors []document.DocumentEventActorV1) ContentVersion {
+func seedDocumentPeopleEvent(t *testing.T, s *Store, name, seed string, actors []document.DocumentEventActorV1, fingerprints ...string) ContentVersion {
 	t.Helper()
+	fingerprint := fakeHash("e0")
+	if len(fingerprints) > 0 {
+		fingerprint = fingerprints[0]
+	}
 	version, target := ingestDocumentEventTarget(t, s, name, seed)
 	_, err := s.db.ExecContext(t.Context(), `INSERT INTO document_event_state(singleton,contract_version,deriver_fingerprint,input_epoch,publication_epoch,updated_at) VALUES(1,$1,$2,$3,$4,$5) ON CONFLICT(singleton) DO NOTHING`,
-		document.DocumentEventsContractV1, fakeHash("e0"), 1, 1, nowRFC3339())
+		document.DocumentEventsContractV1, fingerprint, 1, 1, nowRFC3339())
 	require.NoError(t, err)
 	record := documentEventRecord(t, s.VaultID(), version.ID, seed)
 	if actors != nil {
@@ -777,7 +781,7 @@ func seedDocumentPeopleEvent(t *testing.T, s *Store, name, seed string, actors [
 	raw, _, err := document.MarshalDocumentEventsV1(record)
 	require.NoError(t, err)
 	inputsSHA := requireDocumentEventInputsSHA256(t, s, target)
-	_, err = s.PublishDocumentEvents(t.Context(), target, fakeHash("e0"), inputsSHA, raw)
+	_, err = s.PublishDocumentEvents(t.Context(), target, fingerprint, inputsSHA, raw)
 	require.NoError(t, err)
 	return version
 }

@@ -62,6 +62,7 @@ const optionalFilterFields = new Set([
   "tag_ids",
   "exclude_tag_ids",
   "person_ids",
+  "people",
   "no_tags",
   "media_families",
   "mime_types",
@@ -97,6 +98,26 @@ const encoder = new TextEncoder();
 
 export type MediaFamily = (typeof mediaFamilies)[number];
 export type TextCoverage = (typeof textCoverageValues)[number];
+
+export const personRoles = [
+  "author",
+  "last_saved_by",
+  "custodian",
+  "sender",
+  "recipient",
+  "copied",
+  "blind_copy",
+  "organizer",
+  "attendee",
+  "participant",
+  "speaker",
+  "depicted",
+] as const;
+export type PersonRole = (typeof personRoles)[number];
+export interface PersonFilter {
+  person_id: string;
+  roles: PersonRole[];
+}
 
 export interface QuerySort {
   field:
@@ -158,6 +179,7 @@ export interface QueryFilters {
   collection_ids?: string[];
   exclude_collection_ids?: string[];
   person_ids?: string[];
+  people?: PersonFilter[];
   tag_ids?: string[];
   exclude_tag_ids?: string[];
   no_tags?: boolean;
@@ -248,6 +270,7 @@ export function canonicalQuery(value: Query): string {
     filters.modified_before = normalized.filters.modified_before;
   if (normalized.filters.no_tags) filters.no_tags = true;
   if (normalized.filters.person_ids?.length) filters.person_ids = normalized.filters.person_ids;
+  if (normalized.filters.people?.length) filters.people = normalized.filters.people;
   if (normalized.filters.paths?.length) filters.paths = normalized.filters.paths;
   if (normalized.filters.size_max !== undefined) filters.size_max = normalized.filters.size_max;
   if (normalized.filters.size_min) filters.size_min = normalized.filters.size_min;
@@ -329,6 +352,52 @@ export async function highlightSetFingerprint(value: HighlightSet): Promise<stri
   return `sha256:${bytesToHex(sha256(utf8ToBytes(canonicalHighlightSet(value))))}`;
 }
 
+function parsePeople(value: unknown): PersonFilter[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) throw new Error("People filters must be a list.");
+  return value.map((item) => {
+    const entry = requireObject(item, "filters.people");
+    requireOnlyKeys(entry, ["person_id", "roles"], "filters.people");
+    const roles = optionalStringArray(entry.roles, "filters.people.roles");
+    if (!roles) throw new Error("filters.people.roles is required");
+    return {
+      person_id: requireString(entry.person_id, "filters.people.person_id"),
+      roles: roles as PersonRole[],
+    };
+  });
+}
+
+function normalizePeople(value: PersonFilter[] | undefined): PersonFilter[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) throw new Error("People filters must be a list.");
+  if (value.length > 64) throw new Error("Use at most 64 people filters.");
+  const entries = value.map((entry) => {
+    if (!entry || !uuidV4Pattern.test(entry.person_id))
+      throw new Error("filters.people.person_id is invalid");
+    const roles = normalizeSet(
+      entry.roles,
+      64,
+      (role): role is PersonRole => (personRoles as readonly string[]).includes(role),
+      "filters.people.roles",
+    );
+    if (!roles?.length) throw new Error("filters.people.roles is required");
+    return { person_id: entry.person_id, roles };
+  });
+  entries.sort((a, b) => {
+    if (a.person_id !== b.person_id) return a.person_id < b.person_id ? -1 : 1;
+    const left = a.roles.join("\0");
+    const right = b.roles.join("\0");
+    return left === right ? 0 : left < right ? -1 : 1;
+  });
+  const unique = entries.filter(
+    (entry, index) =>
+      index === 0 ||
+      entry.person_id !== entries[index - 1].person_id ||
+      entry.roles.join("\0") !== entries[index - 1].roles.join("\0"),
+  );
+  return unique.length ? unique : undefined;
+}
+
 function parseFilters(input: Record<string, unknown>): QueryFilters {
   return {
     kinds: optionalStringArray(input.kinds, "filters.kinds") as QueryFilters["kinds"],
@@ -364,6 +433,7 @@ function parseFilters(input: Record<string, unknown>): QueryFilters {
       "filters.exclude_collection_ids",
     ),
     person_ids: optionalStringArray(input.person_ids, "filters.person_ids"),
+    people: parsePeople(input.people),
     tag_ids: optionalStringArray(input.tag_ids, "filters.tag_ids"),
     exclude_tag_ids: optionalStringArray(input.exclude_tag_ids, "filters.exclude_tag_ids"),
     no_tags: optionalBoolean(input.no_tags, "filters.no_tags"),
@@ -463,6 +533,7 @@ function normalizeFilters(value: QueryFilters): QueryFilters {
       (item) => uuidV4Pattern.test(item),
       "exclude_collection_ids",
     ),
+    people: normalizePeople(value.people),
     person_ids: normalizeSet(
       value.person_ids,
       64,

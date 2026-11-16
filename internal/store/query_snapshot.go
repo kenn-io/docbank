@@ -71,7 +71,8 @@ type SnapshotTag struct {
 type SnapshotRow struct {
 	SnapshotMember
 
-	SuggestionMatch bool `json:"suggestion_match,omitzero"`
+	SuggestionMatch bool     `json:"suggestion_match,omitzero"`
+	MatchedRoles    []string `json:"matched_roles,omitzero"`
 
 	Flag                   *string       `json:"flag,omitzero"`
 	Name                   string        `json:"name"`
@@ -98,10 +99,12 @@ type SnapshotGeneration struct {
 
 // SnapshotFacetValue is one counted and optionally selected facet value.
 type SnapshotFacetValue struct {
-	Key      string `json:"key"`
-	Label    string `json:"label"`
-	Count    int64  `json:"count"`
-	Selected bool   `json:"selected"`
+	SelectedPersonIDs []string `json:"selected_person_ids,omitzero"`
+	Key               string   `json:"key"`
+	Label             string   `json:"label"`
+	Count             int64    `json:"count"`
+	Selected          bool     `json:"selected"`
+	Roles             []string `json:"roles,omitzero"`
 }
 
 // SnapshotFacet is either a complete count projection or an explicit unavailable result.
@@ -414,6 +417,7 @@ func materializeSnapshotRows(
 	}
 	var photos []PhotoBrowseRow
 	var photoRowBytes []int64
+	var roleRowBytes []int64
 	annotatePhotos := options.Photos && options.PhotoRanking != nil &&
 		(options.PhotoRanking.ActualMode == query.ModeLexical || options.PhotoRanking.ActualMode == "hybrid")
 	photoColumns := `'','',NULL`
@@ -525,6 +529,9 @@ func materializeSnapshotRows(
 		}
 		projection.TotalBytes += row.Size
 		projection.Rows = append(projection.Rows, row)
+		if !options.Photos && len(compiled.roleMatches) > 0 {
+			roleRowBytes = append(roleRowBytes, int64(len(encoded)))
+		}
 		if annotatePhotos {
 			photos = append(photos, PhotoBrowseRow{AssetID: row.AssetID})
 			photoRowBytes = append(photoRowBytes, int64(len(encoded)))
@@ -555,6 +562,24 @@ func materializeSnapshotRows(
 				return fmt.Errorf("%w: row %d encodes to %d bytes", ErrQuerySnapshotTooLarge, row.NodeID, options.MaxRowBytes)
 			}
 			if err := chargeSnapshotMaterialization(options, &projection.SerializedBytes, 0, rowBytes-photoRowBytes[i]); err != nil {
+				return err
+			}
+		}
+	}
+	if !options.Photos && len(compiled.roleMatches) > 0 {
+		if err := annotateMatchedRoles(ctx, q, compiled, generationID, coverage, projection.Rows); err != nil {
+			return err
+		}
+		for i, row := range projection.Rows {
+			encoded, err := json.Marshal(row)
+			if err != nil {
+				return err
+			}
+			size := int64(len(encoded))
+			if size > options.MaxRowBytes {
+				return ErrQuerySnapshotTooLarge
+			}
+			if err := chargeSnapshotMaterialization(options, &projection.SerializedBytes, 0, size-roleRowBytes[i]); err != nil {
 				return err
 			}
 		}

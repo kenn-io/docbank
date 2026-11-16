@@ -193,9 +193,9 @@ that drives the actual embedded web application instead of mocked state.
 `make report-export-browser-test` (`frontend/screenshots/report-export.run.mjs`)
 builds separate CGO and `CGO_ENABLED=0` branch binaries, launches each through
 `DOCBANK_SCREENSHOT_BINARY` with no fallback to an installed binary, and
-requires exactly one passing, unskipped Chromium run per mode. The case creates
-a synthetic vault and four single-document fixtures through the branch CLI,
-waits for search readiness, then uses real UI controls to: get a strict
+requires exactly two passing, unskipped Chromium cases per mode (the report
+case and the role-search proof). The case creates a synthetic vault and four
+single-document fixtures through the branch CLI, waits for search readiness, then uses real UI controls to: get a strict
 `incomplete_coverage` refusal for a missing-text-only selection with no history
 row added; export exactly three selected original versions and verify the
 downloaded ZIP's size and SHA-256 against the completed job receipt; create a

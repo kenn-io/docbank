@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
@@ -131,3 +132,37 @@ func (r queryResolver) saved(ctx context.Context, value string, byID bool) (quer
 }
 
 var _ query.Resolver = queryResolver{}
+
+// personMentionNames includes aliases and names absorbed by the current person.
+func (r queryResolver) personMentionNames(ctx context.Context, id string) ([]string, error) {
+	var name string
+	if err := r.q.QueryRowContext(ctx, `SELECT display_name FROM persons WHERE person_id=?`, id).Scan(&name); err != nil {
+		return nil, err
+	}
+	var names []string
+	if !strings.ContainsRune(name, '\x00') {
+		names = append(names, name)
+	}
+	q, ok := r.q.(rowsQuerier)
+	if !ok {
+		return nil, errors.New("person aliases require a rows querier")
+	}
+	rows, err := q.QueryContext(ctx, `SELECT i.value_display FROM person_identities i WHERE i.person_id=? AND i.kind='name_alias' UNION SELECT m.absorbed_display_name FROM person_merges m JOIN person_aliases a ON a.retired_person_id=m.absorbed_person_id WHERE a.surviving_person_id=? ORDER BY 1`, id, id)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var alias string
+		if err := rows.Scan(&alias); err != nil {
+			return nil, err
+		}
+		if alias != "" && alias != name && !strings.ContainsRune(alias, '\x00') {
+			names = append(names, alias)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return names, nil
+}

@@ -54,7 +54,7 @@ func (s *Store) DocumentEventStateRow(
 
 func effectiveDocumentEventState(
 	ctx context.Context,
-	q metadataQuerier,
+	q rowQuerier,
 	fingerprint string,
 ) (DocumentEventState, error) {
 	state, exists, err := storedDocumentEventState(ctx, q)
@@ -78,7 +78,7 @@ func effectiveDocumentEventState(
 
 func storedDocumentEventState(
 	ctx context.Context,
-	q metadataQuerier,
+	q rowQuerier,
 ) (DocumentEventState, bool, error) {
 	var state DocumentEventState
 	err := q.QueryRowContext(ctx, `SELECT contract_version,deriver_fingerprint,

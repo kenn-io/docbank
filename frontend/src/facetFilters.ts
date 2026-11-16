@@ -14,6 +14,7 @@ export const facetFilterFields = {
   size: ["size_min", "size_max"],
   text_coverage: ["text_coverage"],
   duplicates: ["has_duplicates"],
+  person_role: ["people"],
   camera: ["cameras"],
   lens: ["lenses"],
   year: ["capture_after", "capture_before"],

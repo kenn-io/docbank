@@ -70,6 +70,7 @@ function snapshot(
       "size",
       "text_coverage",
       "duplicates",
+      "person_role",
     ].map((dimension) =>
       dimension === "extension"
         ? {
@@ -407,16 +408,6 @@ it("keeps rapid runs bound to the accepted frozen snapshot while live observatio
   });
   expect(workspaceBodies.at(-1)).toMatchObject({
     page_size: 100,
-    facets: [
-      "collections",
-      "tags",
-      "media_family",
-      "extension",
-      "modified",
-      "size",
-      "text_coverage",
-      "duplicates",
-    ],
   });
 
   expect(creates).toBe(2);
@@ -537,6 +528,7 @@ it("reruns supported facets and sorting from the complete accepted query", async
       "size",
       "text_coverage",
       "duplicates",
+      "person_role",
     ],
   });
 

@@ -30,6 +30,13 @@ type DocumentEventCoverage struct {
 	PublicationEpoch     int64
 }
 
+func documentEventFreshIndexedSQL(attempt, dirty, head, generation, epoch, contract, fingerprint string) string {
+	return attempt + `.input_epoch=` + epoch + ` AND ` + attempt + `.input_revision=COALESCE(` + dirty + `.revision,0)
+		AND ` + attempt + `.state='indexed' AND ` + head + `.input_epoch=` + attempt + `.input_epoch
+		AND ` + generation + `.inputs_sha256=` + attempt + `.inputs_sha256 AND ` + generation + `.contract_version=` + contract + `
+		AND ` + generation + `.deriver_fingerprint=` + fingerprint
+}
+
 // DocumentEventCoverageReport counts current file heads and browser-safe
 // diagnostics. It reads effective initial state without creating the singleton.
 func (s *Store) DocumentEventCoverageReport(ctx context.Context) (DocumentEventCoverage, error) {
@@ -47,10 +54,7 @@ func (s *Store) DocumentEventCoverageReport(ctx context.Context) (DocumentEventC
 		ContractVersion: state.ContractVersion, DeriverFingerprint: state.DeriverFingerprint,
 		InputEpoch: state.InputEpoch, PublicationEpoch: state.PublicationEpoch,
 	}
-	const freshIndexed = `a.input_epoch=$1 AND a.input_revision=COALESCE(d.revision,0)
-		AND a.state='indexed' AND h.input_epoch=a.input_epoch
-		AND g.inputs_sha256=a.inputs_sha256 AND g.contract_version=$2
-		AND g.deriver_fingerprint=$3`
+	freshIndexed := documentEventFreshIndexedSQL("a", "d", "h", "g", "$1", "$2", "$3")
 	query := `SELECT count(*),
 		COALESCE(sum(CASE WHEN ` + freshIndexed + ` THEN 1 ELSE 0 END),0),
 		COALESCE(sum(CASE WHEN a.input_epoch=$1 AND a.input_revision=COALESCE(d.revision,0)

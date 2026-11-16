@@ -94,6 +94,8 @@ type Filters struct {
 	SetIDs        []string   `json:"set_ids,omitzero"`
 	PersonIDs     []string   `json:"person_ids,omitzero"`
 
+	People []PersonFilter `json:"people,omitzero"`
+
 	Paths                []string `json:"paths,omitempty"`
 	ExcludePaths         []string `json:"exclude_paths,omitempty"`
 	CollectionIDs        []string `json:"collection_ids,omitempty"`
@@ -163,6 +165,8 @@ type filtersInput struct {
 	SetIDs        *[]string  `json:"set_ids"`
 	PersonIDs     *[]string  `json:"person_ids"`
 
+	People *[]PersonFilter `json:"people"`
+
 	Paths                *[]string `json:"paths"`
 	ExcludePaths         *[]string `json:"exclude_paths"`
 	CollectionIDs        *[]string `json:"collection_ids"`
@@ -187,7 +191,7 @@ var optionalFilterFields = withQualityFields(map[string]struct{}{
 	"tag_ids": {}, "exclude_tag_ids": {}, "no_tags": {}, "media_families": {},
 	"mime_types": {}, "extensions": {}, "modified_after": {}, "modified_before": {},
 	"size_min": {}, "size_max": {}, "text_coverage": {}, "has_duplicates": {},
-	"rating_min": {}, "rating_max": {}, "flags": {}, "labels": {}, "collapse_duplicates": {}, "kinds": {}, "cameras": {}, "lenses": {}, "locations": {}, "iso_min": {}, "iso_max": {}, "capture_after": {}, "capture_before": {}, "gps_bounds": {}, "asset_ids": {}, "set_ids": {}, "person_ids": {},
+	"rating_min": {}, "rating_max": {}, "flags": {}, "labels": {}, "collapse_duplicates": {}, "kinds": {}, "cameras": {}, "lenses": {}, "locations": {}, "iso_min": {}, "iso_max": {}, "capture_after": {}, "capture_before": {}, "gps_bounds": {}, "asset_ids": {}, "set_ids": {}, "person_ids": {}, "people": {},
 })
 
 // Parse validates and normalizes one bounded QueryV1 JSON value.
@@ -333,6 +337,9 @@ func (input filtersInput) value() Filters {
 	if input.GPSBounds != nil {
 		value.GPSBounds = input.GPSBounds
 	}
+	if input.People != nil {
+		value.People = *input.People
+	}
 	if input.PersonIDs != nil {
 		value.PersonIDs = *input.PersonIDs
 	}
@@ -424,6 +431,10 @@ func normalizeQuery(value Query) (Query, error) {
 
 func normalizeFilters(value Filters) (Filters, error) {
 	var err error
+	value.People, err = normalizePeople(value.People)
+	if err != nil {
+		return Filters{}, err
+	}
 	value, err = normalizeQualityFilters(value)
 	if err != nil {
 		return Filters{}, err
