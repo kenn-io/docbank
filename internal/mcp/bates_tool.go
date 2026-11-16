@@ -441,6 +441,8 @@ func batesWriteToolHandler(
 			output, err = reserveBatesRange(ctx, lease, request.Params.Arguments)
 		case publishBatesExportToolDefinition.name:
 			output, err = publishBatesExport(ctx, lease, request.Params.Arguments)
+		case publishNumberedPDFToolDefinition.name:
+			output, err = publishNumberedPDF(ctx, lease, request.Params.Arguments)
 		case exportBatesFileToolDefinition.name:
 			output, err = exportBatesFile(ctx, lease, request.Params.Arguments, logger)
 		default:

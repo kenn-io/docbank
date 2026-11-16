@@ -31,10 +31,14 @@ func startFamilyMCP(t *testing.T) *familyMCP {
 
 func startWorkflowMCP(t *testing.T, options mcp.ServerOptions) *familyMCP {
 	t.Helper()
+	return startWorkflowMCPServer(t, mcp.NewServerWithOptions(options))
+}
+
+func startWorkflowMCPServer(t *testing.T, server *mcp.Server) *familyMCP {
+	t.Helper()
 	serverPipe, clientPipe := net.Pipe()
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
-	server := mcp.NewServerWithOptions(options)
 	go func() { done <- mcp.ServeStdio(ctx, server, serverPipe, serverPipe, nil) }()
 	client := &familyMCP{connection: clientPipe, reader: bufio.NewReader(clientPipe)}
 	client.shutdown = sync.OnceFunc(func() {

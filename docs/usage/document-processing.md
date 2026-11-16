@@ -246,7 +246,8 @@ A killed daemon may leave private files in its spool; see the
 Agents can use these commands or the authenticated `POST /api/v1/redaction/resolve`
 and `/api/v1/redaction/render` routes. Browser sessions use resolve and the
 temporary-preview and numbered-publication routes described below. The direct ZIP
-render remains API-key-only. No MCP redaction tool is exposed.
+render remains API-key-only. MCP can publish operator-reserved numbered PDFs, as
+described in [Numbered delivery](#deliver-one-reviewed-pdf-with-bates-numbers).
 
 ### Review a PDF in the browser
 
@@ -440,10 +441,20 @@ Browser sessions and API-key callers can reserve through
 `POST /api/v1/redaction/reservations` and publish a retained PDF through
 `POST /api/v1/redaction/publications`. The ZIP-streaming `/api/v1/redaction/render`
 route remains API-key-only.
-The existing MCP `export_bates_file` tool supports the reduced recovery check
-and reports its scope. It does not accept review files or reserve numbered
-redactions. Load-file exports accept ordinary
-stamped allocations only. Use `redaction package` for a recipient delivery of numbered redactions.
+MCP's `export_bates_file` can fully check a retained numbered PDF using
+`preparation_path`, `masks_path` and `review_path` together. It reports
+`masks_text_and_numbers`; a failed full check never falls back to recovery.
+Without review files, it checks recorded bytes and numbering metadata and reports
+`recorded_bytes_and_numbers`.
+
+With `--allow-package-writes`, MCP's `publish_numbered_pdf` can publish into an
+allocation the operator already reserved through the browser or CLI. It requires
+the three private review files and their review digest. This tool cannot grant retention
+consent or reserve numbers. See [MCP publication](mcp.md#publish-a-reserved-numbered-pdf)
+for inputs and exact retry advice.
+
+Load-file exports accept ordinary stamped allocations only. Use
+`redaction package` for a recipient delivery of numbered redactions.
 
 ### Package completed numbered PDFs for a recipient
 
