@@ -245,7 +245,7 @@ func BenchmarkSemanticMemberships(b *testing.B) {
 				}
 				b.ReportAllocs()
 				for b.Loop() {
-					rows, _, err := semanticANNRowsForSourceTx(ctx, tx, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, opts)
+					rows, _, err := s.semanticANNRowsForSourceTx(ctx, tx, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, opts)
 					if err != nil {
 						b.Fatal(err)
 					}
@@ -299,8 +299,7 @@ func BenchmarkSemanticMemberships(b *testing.B) {
 							b.StartTimer()
 							switch operation {
 							case "authority":
-								filterSQL, filterArgs := searchFilterSQL(opts)
-								rows, err := semanticANNRowsTx(ctx, tx, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, opts, filterSQL, filterArgs)
+								rows, err := s.semanticANNRowsTx(ctx, tx, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, opts)
 								require.NoError(b, err)
 								require.Len(b, rows, count)
 							case "resolve":

@@ -36,7 +36,7 @@ func validateSimilarSource(ctx context.Context, tx metadataQuerier, source Simil
 	}
 	var id int64
 	err := tx.QueryRowContext(ctx, `SELECT n.id FROM `+nodeFrom+`
-		WHERE n.id=? AND n.kind='file' AND n.trashed_at IS NULL AND cv.version_id=?`,
+		WHERE n.id=$1 AND n.kind='file' AND n.trashed_at IS NULL AND cv.version_id=$2`,
 		source.NodeID, source.ContentVersionID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
@@ -44,15 +44,16 @@ func validateSimilarSource(ctx context.Context, tx metadataQuerier, source Simil
 	return err
 }
 
-func (source *similarSourceCapture) load(ctx context.Context, tx metadataQuerier, profile, binding string,
+func (source *similarSourceCapture) load(ctx context.Context, s *Store, tx metadataQuerier, profile, binding string,
 	kind document.EmbeddingInputKind, space string, opts SearchOptions,
 ) error {
 	if err := validateSimilarSource(ctx, tx, source.SimilarSource, opts); err != nil {
 		return err
 	}
+	opts = SearchOptions{ContentVersionIDs: []string{source.ContentVersionID}}
 	var rows []vectorindex.RowIdentity
-	err := scanSemanticRows(ctx, tx, profile, binding, kind, space,
-		" AND n.id=? AND cv.version_id=?", []any{source.NodeID, source.ContentVersionID}, nil, false, false,
+	err := s.scanSemanticRows(ctx, tx, profile, binding, kind, space,
+		opts, nil, true, false,
 		func(key semanticEligibilityKey, _ int64, _ string) {
 			rows = append(rows, vectorindex.RowIdentity{SetID: key.VectorSetID, InputKey: key.InputID, InputChecksum: key.InputChecksum})
 		})
@@ -78,7 +79,7 @@ func (s *Store) AcquireSimilarSearchAuthority(ctx context.Context, profile, bind
 			return err
 		}
 		var present bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_heads WHERE content_version_id=? AND profile_fingerprint=? AND binding_id=?)`,
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_heads WHERE content_version_id=$1 AND profile_fingerprint=$2 AND binding_id=$3)`,
 			source.ContentVersionID, profile, binding).Scan(&present); err != nil {
 			return err
 		}
@@ -133,7 +134,7 @@ func (s *Store) ResolveSimilarCandidates(ctx context.Context, profile, binding s
 	var result SimilarSearchResolution
 	err = s.withReadTx(ctx, func(tx *sql.Tx) error {
 		capture := similarSourceCapture{SimilarSource: source}
-		if err := capture.load(ctx, tx, profile, binding, kind, space, opts); err != nil {
+		if err := capture.load(ctx, s, tx, profile, binding, kind, space, opts); err != nil {
 			if errors.Is(err, ErrNotFound) || errors.Is(err, ErrSimilarSourceUnavailable) {
 				return ErrProcessingSourceFenceStaleVersion
 			}
@@ -150,7 +151,7 @@ func (s *Store) ResolveSimilarCandidates(ctx context.Context, profile, binding s
 			return ErrVectorIndexSourceStale
 		}
 		result.SourceManifestChecksum = manifest
-		result.ScopedDocuments, result.CompleteDocuments, err = semanticSearchCoverageTx(ctx, tx, profile, binding, kind, space, opts)
+		result.ScopedDocuments, result.CompleteDocuments, err = s.semanticSearchCoverageTx(ctx, tx, profile, binding, kind, space, opts)
 		if err != nil {
 			return err
 		}
@@ -166,12 +167,11 @@ func (s *Store) similarCandidatesTx(ctx context.Context, tx metadataQuerier, pro
 	kind document.EmbeddingInputKind, space string, neighbors []vectorindex.Neighbor, limit int,
 	opts SearchOptions, source SimilarSource, result *SimilarSearchResolution,
 ) error {
-	filter, args := searchFilterSQL(opts)
 	byNode := make(map[int64]struct{})
 	groups := make(map[string]*SimilarSearchCandidate)
 	prefix, walked := min(limit+1, len(neighbors)), 0
 	for {
-		members, err := loadSemanticMemberships(ctx, tx, profile, binding, kind, space, filter, args,
+		members, err := s.loadSemanticMemberships(ctx, tx, profile, binding, kind, space, opts,
 			semanticNeighborKeys(neighbors[walked:prefix]))
 		if err != nil {
 			return err
@@ -232,7 +232,7 @@ func (s *Store) similarCandidatesTx(ctx context.Context, tx metadataQuerier, pro
 		hashes[i] = candidate.BlobHash
 	}
 	copies := make(map[int64]string)
-	err := scanSemanticRows(ctx, tx, profile, binding, kind, space, filter, args, hashes, false, false,
+	err := s.scanSemanticRows(ctx, tx, profile, binding, kind, space, opts, hashes, false, false,
 		func(_ semanticEligibilityKey, nodeID int64, hash string) { copies[nodeID] = hash })
 	if err != nil {
 		return err

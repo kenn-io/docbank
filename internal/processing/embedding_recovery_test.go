@@ -179,6 +179,11 @@ type embeddingRecoveryFixture struct {
 
 func newEmbeddingRecoveryFixture(t *testing.T) embeddingRecoveryFixture {
 	t.Helper()
+	return embeddingRecoveryWithFixture(t, newPublicationFixture)
+}
+
+func embeddingRecoveryWithFixture(t *testing.T, makeFixture publicationFixtureFactory) embeddingRecoveryFixture {
+	t.Helper()
 	kind := document.EmbeddingInputRenditionChunk
 	descriptor := embeddingWorkerDescriptor(t)
 	input := document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}
@@ -191,7 +196,7 @@ func newEmbeddingRecoveryFixture(t *testing.T) embeddingRecoveryFixture {
 
 	initial := newRecoveryProvider(t, descriptor)
 	descriptor = initial.Descriptor()
-	fixture, _, _, request, workerConfig := newRealEmbeddingWorkerWithDescriptor(t, kind, &descriptor)
+	fixture, _, _, request, workerConfig := embeddingWorkerWithDescriptorFixture(t, makeFixture, kind, &descriptor)
 	var portable document.ProcessingProfileV1
 	require.NoError(t, json.Unmarshal(request.Profile.CanonicalProfile, &portable))
 	_, fp, err := document.CanonicalProfile(portable)
@@ -421,7 +426,12 @@ func TestEmbeddingSelectedSpaceRecoversAbandonedJob(t *testing.T) {
 
 func TestEmbeddingUpgradeRetainsLocalSimilarityAfterConsentRevocation(t *testing.T) {
 	t.Parallel()
-	f := newEmbeddingRecoveryFixture(t)
+	checkEmbeddingUpgradeRetainsLocalSimilarityAfterConsentRevocation(t, newPublicationFixture)
+}
+
+func checkEmbeddingUpgradeRetainsLocalSimilarityAfterConsentRevocation(t *testing.T, makeFixture publicationFixtureFactory) {
+	t.Helper()
+	f := embeddingRecoveryWithFixture(t, makeFixture)
 	provider := newRecoveryProvider(t, f.request.Descriptor)
 	service := f.service(t, provider.Descriptor(), provider)
 	space, err := provider.VectorIdentity()
@@ -461,7 +471,12 @@ func TestEmbeddingUpgradeRetainsLocalSimilarityAfterConsentRevocation(t *testing
 
 func TestEmbeddingSemanticSearchAfterSecondEndpointMove(t *testing.T) {
 	t.Parallel()
-	f := newEmbeddingRecoveryFixture(t)
+	checkEmbeddingSemanticSearchAfterSecondEndpointMove(t, newPublicationFixture)
+}
+
+func checkEmbeddingSemanticSearchAfterSecondEndpointMove(t *testing.T, makeFixture publicationFixtureFactory) {
+	t.Helper()
+	f := embeddingRecoveryWithFixture(t, makeFixture)
 	first := newRecoveryProvider(t, f.request.Descriptor)
 	service := f.service(t, first.Descriptor(), first)
 	for _, id := range f.versions {

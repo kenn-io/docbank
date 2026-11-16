@@ -44,7 +44,7 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
 	families := make(map[string]bool)
 	err = s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) (retErr error) {
 		d := metadataJSONDialect{s.postgresSchema != ""}
-		scope, args := liveSearchScopeSQL(searchFilterSQL(opts))
+		scope, args := liveSearchScopeSQL(searchFilterSQL(opts, false, 0))
 		args = append([]any{pdfProfile, pdfProfile, generation.ID, generation.ID, unqueuedPDF != nil, pdfProfile, pdfProfile}, args...)
 		rows, err := q.QueryContext(ctx, `WITH coverage AS (
 		 SELECT COALESCE(cv.mime_type, '') AS mime_type,

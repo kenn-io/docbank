@@ -202,7 +202,7 @@ func (s *Store) discoverySnapshot(
 func discoveryCandidates(
 	ctx context.Context, tx *sql.Tx, q fuzzyQuery, opts SearchOptions, ordinary []SearchHit,
 ) ([]discoveryCandidate, []string, error) {
-	filter, args := searchFilterSQL(opts)
+	filter, args := searchFilterSQL(opts, false, 0)
 	args = append([]any{fuzzyAnchor(q)}, args...)
 	args = append(args, fuzzyCandidateLimit+1)
 	// Bound names in SQL before they cross the driver. The 513th rune is the

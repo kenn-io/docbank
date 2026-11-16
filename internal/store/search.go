@@ -466,6 +466,13 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 			return SearchCandidateRevalidation{}, errors.New("search candidate evidence is invalid")
 		}
 		payload[i] = searchCandidateRevalidationJSON(candidate)
+		if s.postgresSchema != "" {
+			payload[i].Evidence = slices.Clone(candidate.Evidence)
+			for j := range payload[i].Evidence {
+				evidence := &payload[i].Evidence[j]
+				evidence.InputID = hex.EncodeToString([]byte(evidence.InputID))
+			}
+		}
 		for _, evidence := range candidate.Evidence {
 			if evidence.NodeID <= 0 || evidence.ContentVersionID == "" {
 				return SearchCandidateRevalidation{}, errors.New("search evidence document identity is incomplete")
@@ -494,7 +501,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 	var result SearchCandidateRevalidation
 	var allowedPositions []int
 	err = s.withSearchOptionsTx(ctx, normalized, func(tx *sql.Tx, normalized SearchOptions) error {
-		filterSQL, filterArgs := searchFilterSQL(normalized)
+		filterSQL, filterArgs := searchFilterSQL(normalized, s.postgresSchema != "", 1)
 		if semanticProfileFingerprint != "" || semanticBindingID != "" {
 			if semanticProfileFingerprint == "" || semanticBindingID == "" {
 				return errors.New("semantic search coverage authority is incomplete")
@@ -512,7 +519,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 				return errors.New("semantic search evidence does not match coverage authority")
 			}
 			semanticSpace = expectedSpace
-			scoped, complete, coverageErr := semanticSearchCoverageTx(ctx, tx,
+			scoped, complete, coverageErr := s.semanticSearchCoverageTx(ctx, tx,
 				semanticProfileFingerprint, semanticBindingID, binding.InputKind, semanticSpace, normalized)
 			if coverageErr != nil {
 				return coverageErr
@@ -521,13 +528,15 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 		} else if semanticSpace != "" {
 			return errors.New("semantic search evidence lacks coverage authority")
 		}
-		renditionEvidenceSQL := `WHEN 'rendition_segment' THEN 1`
+		renditionEvidenceSQL := `WHEN 'rendition_segment' THEN TRUE`
 		if hasRenditionEvidence {
-			var lexicalProjection bool
-			if schemaErr := tx.QueryRowContext(ctx, `SELECT EXISTS(
+			lexicalProjection := s.postgresSchema != ""
+			if !lexicalProjection {
+				if schemaErr := tx.QueryRowContext(ctx, `SELECT EXISTS(
 				SELECT 1 FROM sqlite_schema WHERE type='table' AND name='rendition_lexical_heads'
 			)`).Scan(&lexicalProjection); schemaErr != nil {
-				return schemaErr
+					return schemaErr
+				}
 			}
 			if lexicalProjection {
 				renditionEvidenceSQL = `WHEN 'rendition_segment' THEN NOT EXISTS (
@@ -538,8 +547,8 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 					JOIN rendition_heads rh ON rh.content_version_id=ra.content_version_id
 					 AND rh.profile_fingerprint=ra.profile_fingerprint AND rh.attachment_id=ra.attachment_id
 					WHERE lh.singleton=1 AND ra.content_version_id=source.version_id
-					 AND ls.build_id=json_extract(evidence.value,'$.build_id')
-					 AND ls.segment_id=json_extract(evidence.value,'$.segment_id'))`
+					 AND ls.build_id=` + searchEvidenceTextSQL(s.postgresSchema != "", "build_id") + `
+                     AND ls.segment_id=` + searchEvidenceTextSQL(s.postgresSchema != "", "segment_id") + `)`
 			}
 		}
 		if semanticSource != "" {
@@ -555,7 +564,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 			}
 		}
 		args := slices.Concat([]any{string(encoded)}, filterArgs, normalized.photoLexical.args, []any{semanticProfileFingerprint, semanticBindingID})
-		rows, queryErr := tx.QueryContext(ctx, searchCandidateRevalidationSQL(filterSQL, renditionEvidenceSQL, normalized), args...)
+		rows, queryErr := tx.QueryContext(ctx, searchCandidateRevalidationSQL(filterSQL, renditionEvidenceSQL, normalized, s.postgresSchema != "", 1+len(filterArgs)+len(normalized.photoLexical.args)), args...)
 		if queryErr != nil {
 			return queryErr
 		}
@@ -600,23 +609,49 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 	return result, nil
 }
 
-func searchCandidateRevalidationSQL(filterSQL, renditionEvidenceSQL string, opts SearchOptions) string {
+// Use json so unrelated NUL-bearing evidence is not decoded as PostgreSQL text.
+func searchEvidenceTextSQL(postgres bool, key string) string {
+	if postgres {
+		return "(evidence.value::json ->> '" + key + "')"
+	}
+	return "json_extract(evidence.value,'$." + key + "')"
+}
+
+func searchCandidateRevalidationSQL(filterSQL, renditionEvidenceSQL string, opts SearchOptions, postgres bool, offset int) string {
+	text := func(key string) string { return searchEvidenceTextSQL(postgres, key) }
+	requested := `SELECT CAST(key AS INTEGER) AS position,
+                   CAST(json_extract(value,'$.node_id') AS INTEGER) AS node_id,
+                   json_extract(value,'$.version_id') AS version_id,
+                   json_extract(value,'$.evidence') AS evidence
+                FROM json_each($1)`
+	array := func(expression string) string { return "json_each(" + expression + ")" }
+	staleName := "source.current_name IS NOT " + text("node_name")
+	input := text("input_id")
+	profile, binding := "?", "?"
+	if postgres {
+		requested = `SELECT ordinality-1 AS position,
+                       CAST(value->>'node_id' AS BIGINT) AS node_id,
+                       value->>'version_id' AS version_id, value->'evidence' AS evidence
+                    FROM json_array_elements($1::json) WITH ORDINALITY AS items(value,ordinality)`
+		array = func(expression string) string { return "json_array_elements(" + expression + "::json)" }
+		staleName = "source.current_name IS DISTINCT FROM " + text("node_name")
+		input = "decode(" + input + ",'hex')"
+		profile, binding = "$"+strconv.Itoa(offset+1), "$"+strconv.Itoa(offset+2)
+	}
+	if opts.photoLexical.sql != "" {
+		staleName += " OR source.node_id NOT IN (" + opts.photoLexical.sql + ")"
+	}
 	differentSourceSQL := "source.node_id<>scoped.node_id"
 	if opts.CollapsesPhotoDuplicates() {
 		differentSourceSQL += " AND source.blob_hash<>scoped.blob_hash"
 	}
-	return `WITH requested AS (
-			SELECT CAST(key AS INTEGER) AS position,
-			       CAST(json_extract(value,'$.node_id') AS INTEGER) AS node_id,
-			       json_extract(value,'$.version_id') AS version_id,
-			       json_extract(value,'$.evidence') AS evidence
-			FROM json_each(?)
-		), identities AS (
+	return `WITH requested AS (` + requested + `
+        ), identities AS (
 			SELECT node_id,version_id FROM requested
 			UNION
-			SELECT CAST(json_extract(evidence.value,'$.node_id') AS INTEGER),
-			       json_extract(evidence.value,'$.version_id')
-			FROM requested,json_each(requested.evidence) evidence
+			SELECT CAST(` + text("node_id") + ` AS BIGINT),
+			       ` + text("version_id") + `
+			FROM requested,` + array("requested.evidence") + ` evidence
 		), live AS (
 			SELECT n.id AS node_id,cv.version_id,cv.blob_hash,n.name AS current_name
 			FROM identities JOIN nodes n ON n.id=identities.node_id
@@ -629,14 +664,14 @@ func searchCandidateRevalidationSQL(filterSQL, renditionEvidenceSQL string, opts
 		)
 		SELECT scoped.position FROM scoped
 		WHERE NOT EXISTS (
-			SELECT 1 FROM json_each(scoped.evidence) evidence
-			LEFT JOIN live source ON source.node_id=CAST(json_extract(evidence.value,'$.node_id') AS INTEGER)
-			 AND source.version_id=json_extract(evidence.value,'$.version_id')
-			WHERE source.node_id IS NULL OR (` + differentSourceSQL + `) OR CASE json_extract(evidence.value,'$.kind')
-			` + nameEvidenceSQL(opts.photoLexical) + `
+			SELECT 1 FROM ` + array("scoped.evidence") + ` evidence
+			LEFT JOIN live source ON source.node_id=CAST(` + text("node_id") + ` AS BIGINT)
+			 AND source.version_id=` + text("version_id") + `
+			WHERE source.node_id IS NULL OR (` + differentSourceSQL + `) OR CASE ` + text("kind") + `
+			WHEN 'node_name' THEN ` + staleName + `
 			WHEN 'content_blob' THEN NOT (
-				COALESCE(json_extract(evidence.value,'$.blob_hash'),'')<>'' AND
-				json_extract(evidence.value,'$.blob_hash')=source.blob_hash)
+				COALESCE(` + text("blob_hash") + `,'')<>'' AND
+				` + text("blob_hash") + `=source.blob_hash)
 			` + renditionEvidenceSQL + `
 			WHEN 'embedding' THEN NOT EXISTS (
 				SELECT 1 FROM embedding_heads eh
@@ -649,14 +684,14 @@ func searchCandidateRevalidationSQL(filterSQL, renditionEvidenceSQL string, opts
 				 AND egi.input_id=evr.input_id AND egi.rendered_checksum=evr.checksum
 				JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id
 				WHERE eh.content_version_id=source.version_id
-				 AND eh.vector_space_id=json_extract(evidence.value,'$.vector_space_id')
-				 AND eh.embedding_set_id=json_extract(evidence.value,'$.embedding_set_id')
-				 AND eh.input_kind=json_extract(evidence.value,'$.input_kind')
-				 AND es.profile_fingerprint=? AND es.binding_id=?
-				 AND es.input_generation_id=json_extract(evidence.value,'$.input_generation_id')
-				 AND evr.input_id=json_extract(evidence.value,'$.input_id')
+				 AND eh.vector_space_id=` + text("vector_space_id") + `
+				 AND eh.embedding_set_id=` + text("embedding_set_id") + `
+				 AND eh.input_kind=` + text("input_kind") + `
+				 AND es.profile_fingerprint=` + profile + ` AND es.binding_id=` + binding + `
+				 AND es.input_generation_id=` + text("input_generation_id") + `
+				 AND evr.input_id=` + input + `
 				 AND (es.input_kind='original_file' OR (es.input_kind='image' AND ` + currentImageEmbeddingSQL("es.content_version_id", "eig.evidence_fingerprint") + `) OR (es.input_kind='rendition_chunk' AND ` + currentRenditionChunkAuthoritySQL + `)))
-			ELSE 1 END
+			ELSE TRUE END
 		) ORDER BY scoped.position`
 }
 
@@ -687,7 +722,7 @@ type SemanticSearchResolution struct {
 	SourceManifestChecksum string
 	Candidates             []SemanticSearchCandidate
 	Truncated              bool
-	// NextNeighbor is the next index in the supplied neighbors, or their length when exhausted.
+	// NextNeighbor resumes an unfinished row, including index zero, or equals the neighbor count when exhausted.
 	NextNeighbor int
 }
 
@@ -732,7 +767,7 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 	}
 	if similar != nil {
 		err := s.withReadTx(ctx, func(tx *sql.Tx) error {
-			return similar.load(ctx, tx, profileFingerprint, bindingID, binding.InputKind, vectorSpaceID, normalized)
+			return similar.load(ctx, s, tx, profileFingerprint, bindingID, binding.InputKind, vectorSpaceID, normalized)
 		})
 		if err != nil {
 			return SemanticSearchAuthority{}, err
@@ -790,7 +825,7 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 	err := s.withSearchOptionsTx(ctx, opts, func(tx *sql.Tx, opts SearchOptions) error {
 		var err error
 		if similar != nil {
-			if err := similar.load(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, opts); err != nil {
+			if err := similar.load(ctx, s, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, opts); err != nil {
 				return err
 			}
 		}
@@ -798,34 +833,34 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 		if err != nil {
 			return err
 		}
-		annRows, wholeSpace, err = semanticANNRowsForSourceTx(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, opts)
+		annRows, wholeSpace, err = s.semanticANNRowsForSourceTx(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, opts)
 		return err
 	})
 	return source, annRows, wholeSpace, err
 }
 
-func semanticANNRowsForSourceTx(ctx context.Context, tx metadataQuerier, profile, binding string,
+func (s *Store) semanticANNRowsForSourceTx(ctx context.Context, tx metadataQuerier, profile, binding string,
 	kind document.EmbeddingInputKind, space string, opts SearchOptions,
 ) ([]vectorindex.RowIdentity, bool, error) {
-	filterSQL, filterArgs := searchFilterSQL(opts)
+	filterSQL, _ := searchFilterSQL(opts, s.postgresSchema != "", 0)
 	if filterSQL == "" && !opts.CollapsesPhotoDuplicates() {
 		return nil, true, nil
 	}
-	rows, err := semanticANNRowsTx(ctx, tx, profile, binding, kind, space, opts, filterSQL, filterArgs)
+	rows, err := s.semanticANNRowsTx(ctx, tx, profile, binding, kind, space, opts)
 	return rows, false, err
 }
 
 // semanticANNRowsTx reads eligible rows in the requested scope for SearchRows.
 // This allowlist excludes other bindings, trashed, non-current,
 // out-of-scope, and non-representative rows before scoring.
-func semanticANNRowsTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
-	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions, filterSQL string, filterArgs []any,
+func (s *Store) semanticANNRowsTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
+	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions,
 ) ([]vectorindex.RowIdentity, error) {
 	annRows := make([]vectorindex.RowIdentity, 0)
 	var lastHash string
 	var representative int64
-	err := scanSemanticRows(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
-		filterSQL, filterArgs, nil, len(opts.ContentVersionIDs) != 0, opts.CollapsesPhotoDuplicates(), func(key semanticEligibilityKey, nodeID int64, hash string) {
+	err := s.scanSemanticRows(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
+		opts, nil, len(opts.ContentVersionIDs) != 0, opts.CollapsesPhotoDuplicates(), func(key semanticEligibilityKey, nodeID int64, hash string) {
 			if opts.CollapsesPhotoDuplicates() {
 				if hash != lastHash {
 					lastHash, representative = hash, nodeID
@@ -848,14 +883,14 @@ func semanticANNRowsTx(ctx context.Context, tx metadataQuerier, profileFingerpri
 
 // LiveSearchScopeExists reports whether normalized search filters match a live file.
 func (s *Store) LiveSearchScopeExists(ctx context.Context, opts SearchOptions) (bool, error) {
-	scopeSQL, args := liveSearchScopeSQL(searchFilterSQL(opts))
+	scopeSQL, args := liveSearchScopeSQL(searchFilterSQL(opts, s.postgresSchema != "", 0))
 	var exists bool
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 `+scopeSQL+` LIMIT 1)`, args...).Scan(&exists)
 	return exists, err
 }
 
-func liveSearchScopeCount(ctx context.Context, q metadataQuerier, opts SearchOptions) (int, error) {
-	scopeSQL, args := liveSearchScopeSQL(searchFilterSQL(opts))
+func (s *Store) liveSearchScopeCount(ctx context.Context, q metadataQuerier, opts SearchOptions) (int, error) {
+	scopeSQL, args := liveSearchScopeSQL(searchFilterSQL(opts, s.postgresSchema != "", 0))
 	var count int
 	err := q.QueryRowContext(ctx, `SELECT COUNT(*) `+scopeSQL, args...).Scan(&count)
 	return count, err
@@ -880,18 +915,18 @@ func currentEmbeddingHeadsSQL() string {
 		  AND (es.input_kind='original_file' OR (es.input_kind='image' AND ` + currentImageEmbeddingSQL("es.content_version_id", "eig.evidence_fingerprint") + `) OR (es.input_kind='rendition_chunk' AND ` + currentRenditionChunkAuthoritySQL + `))`
 }
 
-func semanticSearchCoverageTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
+func (s *Store) semanticSearchCoverageTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
 	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions,
 ) (required, complete int, retErr error) {
-	required, err := liveSearchScopeCount(ctx, tx, opts)
+	required, err := s.liveSearchScopeCount(ctx, tx, opts)
 	if err != nil {
 		return 0, 0, err
 	}
-	filterSQL, filterArgs := searchFilterSQL(opts)
+	filterSQL, filterArgs := searchFilterSQL(opts, s.postgresSchema != "", 4)
 	args := []any{profileFingerprint, bindingID, inputKind, vectorSpaceID}
 	args = append(args, filterArgs...)
 	err = tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT n.id) `+currentEmbeddingHeadsSQL()+`
-		AND eh.profile_fingerprint=? AND eh.binding_id=? AND eh.input_kind=? AND eh.vector_space_id=? `+filterSQL,
+		AND eh.profile_fingerprint=$1 AND eh.binding_id=$2 AND eh.input_kind=$3 AND eh.vector_space_id=$4 `+filterSQL,
 		args...).Scan(&complete)
 	return required, complete, err
 }
@@ -941,13 +976,12 @@ func (s *Store) semanticCandidatesTx(ctx context.Context, tx metadataQuerier, pr
 	normalized SearchOptions, excludedNodes map[int64]struct{}, result *SemanticSearchResolution,
 ) error {
 	var err error
-	filterSQL, filterArgs := searchFilterSQL(normalized)
-	eligible := make(map[semanticEligibilityKey]SemanticSearchCandidate)
+	eligible := make(map[semanticEligibilityKey][]SemanticSearchCandidate)
 	representatives := make(map[string]int64)
 	prefix, walked := min(limit+1, len(neighbors)), 0
 	for {
-		members, err := loadSemanticMemberships(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
-			filterSQL, filterArgs, semanticNeighborKeys(neighbors[walked:prefix]))
+		members, err := s.loadSemanticMemberships(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
+			normalized, semanticNeighborKeys(neighbors[walked:prefix]))
 		if err != nil {
 			return err
 		}
@@ -961,8 +995,8 @@ func (s *Store) semanticCandidatesTx(ctx context.Context, tx metadataQuerier, pr
 					}
 				}
 			}
-			err := scanSemanticRows(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
-				filterSQL, filterArgs, hashes, false, true, func(_ semanticEligibilityKey, nodeID int64, hash string) {
+			err := s.scanSemanticRows(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
+				normalized, hashes, false, true, func(_ semanticEligibilityKey, nodeID int64, hash string) {
 					if representatives[hash] == 0 {
 						representatives[hash] = nodeID
 					}
@@ -972,11 +1006,12 @@ func (s *Store) semanticCandidatesTx(ctx context.Context, tx metadataQuerier, pr
 			}
 		}
 		for key, entries := range members {
-			for _, entry := range entries {
-				if !normalized.CollapsesPhotoDuplicates() || entry.NodeID == representatives[entry.BlobHash] {
-					eligible[key] = entry
-				}
+			if normalized.CollapsesPhotoDuplicates() {
+				entries = slices.DeleteFunc(entries, func(entry SemanticSearchCandidate) bool {
+					return entry.NodeID != representatives[entry.BlobHash]
+				})
 			}
+			eligible[key] = entries
 		}
 		result.Candidates, result.Truncated, result.NextNeighbor = reduceSemanticCandidates(s.vaultID, vectorSpaceID,
 			neighbors[:prefix], limit, eligible, excludedNodes)
@@ -992,7 +1027,7 @@ func (s *Store) semanticCandidatesTx(ctx context.Context, tx metadataQuerier, pr
 			return err
 		}
 		if candidate.InputKind == document.EmbeddingInputOriginalFile {
-			candidate.Excerpt, err = searchExcerptByVersionTx(ctx, tx, candidate.ContentVersionID)
+			candidate.Excerpt, err = s.searchExcerptByVersionTx(ctx, tx, candidate.ContentVersionID)
 			if err != nil {
 				return err
 			}
@@ -1001,18 +1036,37 @@ func (s *Store) semanticCandidatesTx(ctx context.Context, tx metadataQuerier, pr
 	return nil
 }
 
-func searchExcerptByVersionTx(ctx context.Context, queryer interface {
+func (s *Store) searchExcerptSQL() string {
+	if s.postgresSchema != "" {
+		prefix := "substring(text,1,CAST($1 AS INTEGER)*4)"
+		return "substring(" + prefix + ",1,CASE WHEN position('\\x00'::bytea in " + prefix + ")>0 THEN position('\\x00'::bytea in " + prefix + ")-1 ELSE length(" + prefix + ") END)"
+	}
+	return "substr(text,1,$1)"
+}
+
+func (s *Store) searchExcerptByVersionTx(ctx context.Context, queryer interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }, versionID string) (string, error) {
 	var excerpt string
-	err := queryer.QueryRowContext(ctx, `SELECT substr(text, 1, ?) FROM extracted_text
-		WHERE status='ok' AND blob_hash=(SELECT blob_hash FROM content_versions WHERE version_id=? LIMIT 1)
+	err := queryer.QueryRowContext(ctx, `SELECT `+s.searchExcerptSQL()+` FROM extracted_text
+		WHERE status='ok' AND blob_hash=(SELECT blob_hash FROM content_versions WHERE version_id=$2 LIMIT 1)
 		ORDER BY extractor LIMIT 1`, maxExplainedSearchExcerptRunes, versionID).Scan(&excerpt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 	if err != nil {
 		return "", err
+	}
+	if s.postgresSchema != "" {
+		// SQLite's substr limits runes before match-marker handling.
+		count := 0
+		for offset := range excerpt {
+			if count == maxExplainedSearchExcerptRunes {
+				excerpt = excerpt[:offset]
+				break
+			}
+			count++
+		}
 	}
 	return boundedExplainedSearchExcerpt(excerpt), nil
 }
@@ -1034,7 +1088,8 @@ func semanticNeighborKeys(neighbors []vectorindex.Neighbor) []semanticEligibilit
 
 // semanticMembershipSQL shares current-source and input authority across keyed
 // candidate loads and streaming row scans. The caller chooses the driving index.
-func semanticMembershipSQL(driver string) string {
+func semanticMembershipSQL(driver string, offset int) string {
+	parameters := strings.Split(numberedPlaceholders(4, offset), ",")
 	return driver + `
  JOIN content_versions cv ON cv.version_id=es.content_version_id
  JOIN nodes n ON n.id=cv.node_id
@@ -1049,8 +1104,8 @@ func semanticMembershipSQL(driver string) string {
  LEFT JOIN rendition_attachments ra ON ra.attachment_id=eig.attachment_id
   AND ra.content_version_id=es.content_version_id AND ra.profile_fingerprint=es.profile_fingerprint
  LEFT JOIN blobs evidence_blob ON evidence_blob.hash=eig.evidence_fingerprint
- WHERE es.vector_space_id=?
-  AND es.profile_fingerprint=? AND es.binding_id=? AND es.input_kind=?
+ WHERE es.vector_space_id=` + parameters[0] + `
+  AND es.profile_fingerprint=` + parameters[1] + ` AND es.binding_id=` + parameters[2] + ` AND es.input_kind=` + parameters[3] + `
   AND n.current_version_id=es.content_version_id AND n.trashed_at IS NULL
   AND (es.input_kind='original_file' OR (es.input_kind='image' AND ` + currentImageEmbeddingSQL("es.content_version_id", "eig.evidence_fingerprint") + `) OR (es.input_kind='rendition_chunk' AND ` + currentRenditionChunkAuthoritySQL + `))
  `
@@ -1058,11 +1113,13 @@ func semanticMembershipSQL(driver string) string {
 
 // scanSemanticRows reads the whole space when blobHashes is nil, else only
 // rows whose current content has one of those hashes.
-func scanSemanticRows(ctx context.Context, tx metadataQuerier, profile, binding string,
-	kind document.EmbeddingInputKind, space, filterSQL string, filterArgs []any,
+func (s *Store) scanSemanticRows(ctx context.Context, tx metadataQuerier, profile, binding string,
+	kind document.EmbeddingInputKind, space string, opts SearchOptions,
 	blobHashes []string, versionFence, representativeOrder bool, visit func(semanticEligibilityKey, int64, string),
 ) (retErr error) {
+	postgres := s.postgresSchema != ""
 	driver := `FROM embedding_sets es`
+	filterSQL, filterArgs := searchFilterSQL(opts, postgres, 4)
 	prefix := ""
 	var args []any
 	if blobHashes != nil {
@@ -1071,19 +1128,32 @@ func scanSemanticRows(ctx context.Context, tx metadataQuerier, profile, binding 
 			return err
 		}
 		args = append(args, string(encoded))
-		driver = `FROM json_each(?) k CROSS JOIN content_versions cv_key INDEXED BY content_versions_blob ON cv_key.blob_hash=k.value
+		driver = `FROM json_each($1) k CROSS JOIN content_versions cv_key INDEXED BY content_versions_blob ON cv_key.blob_hash=k.value
    CROSS JOIN embedding_sets es ON es.content_version_id=cv_key.version_id`
+		if postgres {
+			driver = `FROM jsonb_array_elements_text($1::jsonb) AS k(value)
+            JOIN content_versions cv_key ON cv_key.blob_hash=k.value
+            JOIN embedding_sets es ON es.content_version_id=cv_key.version_id`
+		}
+		filterSQL, filterArgs = searchFilterSQL(opts, postgres, 5)
 	} else if versionFence {
+		filterSQL, filterArgs = searchFilterSQL(opts, postgres, 0)
+		join := "CROSS JOIN"
+		index := " INDEXED BY embedding_sets_content_version"
+		if postgres {
+			join, index = "JOIN", ""
+		}
 		// Explicit version fences are bounded to 4096 IDs. Other filters keep
 		// the embedding scan so unembedded files do not drive their cost.
 		prefix = `WITH scoped_versions AS MATERIALIZED (
    SELECT cv.version_id FROM content_versions cv
-   CROSS JOIN nodes n ON n.id=cv.node_id WHERE 1=1 ` + filterSQL + `) `
-		driver = `FROM scoped_versions scope CROSS JOIN embedding_sets es INDEXED BY embedding_sets_content_version
+   ` + join + ` nodes n ON n.id=cv.node_id WHERE 1=1 ` + filterSQL + `) `
+		driver = `FROM scoped_versions scope ` + join + ` embedding_sets es` + index + `
    ON es.content_version_id=scope.version_id`
 		args = append(args, filterArgs...)
 		filterSQL, filterArgs = "", nil
 	}
+	offset := len(args)
 	args = append(args, space, profile, binding, kind)
 	args = append(args, filterArgs...)
 	order := ""
@@ -1091,7 +1161,7 @@ func scanSemanticRows(ctx context.Context, tx metadataQuerier, profile, binding 
 		order = " ORDER BY cv.blob_hash," + DuplicateRepresentativeOrder
 	}
 	rows, err := tx.QueryContext(ctx, prefix+`SELECT evr.vector_set_id,evr.input_id,evr.checksum,n.id AS node_id,cv.blob_hash `+
-		semanticMembershipSQL(driver)+filterSQL+order, args...)
+		semanticMembershipSQL(driver, offset)+filterSQL+order, args...)
 	if err != nil {
 		return err
 	}
@@ -1108,12 +1178,27 @@ func scanSemanticRows(ctx context.Context, tx metadataQuerier, profile, binding 
 	return rows.Err()
 }
 
-func loadSemanticMemberships(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
-	inputKind document.EmbeddingInputKind, vectorSpaceID, filterSQL string, filterArgs []any, keys []semanticEligibilityKey,
+func (s *Store) loadSemanticMemberships(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
+	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions, keys []semanticEligibilityKey,
 ) (_ map[semanticEligibilityKey][]SemanticSearchCandidate, retErr error) {
+	postgres := s.postgresSchema != ""
+	if postgres {
+		keys = slices.Clone(keys)
+		for i := range keys {
+			keys[i].InputID = hex.EncodeToString([]byte(keys[i].InputID))
+		}
+	}
 	encoded, err := json.Marshal(keys)
 	if err != nil {
 		return nil, err
+	}
+	filterSQL, filterArgs := searchFilterSQL(opts, postgres, 5)
+	dialect := metadataJSONDialect{postgres}
+	driver := `FROM json_each($1) k CROSS JOIN embedding_sets es INDEXED BY embedding_sets_vector_set ON es.vector_set_id=json_extract(k.value,'$.VectorSetID')`
+	inputSQL := dialect.text("k.value", "InputID")
+	if postgres {
+		driver = `FROM json_array_elements($1::json) AS k(value) JOIN embedding_sets es ON es.vector_set_id=k.value->>'VectorSetID'`
+		inputSQL = `decode(k.value->>'InputID','hex')`
 	}
 	args := append([]any{string(encoded), vectorSpaceID, profileFingerprint, bindingID, inputKind}, filterArgs...)
 	rows, err := tx.QueryContext(ctx, `SELECT n.id,n.revision,n.current_version_id,
@@ -1122,8 +1207,8 @@ func loadSemanticMemberships(ctx context.Context, tx metadataQuerier, profileFin
 			COALESCE(ra.build_id,''),COALESCE(eig.generation_blob_hash,''),
 			eig.generation_encoded_size,eig.generation_checksum,eig.evidence_fingerprint,
 			COALESCE(evidence_blob.size,0),eig.input_count,cv.blob_hash,n.modified_at
-  `+semanticMembershipSQL(`FROM json_each(?) k CROSS JOIN embedding_sets es INDEXED BY embedding_sets_vector_set ON es.vector_set_id=json_extract(k.value,'$.VectorSetID')`)+
-		` AND evr.input_id=json_extract(k.value,'$.InputID') AND evr.checksum=json_extract(k.value,'$.InputChecksum')`+
+  `+semanticMembershipSQL(driver, 1)+
+		` AND evr.input_id=`+inputSQL+` AND evr.checksum=`+dialect.text("k.value", "InputChecksum")+
 		filterSQL+` ORDER BY es.vector_set_id,es.embedding_set_id`, args...)
 	if err != nil {
 		return nil, err
@@ -1149,31 +1234,30 @@ func loadSemanticMemberships(ctx context.Context, tx metadataQuerier, profileFin
 }
 
 func reduceSemanticCandidates(vaultID, vectorSpaceID string, neighbors []vectorindex.Neighbor,
-	limit int, eligible map[semanticEligibilityKey]SemanticSearchCandidate, excludedNodes map[int64]struct{},
+	limit int, eligible map[semanticEligibilityKey][]SemanticSearchCandidate, excludedNodes map[int64]struct{},
 ) ([]SemanticSearchCandidate, bool, int) {
 	seen := make(map[int64]struct{}, limit+1)
 	candidates := make([]SemanticSearchCandidate, 0, min(limit+1, len(eligible)))
 	for index, neighbor := range neighbors {
-		entry, ok := eligible[semanticEligibilityKey{VectorSetID: neighbor.SetID,
+		entries := eligible[semanticEligibilityKey{VectorSetID: neighbor.SetID,
 			InputID: neighbor.InputKey, InputChecksum: neighbor.InputChecksum}]
-		if !ok {
-			continue
-		}
-		if _, excluded := excludedNodes[entry.NodeID]; excluded {
-			continue
-		}
-		if _, duplicate := seen[entry.NodeID]; duplicate {
-			continue
-		}
-		seen[entry.NodeID] = struct{}{}
-		candidate := entry
-		candidate.VaultID = vaultID
-		candidate.VectorSpaceID = vectorSpaceID
-		candidate.InputID = neighbor.InputKey
-		candidate.Score = neighbor.Score
-		candidates = append(candidates, candidate)
-		if len(candidates) == limit+1 {
-			return candidates[:limit], true, index
+		for _, entry := range entries {
+			if _, excluded := excludedNodes[entry.NodeID]; excluded {
+				continue
+			}
+			if _, duplicate := seen[entry.NodeID]; duplicate {
+				continue
+			}
+			seen[entry.NodeID] = struct{}{}
+			candidate := entry
+			candidate.VaultID = vaultID
+			candidate.VectorSpaceID = vectorSpaceID
+			candidate.InputID = neighbor.InputKey
+			candidate.Score = neighbor.Score
+			candidates = append(candidates, candidate)
+			if len(candidates) == limit+1 {
+				return candidates[:limit], true, index
+			}
 		}
 	}
 	return candidates, false, len(neighbors)
@@ -2665,16 +2749,6 @@ func photoSearchFragment(ctx context.Context, queryer rowQuerier, request PhotoB
 	return compiledQueryFragment{sql: statement, args: args}, err
 }
 
-// nameEvidenceSQL marks a filename match stale once the name changes or, for
-// a photo search, the node no longer matches the authored query.
-func nameEvidenceSQL(photoLexical compiledQueryFragment) string {
-	stale := `WHEN 'node_name' THEN source.current_name IS NOT json_extract(evidence.value,'$.node_name')`
-	if photoLexical.sql != "" {
-		stale += ` OR source.node_id NOT IN (` + photoLexical.sql + `)`
-	}
-	return stale
-}
-
 // MaxSearchUnderPathBytes bounds folder paths before lookup or allocation.
 const MaxSearchUnderPathBytes = 16384
 
@@ -2741,7 +2815,7 @@ func (s *Store) normalizeSearchOptionsWithQuerier(
 		// Scope validation needs the definition, not its assignment count.
 		var exists bool
 		if err := queryer.QueryRowContext(ctx,
-			`SELECT EXISTS(SELECT 1 FROM tags WHERE id=?)`, opts.TagID).Scan(&exists); err != nil {
+			`SELECT EXISTS(SELECT 1 FROM tags WHERE id=$1)`, opts.TagID).Scan(&exists); err != nil {
 			return SearchOptions{}, fmt.Errorf("search tag %q: %w", opts.TagID, err)
 		}
 		if !exists {
@@ -2797,7 +2871,7 @@ func (s *Store) normalizeSearchOptionsWithQuerier(
 func (s *Store) searchFilterPage(
 	ctx context.Context, limit int, opts SearchOptions,
 ) ([]SearchHit, bool, error) {
-	filterSQL, args := searchFilterSQL(opts)
+	filterSQL, args := searchFilterSQL(opts, false, 0)
 	args = append(args, limit+1)
 	rows, err := s.db.QueryContext(ctx, `
 		WITH RECURSIVE page AS (
@@ -2849,7 +2923,7 @@ func (s *Store) searchFilterPage(
 func searchCandidateFiltersSQL(opts SearchOptions) (names, content string, args []any) {
 	tagID := opts.TagID
 	opts.TagID = ""
-	filter, args := searchFilterSQL(opts)
+	filter, args := searchFilterSQL(opts, false, 0)
 	if tagID == "" {
 		return filter, filter, args
 	}
@@ -2864,11 +2938,18 @@ func searchCandidateFiltersSQL(opts SearchOptions) (names, content string, args 
 	return names, content, append(args, tagID)
 }
 
-func searchFilterSQL(opts SearchOptions) (string, []any) {
+func searchFilterSQL(opts SearchOptions, postgres bool, offset int) (string, []any) {
 	var (
 		clauses []string
 		args    []any
 	)
+	parameter := func() string {
+		if !postgres {
+			return "?"
+		}
+		return "$" + strconv.Itoa(offset+len(args)+1)
+	}
+	dialect := metadataJSONDialect{postgres}
 	if opts.PDFFilter != "" {
 		clauses = append(clauses, "AND ("+opts.pdfPredicate.sql+")")
 		args = append(args, opts.pdfPredicate.args...)
@@ -2886,21 +2967,18 @@ func searchFilterSQL(opts SearchOptions) (string, []any) {
 			panic(err)
 		}
 		clauses = append(clauses, `AND cv.version_id IN (
-			SELECT value FROM json_each(?)
+			SELECT value FROM `+dialect.arrayValues(parameter())+`
 		)`)
 		args = append(args, string(encoded))
 	}
 	if opts.TagID != "" {
 		clauses = append(clauses, `AND n.id IN (
-			SELECT node_id FROM node_tags WHERE tag_id=?
+			SELECT node_id FROM node_tags WHERE tag_id=`+parameter()+`
 		)`)
 		args = append(args, opts.TagID)
 	}
 	if opts.MIMEType != "" {
-		clauses = append(clauses, `AND lower(trim(CASE
-			WHEN instr(cv.mime_type, ';')=0 THEN cv.mime_type
-			ELSE substr(cv.mime_type, 1, instr(cv.mime_type, ';')-1)
-		END))=?`)
+		clauses = append(clauses, `AND `+mimeBaseSQL(postgres, "cv.mime_type")+`=`+parameter())
 		args = append(args, opts.MIMEType)
 	}
 	if opts.UnderNodeID != 0 {
@@ -2910,7 +2988,7 @@ func searchFilterSQL(opts SearchOptions) (string, []any) {
 		// Live directories therefore suffice and use nodes_live_children.
 		clauses = append(clauses, `AND n.parent_id IN (
 			WITH RECURSIVE directories(id) AS (
-				SELECT ?
+				SELECT CAST(`+parameter()+` AS BIGINT)
 				UNION ALL
 				SELECT child.id FROM nodes child
 				JOIN directories parent ON child.parent_id=parent.id
@@ -2921,11 +2999,11 @@ func searchFilterSQL(opts SearchOptions) (string, []any) {
 		args = append(args, opts.UnderNodeID)
 	}
 	if opts.ModifiedSince != "" {
-		clauses = append(clauses, `AND n.modified_at>=?`)
+		clauses = append(clauses, `AND n.modified_at>=`+parameter()+``)
 		args = append(args, opts.ModifiedSince)
 	}
 	if opts.ModifiedBefore != "" {
-		clauses = append(clauses, `AND n.modified_at<?`)
+		clauses = append(clauses, `AND n.modified_at<`+parameter()+``)
 		args = append(args, opts.ModifiedBefore)
 	}
 	return strings.Join(clauses, "\n"), args

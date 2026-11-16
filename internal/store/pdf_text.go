@@ -6,21 +6,26 @@ import (
 	"errors"
 )
 
+// mimeBaseSQL preserves SQLite substring behavior when NUL precedes a parameter.
+func mimeBaseSQL(postgres bool, column string) string {
+	if !postgres {
+		return "lower(trim(CASE WHEN instr(" + column + ",';')=0 THEN " + column + " ELSE substr(" + column + ",1,instr(" + column + ",';')-1) END))"
+	}
+	return `lower(trim(CASE
+ WHEN position(';'::bytea in ` + column + `)>0
+  AND position('\x00'::bytea in ` + column + `)>0
+  AND position('\x00'::bytea in ` + column + `)<position(';'::bytea in ` + column + `)
+ THEN encode(substring(` + column + ` from 1 for position('\x00'::bytea in ` + column + `)-1),'escape')
+ ELSE split_part(encode(` + column + `,'escape'),';',1) END))`
+}
+
 // PDFTextTargetsAfter lists live PDFs without the profile's text, optionally
 // including versions whose job is still waiting to publish.
 func (s *Store) PDFTextTargetsAfter(ctx context.Context, profile, after string, maxBytes int64, limit int, includeWaiting bool) ([]DocumentSummary, error) {
 	if limit < 1 || limit > 1000 {
 		return nil, errors.New("invalid PDF backfill bounds")
 	}
-	mimeType := "lower(trim(CASE WHEN instr(v.mime_type,';')=0 THEN v.mime_type ELSE substr(v.mime_type,1,instr(v.mime_type,';')-1) END))"
-	if s.postgresSchema != "" {
-		mimeType = `lower(trim(CASE
- WHEN position(';'::bytea in v.mime_type)>0
-  AND position('\x00'::bytea in v.mime_type)>0
-  AND position('\x00'::bytea in v.mime_type)<position(';'::bytea in v.mime_type)
- THEN encode(substring(v.mime_type from 1 for position('\x00'::bytea in v.mime_type)-1),'escape')
- ELSE split_part(encode(v.mime_type,'escape'),';',1) END))`
-	}
+	mimeType := mimeBaseSQL(s.postgresSchema != "", "v.mime_type")
 	waiting := ""
 	if !includeWaiting {
 		waiting = ` AND NOT ` + pdfWaitingSQL("v.version_id", "$2")
