@@ -250,7 +250,11 @@ func TestCollectionCoverageLatestExactAttemptUsesWaiterAndJobTimes(t *testing.T)
 
 func collectionCoverageFixture(t *testing.T, count int) (*Store, IngestRun, []Node, ProcessingProfileRecord) {
 	t.Helper()
-	s := newTestStore(t)
+	return collectionCoverageFixtureWithStore(t, newTestStore(t), count)
+}
+
+func collectionCoverageFixtureWithStore(t *testing.T, s *Store, count int) (*Store, IngestRun, []Node, ProcessingProfileRecord) {
+	t.Helper()
 	run, err := s.BeginIngest(t.Context(), "cli", "Synthetic coverage collection")
 	require.NoError(t, err)
 	nodes := make([]Node, count)

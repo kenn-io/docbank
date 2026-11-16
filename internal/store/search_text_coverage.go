@@ -44,28 +44,32 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
 	families := make(map[string]bool)
 	err = s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) (retErr error) {
 		d := metadataJSONDialect{s.postgresSchema != ""}
-		scope, args := liveSearchScopeSQL(searchFilterSQL(opts, false, 0))
+		scope, args := liveSearchScopeSQL(searchFilterSQL(opts, d.postgres, 7))
 		args = append([]any{pdfProfile, pdfProfile, generation.ID, generation.ID, unqueuedPDF != nil, pdfProfile, pdfProfile}, args...)
+		mediaType := "COALESCE(cv.mime_type, '')"
+		if d.postgres {
+			mediaType = "COALESCE(" + mimeBaseSQL(true, "cv.mime_type") + ",'')"
+		}
 		rows, err := q.QueryContext(ctx, `WITH coverage AS (
-		 SELECT COALESCE(cv.mime_type, '') AS mime_type,
- `+pdfWaitingSQL("cv.version_id", "?")+` pdf_waiting,
+		 SELECT `+mediaType+` AS mime_type,
+ `+pdfWaitingSQL("cv.version_id", "$1")+` pdf_waiting,
  COALESCE((SELECT b.build_id FROM rendition_heads h JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
  JOIN rendition_builds b ON b.build_id=a.build_id
  JOIN rendition_lexical_generation_builds gb ON gb.build_id=b.build_id
- WHERE h.content_version_id=cv.version_id AND h.profile_fingerprint=? AND gb.generation_id=?
+ WHERE h.content_version_id=cv.version_id AND h.profile_fingerprint=$2 AND gb.generation_id=$3
  AND `+pdfOmissionCandidateSQL(d, "b")+`
  LIMIT 1),'') pdf_evidence,
 		 EXISTS(SELECT 1 FROM text_searchable_versions sv WHERE sv.version_id=cv.version_id) native,
 		 EXISTS(SELECT 1 FROM text_extraction_queue tq WHERE tq.blob_hash=cv.blob_hash) pending,
-		 EXISTS(SELECT 1 FROM extracted_text e WHERE e.blob_hash=cv.blob_hash AND e.status='ok' AND length(trim(e.text))>0) extracted,
+		 EXISTS(SELECT 1 FROM extracted_text e WHERE e.blob_hash=cv.blob_hash AND e.status='ok' AND `+nonemptyLegacyTextSQL("e.text", d.postgres)+`) extracted,
 		 EXISTS(SELECT 1 FROM rendition_heads h
 		 JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
 		  AND a.content_version_id=h.content_version_id AND a.profile_fingerprint=h.profile_fingerprint
 		 JOIN rendition_lexical_generation_builds gb ON gb.build_id=a.build_id
-		 WHERE h.content_version_id=cv.version_id AND gb.generation_id=? AND `+renditionHasSearchableTextSQL("a.build_id", false)+`) serving,
-		 CASE WHEN ? AND lower(trim(cv.mime_type)) LIKE 'application/pdf%'
-		 AND NOT EXISTS(SELECT 1 FROM rendition_heads h WHERE h.content_version_id=cv.version_id AND h.profile_fingerprint=?)
-		 AND NOT EXISTS(SELECT 1 FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id WHERE w.content_version_id=cv.version_id AND w.profile_fingerprint=? AND (w.state='rejected' OR j.state IN ('failed','operator_required')))
+		 WHERE h.content_version_id=cv.version_id AND gb.generation_id=$4 AND `+renditionHasSearchableTextSQL("a.build_id", d.postgres)+`) serving,
+		 CASE WHEN $5 AND `+mediaType+` LIKE 'application/pdf%'
+		 AND NOT EXISTS(SELECT 1 FROM rendition_heads h WHERE h.content_version_id=cv.version_id AND h.profile_fingerprint=$6)
+		 AND NOT EXISTS(SELECT 1 FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id WHERE w.content_version_id=cv.version_id AND w.profile_fingerprint=$7 AND (w.state='rejected' OR j.state IN ('failed','operator_required')))
 		 THEN cv.version_id ELSE '' END pdf_unqueued,
 		 cv.size source_size
 

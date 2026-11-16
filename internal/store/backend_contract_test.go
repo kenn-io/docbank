@@ -22,6 +22,196 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
+	{name: "lexical-search", postgres: "native operations", scope: "Document filename/current-text lexical retrieval, filtering, phrase/prefix queries, excerpts and result limits; native scoring differs from FTS5; excludes photo query compilation.", scenarios: []backendScenario{
+		{"LexicalGenerationReadSnapshotCannotMixPublicationEpochs", func(t *testing.T) {
+			t.Helper()
+			checkLexicalGenerationReadSnapshotCannotMixPublicationEpochs(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkLexicalGenerationReadSnapshotCannotMixPublicationEpochs(t, newPostgresQueryStore)
+		}},
+		{"LexicalSearchIndexes", nil, checkLexicalSearchIndexesPostgres},
+		{"LexicalExcerptsSnapshot", nil, checkLexicalExcerptsSnapshotPostgres},
+
+		{"SearchTextCoverage", func(t *testing.T) { t.Helper(); checkSearchTextCoverage(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkSearchTextCoverage(t, newPostgresQueryStore) }},
+		{"SearchTextCoverageCandidateEvidence", func(t *testing.T) { t.Helper(); checkSearchTextCoverageCandidateEvidence(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkSearchTextCoverageCandidateEvidence(t, newPostgresQueryStore) }},
+		{"SearchTextCoverageLimitsEvidenceReads", func(t *testing.T) { t.Helper(); checkSearchTextCoverageLimitsEvidenceReads(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkSearchTextCoverageLimitsEvidenceReads(t, newPostgresQueryStore) }},
+		{"SearchFindsLiveNodesOnly", func(t *testing.T) {
+			t.Helper()
+			checkSearchFindsLiveNodesOnly(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchFindsLiveNodesOnly(t, newPostgresQueryStore)
+		}},
+		{"SearchPrefixAndRename", func(t *testing.T) {
+			t.Helper()
+			checkSearchPrefixAndRename(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchPrefixAndRename(t, newPostgresQueryStore)
+		}},
+		{"SearchPreparedWordsAndPhrases", func(t *testing.T) {
+			t.Helper()
+			checkSearchPreparedWordsAndPhrases(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchPreparedWordsAndPhrases(t, newPostgresQueryStore)
+		}},
+		{"SearchSurvivesOperatorInput", func(t *testing.T) {
+			t.Helper()
+			checkSearchSurvivesOperatorInput(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchSurvivesOperatorInput(t, newPostgresQueryStore)
+		}},
+		{"SearchTieBreaksByName", func(t *testing.T) {
+			t.Helper()
+			checkSearchTieBreaksByName(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchTieBreaksByName(t, newPostgresQueryStore)
+		}},
+		{"SearchPageReportsTruncation", func(t *testing.T) {
+			t.Helper()
+			checkSearchPageReportsTruncation(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchPageReportsTruncation(t, newPostgresQueryStore)
+		}},
+		{"SearchPageFiltersNameAndContentMatchesByTag", func(t *testing.T) {
+			t.Helper()
+			checkSearchPageFiltersNameAndContentMatchesByTag(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchPageFiltersNameAndContentMatchesByTag(t, newPostgresQueryStore)
+		}},
+		{"SearchPageFiltersCurrentMediaTypeWithParameters", func(t *testing.T) {
+			t.Helper()
+			checkSearchPageFiltersCurrentMediaTypeWithParameters(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchPageFiltersCurrentMediaTypeWithParameters(t, newPostgresQueryStore)
+		}},
+		{"SearchPageFiltersDescendantsByStableDirectory", func(t *testing.T) {
+			t.Helper()
+			checkSearchPageFiltersDescendantsByStableDirectory(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchPageFiltersDescendantsByStableDirectory(t, newPostgresQueryStore)
+		}},
+		{"SearchContentScopeFollowsMovedDirectories", func(t *testing.T) {
+			t.Helper()
+			checkSearchContentScopeFollowsMovedDirectories(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchContentScopeFollowsMovedDirectories(t, newPostgresQueryStore)
+		}},
+		{"SearchPageFiltersByModificationTime", func(t *testing.T) {
+			t.Helper()
+			checkSearchPageFiltersByModificationTime(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchPageFiltersByModificationTime(t, newPostgresQueryStore)
+		}},
+		{"SearchPageAllowsOnlyBoundedQuerylessFilters", func(t *testing.T) {
+			t.Helper()
+			checkSearchPageAllowsOnlyBoundedQuerylessFilters(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchPageAllowsOnlyBoundedQuerylessFilters(t, newPostgresQueryStore)
+		}},
+		{"SearchExplainedLexicalCandidatesCitesActiveRenditionSegment", func(t *testing.T) {
+			t.Helper()
+			checkSearchExplainedLexicalCandidatesCitesActiveRenditionSegment(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchExplainedLexicalCandidatesCitesActiveRenditionSegment(t, newPostgresQueryStore)
+		}},
+		{"SearchExplainedLexicalCandidatesIncludesNamePath", func(t *testing.T) {
+			t.Helper()
+			checkSearchExplainedLexicalCandidatesIncludesNamePath(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchExplainedLexicalCandidatesIncludesNamePath(t, newPostgresQueryStore)
+		}},
+		{"SearchExplainedContentPathsFollowRankAndMoves", func(t *testing.T) {
+			t.Helper()
+			checkSearchExplainedContentPathsFollowRankAndMoves(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchExplainedContentPathsFollowRankAndMoves(t, newPostgresQueryStore)
+		}},
+		{"SearchPathsPreserveResultOrder", func(t *testing.T) {
+			t.Helper()
+			checkSearchPathsPreserveResultOrder(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchPathsPreserveResultOrder(t, newPostgresQueryStore)
+		}},
+		{"SearchExplainedLexicalCandidatesBoundsLongNameExcerpt", func(t *testing.T) {
+			t.Helper()
+			checkSearchExplainedLexicalCandidatesBoundsLongNameExcerpt(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchExplainedLexicalCandidatesBoundsLongNameExcerpt(t, newPostgresQueryStore)
+		}},
+		{"SearchExplainedLexicalCandidatesRanksFilteredNamesBeforeLimit", func(t *testing.T) {
+			t.Helper()
+			checkSearchExplainedLexicalCandidatesRanksFilteredNamesBeforeLimit(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchExplainedLexicalCandidatesRanksFilteredNamesBeforeLimit(t, newPostgresQueryStore)
+		}},
+		{"SearchContentFollowsStableNameMatches", func(t *testing.T) {
+			t.Helper()
+			checkSearchContentFollowsStableNameMatches(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchContentFollowsStableNameMatches(t, newPostgresQueryStore)
+		}},
+		{"SearchContentFirstDefaultParity", func(t *testing.T) {
+			t.Helper()
+			checkSearchContentFirstDefaultParity(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchContentFirstDefaultParity(t, newPostgresQueryStore)
+		}},
+		{"SearchContentFirstPageBoundary", func(t *testing.T) {
+			t.Helper()
+			checkSearchContentFirstPageBoundary(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchContentFirstPageBoundary(t, newPostgresQueryStore)
+		}},
+		{"SearchContentFirstFence", func(t *testing.T) {
+			t.Helper()
+			checkSearchContentFirstFence(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchContentFirstFence(t, newPostgresQueryStore)
+		}},
+		{"SearchContentFirstNodeStates", func(t *testing.T) {
+			t.Helper()
+			checkSearchContentFirstNodeStates(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchContentFirstNodeStates(t, newPostgresQueryStore)
+		}},
+		{"SearchContentFirstContentVersions", func(t *testing.T) {
+			t.Helper()
+			checkSearchContentFirstContentVersions(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchContentFirstContentVersions(t, newPostgresQueryStore)
+		}},
+		{"SearchContentFirstPriority", func(t *testing.T) {
+			t.Helper()
+			checkSearchContentFirstPriority(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchContentFirstPriority(t, newPostgresQueryStore)
+		}},
+	}},
 	{name: "semantic-results", postgres: "native operations", scope: "Current original/chunk/image candidate resolution, scoped coverage, evidence revalidation and similar-document grouping; excludes lexical queries and face capture.", scenarios: []backendScenario{
 		{"SemanticResultsUseCurrentDerivedEvidence", func(t *testing.T) {
 			t.Helper()
@@ -123,7 +313,7 @@ var backendSuites = []backendSuite{
 			checkResolveSemanticCandidatesPagesPastIneligibleNeighbors(t, newPostgresQueryStore)
 		}},
 	}},
-	{name: "vector-index-publication", postgres: "native operations", scope: "Original/chunk/image source membership, fenced publication and recovery, reader leases and per-space source memoization; excludes face-member capture and ranked/lexical search; native worker/service completion and reconstruction run in internal/processing.", scenarios: []backendScenario{
+	{name: "vector-index-publication", postgres: "native operations", scope: "Original/chunk/image source membership, fenced publication and recovery, reader leases and per-space source memoization; excludes face-member capture; native worker/service completion and reconstruction run in internal/processing.", scenarios: []backendScenario{
 		{"VectorIndexSourceCapturesExactEligibleMembership", func(t *testing.T) {
 			t.Helper()
 			t.Parallel()
@@ -2445,9 +2635,9 @@ var backendSuites = []backendSuite{
 			checkOlderCompleteReceiptCanCoexistWithNewerPendingCurrentCoverage(t, newPostgresQueryStore)
 		}},
 	}},
-	{name: "processing-publication", postgres: "native rendition/embedding/photo workers", scope: "internal/processing tests qualify shared-build publication, durable resume, consent/source fencing, email-PDF receipt/export, supplied-media continuation, direct original/chunk embedding-worker recovery, photo descriptions and face detection. Foreground direct-file/image completion and index recovery use vector-index-publication and internal/processing scenarios. Face embedding/matching workers, remote acquisition and search remain unqualified."},
+	{name: "processing-publication", postgres: "native rendition/embedding/photo workers", scope: "internal/processing tests qualify shared-build publication, durable resume, consent/source fencing, email-PDF receipt/export, supplied-media continuation, direct original/chunk embedding-worker recovery, photo descriptions and face detection. Foreground direct-file/image completion and index recovery use vector-index-publication and internal/processing scenarios. Face embedding/matching workers, remote acquisition and photo query compilation remain unqualified."},
 	{name: "photo-editing", postgres: "unqualified", scope: "Query-driven photo review remains unqualified. Explicit decisions use photo-review; people edits use people-curation; query selection stays with search."},
-	{name: "search", postgres: "unqualified", scope: "Lexical/vector search and query execution remain unqualified; matching metadata columns do not establish ranking or index parity."},
+	{name: "search", postgres: "native document retrieval", scope: "lexical-search and semantic-results qualify document lexical, vector and hybrid retrieval; photo query compilation, PDF facts and selected recording/vision retrieval remain unqualified."},
 	{name: "transfer-and-recovery", postgres: "native backup capture and SQLite recovery", scope: "internal/backupapp tests qualify repository capture, loose/packed bytes, audited and photo recovery, source loss and missing-byte failure. PostgreSQL-target restore remains unqualified; metadata-export and metadata-import cover native logical transfer."},
 	{name: "organization", postgres: "native operations", scope: "Tags, audited bulk edits and saved definitions; excludes query execution and delivery.", scenarios: []backendScenario{
 		{"BatchTagsMixedChangesNoOpsAndCallerOrder", func(t *testing.T) {

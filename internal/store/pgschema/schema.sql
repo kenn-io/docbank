@@ -1,3 +1,23 @@
+-- Native document search projections retain canonical source bytes separately.
+-- Normalize only the search projection; retained names and evidence stay exact.
+-- Splitting punctuation keeps file extensions from becoming whole host tokens.
+CREATE FUNCTION {{schema}}.lexical_text(value TEXT) RETURNS TEXT
+LANGUAGE SQL IMMUTABLE PARALLEL SAFE
+RETURN regexp_replace(regexp_replace(normalize(value,NFD),U&'[\0300-\036f]','','g'),
+ '[[:punct:][:space:]]+',' ','g');
+
+-- A derived index must not make accepted text unwriteable or unrestorable.
+-- Oversized token vectors are omitted; retained text stays exact.
+-- EXCEPTION changes transaction state; only stored-column writes call this function.
+CREATE FUNCTION {{schema}}.lexical_vector(value TEXT) RETURNS TSVECTOR
+LANGUAGE plpgsql IMMUTABLE PARALLEL UNSAFE AS $$
+BEGIN
+    RETURN to_tsvector('pg_catalog.simple', {{schema}}.lexical_text(value));
+EXCEPTION WHEN program_limit_exceeded THEN
+    RETURN NULL;
+END;
+$$;
+
 -- The PostgreSQL identity follows the same logical vault through export and
 -- restore.
 -- Foreign keys can be deferred during logical import. Ordinary writers keep
@@ -1196,6 +1216,8 @@ CREATE TABLE {{schema}}.rendition_lexical_index (
     build_id   TEXT COLLATE "C" NOT NULL,
     segment_id BYTEA NOT NULL,
     text       BYTEA NOT NULL,
+    search_text TEXT COLLATE "C" NOT NULL DEFAULT '',
+    search_vector TSVECTOR GENERATED ALWAYS AS ({{schema}}.lexical_vector(search_text)) STORED,
     UNIQUE (build_id, segment_id)
 );
 
@@ -1359,6 +1381,8 @@ CREATE TABLE {{schema}}.extracted_text (
     error             BYTEA,
     attempts          BIGINT NOT NULL DEFAULT 0,
     text              BYTEA,
+    search_text TEXT COLLATE "C" NOT NULL DEFAULT '',
+    search_vector TSVECTOR GENERATED ALWAYS AS ({{schema}}.lexical_vector(search_text)) STORED,
     extracted_at      TEXT COLLATE "C" NOT NULL,
     UNIQUE (blob_hash, extractor)
 );
@@ -2550,3 +2574,7 @@ CREATE TABLE {{schema}}.vector_membership_epochs (
     vector_space_id TEXT COLLATE "C" PRIMARY KEY,
     revision BIGINT NOT NULL
 );
+
+CREATE INDEX nodes_search ON {{schema}}.nodes USING GIN (to_tsvector('pg_catalog.simple', {{schema}}.lexical_text(name)));
+CREATE INDEX extracted_text_search ON {{schema}}.extracted_text USING GIN (search_vector);
+CREATE INDEX rendition_lexical_search ON {{schema}}.rendition_lexical_index USING GIN (search_vector);

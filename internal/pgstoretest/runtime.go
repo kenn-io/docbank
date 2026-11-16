@@ -104,7 +104,7 @@ func RuntimeConfig(tb testing.TB, setup *sql.DB, cfg pgschema.Config) *pgx.ConnC
 		"; GRANT UPDATE(live_entries,live_stored_bytes,live_raw_bytes,max_live_stored_len,max_live_raw_len) ON "+schema+".blob_packs TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(next_attempt_at) ON "+schema+".text_extraction_queue TO "+quotedRole+
 		"; GRANT INSERT ON "+schema+".text_searchable_versions TO "+quotedRole+
-		"; GRANT INSERT,UPDATE(extractor_version,status,error,attempts,text,extracted_at) ON "+schema+".extracted_text TO "+quotedRole+
+		"; GRANT INSERT,UPDATE(extractor_version,status,error,attempts,text,extracted_at,search_text) ON "+schema+".extracted_text TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(hidden_at,excluded_at,display_file_id,display_override_file_id,representative_rank,revision,updated_at) ON "+schema+".photo_assets TO "+quotedRole+
 		"; GRANT INSERT,DELETE ON "+schema+".photo_change_receipts TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(asset_id,role,sidecar_of_file_id,source_provenance_identity,revision,rating,flag,label,caption,creator,copyright,rotation,confirmed_fields,flag_owner) ON "+schema+".photo_files TO "+quotedRole+
