@@ -722,7 +722,7 @@ type SemanticSearchResolution struct {
 	SourceManifestChecksum string
 	Candidates             []SemanticSearchCandidate
 	Truncated              bool
-	// NextNeighbor is the next index in the supplied neighbors, or their length when exhausted.
+	// NextNeighbor resumes an unfinished row, including index zero, or equals the neighbor count when exhausted.
 	NextNeighbor int
 }
 
@@ -976,7 +976,7 @@ func (s *Store) semanticCandidatesTx(ctx context.Context, tx metadataQuerier, pr
 	normalized SearchOptions, excludedNodes map[int64]struct{}, result *SemanticSearchResolution,
 ) error {
 	var err error
-	eligible := make(map[semanticEligibilityKey]SemanticSearchCandidate)
+	eligible := make(map[semanticEligibilityKey][]SemanticSearchCandidate)
 	representatives := make(map[string]int64)
 	prefix, walked := min(limit+1, len(neighbors)), 0
 	for {
@@ -1006,11 +1006,12 @@ func (s *Store) semanticCandidatesTx(ctx context.Context, tx metadataQuerier, pr
 			}
 		}
 		for key, entries := range members {
-			for _, entry := range entries {
-				if !normalized.CollapsesPhotoDuplicates() || entry.NodeID == representatives[entry.BlobHash] {
-					eligible[key] = entry
-				}
+			if normalized.CollapsesPhotoDuplicates() {
+				entries = slices.DeleteFunc(entries, func(entry SemanticSearchCandidate) bool {
+					return entry.NodeID != representatives[entry.BlobHash]
+				})
 			}
+			eligible[key] = entries
 		}
 		result.Candidates, result.Truncated, result.NextNeighbor = reduceSemanticCandidates(s.vaultID, vectorSpaceID,
 			neighbors[:prefix], limit, eligible, excludedNodes)
@@ -1055,6 +1056,17 @@ func (s *Store) searchExcerptByVersionTx(ctx context.Context, queryer interface 
 	}
 	if err != nil {
 		return "", err
+	}
+	if s.postgresSchema != "" {
+		// SQLite's substr limits runes before match-marker handling.
+		count := 0
+		for offset := range excerpt {
+			if count == maxExplainedSearchExcerptRunes {
+				excerpt = excerpt[:offset]
+				break
+			}
+			count++
+		}
 	}
 	return boundedExplainedSearchExcerpt(excerpt), nil
 }
@@ -1222,31 +1234,30 @@ func (s *Store) loadSemanticMemberships(ctx context.Context, tx metadataQuerier,
 }
 
 func reduceSemanticCandidates(vaultID, vectorSpaceID string, neighbors []vectorindex.Neighbor,
-	limit int, eligible map[semanticEligibilityKey]SemanticSearchCandidate, excludedNodes map[int64]struct{},
+	limit int, eligible map[semanticEligibilityKey][]SemanticSearchCandidate, excludedNodes map[int64]struct{},
 ) ([]SemanticSearchCandidate, bool, int) {
 	seen := make(map[int64]struct{}, limit+1)
 	candidates := make([]SemanticSearchCandidate, 0, min(limit+1, len(eligible)))
 	for index, neighbor := range neighbors {
-		entry, ok := eligible[semanticEligibilityKey{VectorSetID: neighbor.SetID,
+		entries := eligible[semanticEligibilityKey{VectorSetID: neighbor.SetID,
 			InputID: neighbor.InputKey, InputChecksum: neighbor.InputChecksum}]
-		if !ok {
-			continue
-		}
-		if _, excluded := excludedNodes[entry.NodeID]; excluded {
-			continue
-		}
-		if _, duplicate := seen[entry.NodeID]; duplicate {
-			continue
-		}
-		seen[entry.NodeID] = struct{}{}
-		candidate := entry
-		candidate.VaultID = vaultID
-		candidate.VectorSpaceID = vectorSpaceID
-		candidate.InputID = neighbor.InputKey
-		candidate.Score = neighbor.Score
-		candidates = append(candidates, candidate)
-		if len(candidates) == limit+1 {
-			return candidates[:limit], true, index
+		for _, entry := range entries {
+			if _, excluded := excludedNodes[entry.NodeID]; excluded {
+				continue
+			}
+			if _, duplicate := seen[entry.NodeID]; duplicate {
+				continue
+			}
+			seen[entry.NodeID] = struct{}{}
+			candidate := entry
+			candidate.VaultID = vaultID
+			candidate.VectorSpaceID = vectorSpaceID
+			candidate.InputID = neighbor.InputKey
+			candidate.Score = neighbor.Score
+			candidates = append(candidates, candidate)
+			if len(candidates) == limit+1 {
+				return candidates[:limit], true, index
+			}
 		}
 	}
 	return candidates, false, len(neighbors)

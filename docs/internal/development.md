@@ -389,7 +389,7 @@ A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Direct embedding-worker publication/recovery, photo
 descriptions and face detection have qualification below. Foreground direct-file
 and image embedding can publish a vector index before returning. Face embedding/matching workers,
-remote-media acquisition, search and PostgreSQL-target backup recovery remain unqualified.
+remote-media acquisition, lexical/hybrid search and PostgreSQL-target backup recovery remain unqualified.
 Native multi-store catalog operations are qualified below; deployment adapters
 and filesystem workers remain separate from public PostgreSQL vault opening.
 
@@ -1051,7 +1051,8 @@ The internal PostgreSQL Store resolves neighbors from a published vector index
 into current original-file, rendition-chunk and image documents. It uses the
 same candidate reducer, score order, result bounds and duplicate rules as
 SQLite. Ordinary semantic search keeps separate documents with identical
-content. Similar-document search excludes its source and groups eligible copies,
+content, including documents sharing one chunk vector row. A result page can
+resume inside that row while excluding documents already returned. Similar-document search excludes its source and groups eligible copies,
 counting copies beyond the returned page.
 
 Tag, base MIME type, directory, modification-time, exact-version and
@@ -2381,7 +2382,7 @@ schema can enroll its root without a copied fixture.
 Copying supporting catalogs qualifies their validation, not their producers.
 The [operation inventory](#backend-support-and-drift-checks) identifies native
 writes and their catalog-maintenance coverage. Public PostgreSQL opening,
-PostgreSQL-target physical restore and search remain unqualified. Logical metadata transfer
+PostgreSQL-target physical restore and lexical/hybrid search remain unqualified. Logical metadata transfer
 uses the internal import/export entry points described above.
 
 For PostgreSQL tests, start a disposable server, never an operator database:

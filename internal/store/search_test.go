@@ -83,6 +83,32 @@ func checkSimilarSharedRowsExpandMembershipBeforeSourceExclusion(t *testing.T, o
 	for _, input := range records[0].InputGeneration.Inputs {
 		neighbors = append(neighbors, vectorindex.Neighbor{SetID: records[0].VectorSet.ID, InputKey: input.ID, InputChecksum: input.RenderedChecksum, Score: 0.8})
 	}
+	t.Run("ordinary search keeps every document sharing a chunk", func(t *testing.T) {
+		opts := SearchOptions{ContentVersionIDs: versions}
+		ordinary, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, "chunk", records[0].InputKind,
+			records[0].VectorSpace.ID, source.ManifestChecksum, neighbors, 10, opts, nil)
+		require.NoError(t, err)
+		require.Len(t, ordinary.Candidates, 3)
+		require.False(t, ordinary.Truncated)
+		got := make([]string, 0, 3)
+		for _, candidate := range ordinary.Candidates {
+			got = append(got, candidate.ContentVersionID)
+		}
+		require.ElementsMatch(t, versions, got)
+		seen := make(map[int64]struct{})
+		remaining := neighbors
+		for page := range 3 {
+			result, err := s.ResolveSemanticCandidates(t.Context(), profile.Fingerprint, "chunk", records[0].InputKind,
+				records[0].VectorSpace.ID, source.ManifestChecksum, remaining, 1, opts, seen)
+			require.NoError(t, err)
+			require.Len(t, result.Candidates, 1)
+			id := result.Candidates[0].NodeID
+			require.NotContains(t, seen, id)
+			seen[id] = struct{}{}
+			require.Equal(t, page < 2, result.Truncated)
+			remaining = remaining[result.NextNeighbor:]
+		}
+	})
 	resolution, err := s.ResolveSimilarCandidates(t.Context(), profile.Fingerprint, "chunk", records[0].InputKind,
 		records[0].VectorSpace.ID, source.ManifestChecksum, neighbors, 1, SearchOptions{ContentVersionIDs: versions}, SimilarSource{NodeID: sourceNode.NodeID, ContentVersionID: sourceVersion})
 	require.NoError(t, err)
@@ -808,9 +834,9 @@ func TestReduceSemanticCandidatesExhaustsNeighborsWithoutDatabaseWork(t *testing
 	key := semanticEligibilityKey{
 		VectorSetID: "eligible", InputID: "eligible-input", InputChecksum: fakeHash("eligible"),
 	}
-	eligible := map[semanticEligibilityKey]SemanticSearchCandidate{
-		key: {NodeID: 42, ContentVersionID: "version-42", EmbeddingSetID: "embedding-set", InputGenerationID: "generation",
-			InputKind: document.EmbeddingInputOriginalFile},
+	eligible := map[semanticEligibilityKey][]SemanticSearchCandidate{
+		key: {{NodeID: 42, ContentVersionID: "version-42", EmbeddingSetID: "embedding-set", InputGenerationID: "generation",
+			InputKind: document.EmbeddingInputOriginalFile}},
 	}
 
 	candidates, truncated, next := reduceSemanticCandidates("vault", fakeHash("space"), neighbors, 10, eligible, nil)
@@ -827,15 +853,15 @@ func TestReduceSemanticCandidatesKeepsBestChunkPerDocument(t *testing.T) {
 	spaceID := fakeHash("space")
 	firstKey := semanticEligibilityKey{VectorSetID: "set", InputID: "chunk-1", InputChecksum: fakeHash("chunk-1")}
 	secondKey := semanticEligibilityKey{VectorSetID: "set", InputID: "chunk-2", InputChecksum: fakeHash("chunk-2")}
-	eligible := map[semanticEligibilityKey]SemanticSearchCandidate{
-		firstKey: {NodeID: 42, ContentVersionID: "version-42", EmbeddingSetID: "embedding-set", InputGenerationID: "generation",
-			InputKind: document.EmbeddingInputRenditionChunk},
-		secondKey: {NodeID: 42, ContentVersionID: "version-42", EmbeddingSetID: "embedding-set", InputGenerationID: "generation",
-			InputKind: document.EmbeddingInputRenditionChunk},
+	eligible := map[semanticEligibilityKey][]SemanticSearchCandidate{
+		firstKey: {{NodeID: 42, ContentVersionID: "version-42", EmbeddingSetID: "embedding-set", InputGenerationID: "generation",
+			InputKind: document.EmbeddingInputRenditionChunk}},
+		secondKey: {{NodeID: 42, ContentVersionID: "version-42", EmbeddingSetID: "embedding-set", InputGenerationID: "generation",
+			InputKind: document.EmbeddingInputRenditionChunk}},
 	}
 
 	thirdKey := semanticEligibilityKey{VectorSetID: "other-set", InputID: "chunk-3", InputChecksum: fakeHash("chunk-3")}
-	eligible[thirdKey] = SemanticSearchCandidate{NodeID: 43, ContentVersionID: "version-43"}
+	eligible[thirdKey] = []SemanticSearchCandidate{{NodeID: 43, ContentVersionID: "version-43"}}
 	neighbors := []vectorindex.Neighbor{
 		{SetID: firstKey.VectorSetID, InputKey: firstKey.InputID, InputChecksum: firstKey.InputChecksum, Score: 0.9},
 		{SetID: secondKey.VectorSetID, InputKey: secondKey.InputID, InputChecksum: secondKey.InputChecksum, Score: 0.8},

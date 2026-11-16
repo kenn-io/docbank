@@ -477,6 +477,7 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 	seen := make(map[int64]struct{})
 	pageLimit := query.VectorLimit
 	for {
+		seenBefore := len(seen)
 		resolution, err := backend.ResolveSemanticCandidates(ctx, query.ProcessingProfileFingerprint,
 			query.BindingID, authority.InputKind, authority.VectorSpace.ID, stored.SourceManifestChecksum,
 			neighbors, pageLimit, query.Scope, seen)
@@ -526,7 +527,8 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 		if len(candidates) == query.VectorLimit || !resolution.Truncated {
 			break
 		}
-		if resolution.NextNeighbor <= 0 || resolution.NextNeighbor >= len(neighbors) {
+		if resolution.NextNeighbor < 0 || resolution.NextNeighbor >= len(neighbors) ||
+			(resolution.NextNeighbor == 0 && len(seen) == seenBefore) {
 			return nil, coverage, false, errors.New("semantic candidate page did not advance through neighbors")
 		}
 		neighbors = neighbors[resolution.NextNeighbor:]

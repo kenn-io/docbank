@@ -1,11 +1,12 @@
 package store
 
 import (
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/stdlib"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/vectorindex"
@@ -81,6 +82,18 @@ func checkSemanticScopeFiltersAndExcerpts(t *testing.T, open func(*testing.T) *S
 	_, err = s.MkdirAll(t.Context(), "/outside-scope")
 	require.NoError(t, err)
 	opts := SearchOptions{ContentVersionIDs: []string{record.ContentVersionID}, TagID: tag.ID, MIMEType: "application/pdf", UnderPath: "/scope", ModifiedSince: at.Format(time.RFC3339Nano), ModifiedBefore: at.Add(time.Nanosecond).Format(time.RFC3339Nano)}
+	t.Run("excerpt stops before later match markers", func(t *testing.T) {
+		require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{BlobHash: version.BlobHash,
+			Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK,
+			Text: strings.Repeat("a", 600) + "\x01" + strings.Repeat("b", 10)}))
+		result, err := s.ResolveSemanticCandidates(t.Context(), record.ProcessingProfileFingerprint, record.BindingID,
+			record.InputKind, record.VectorSpace.ID, source.ManifestChecksum, neighbors, 1, opts, nil)
+		require.NoError(t, err)
+		require.Len(t, result.Candidates, 1)
+		require.Equal(t, strings.Repeat("a", 512), result.Candidates[0].Excerpt)
+		require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{BlobHash: version.BlobHash,
+			Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "before\x00after"}))
+	})
 	for _, excluded := range []string{"matching filters", "tag", "directory", "since", "before"} {
 		t.Run(excluded, func(t *testing.T) {
 			scope := opts
