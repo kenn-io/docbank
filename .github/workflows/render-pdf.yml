@@ -24,7 +24,7 @@ env:
 jobs:
   email-pdf-memory-proof:
     name: Email PDF memory proof
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
