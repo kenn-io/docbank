@@ -196,7 +196,8 @@ func RuntimeConfig(tb testing.TB, setup *sql.DB, cfg pgschema.Config) *pgx.ConnC
 	_, err = setup.ExecContext(ctx, "GRANT INSERT,DELETE ON "+schema+".vector_index_generations TO "+quotedRole+
 		"; GRANT INSERT,DELETE,UPDATE(generation_id,source_manifest_checksum) ON "+schema+".vector_index_heads TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(source_manifest_checksum,owner,fencing_token,lease_expires_at) ON "+schema+".vector_index_build_jobs TO "+quotedRole+
-		"; GRANT DELETE ON "+schema+".vector_index_reader_leases TO "+quotedRole+
+		"; GRANT INSERT,DELETE ON "+schema+".vector_index_reader_leases TO "+quotedRole+
+		"; GRANT INSERT,UPDATE(revision) ON "+schema+".vector_membership_epochs TO "+quotedRole+
 		"; GRANT INSERT,DELETE ON "+schema+".vector_index_unavailable_coverage TO "+quotedRole)
 	require.NoError(tb, err)
 

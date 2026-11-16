@@ -709,6 +709,10 @@ func (s *Store) installContentVersionWithOperationTx(
 		return Node{}, ContentVersion{}, fmt.Errorf(
 			"installing %s content version for node %d: %w", transitionKind, n.ID, err)
 	}
+	if err := invalidateVectorMembershipTx(ctx, tx, s.postgresSchema != "", `SELECT vector_space_id FROM embedding_heads
+	 WHERE content_version_id IN ($1,$2)`, n.CurrentVersionID, operation.versionID); err != nil {
+		return Node{}, ContentVersion{}, err
+	}
 	updated, err := nodeByIDTx(ctx, tx, n.ID)
 	if err != nil {
 		return Node{}, ContentVersion{}, err

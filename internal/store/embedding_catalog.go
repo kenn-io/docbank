@@ -479,11 +479,11 @@ func (s *Store) PublishEmbeddingHead(ctx context.Context, record EmbeddingHeadRe
 		return fmt.Errorf("publishing embedding head: %w", err)
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return publishEmbeddingHeadTx(ctx, tx, record)
+		return publishEmbeddingHeadTx(ctx, tx, record, s.postgresSchema != "")
 	})
 }
 
-func publishEmbeddingHeadTx(ctx context.Context, tx *sql.Tx, record EmbeddingHeadRecord) error {
+func publishEmbeddingHeadTx(ctx context.Context, tx *sql.Tx, record EmbeddingHeadRecord, postgres bool) error {
 	set, err := loadEmbeddingSetTx(ctx, tx, record.SetID)
 	if err != nil {
 		return fmt.Errorf("publishing embedding head: %w", err)
@@ -516,6 +516,15 @@ func publishEmbeddingHeadTx(ctx context.Context, tx *sql.Tx, record EmbeddingHea
 	if newerFailure {
 		return fmt.Errorf("publishing embedding head: stale or reused fencing token: %w", ErrEmbeddingAuthorityStale)
 	}
+	var priorSet, priorSpace string
+	if postgres {
+		err := tx.QueryRowContext(ctx, `SELECT embedding_set_id,vector_space_id FROM embedding_heads
+		 WHERE content_version_id=$1 AND profile_fingerprint=$2 AND binding_id=$3 AND input_kind=$4`,
+			record.Key.ContentVersionID, record.ProcessingProfileFingerprint, record.Key.BindingID, record.Key.InputKind).Scan(&priorSet, &priorSpace)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO embedding_heads(
 		content_version_id,binding_id,input_kind,embedding_set_id,vector_space_id,
 		profile_fingerprint,published_at,fencing_token
@@ -539,6 +548,12 @@ func publishEmbeddingHeadTx(ctx context.Context, tx *sql.Tx, record EmbeddingHea
 	}
 	if changed != 1 {
 		return fmt.Errorf("publishing embedding head: stale or reused fencing token: %w", ErrEmbeddingAuthorityStale)
+	}
+	if postgres && (priorSet != record.SetID || priorSpace != record.VectorSpaceID) {
+		if err := invalidateVectorMembershipTx(ctx, tx, true, `SELECT CAST($1 AS TEXT) AS vector_space_id
+		 UNION SELECT $2 WHERE $2<>''`, record.VectorSpaceID, priorSpace); err != nil {
+			return err
+		}
 	}
 	_, err = tx.ExecContext(ctx, `DELETE FROM embedding_failures
 		WHERE content_version_id=$1 AND profile_fingerprint=$2 AND binding_id=$3 AND input_kind=$4`,
@@ -1687,7 +1702,7 @@ func publishEmbeddingHeadWithLeaseTx(ctx context.Context, tx *sql.Tx, vaultID st
 	if err != nil {
 		return ProviderOperationAuthorization{}, err
 	}
-	return authorization, publishEmbeddingHeadTx(ctx, tx, record)
+	return authorization, publishEmbeddingHeadTx(ctx, tx, record, postgres)
 }
 
 func requireEmbeddingWorkerLeaseTx(ctx context.Context, tx *sql.Tx, rootID string,

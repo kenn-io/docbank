@@ -555,6 +555,9 @@ func (s *Store) insertPhotoAssetTx(ctx context.Context, tx *sql.Tx, nodeID int64
 		return PhotoAsset{}, fmt.Errorf("selecting initial photo display: %w", err)
 	}
 	asset.DisplayFileID, asset.DisplaySource = choice.FileID, choice.Source
+	if err := invalidatePhotoVectorMembershipTx(ctx, tx, s.postgresSchema != "", PhotoAsset{}, asset); err != nil {
+		return PhotoAsset{}, err
+	}
 	if err := validatePhotoAssetPointers(asset, asset.Files); err != nil {
 		return PhotoAsset{}, err
 	}
@@ -681,6 +684,9 @@ func (s *Store) commitPhotoAssetTx(ctx context.Context, tx *sql.Tx, before, asse
 	}
 	result, err := photoAssetByIDQuery(ctx, tx, asset.ID)
 	if err != nil {
+		return PhotoAsset{}, err
+	}
+	if err := invalidatePhotoVectorMembershipTx(ctx, tx, s.postgresSchema != "", before, result); err != nil {
 		return PhotoAsset{}, err
 	}
 	changes := photoAssetMemberChanges(before, result)

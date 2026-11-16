@@ -101,7 +101,7 @@ func (s *Store) VaultChanges(ctx context.Context, after string, limit int) (chan
 	return changes, head, rows.Err()
 }
 
-func publishRenditionHeadTx(ctx context.Context, tx *sql.Tx, head RenditionHeadRecord) error {
+func publishRenditionHeadTx(ctx context.Context, tx *sql.Tx, head RenditionHeadRecord, postgres bool) error {
 	var prior string
 	err := tx.QueryRowContext(ctx, `SELECT attachment_id FROM rendition_heads WHERE content_version_id=$1 AND profile_fingerprint=$2`, head.ContentVersionID, head.ProcessingProfileFingerprint).Scan(&prior)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -112,6 +112,13 @@ func publishRenditionHeadTx(ctx context.Context, tx *sql.Tx, head RenditionHeadR
 	}
 	if prior == head.AttachmentID {
 		return nil
+	}
+	if err := invalidateVectorMembershipTx(ctx, tx, postgres, `SELECT h.vector_space_id FROM embedding_heads h
+	 JOIN embedding_sets es ON es.embedding_set_id=h.embedding_set_id
+	 JOIN embedding_input_generations g ON g.generation_id=es.input_generation_id
+	 WHERE es.input_kind<>'image' AND es.content_version_id=$1 AND es.profile_fingerprint=$2
+	 AND g.attachment_id IN ($3,$4)`, head.ContentVersionID, head.ProcessingProfileFingerprint, prior, head.AttachmentID); err != nil {
+		return err
 	}
 	return recordProcessedTx(ctx, tx, head.ContentVersionID, "")
 }

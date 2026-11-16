@@ -79,7 +79,7 @@ func deleteEmbeddingAuthorityForVersionsTx(ctx context.Context, tx *sql.Tx, vers
 			versionID); err != nil {
 			return fmt.Errorf("releasing embedding roots for content version %s: %w", versionID, err)
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_heads WHERE content_version_id=$1`, versionID); err != nil {
+		if _, err := deleteEmbeddingHeadsTx(ctx, tx, postgres, `content_version_id=$1`, versionID); err != nil {
 			return fmt.Errorf("deleting embedding heads for content version %s: %w", versionID, err)
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_sets WHERE content_version_id=$1`, versionID); err != nil {

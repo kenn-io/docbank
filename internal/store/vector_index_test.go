@@ -174,9 +174,10 @@ func checkVectorIndexPublicationFencesMembershipDriftAndKeepsPriorHead(t *testin
 	assert.Equal(t, prior.ID, active.ID)
 }
 
-func TestVectorIndexReaderLeasePinsPriorGenerationAndExpiresWithFence(t *testing.T) {
+func checkVectorIndexReaderLeasePinsPriorGenerationAndExpiresWithFence(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, _, source := newPublishedVectorIndexFixture(t)
+	s, _, source := publishedVectorIndexFixture(t, open(t))
 	now := time.Date(2026, 8, 26, 13, 0, 0, 0, time.UTC)
 	space := source.VectorSpaceID
 	first := VectorIndexGenerationRecord{ID: hashVectorIndexTest("generation-a"),
@@ -184,7 +185,7 @@ func TestVectorIndexReaderLeasePinsPriorGenerationAndExpiresWithFence(t *testing
 		IndexManifestChecksum: hashVectorIndexTest("manifest-a"), Bytes: []byte("generation-a"),
 		RowCount: 1, BuiltAt: metadataEmbeddingTimeForTest(now)}
 	second := first
-	second.ID, second.SourceManifestChecksum, second.Bytes = hashVectorIndexTest("generation-b"), hashVectorIndexTest("source-b"), []byte("generation-b")
+	second.ID, second.Bytes = hashVectorIndexTest("generation-b"), []byte("generation-b")
 	require.NoError(t, putVectorIndexGenerationForTest(t, s, first))
 	lease, err := s.AcquireVectorIndexGeneration(t.Context(), space, "reader", now, time.Minute)
 	require.NoError(t, err)
@@ -333,13 +334,13 @@ func putVectorIndexGenerationForTest(tb testing.TB, s *Store, record VectorIndex
 	return s.withStorageTx(tb.Context(), func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(tb.Context(), `INSERT INTO vector_index_generations(
 			generation_id,vector_space_id,source_manifest_checksum,index_manifest_checksum,
-			generation_bytes,byte_size,row_count,built_at) VALUES(?,?,?,?,?,?,?,?)`, record.ID,
+			generation_bytes,byte_size,row_count,built_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, record.ID,
 			record.VectorSpaceID, record.SourceManifestChecksum, record.IndexManifestChecksum,
 			record.Bytes, len(record.Bytes), record.RowCount, record.BuiltAt); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(tb.Context(), `INSERT INTO vector_index_heads(
-			vector_space_id,generation_id,source_manifest_checksum) VALUES(?,?,?)
+			vector_space_id,generation_id,source_manifest_checksum) VALUES($1,$2,$3)
 			ON CONFLICT(vector_space_id) DO UPDATE SET generation_id=excluded.generation_id,
 			source_manifest_checksum=excluded.source_manifest_checksum`, record.VectorSpaceID,
 			record.ID, record.SourceManifestChecksum)
@@ -351,7 +352,7 @@ func vectorIndexGenerationExistsForTest(t *testing.T, s *Store, generationID str
 	t.Helper()
 	var present bool
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT EXISTS(
-		SELECT 1 FROM vector_index_generations WHERE generation_id=?)`, generationID).Scan(&present))
+		SELECT 1 FROM vector_index_generations WHERE generation_id=$1)`, generationID).Scan(&present))
 	return present
 }
 
@@ -453,19 +454,18 @@ func TestVectorIndexSweepIncludesSpacesAfterLastEmbeddingHeadIsRemoved(t *testin
 	require.Contains(t, spaces, source.VectorSpaceID)
 }
 
-func TestVectorIndexRetirementPreservesReadersUntilLeaseRelease(t *testing.T) {
+func checkVectorIndexRetirementPreservesReadersUntilLeaseRelease(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, _, source := newPublishedVectorIndexFixture(t)
+	s, record, source := publishedVectorIndexFixture(t, open(t))
 	now := time.Now().UTC()
 	generation := vectorIndexGenerationFixture("retiring", source, []byte("index"), now)
 	require.NoError(t, putVectorIndexGenerationForTest(t, s, generation))
 	lease, err := s.AcquireVectorIndexGeneration(t.Context(), source.VectorSpaceID, "reader", now, time.Minute)
 	require.NoError(t, err)
 	require.ErrorIs(t, s.RetireEmptyVectorIndexHead(t.Context(), source.VectorSpaceID, now), ErrVectorIndexSourceStale)
-	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(t.Context(), `DELETE FROM embedding_heads`)
-		return err
-	}))
+	_, err = s.PurgeDerivatives(t.Context(), PurgeRequest{ContentVersionIDs: []string{record.ContentVersionID}})
+	require.NoError(t, err)
 	require.NoError(t, s.RetireEmptyVectorIndexHead(t.Context(), source.VectorSpaceID, now))
 	_, err = s.ActiveVectorIndexGeneration(t.Context(), source.VectorSpaceID)
 	require.ErrorIs(t, err, ErrNotFound)
@@ -519,7 +519,7 @@ func TestVectorIndexAcquireRejectsHeadReplacedBeforeLease(t *testing.T) {
 	require.Equal(t, 1, reclaimed)
 	lease := VectorIndexReaderLease{ID: "reader-race", Generation: first, FencingToken: 1, ExpiresAt: now.Add(time.Minute)}
 	err = s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return insertVectorIndexReaderLeaseTx(t.Context(), tx, lease, "reader")
+		return insertVectorIndexReaderLeaseTx(t.Context(), tx, lease, "reader", s.postgresSchema != "")
 	})
 	require.ErrorIs(t, err, ErrVectorIndexSourceStale)
 	var count int

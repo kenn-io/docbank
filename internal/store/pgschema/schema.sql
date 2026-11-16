@@ -2544,3 +2544,9 @@ CREATE TABLE {{schema}}.storage_operation_stores (
     PRIMARY KEY (operation_id,store_id)
 );
 CREATE INDEX storage_operation_stores_store ON {{schema}}.storage_operation_stores(store_id,operation_id);
+
+-- Local derived membership revisions fence cached reader source checks.
+CREATE TABLE {{schema}}.vector_membership_epochs (
+    vector_space_id TEXT COLLATE "C" PRIMARY KEY,
+    revision BIGINT NOT NULL
+);
