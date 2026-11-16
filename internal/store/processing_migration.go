@@ -188,7 +188,7 @@ func (s *Store) migrateLegacyPlainTextTx(
 	}
 
 	if err := revokeStaleLegacyPlainTextHeadsTx(
-		ctx, tx, selected, eligible, profile.Fingerprint, blobHash,
+		ctx, tx, selected, eligible, profile.Fingerprint, blobHash, s.postgresSchema != "",
 	); err != nil {
 		return LegacyMigrationReport{}, err
 	}
@@ -218,7 +218,7 @@ func (s *Store) migrateLegacyPlainTextTx(
 		if err := insertLegacyRenditionAttachmentTx(ctx, tx, attachment, s.postgresSchema != ""); err != nil {
 			return LegacyMigrationReport{}, err
 		}
-		if err := publishRenditionHeadTx(ctx, tx, RenditionHeadRecord{ContentVersionID: version.versionID, ProcessingProfileFingerprint: profile.Fingerprint, AttachmentID: attachmentID, PublishedAt: row.extractedAt}); err != nil {
+		if err := publishRenditionHeadTx(ctx, tx, RenditionHeadRecord{ContentVersionID: version.versionID, ProcessingProfileFingerprint: profile.Fingerprint, AttachmentID: attachmentID, PublishedAt: row.extractedAt}, s.postgresSchema != ""); err != nil {
 			return LegacyMigrationReport{}, err
 		}
 		report.MigratedAttachments++
@@ -299,7 +299,7 @@ func (s *Store) migrateLegacyPlainTextTx(
 
 func revokeStaleLegacyPlainTextHeadsTx(
 	ctx context.Context, tx *sql.Tx, selected []legacySelectedVersion,
-	eligible map[string]legacyPlainTextRow, profileFingerprint, blobHash string,
+	eligible map[string]legacyPlainTextRow, profileFingerprint, blobHash string, postgres bool,
 ) error {
 	expected := make(map[string]string, len(selected))
 	for _, version := range selected {
@@ -357,8 +357,7 @@ func revokeStaleLegacyPlainTextHeadsTx(
 		return err
 	}
 	for _, head := range stale {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM rendition_heads
-			WHERE content_version_id=$1 AND profile_fingerprint=$2 AND attachment_id=$3`,
+		if _, err := deleteRenditionHeadsTx(ctx, tx, postgres, `content_version_id=$1 AND profile_fingerprint=$2 AND attachment_id=$3`,
 			head.versionID, profileFingerprint, head.attachmentID); err != nil {
 			return fmt.Errorf("revoking stale legacy rendition head %s: %w", head.attachmentID, err)
 		}

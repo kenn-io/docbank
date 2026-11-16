@@ -583,16 +583,16 @@ func (s *Store) AcquireVectorIndexGeneration(ctx context.Context, vectorSpaceID,
 		return lease, err
 	}
 	err = s.withBookkeepingTx(ctx, func(tx *sql.Tx) error {
-		return insertVectorIndexReaderLeaseTx(ctx, tx, lease, owner)
+		return insertVectorIndexReaderLeaseTx(ctx, tx, lease, owner, s.postgresSchema != "")
 	})
 	return lease, err
 }
 
-func insertVectorIndexReaderLeaseTx(ctx context.Context, tx *sql.Tx, lease VectorIndexReaderLease, owner string) error {
+func insertVectorIndexReaderLeaseTx(ctx context.Context, tx *sql.Tx, lease VectorIndexReaderLease, owner string, postgres bool) error {
 	result, err := tx.ExecContext(ctx, `INSERT INTO vector_index_reader_leases(
 		lease_id,generation_id,owner,fencing_token,lease_expires_at)
 		SELECT $1,generation_id,$2,$3,$4 FROM vector_index_heads WHERE vector_space_id=$5 AND generation_id=$6`,
-		lease.ID, owner, lease.FencingToken, lease.ExpiresAt.Format(timestampLayout), lease.Generation.VectorSpaceID, lease.Generation.ID)
+		lease.ID, storedString(postgres, owner), lease.FencingToken, lease.ExpiresAt.Format(timestampLayout), lease.Generation.VectorSpaceID, lease.Generation.ID)
 	if err != nil {
 		return err
 	}

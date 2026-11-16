@@ -633,7 +633,8 @@ GRANT INSERT, DELETE, UPDATE(generation_id, source_manifest_checksum)
     ON documents.vector_index_heads TO docbank_runtime;
 GRANT INSERT, UPDATE(source_manifest_checksum, owner, fencing_token, lease_expires_at)
     ON documents.vector_index_build_jobs TO docbank_runtime;
-GRANT DELETE ON documents.vector_index_reader_leases TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.vector_index_reader_leases TO docbank_runtime;
+GRANT INSERT, UPDATE (revision) ON documents.vector_membership_epochs TO docbank_runtime;
 GRANT INSERT, DELETE ON documents.vector_index_unavailable_coverage TO docbank_runtime;
 GRANT INSERT ON documents.page_documents, documents.page_frames,
     documents.page_recipes, documents.page_images, documents.email_generations,
@@ -1019,13 +1020,30 @@ retain accepted NUL and backslash characters through byte bindings. These
 catalogs remain outside portable metadata; index reconstruction uses retained
 embedding authority and bytes.
 
-Reader-lease acquisition, membership-epoch memoization, semantic result
-resolution and ranked/lexical search remain unqualified on PostgreSQL. The
-reader-lease table supports cleanup's pin checks, but the runtime fixture cannot
-insert leases. SQLite retains its existing per-space membership epochs and
-memoization; this port adds no PostgreSQL scan fallback to those query paths.
-Public PostgreSQL vault opening and PostgreSQL-target physical restore remain
-separate.
+Readers acquire and release the published generation on both backends. The
+lease pins its immutable bytes against cleanup until release or expiry. A head
+replaced between the read snapshot and lease insertion refuses acquisition;
+callers that require current membership at use time still recheck it. Reader
+owners retain accepted NUL and backslash characters. Lease bookkeeping does not
+advance the Store write revision or wake embedding discovery.
+
+The source checksum cache reads a per-space membership revision in the same
+repeatable-read snapshot as its members. PostgreSQL advances affected revisions
+in Go, in the transaction that changes an embedding or rendition head, a node's
+current version or trash state, matching preview evidence, or a photo's display
+and visibility. Deletion captures the affected spaces before removing their
+last heads. Failed writes roll back the membership revisions too. Identical
+publication, an unchanged photo display, and writes to another vector space
+reuse the warm cache. A reader holding an older snapshot cannot replace a newer
+cached checksum. These revisions are local derived state, outside portable
+metadata; a fresh Store starts with an empty cache.
+
+SQLite keeps its released membership triggers and receives no additional
+maintenance queries. The shared reader scenarios cover native original/chunk
+and image membership changes, leases, cleanup, warm-cache reuse and snapshots.
+Face-member capture, semantic result resolution and ranked/lexical search remain
+unqualified on PostgreSQL. Public PostgreSQL vault opening and PostgreSQL-target
+physical restore remain separate.
 
 #### Backup capture and SQLite recovery
 

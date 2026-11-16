@@ -22,7 +22,7 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
-	{name: "vector-index-publication", postgres: "native operations", scope: "Source membership, fenced build claims, immutable generation publication, crash retry and garbage collection; excludes reader-lease acquisition, membership memoization and ranked search; native worker/service completion and reconstruction run in internal/processing.", scenarios: []backendScenario{
+	{name: "vector-index-publication", postgres: "native operations", scope: "Original/chunk/image source membership, fenced publication and recovery, reader leases and per-space source memoization; excludes face-member capture and ranked/lexical search; native worker/service completion and reconstruction run in internal/processing.", scenarios: []backendScenario{
 		{"VectorIndexSourceCapturesExactEligibleMembership", func(t *testing.T) {
 			t.Helper()
 			t.Parallel()
@@ -68,6 +68,64 @@ var backendSuites = []backendSuite{
 			t.Parallel()
 			checkVectorIndexSourceCaptureMatchesPerMemberRule(t, newPostgresQueryStore)
 		}},
+		{"VectorReaderAcceptedOwnersAndBookkeeping", func(t *testing.T) {
+			t.Helper()
+			checkVectorReaderAcceptedOwnersAndBookkeeping(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkVectorReaderAcceptedOwnersAndBookkeeping(t, newPostgresQueryStore)
+		}},
+		{"VectorReaderMemoTracksNativeWrites", func(t *testing.T) {
+			t.Helper()
+			checkVectorReaderMemoTracksNativeWrites(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkVectorReaderMemoTracksNativeWrites(t, newPostgresQueryStore)
+		}},
+		{"VectorReaderMemoReusesUnchangedMembership", func(t *testing.T) {
+			t.Helper()
+			checkVectorReaderMemoReusesUnchangedMembership(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkVectorReaderMemoReusesUnchangedMembership(t, newPostgresQueryStore)
+		}},
+		{"VectorReaderMemoTracksPhotoDisplay", func(t *testing.T) {
+			t.Helper()
+			checkVectorReaderMemoTracksPhotoDisplay(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkVectorReaderMemoTracksPhotoDisplay(t, newPostgresQueryStore)
+		}},
+		{"VectorReaderMemoTracksRenditionChanges", func(t *testing.T) {
+			t.Helper()
+			checkVectorReaderMemoTracksRenditionChanges(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkVectorReaderMemoTracksRenditionChanges(t, newPostgresQueryStore)
+		}},
+		{"VectorReaderMemoUsesConsumerSnapshot", func(t *testing.T) {
+			t.Helper()
+			checkVectorReaderMemoUsesConsumerSnapshot(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkVectorReaderMemoUsesConsumerSnapshot(t, newPostgresQueryStore)
+		}},
+		{"VectorIndexReaderLeasePinsPriorGenerationAndExpiresWithFence", func(t *testing.T) {
+			t.Helper()
+			checkVectorIndexReaderLeasePinsPriorGenerationAndExpiresWithFence(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkVectorIndexReaderLeasePinsPriorGenerationAndExpiresWithFence(t, newPostgresQueryStore)
+		}},
+		{"VectorIndexRetirementPreservesReadersUntilLeaseRelease", func(t *testing.T) {
+			t.Helper()
+			checkVectorIndexRetirementPreservesReadersUntilLeaseRelease(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkVectorIndexRetirementPreservesReadersUntilLeaseRelease(t, newPostgresQueryStore)
+		}},
+		{"VectorReaderRejectsConcurrentHeadReplacement", nil, checkVectorReaderRejectsConcurrentHeadReplacementPostgres},
+		{"VectorReaderInvalidationRollback", nil, checkVectorReaderInvalidationRollbackPostgres},
 		{"VectorIndexPublicationRollback", nil, checkVectorIndexPublicationRollbackPostgres},
 		{"VectorIndexGenerationSnapshot", nil, checkVectorIndexGenerationSnapshotPostgres},
 	}},

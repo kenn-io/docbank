@@ -127,6 +127,14 @@ func (s *Store) publishVisualPreview(
 			return errors.New("visual preview recipe already has a different result")
 		}
 		generation = stored
+		if inserted != 0 && preview.State == document.VisualPreviewReady {
+			if err := invalidateVectorMembershipTx(ctx, tx, s.postgresSchema != "", `SELECT h.vector_space_id FROM embedding_heads h
+			 JOIN embedding_sets es ON es.embedding_set_id=h.embedding_set_id
+			 JOIN embedding_input_generations g ON g.generation_id=es.input_generation_id
+			 WHERE es.input_kind='image' AND es.content_version_id=$1 AND g.evidence_fingerprint=$2`, versionID, checksum); err != nil {
+				return err
+			}
+		}
 		if !activeHead {
 			return nil
 		}

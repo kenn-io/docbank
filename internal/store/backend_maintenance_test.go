@@ -76,7 +76,7 @@ var backendMaintenanceEffects = []backendMaintenance{
  embedding_vector_spaces_immutable_update embedding_input_generations_immutable_update
  embedding_generation_inputs_immutable_update embedding_vector_sets_immutable_update
  embedding_vector_rows_immutable_update embedding_sets_immutable_update`},
-	{"vector source membership epochs", "SQLite triggers; PostgreSQL reader memoization unqualified", "SQLite-only read memoization; PostgreSQL vector publication uses fresh source capture, while reader acquisition and ranked search remain unqualified", `
+	{"vector source membership epochs", "vector_membership.go; publication, deletion, version, trash and photo writers", "vector-index-publication contracts; original/chunk/image membership only; face capture and ranked/lexical search remain unqualified", `
  vector_source_embedding_heads_insert vector_source_embedding_heads_update vector_source_embedding_heads_delete
  vector_source_rendition_heads_insert vector_source_rendition_heads_update vector_source_rendition_heads_delete
  vector_source_visual_preview_generations_insert vector_source_visual_preview_generations_delete

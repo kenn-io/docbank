@@ -131,7 +131,7 @@ func (s *Store) revokeMediaOccurrenceTx(ctx context.Context, tx *sql.Tx, princip
 		if s.postgresSchema != "" {
 			bindingMatch = `position('"input_binding":' || i.input_binding_json in j.execution_identity_json)>0`
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM rendition_heads WHERE attachment_id IN (
+		if _, err := deleteRenditionHeadsTx(ctx, tx, s.postgresSchema != "", `attachment_id IN (
 			SELECT a.attachment_id FROM rendition_attachments a
 			JOIN rendition_jobs j ON j.job_id=a.build_id
 			JOIN media_input_artifacts i ON i.occurrence_id=$1

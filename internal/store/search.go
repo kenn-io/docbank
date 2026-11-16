@@ -2320,11 +2320,10 @@ func insertRenditionAttachmentAndHeadTx(
 		}
 		return nil
 	}
-	if err := publishRenditionHeadTx(ctx, tx, head); err != nil {
+	if err := publishRenditionHeadTx(ctx, tx, head, postgres); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_heads
-		WHERE content_version_id=$1 AND profile_fingerprint=$2 AND EXISTS (
+	if _, err := deleteEmbeddingHeadsTx(ctx, tx, postgres, `content_version_id=$1 AND profile_fingerprint=$2 AND EXISTS (
 			SELECT 1 FROM embedding_sets s
 			JOIN embedding_input_generations g ON g.generation_id=s.input_generation_id
 			WHERE s.embedding_set_id=embedding_heads.embedding_set_id

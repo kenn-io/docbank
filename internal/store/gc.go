@@ -339,8 +339,7 @@ func (s *Store) PurgeDerivatives(
 		}
 
 		for _, attachment := range selected {
-			result, err := tx.ExecContext(ctx,
-				`DELETE FROM rendition_heads WHERE attachment_id=$1`, attachment.id)
+			result, err := deleteRenditionHeadsTx(ctx, tx, s.postgresSchema != "", `attachment_id=$1`, attachment.id)
 			if err != nil {
 				return fmt.Errorf("removing rendition head for attachment %s: %w", attachment.id, err)
 			}
@@ -1033,8 +1032,7 @@ func (s *Store) purgeEmbeddingCatalogTx(
 		}
 		if rooted {
 			if candidate.explicit {
-				result, err := tx.ExecContext(ctx,
-					`DELETE FROM embedding_heads WHERE embedding_set_id=$1`, candidate.id)
+				result, err := deleteEmbeddingHeadsTx(ctx, tx, s.postgresSchema != "", `embedding_set_id=$1`, candidate.id)
 				if err != nil {
 					return nil, fmt.Errorf("removing rooted embedding head: %w", err)
 				}
@@ -1080,8 +1078,7 @@ func (s *Store) purgeEmbeddingCatalogTx(
 		if !collectGarbage && !all {
 			vectorIDs = append(vectorIDs, candidate.vectorSetID)
 		}
-		result, err := tx.ExecContext(ctx,
-			`DELETE FROM embedding_heads WHERE embedding_set_id=$1`, candidate.id)
+		result, err := deleteEmbeddingHeadsTx(ctx, tx, s.postgresSchema != "", `embedding_set_id=$1`, candidate.id)
 		if err != nil {
 			return nil, fmt.Errorf("removing embedding head: %w", err)
 		}
