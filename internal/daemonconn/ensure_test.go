@@ -230,7 +230,7 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 	assert.False(t, discoverOptions(true).Accept(rec, info), "daemons without unavailable-index search errors must be replaced")
 	rec.Metadata[metaProtocolVersion] = "123" // Before face suggestions.
 	assert.False(t, discoverOptions(true).Accept(rec, info), "face suggestion clients must replace daemons without their routes")
-	rec.Metadata[metaProtocolVersion] = "128" // Before document facts routes and people facts freshness.
+	rec.Metadata[metaProtocolVersion] = "129" // Before document facts routes and people facts freshness.
 	assert.False(t, discoverOptions(true).Accept(rec, info), "daemons without document facts routes or people facts freshness must be replaced")
 	rec.Metadata[metaProtocolVersion] = daemonProtocolVersion + "-other"
 	assert.False(t, discoverOptions(true).Accept(rec, info), "an incompatible protocol must be replaced")

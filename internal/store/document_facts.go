@@ -60,7 +60,7 @@ func (s *Store) freshEventStateInTx(ctx context.Context, tx *sql.Tx, versionID s
 	// SQLite binds $n parameters in first-appearance order; keep it aligned with PostgreSQL.
 	var attempt, head, fresh, failed bool
 	err = tx.QueryRowContext(ctx, `SELECT a.content_version_id IS NOT NULL,h.content_version_id IS NOT NULL,
- COALESCE(`+documentEventFreshIndexedSQL("$1", "$2", "$3")+`,false),
+ COALESCE(`+documentEventFreshIndexedSQL("a", "d", "h", "g", "$1", "$2", "$3")+`,false),
  COALESCE(a.input_epoch=$1 AND a.input_revision=COALESCE(d.revision,0) AND a.state IN ('failed','unavailable'),false)
  FROM content_versions cv LEFT JOIN document_event_dirty d ON d.content_version_id=cv.version_id
  LEFT JOIN document_event_attempts a ON a.content_version_id=cv.version_id
