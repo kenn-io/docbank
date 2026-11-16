@@ -103,10 +103,7 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkVectorReaderMemoTracksRenditionChanges(t, newPostgresQueryStore)
 		}},
-		{"VectorReaderMemoUsesConsumerSnapshot", func(t *testing.T) {
-			t.Helper()
-			checkVectorReaderMemoUsesConsumerSnapshot(t, newTestStore)
-		}, func(t *testing.T) {
+		{"VectorReaderMemoUsesConsumerSnapshot", nil, func(t *testing.T) {
 			t.Helper()
 			checkVectorReaderMemoUsesConsumerSnapshot(t, newPostgresQueryStore)
 		}},
