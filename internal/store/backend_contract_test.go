@@ -22,6 +22,107 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
+	{name: "semantic-results", postgres: "native operations", scope: "Current original/chunk/image candidate resolution, scoped coverage, evidence revalidation and similar-document grouping; excludes lexical queries and face capture.", scenarios: []backendScenario{
+		{"SemanticResultsUseCurrentDerivedEvidence", func(t *testing.T) {
+			t.Helper()
+			checkSemanticResultsUseCurrentDerivedEvidence(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSemanticResultsUseCurrentDerivedEvidence(t, newPostgresQueryStore)
+		}},
+		{"SemanticScopeFiltersAndExcerpts", func(t *testing.T) {
+			t.Helper()
+			checkSemanticScopeFiltersAndExcerpts(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSemanticScopeFiltersAndExcerpts(t, newPostgresQueryStore)
+		}},
+		{"SemanticResolutionSnapshot", nil, checkSemanticResolutionSnapshotPostgres},
+		{"SimilarSharedRowsExpandMembershipBeforeSourceExclusion", func(t *testing.T) {
+			t.Helper()
+			checkSimilarSharedRowsExpandMembershipBeforeSourceExclusion(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSimilarSharedRowsExpandMembershipBeforeSourceExclusion(t, newPostgresQueryStore)
+		}},
+		{"SimilarDuplicateGroupUsesHighestScoringRepresentative", func(t *testing.T) {
+			t.Helper()
+			checkSimilarDuplicateGroupUsesHighestScoringRepresentative(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSimilarDuplicateGroupUsesHighestScoringRepresentative(t, newPostgresQueryStore)
+		}},
+		{"SimilarMissingHeadBeforeLeaseAndSourceFenceBeforeCoverage", func(t *testing.T) {
+			t.Helper()
+			checkSimilarMissingHeadBeforeLeaseAndSourceFenceBeforeCoverage(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSimilarMissingHeadBeforeLeaseAndSourceFenceBeforeCoverage(t, newPostgresQueryStore)
+		}},
+		{"SimilarOrdinarySemanticSearchPreservesIdenticalDocuments", func(t *testing.T) {
+			t.Helper()
+			checkSimilarOrdinarySemanticSearchPreservesIdenticalDocuments(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSimilarOrdinarySemanticSearchPreservesIdenticalDocuments(t, newPostgresQueryStore)
+		}},
+		{"ResolveAndRevalidateSemanticCandidatesRespectScopeAndReportCoverage", func(t *testing.T) {
+			t.Helper()
+			checkResolveAndRevalidateSemanticCandidatesRespectScopeAndReportCoverage(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkResolveAndRevalidateSemanticCandidatesRespectScopeAndReportCoverage(t, newPostgresQueryStore)
+		}},
+		{"ResolveAndRevalidateSemanticCandidatesIsolateSharedVectorSpaceAndCoverage", func(t *testing.T) {
+			t.Helper()
+			checkResolveAndRevalidateSemanticCandidatesIsolateSharedVectorSpaceAndCoverage(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkResolveAndRevalidateSemanticCandidatesIsolateSharedVectorSpaceAndCoverage(t, newPostgresQueryStore)
+		}},
+		{"ResolveSemanticCandidatesRejectsStaleSourceManifest", func(t *testing.T) {
+			t.Helper()
+			checkResolveSemanticCandidatesRejectsStaleSourceManifest(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkResolveSemanticCandidatesRejectsStaleSourceManifest(t, newPostgresQueryStore)
+		}},
+		{"RevalidateSearchCandidatesPreservesOrderAtTheCandidateLimit", func(t *testing.T) {
+			t.Helper()
+			checkRevalidateSearchCandidatesPreservesOrderAtTheCandidateLimit(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkRevalidateSearchCandidatesPreservesOrderAtTheCandidateLimit(t, newPostgresQueryStore)
+		}},
+		{"RevalidateSearchCandidatesRefreshesPathsAfterFiltering", func(t *testing.T) {
+			t.Helper()
+			checkRevalidateSearchCandidatesRefreshesPathsAfterFiltering(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkRevalidateSearchCandidatesRefreshesPathsAfterFiltering(t, newPostgresQueryStore)
+		}},
+		{"RevalidateSearchCandidatesAppliesCurrentScopeAndBlobEvidence", func(t *testing.T) {
+			t.Helper()
+			checkRevalidateSearchCandidatesAppliesCurrentScopeAndBlobEvidence(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkRevalidateSearchCandidatesAppliesCurrentScopeAndBlobEvidence(t, newPostgresQueryStore)
+		}},
+		{"AcquireSemanticSearchAuthorityUsesStoredDescriptor", func(t *testing.T) {
+			t.Helper()
+			checkAcquireSemanticSearchAuthorityUsesStoredDescriptor(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkAcquireSemanticSearchAuthorityUsesStoredDescriptor(t, newPostgresQueryStore)
+		}},
+		{"ResolveSemanticCandidatesPagesPastIneligibleNeighbors", func(t *testing.T) {
+			t.Helper()
+			checkResolveSemanticCandidatesPagesPastIneligibleNeighbors(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkResolveSemanticCandidatesPagesPastIneligibleNeighbors(t, newPostgresQueryStore)
+		}},
+	}},
 	{name: "vector-index-publication", postgres: "native operations", scope: "Original/chunk/image source membership, fenced publication and recovery, reader leases and per-space source memoization; excludes face-member capture and ranked/lexical search; native worker/service completion and reconstruction run in internal/processing.", scenarios: []backendScenario{
 		{"VectorIndexSourceCapturesExactEligibleMembership", func(t *testing.T) {
 			t.Helper()

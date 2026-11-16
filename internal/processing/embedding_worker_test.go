@@ -1233,11 +1233,6 @@ func newRealEmbeddingWorker(tb testing.TB, kind document.EmbeddingInputKind, add
 	return embeddingWorkerWithFixture(tb, newPublicationFixture, kind, additionalBindings...)
 }
 
-func newRealEmbeddingWorkerWithDescriptor(tb testing.TB, kind document.EmbeddingInputKind, descriptor *document.EmbeddingDescriptor, additionalBindings ...string) (publicationFixture, *embeddingWorkerFixture, *EmbeddingWorker, store.EmbeddingJobRequest, EmbeddingWorkerConfig) {
-	tb.Helper()
-	return embeddingWorkerWithDescriptorFixture(tb, newPublicationFixture, kind, descriptor, additionalBindings...)
-}
-
 func embeddingWorkerWithFixture(tb testing.TB, makeFixture publicationFixtureFactory, kind document.EmbeddingInputKind, additionalBindings ...string) (publicationFixture, *embeddingWorkerFixture, *EmbeddingWorker, store.EmbeddingJobRequest) {
 	tb.Helper()
 	fixture, fake, worker, request, _ := embeddingWorkerWithDescriptorFixture(tb, makeFixture, kind, nil, additionalBindings...)

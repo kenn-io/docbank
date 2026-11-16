@@ -152,6 +152,14 @@ func TestEmbeddingPhotoWorkersPostgres(t *testing.T) {
 
 func TestVectorIndexWorkersPostgres(t *testing.T) {
 	t.Parallel()
+	t.Run("EmbeddingSemanticSearchAfterSecondEndpointMove", func(t *testing.T) {
+		t.Parallel()
+		checkEmbeddingSemanticSearchAfterSecondEndpointMove(t, postgresPublicationFixture)
+	})
+	t.Run("EmbeddingUpgradeRetainsLocalSimilarityAfterConsentRevocation", func(t *testing.T) {
+		t.Parallel()
+		checkEmbeddingUpgradeRetainsLocalSimilarityAfterConsentRevocation(t, postgresPublicationFixture)
+	})
 	t.Run("ProcessingServiceCompletesImageEmbedding", func(t *testing.T) {
 		t.Parallel()
 		checkProcessingServiceCompletesImageEmbedding(t, postgresPhotoDescriptionFixture)

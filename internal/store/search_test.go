@@ -49,11 +49,12 @@ func (q *searchHydrationCancelQuerier) QueryContext(ctx context.Context, query s
 	return q.metadataQuerier.QueryContext(ctx, query, args...)
 }
 
-func TestSimilarSharedRowsExpandMembershipBeforeSourceExclusion(t *testing.T) {
+func checkSimilarSharedRowsExpandMembershipBeforeSourceExclusion(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, sourceVersion, profile, sourceAttachment := newEmbeddingCatalogFixture(t)
+	s, sourceVersion, profile, sourceAttachment := seedEmbeddingCatalog(t, open(t))
 	var buildID string
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT build_id FROM rendition_attachments WHERE attachment_id=?`, sourceAttachment).Scan(&buildID))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT build_id FROM rendition_attachments WHERE attachment_id=$1`, sourceAttachment).Scan(&buildID))
 	sourceNode, err := s.ContentVersionByID(t.Context(), sourceVersion)
 	require.NoError(t, err)
 	versions := []string{sourceVersion}
@@ -100,7 +101,7 @@ func TestSimilarSharedRowsExpandMembershipBeforeSourceExclusion(t *testing.T) {
 		defer func() { require.NoError(t, tx.Rollback()) }()
 		for i := range 2 {
 			keys := semanticNeighborKeys(neighbors[i : i+1])
-			members, err := loadSemanticMemberships(t.Context(), tx, profile.Fingerprint, "chunk", records[0].InputKind, records[0].VectorSpace.ID, "", nil, keys)
+			members, err := s.loadSemanticMemberships(t.Context(), tx, profile.Fingerprint, "chunk", records[0].InputKind, records[0].VectorSpace.ID, SearchOptions{}, keys)
 			require.NoError(t, err)
 			require.Len(t, members, 1, "a neighbor must not load the other inputs in its set")
 			require.Len(t, members[keys[0]], 3, "all document memberships of the requested row survive")
@@ -134,13 +135,14 @@ func TestSimilarSharedRowsExpandMembershipBeforeSourceExclusion(t *testing.T) {
 	require.ErrorIs(t, err, ErrProcessingSourceFenceStaleVersion)
 }
 
-func TestSimilarDuplicateGroupUsesHighestScoringRepresentative(t *testing.T) {
+func checkSimilarDuplicateGroupUsesHighestScoringRepresentative(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, sourceVersion, profile, _ := newEmbeddingCatalogFixture(t)
+	s, sourceVersion, profile, _ := seedEmbeddingCatalog(t, open(t))
 	sourceNode, err := s.ContentVersionByID(t.Context(), sourceVersion)
 	require.NoError(t, err)
 	var secondVersion string
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT version_id FROM content_versions WHERE version_id<>? AND blob_hash=? LIMIT 1`, sourceVersion, catalogSourceHash).Scan(&secondVersion))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT version_id FROM content_versions WHERE version_id<>$1 AND blob_hash=$2 LIMIT 1`, sourceVersion, catalogSourceHash).Scan(&secondVersion))
 	third, err := s.CreateFile(t.Context(), s.RootID(), "third.txt", catalogSourceHash, 20, "text/plain")
 	require.NoError(t, err)
 	versions := []string{sourceVersion, secondVersion, third.CurrentVersionID}
@@ -171,11 +173,22 @@ func TestSimilarDuplicateGroupUsesHighestScoringRepresentative(t *testing.T) {
 	assert.Equal(t, third.CurrentVersionID, resolution.Candidates[0].InputID)
 	assert.InDelta(t, 0.9, resolution.Candidates[0].Score, 1e-12)
 	assert.Equal(t, 1, resolution.Candidates[0].DuplicateCount)
+
+	// The source PDF can be compared against a result scope containing only text.
+	scoped, err := s.ResolveSimilarCandidates(t.Context(), profile.Fingerprint, "optional", records[0].InputKind,
+		records[0].VectorSpace.ID, source.ManifestChecksum, neighbors, 1,
+		SearchOptions{ContentVersionIDs: versions, MIMEType: "text/plain"},
+		SimilarSource{NodeID: sourceNode.NodeID, ContentVersionID: sourceVersion})
+	require.NoError(t, err)
+	require.Len(t, scoped.Candidates, 1)
+	assert.Equal(t, third.ID, scoped.Candidates[0].NodeID)
+	assert.Zero(t, scoped.Candidates[0].DuplicateCount)
 }
 
-func TestSimilarMissingHeadBeforeLeaseAndSourceFenceBeforeCoverage(t *testing.T) {
+func checkSimilarMissingHeadBeforeLeaseAndSourceFenceBeforeCoverage(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, version, profile, _ := newEmbeddingCatalogFixture(t)
+	s, version, profile, _ := seedEmbeddingCatalog(t, open(t))
 	content, err := s.ContentVersionByID(t.Context(), version)
 	require.NoError(t, err)
 	source := SimilarSource{NodeID: content.NodeID, ContentVersionID: version}
@@ -186,11 +199,12 @@ func TestSimilarMissingHeadBeforeLeaseAndSourceFenceBeforeCoverage(t *testing.T)
 	require.ErrorIs(t, err, ErrInvalidProcessingSourceFence)
 }
 
-func TestSimilarOrdinarySemanticSearchPreservesIdenticalDocuments(t *testing.T) {
+func checkSimilarOrdinarySemanticSearchPreservesIdenticalDocuments(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, first, profile, _ := newEmbeddingCatalogFixture(t)
+	s, first, profile, _ := seedEmbeddingCatalog(t, open(t))
 	var second string
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT version_id FROM content_versions WHERE version_id<>? AND blob_hash=? LIMIT 1`, first, catalogSourceHash).Scan(&second))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT version_id FROM content_versions WHERE version_id<>$1 AND blob_hash=$2 LIMIT 1`, first, catalogSourceHash).Scan(&second))
 	var neighbors []vectorindex.Neighbor
 	var space string
 	for _, version := range []string{first, second} {
@@ -318,9 +332,10 @@ func TestResolveSemanticCandidatesCollapsesPhotoDuplicatesBeforeLimit(t *testing
 	}
 }
 
-func TestResolveAndRevalidateSemanticCandidatesRespectScopeAndReportCoverage(t *testing.T) {
+func checkResolveAndRevalidateSemanticCandidatesRespectScopeAndReportCoverage(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 	version, err := s.ContentVersionByID(t.Context(), versionID)
 	require.NoError(t, err)
 	excerpt := strings.Repeat("界", 512)
@@ -385,9 +400,10 @@ func TestResolveAndRevalidateSemanticCandidatesRespectScopeAndReportCoverage(t *
 	assert.False(t, filtered.Truncated)
 }
 
-func TestResolveAndRevalidateSemanticCandidatesIsolateSharedVectorSpaceAndCoverage(t *testing.T) {
+func checkResolveAndRevalidateSemanticCandidatesIsolateSharedVectorSpaceAndCoverage(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 	otherProfile := embeddingCatalogProfileVariant(t)
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
 		return ensureProcessingProfileTx(t.Context(), tx, otherProfile, s.postgresSchema != "")
@@ -449,9 +465,10 @@ func TestResolveAndRevalidateSemanticCandidatesIsolateSharedVectorSpaceAndCovera
 	}
 }
 
-func TestResolveSemanticCandidatesRejectsStaleSourceManifest(t *testing.T) {
+func checkResolveSemanticCandidatesRejectsStaleSourceManifest(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
@@ -468,9 +485,10 @@ func TestResolveSemanticCandidatesRejectsStaleSourceManifest(t *testing.T) {
 	require.ErrorIs(t, err, ErrVectorIndexSourceStale)
 }
 
-func TestRevalidateSearchCandidatesPreservesOrderAtTheCandidateLimit(t *testing.T) {
+func checkRevalidateSearchCandidatesPreservesOrderAtTheCandidateLimit(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	first, err := s.CreateFile(t.Context(), s.RootID(), "first.txt", fakeHash("first"), 5, "text/plain")
 	require.NoError(t, err)
 	second, err := s.CreateFile(t.Context(), s.RootID(), "second.txt", fakeHash("second"), 6, "text/plain")
@@ -495,9 +513,10 @@ func TestRevalidateSearchCandidatesPreservesOrderAtTheCandidateLimit(t *testing.
 	}
 }
 
-func TestRevalidateSearchCandidatesRefreshesPathsAfterFiltering(t *testing.T) {
+func checkRevalidateSearchCandidatesRefreshesPathsAfterFiltering(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	parent, err := s.MkdirAll(ctx, "/before/資料")
 	require.NoError(t, err)
@@ -540,9 +559,10 @@ func TestRevalidateSearchCandidatesRefreshesPathsAfterFiltering(t *testing.T) {
 	require.Empty(t, result.Candidates)
 }
 
-func TestRevalidateSearchCandidatesAppliesCurrentScopeAndBlobEvidence(t *testing.T) {
+func checkRevalidateSearchCandidatesAppliesCurrentScopeAndBlobEvidence(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	text, err := s.CreateFile(t.Context(), s.RootID(), "text.txt", fakeHash("text"), 4, "text/plain")
 	require.NoError(t, err)
 	pdf, err := s.CreateFile(t.Context(), s.RootID(), "paper.pdf", fakeHash("pdf"), 3, "application/pdf")
@@ -862,9 +882,10 @@ func TestAcquireSemanticSearchAuthorityUnavailableBindings(t *testing.T) {
 	}
 }
 
-func TestAcquireSemanticSearchAuthorityUsesStoredDescriptor(t *testing.T) {
+func checkAcquireSemanticSearchAuthorityUsesStoredDescriptor(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versionID, profile, _ := newEmbeddingCatalogFixture(t)
+	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 	record := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, "optional", "")
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
@@ -3087,9 +3108,10 @@ func TestSearchContentFirstGenerationSources(t *testing.T) {
 	}
 }
 
-func TestResolveSemanticCandidatesPagesPastIneligibleNeighbors(t *testing.T) {
+func checkResolveSemanticCandidatesPagesPastIneligibleNeighbors(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, version, profile, _ := newEmbeddingCatalogFixture(t)
+	s, version, profile, _ := seedEmbeddingCatalog(t, open(t))
 	first, err := s.ContentVersionByID(t.Context(), version)
 	require.NoError(t, err)
 	nodes := []Node{{ID: first.NodeID, CurrentVersionID: version}}
@@ -3257,17 +3279,17 @@ func TestSemanticAcquisitionSkipsUnscopedRowsAndMatchesVersionFence(t *testing.T
 		publish(t, record, 1)
 	}
 	counted := &membershipCountingQuerier{metadataQuerier: s.db}
-	rows, wholeSpace, err := semanticANNRowsForSourceTx(ctx, counted, profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, space, SearchOptions{})
+	rows, wholeSpace, err := s.semanticANNRowsForSourceTx(ctx, counted, profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, space, SearchOptions{})
 	require.NoError(t, err)
 	require.True(t, wholeSpace)
 	require.Nil(t, rows)
 	require.Zero(t, counted.queries, "unscoped acquisition must not read the catalog")
 	opts := SearchOptions{ContentVersionIDs: versions}
-	rows, _, err = semanticANNRowsForSourceTx(ctx, s.db, profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, space, opts)
+	rows, _, err = s.semanticANNRowsForSourceTx(ctx, s.db, profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile, space, opts)
 	require.NoError(t, err)
-	filter, args := searchFilterSQL(opts)
+	filter, args := searchFilterSQL(opts, false, 0)
 	args = append([]any{space, profile.Fingerprint, "optional", document.EmbeddingInputOriginalFile}, args...)
-	oldRows, err := s.db.QueryContext(ctx, `SELECT evr.vector_set_id,evr.input_id,evr.checksum `+semanticMembershipSQL(`FROM embedding_sets es`)+filter, args...)
+	oldRows, err := s.db.QueryContext(ctx, `SELECT evr.vector_set_id,evr.input_id,evr.checksum `+semanticMembershipSQL(`FROM embedding_sets es`, 0)+filter, args...)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, oldRows.Close()) }()
 	var want []vectorindex.RowIdentity
@@ -3293,7 +3315,7 @@ func TestSemanticSparseFilteredAcquisitionUsesEmbeddingCandidates(t *testing.T) 
 		require.NoError(t, err)
 	}
 	q := &semanticScanPlanQuerier{metadataQuerier: s.db, store: s, t: t}
-	_, _, err := semanticANNRowsForSourceTx(t.Context(), q, profile.Fingerprint, "optional", record.InputKind, record.VectorSpace.ID, SearchOptions{MIMEType: "application/pdf"})
+	_, _, err := s.semanticANNRowsForSourceTx(t.Context(), q, profile.Fingerprint, "optional", record.InputKind, record.VectorSpace.ID, SearchOptions{MIMEType: "application/pdf"})
 	require.NoError(t, err)
 	// Start with embedding candidates. Materializing all matching files makes
 	// sparse semantic searches grow with unembedded files.
@@ -3304,7 +3326,7 @@ func TestSemanticVersionFenceAcquisitionUsesKeyLookups(t *testing.T) {
 	t.Parallel()
 	s, record, _ := newPublishedVectorIndexFixture(t)
 	q := &semanticScanPlanQuerier{metadataQuerier: s.db, store: s, t: t}
-	rows, wholeSpace, err := semanticANNRowsForSourceTx(t.Context(), q, record.ProcessingProfileFingerprint, record.BindingID,
+	rows, wholeSpace, err := s.semanticANNRowsForSourceTx(t.Context(), q, record.ProcessingProfileFingerprint, record.BindingID,
 		record.InputKind, record.VectorSpace.ID, SearchOptions{ContentVersionIDs: []string{record.ContentVersionID}})
 	require.NoError(t, err)
 	require.False(t, wholeSpace)

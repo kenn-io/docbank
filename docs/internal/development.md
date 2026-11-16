@@ -1041,9 +1041,42 @@ metadata; a fresh Store starts with an empty cache.
 SQLite keeps its released membership triggers and receives no additional
 maintenance queries. The shared reader scenarios cover native original/chunk
 and image membership changes, leases, cleanup, warm-cache reuse and snapshots.
-Face-member capture, semantic result resolution and ranked/lexical search remain
-unqualified on PostgreSQL. Public PostgreSQL vault opening and PostgreSQL-target
-physical restore remain separate.
+Face-member capture and lexical/hybrid search remain unqualified on PostgreSQL.
+Public PostgreSQL vault opening and PostgreSQL-target physical restore remain
+separate.
+
+#### Semantic results and similar documents
+
+The internal PostgreSQL Store resolves neighbors from a published vector index
+into current original-file, rendition-chunk and image documents. It uses the
+same candidate reducer, score order, result bounds and duplicate rules as
+SQLite. Ordinary semantic search keeps separate documents with identical
+content. Similar-document search excludes its source and groups eligible copies,
+counting copies beyond the returned page.
+
+Tag, base MIME type, directory, modification-time, exact-version and
+source-presence filters apply before the candidate limit and vector scoring.
+Coverage counts, membership checks, evidence and result paths share a
+repeatable-read snapshot. The final evidence check rejects stale heads or
+changed source manifests and refreshes paths without changing result order.
+Original-file excerpts preserve SQLite's rune limit and NUL boundary. Chunk
+results retain the exact evidence identity for the existing retrieval reader.
+
+PostgreSQL uses native JSON array expansion and byte-valued input identities.
+SQLite keeps its forced join order and indexed vector-set and blob lookups;
+there is no SQL rewriting layer or additional source scan on its warm read path.
+The shared scenarios cover filtered results, duplicate groups, coverage,
+acquisition, bounded excerpts and final evidence checks. A PostgreSQL scenario
+commits a trash operation between reads and verifies that the in-flight result
+keeps its original snapshot while the next request rejects the stale index.
+
+The processing lane exercises semantic search and similar-document search
+through the real service, index worker and retrieval code. Retained chunk
+vectors remain searchable after provider consent is revoked; moving the
+provider endpoint does not re-embed documents. This qualifies document semantic
+search with the listed filters. PDF fact filters, photo query compilation,
+face-member capture and lexical/hybrid retrieval remain separate. No public
+PostgreSQL vault opener is exposed by this internal qualification.
 
 #### Backup capture and SQLite recovery
 
