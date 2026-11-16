@@ -31,6 +31,7 @@ var backendSuites = []backendSuite{
 			checkLexicalGenerationReadSnapshotCannotMixPublicationEpochs(t, newPostgresQueryStore)
 		}},
 		{"LexicalSearchIndexes", nil, checkLexicalSearchIndexesPostgres},
+		{"LexicalExcerptsSnapshot", nil, checkLexicalExcerptsSnapshotPostgres},
 
 		{"SearchTextCoverage", func(t *testing.T) { t.Helper(); checkSearchTextCoverage(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkSearchTextCoverage(t, newPostgresQueryStore) }},
 		{"SearchTextCoverageCandidateEvidence", func(t *testing.T) { t.Helper(); checkSearchTextCoverageCandidateEvidence(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkSearchTextCoverageCandidateEvidence(t, newPostgresQueryStore) }},
@@ -2634,9 +2635,9 @@ var backendSuites = []backendSuite{
 			checkOlderCompleteReceiptCanCoexistWithNewerPendingCurrentCoverage(t, newPostgresQueryStore)
 		}},
 	}},
-	{name: "processing-publication", postgres: "native rendition/embedding/photo workers", scope: "internal/processing tests qualify shared-build publication, durable resume, consent/source fencing, email-PDF receipt/export, supplied-media continuation, direct original/chunk embedding-worker recovery, photo descriptions and face detection. Foreground direct-file/image completion and index recovery use vector-index-publication and internal/processing scenarios. Face embedding/matching workers, remote acquisition and search remain unqualified."},
+	{name: "processing-publication", postgres: "native rendition/embedding/photo workers", scope: "internal/processing tests qualify shared-build publication, durable resume, consent/source fencing, email-PDF receipt/export, supplied-media continuation, direct original/chunk embedding-worker recovery, photo descriptions and face detection. Foreground direct-file/image completion and index recovery use vector-index-publication and internal/processing scenarios. Face embedding/matching workers, remote acquisition and photo query compilation remain unqualified."},
 	{name: "photo-editing", postgres: "unqualified", scope: "Query-driven photo review remains unqualified. Explicit decisions use photo-review; people edits use people-curation; query selection stays with search."},
-	{name: "search", postgres: "unqualified", scope: "Lexical/vector search and query execution remain unqualified; matching metadata columns do not establish ranking or index parity."},
+	{name: "search", postgres: "native document retrieval", scope: "lexical-search and semantic-results qualify document lexical, vector and hybrid retrieval; photo query compilation, PDF facts and selected recording/vision retrieval remain unqualified."},
 	{name: "transfer-and-recovery", postgres: "native backup capture and SQLite recovery", scope: "internal/backupapp tests qualify repository capture, loose/packed bytes, audited and photo recovery, source loss and missing-byte failure. PostgreSQL-target restore remains unqualified; metadata-export and metadata-import cover native logical transfer."},
 	{name: "organization", postgres: "native operations", scope: "Tags, audited bulk edits and saved definitions; excludes query execution and delivery.", scenarios: []backendScenario{
 		{"BatchTagsMixedChangesNoOpsAndCallerOrder", func(t *testing.T) {

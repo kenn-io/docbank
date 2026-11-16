@@ -189,6 +189,7 @@ func (s *Store) searchExplainedLexicalCandidates(ctx context.Context, query stri
 	}
 	var content []ExplainedLexicalCandidate
 	queryContent := func(queryer metadataQuerier, generationID string) (retErr error) {
+		var indexRowIDs []int64
 		if len(opts.SelectedBuilds) != 0 && generationID == "" {
 			return errors.New("selected media builds have no lexical generation")
 		}
@@ -243,7 +244,12 @@ func (s *Store) searchExplainedLexicalCandidates(ctx context.Context, query stri
 		seenContent := make(map[candidateKey]struct{}, remaining+1)
 		for rows.Next() {
 			var candidate ExplainedLexicalCandidate
-			node, err := scanExplainedLexicalRow(rows, &candidate)
+			var indexRowID int64
+			var extra []any
+			if s.postgresSchema != "" {
+				extra = []any{&indexRowID}
+			}
+			node, err := scanExplainedLexicalRow(rows, &candidate, extra...)
 			if err != nil {
 				return err
 			}
@@ -266,12 +272,25 @@ func (s *Store) searchExplainedLexicalCandidates(ctx context.Context, query stri
 				candidate.EvidenceKind = "rendition_segment"
 			}
 			content = append(content, candidate)
+			if s.postgresSchema != "" {
+				indexRowIDs = append(indexRowIDs, indexRowID)
+			}
 			if len(content) == remaining+1 {
 				break
 			}
 		}
 		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 			return err
+		}
+		if s.postgresSchema != "" {
+			// The extra candidate detects truncation; it is never returned.
+			excerpts, err := postgresContentExcerpts(ctx, queryer, query, generationID, indexRowIDs[:min(len(indexRowIDs), remaining)])
+			if err != nil {
+				return err
+			}
+			for i, excerpt := range excerpts {
+				content[i].Excerpt = excerpt
+			}
 		}
 		if len(content) == 1 {
 			content[0].Path, err = pathOf(ctx, queryer, content[0].Node.ID)
@@ -335,13 +354,13 @@ func explainedNameCandidates(hits []SearchHit) []ExplainedLexicalCandidate {
 	return result
 }
 
-func scanExplainedLexicalRow(row interface{ Scan(dest ...any) error }, candidate *ExplainedLexicalCandidate) (Node, error) {
+func scanExplainedLexicalRow(row interface{ Scan(dest ...any) error }, candidate *ExplainedLexicalCandidate, extra ...any) (Node, error) {
 	var node Node
 	var locatorJSON string
-	if err := row.Scan(&node.ID, &node.ParentID, &node.Name, &node.Kind,
+	if err := row.Scan(append([]any{&node.ID, &node.ParentID, &node.Name, &node.Kind,
 		&node.CurrentVersionID, &node.BlobHash, &node.MD5, &node.Size, &node.MimeType,
 		&node.Revision, &node.CreatedAt, &node.ModifiedAt, &node.TrashedAt,
-		&candidate.BuildID, &candidate.SegmentID, &candidate.Excerpt, &locatorJSON); err != nil {
+		&candidate.BuildID, &candidate.SegmentID, &candidate.Excerpt, &locatorJSON}, extra...)...); err != nil {
 		return Node{}, err
 	}
 	if locatorJSON != "" {

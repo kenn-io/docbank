@@ -2280,7 +2280,8 @@ func checkLexicalGenerationReadSnapshotCannotMixPublicationEpochs(t *testing.T, 
 			defer func() { retErr = errors.Join(retErr, rows.Close()) }()
 			for rows.Next() {
 				var candidate ExplainedLexicalCandidate
-				if _, err := scanExplainedLexicalRow(rows, &candidate); err != nil {
+				var rowID int64
+				if _, err := scanExplainedLexicalRow(rows, &candidate, &rowID); err != nil {
 					return err
 				}
 				visibleBuildIDs = append(visibleBuildIDs, candidate.BuildID)

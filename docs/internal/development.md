@@ -1098,7 +1098,7 @@ searchable by `invoice`. Native tokenization and relevance scores differ from
 SQLite FTS5; ranks are not portable between engines. Equal native scores use
 byte-ordered names and node IDs.
 
-GIN expression indexes cover names, extracted text and immutable rendition
+GIN indexes cover names, extracted text and immutable rendition
 segments. Generated `search_vector` columns cache the parsed tokens so reads
 rank stored vectors rather than rebuilding them. Byte-stored text keeps every
 original byte, including NUL. Native
@@ -1119,9 +1119,14 @@ require exception-handling functions to be parallel-unsafe.
 
 Content reads pin a lexical generation inside a read-only `REPEATABLE READ`
 transaction. Segment membership, current rendition heads, result evidence and
-paths share that snapshot. Filters apply before result bounds, including exact
-version sets, directories, MIME types, tags and modification times. Queryless
-filter pages and text-coverage counts also use the native backend.
+paths share that snapshot. PostgreSQL first ranks lightweight candidate rows.
+The shared Go collector removes duplicate documents and applies the result
+limit before a second query builds excerpts for the selected index row IDs.
+That query uses the same snapshot, so a replacement cannot change the selected
+text between ranking and excerpt reads. Filters apply before result bounds,
+including exact version sets, directories, MIME types, tags and modification
+times. Queryless filter pages and text-coverage counts also use the native
+backend.
 
 The `lexical-search` backend suite exercises these reads on both engines,
 including concurrent publication, empty and replaced content, truncation and

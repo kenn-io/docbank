@@ -146,18 +146,56 @@ func postgresContentSearch(query, generation string, opts SearchOptions) (sqlque
 		args = append(args, string(encoded))
 	}
 	hits.Args = append(hits.Args, args...)
-	snippet := `ts_headline('pg_catalog.simple',text_index.search_text,(SELECT tsq FROM requested_query),
- 'MaxWords=24,MinWords=12,StartSel='||chr(1)||',StopSel='||chr(2))`
-	evidence := `'' AS build_id,'' AS segment_id,` + snippet + `,'' AS locator_json`
+	evidence := `'' AS build_id,'' AS segment_id,'' AS excerpt,'' AS locator_json`
 	order := ",text_index.id"
 	if generation != "" {
-		evidence = `text_index.build_id,text_index.segment_id,` + snippet + `,ru.locator_json`
+		evidence = `text_index.build_id,text_index.segment_id,'' AS excerpt,ru.locator_json`
 		order = ",text_index.build_id,text_index.segment_id"
 	}
-	statement := `WITH requested_query AS(SELECT ` + postgresSearchExpression(query, 0).SQL + ` AS tsq)
- SELECT ` + nodeCols + `,` + evidence + ` FROM (` + hits.SQL + `) matches
+	statement := `SELECT ` + nodeCols + `,` + evidence + `,text_index.` + key + ` FROM (` + hits.SQL + `) matches
  JOIN ` + table + ` text_index ON text_index.` + key + `=matches.doc_key ` + outputJoin + `
  WHERE ` + outputCondition + ` AND n.trashed_at IS NULL ` + filter + `
  ORDER BY matches.score DESC,n.name,n.id` + order
 	return sqlquery.Query{SQL: statement, Args: hits.Args}, nil
+}
+
+// Excerpts use exactly the chosen index rows, on the candidate read's snapshot.
+func postgresContentExcerpts(ctx context.Context, q metadataQuerier, query, generation string, rowIDs []int64) (_ []string, retErr error) {
+	if len(rowIDs) == 0 {
+		return nil, nil
+	}
+	encoded, err := json.Marshal(rowIDs)
+	if err != nil {
+		return nil, err
+	}
+	expression := postgresSearchExpression(query, 0)
+	table, key := "extracted_text", "id"
+	if generation != "" {
+		table, key = "rendition_lexical_index", "row_id"
+	}
+	args := slices.Concat(expression.Args, []any{string(encoded)})
+	rows, err := q.QueryContext(ctx, `WITH requested_query AS(SELECT `+expression.SQL+` AS tsq)
+ SELECT ts_headline('pg_catalog.simple',i.search_text,(SELECT tsq FROM requested_query),
+ 'MaxWords=24,MinWords=12,StartSel='||chr(1)||',StopSel='||chr(2))
+ FROM json_array_elements_text($`+strconv.Itoa(len(args))+`::json) WITH ORDINALITY picked(id,position)
+ JOIN `+table+` i ON i.`+key+`=picked.id::bigint ORDER BY picked.position`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("reading PostgreSQL content excerpts: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+	excerpts := make([]string, 0, len(rowIDs))
+	for rows.Next() {
+		var excerpt string
+		if err := rows.Scan(&excerpt); err != nil {
+			return nil, fmt.Errorf("scanning PostgreSQL content excerpt: %w", err)
+		}
+		excerpts = append(excerpts, boundedExplainedSearchExcerpt(excerpt))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading PostgreSQL content excerpts: %w", err)
+	}
+	if len(excerpts) != len(rowIDs) {
+		return nil, errors.New("selected lexical index rows disappeared inside the read snapshot")
+	}
+	return excerpts, nil
 }
