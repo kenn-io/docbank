@@ -131,12 +131,22 @@ func (s *Store) revokeMediaOccurrenceTx(ctx context.Context, tx *sql.Tx, princip
 		if s.postgresSchema != "" {
 			bindingMatch = `position('"input_binding":' || i.input_binding_json in j.execution_identity_json)>0`
 		}
-		if _, err := deleteRenditionHeadsTx(ctx, tx, s.postgresSchema != "", `attachment_id IN (
-			SELECT a.attachment_id FROM rendition_attachments a
+		attachments := `SELECT a.attachment_id FROM rendition_attachments a
 			JOIN rendition_jobs j ON j.job_id=a.build_id
 			JOIN media_input_artifacts i ON i.occurrence_id=$1
-			WHERE `+bindingMatch+`
-		)`, storedString(s.postgresSchema != "", id)); err != nil {
+			WHERE ` + bindingMatch
+		// Clear dependent serving pointers before revoking their attachment.
+		// Retained sets, vectors and rendition evidence remain available.
+		if _, err := deleteEmbeddingHeadsTx(ctx, tx, s.postgresSchema != "", `embedding_set_id IN (
+			SELECT es.embedding_set_id FROM embedding_sets es
+			JOIN embedding_input_generations g ON g.generation_id=es.input_generation_id
+			WHERE g.attachment_id IN (`+attachments+`))`, storedString(s.postgresSchema != "", id)); err != nil {
+			return fmt.Errorf("revoking input-bound embedding heads: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_failures WHERE attachment_id IN (`+attachments+`)`, storedString(s.postgresSchema != "", id)); err != nil {
+			return fmt.Errorf("clearing input-bound embedding failures: %w", err)
+		}
+		if _, err := deleteRenditionHeadsTx(ctx, tx, s.postgresSchema != "", `attachment_id IN (`+attachments+`)`, storedString(s.postgresSchema != "", id)); err != nil {
 			return fmt.Errorf("revoking input-bound rendition heads: %w", err)
 		}
 	}

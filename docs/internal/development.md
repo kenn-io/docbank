@@ -1581,8 +1581,10 @@ changed request identities conflict. Equal remote bytes reuse an existing source
 revision without merging separate source identities or caller occurrences.
 
 Reads select only the caller's visible occurrences. Revocation hides that
-occurrence and its inputs, removes its input-bound rendition heads, and preserves
-other callers' occurrences. Source pages, occurrence pages and exact-revision
+occurrence and its inputs, removes its input-bound rendition heads and dependent
+chunk-embedding heads and failures, and preserves other callers' occurrences.
+The same transaction invalidates cached vector membership. Original-file
+embeddings and retained rendition/vector evidence remain. Source pages, occurrence pages and exact-revision
 views use one repeatable-read snapshot for their totals, selection and receipts.
 A concurrent revocation or receipt update becomes visible on the next request.
 SQLite retains its page-first join order; PostgreSQL uses ordinary joins. Both
