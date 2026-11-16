@@ -1070,7 +1070,7 @@ func fenceFingerprintSchema() schema {
 
 func documentFactsInputSchema(maxOffset int64) schema {
 	s := rootObjectSchema(schema{"node_id": integerSchema(1, 0), "content_version_id": uuidSchema(), "offset": integerSchema(0, maxOffset), "snapshot": fenceFingerprintSchema()})
-	s["description"] = "Choose node_id or content_version_id; pass snapshot with offset."
+	s["description"] = "Choose node_id or content_version_id."
 	return s
 }
 
