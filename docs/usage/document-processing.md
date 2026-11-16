@@ -39,6 +39,8 @@ Cancellation before apply and failed server startup leave the saved choice uncha
 
 In the web app, open **System → Search by meaning**, review the download size, and choose **Turn on** to approve setup. Setup starts the server and saves the indexing choice for this vault and new imports. Run `docbank daemon restart`, then reopen the web app to start indexing and search by meaning. The tab keeps the restart instruction until the daemon restarts.
 
+A successful built-in setup in the web app or CLI records the choice for other Kenn apps on this computer. If another app recorded that choice, Docbank installs any missing shared files and starts indexing at its next launch without saving a vault setup. If setup fails, use **Turn on** to try again. Existing configured providers keep their settings.
+
 For other processing, configure a profile and its referenced rendition, embedding, and retrieval profiles, then select a name listed by `processing profiles`.
 
 Preview the current version before sending a document or query to any provider:
@@ -151,6 +153,17 @@ The first request to a provider checks it with a synthetic image, and a failed c
 
 Derivative purge and consent revocation leave pending suggestion text in place. Dismissing the suggestion removes it, and so does purging the photo version.
 
+## Turn on face suggestions
+
+Run `docbank processing faces`. It reviews the local processing plan and reports the missing download size before installation. The face model runs locally on photo previews and detected or manually drawn face boxes. Turning it on grants ongoing consent for this vault, including new photos. The daemon can start using the consent immediately.
+
+The face model has its own profile and download. Setting up text search doesn't enable face suggestions. Startup reuses installed face assets; missing assets require running setup again. Faces the model can't align remain available for manual naming. Review and name suggested groups in [People](people.md#face-suggestions).
+
+Profiles that include face embeddings use this setup and background worker.
+Per-file plans, starts, consent grants, coverage, search fences, and aggregate job
+status refuse these profiles, including custom and mixed profiles supplied through
+the Go API.
+
 ## Embed photos for meaning search
 
 Image bindings serve Photos search. Documents search uses text bindings; a hybrid search with only image bindings uses filename and retained-text matches.
@@ -233,7 +246,8 @@ A killed daemon may leave private files in its spool; see the
 Agents can use these commands or the authenticated `POST /api/v1/redaction/resolve`
 and `/api/v1/redaction/render` routes. Browser sessions use resolve and the
 temporary-preview and numbered-publication routes described below. The direct ZIP
-render remains API-key-only. No MCP redaction tool is exposed.
+render remains API-key-only. MCP can publish operator-reserved numbered PDFs, as
+described in [Numbered delivery](#deliver-one-reviewed-pdf-with-bates-numbers).
 
 ### Review a PDF in the browser
 
@@ -326,8 +340,8 @@ Check the displayed range, opt in to keeping the unredacted original indefinitel
 and choose **Review numbering**, then **Reserve and keep PDF**. Each page gains
 a half-inch footer below the reviewed content; a Letter page becomes 612 by 828
 points. The server verifies the content and footer before publication.
-**Download numbered PDF** downloads the retained PDF, and **Open Productions**
-opens its recovery view. After editing masks, create another preview to number
+Each kept PDF shows its label range. Under **Download**, **PDF** downloads the
+retained PDF; the open icon beside the range opens Productions. After editing masks, create another preview to number
 the new review with a separate range. Earlier published PDFs stay downloadable
 until you close the review. Downloads check the retained file
 identity; masks and approved text are not rechecked. The plain preview and ZIP remain available
@@ -427,12 +441,38 @@ Browser sessions and API-key callers can reserve through
 `POST /api/v1/redaction/reservations` and publish a retained PDF through
 `POST /api/v1/redaction/publications`. The ZIP-streaming `/api/v1/redaction/render`
 route remains API-key-only.
-The existing MCP `export_bates_file` tool supports the reduced recovery check
-and reports its scope. It does not accept review files or reserve numbered
-redactions. Load-file exports accept ordinary
-stamped allocations only. Use `redaction package` for a recipient delivery of numbered redactions.
+MCP's `export_bates_file` can fully check a retained numbered PDF using
+`preparation_path`, `masks_path` and `review_path` together. It reports
+`masks_text_and_numbers`; a failed full check never falls back to recovery.
+Without review files, it checks recorded bytes and numbering metadata and reports
+`recorded_bytes_and_numbers`.
+
+With `--allow-package-writes`, MCP's `publish_numbered_pdf` can publish into an
+allocation the operator already reserved through the browser or CLI. It requires
+the three private review files and their review digest. This tool cannot grant retention
+consent or reserve numbers. See [MCP publication](mcp.md#publish-a-reserved-numbered-pdf)
+for inputs and exact retry advice.
+
+Load-file exports accept ordinary stamped allocations only. Use
+`redaction package` for a recipient delivery of numbered redactions.
 
 ### Package completed numbered PDFs for a recipient
+
+In the browser review, choose **Download** › **Recipient ZIP** beside a completed
+numbered PDF. Each completed delivery keeps its own action, even after you edit
+masks or publish another range. The ZIP contains that retained PDF, its reviewed
+text without footer labels, and DAT/OPT load files for recipient import. Private
+preparation, masks and review files stay outside the ZIP.
+
+The server rechecks masks, text and numbers before offering the download. It does
+not render again or need the original to remain live. The page runtime is not
+required; the recorded renderer and writer must still be supported for full
+verification. No weaker check is substituted. The package holds no rendering
+slot while waiting for download, but only one package can wait or transfer at a
+time. Its unused download link expires after two minutes. Keep the review open until
+the transfer finishes: closing it cancels the package and any transfer in
+progress. If cleanup fails, choose **Release recipient ZIP** before retrying. The completed PDF remains in
+Productions, while preparing a new recipient ZIP needs its open private review.
 
 `redaction package` puts completed numbered redactions into one ZIP for import
 by a recipient. It preserves each retained PDF and its numbers, verifies masks,
@@ -588,6 +628,14 @@ integrity failures exit 6. A renderer RSS refusal exits 5 and can be retried whe
 memory use is lower. Opening, reading, staging or cleaning up files, cancellation,
 timeouts, engine failures and output failures exit 1. No success result is printed on validation failure.
 Check the exit status even when output was partially written.
+
+## OCR
+
+Pages without a text layer may be scans or blank pages. OCR can read scanned text. Configure a [Docling profile](../configuration.md#document-conversion-with-docling) or a [Mistral OCR profile](../configuration.md#document-ocr-with-mistral), then use `processing plan` and `processing build` with consent to run it. Neither runs automatically.
+
+Processing coverage for `docbank-pdf-text` lists the source PDF pages without a text layer.
+
+Both profiles refuse PDFs containing DCT, JBIG2, or JPX streams during local inspection, including many scans.
 
 ## Convert documents with Docling
 

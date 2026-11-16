@@ -29,7 +29,7 @@ test("Meaning search explains metadata fallback and captures it for Cull", async
     expect(body.snapshot_id).toEqual(expect.any(String));
     expect(body.actual_mode).toBe("lexical");
     await expect(
-      page.getByText("Image search is unavailable. Showing metadata matches."),
+      page.getByText("Image search is unavailable. Showing matches based on photo details."),
     ).toBeVisible();
     await expect(page.locator("[data-asset] img").first()).toBeVisible();
     await page.evaluate(() => document.fonts.ready);

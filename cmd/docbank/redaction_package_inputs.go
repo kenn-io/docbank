@@ -32,9 +32,9 @@ type recipientPreflight struct {
 	Documents []processing.RecipientPackageDocument
 }
 
-func readRecipientSelection(path string) (recipientSelection, error) {
+func readRecipientSelection(ctx context.Context, path string) (recipientSelection, error) {
 	var selection recipientSelection
-	data, err := readRedactionFile(path, 256<<10)
+	data, err := readRedactionFile(ctx, path, 256<<10)
 	if err != nil {
 		return selection, err
 	}
@@ -105,7 +105,7 @@ func preflightRecipientPackage(ctx context.Context, c *daemonconn.Connection, se
 		if err := ctx.Err(); err != nil {
 			return checked, err
 		}
-		review, err := readRecipientReview(input)
+		review, err := readRecipientReview(ctx, input)
 		if err != nil {
 			return checked, fmt.Errorf("allocation %s: %w", input.AllocationID, err)
 		}
@@ -125,12 +125,12 @@ func preflightRecipientPackage(ctx context.Context, c *daemonconn.Connection, se
 	return checked, nil
 }
 
-func readRecipientReview(input recipientInput) (processing.RedactionReview, error) {
-	request, err := readRedactionInputs(input.Preparation, input.Masks)
+func readRecipientReview(ctx context.Context, input recipientInput) (processing.RedactionReview, error) {
+	request, err := readRedactionInputs(ctx, input.Preparation, input.Masks)
 	if err != nil {
 		return processing.RedactionReview{}, err
 	}
-	review, err := readRedactionReview(input.Review, request)
+	review, err := readRedactionReview(ctx, input.Review, request)
 	if err != nil {
 		return review, err
 	}

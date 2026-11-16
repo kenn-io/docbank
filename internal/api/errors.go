@@ -104,10 +104,12 @@ var storeErrCodes = []struct {
 	code   string
 }{
 	{store.ErrInvalidPhotoSuggestionResponse, http.StatusUnprocessableEntity, "invalid_photo_suggestion_response"},
+	{store.ErrInvalidSearchScope, http.StatusUnprocessableEntity, "validation"},
 	{store.ErrSearchQueryRequired, http.StatusUnprocessableEntity, "search_query_required"},
 	{store.ErrNotFound, http.StatusNotFound, "not_found"},
 	{store.ErrExists, http.StatusConflict, "exists"},
 	{store.ErrCycle, http.StatusConflict, "cycle"},
+	{store.ErrPersonCandidateDecided, http.StatusConflict, "person_candidate_decided"},
 	{store.ErrStaleRevision, http.StatusPreconditionFailed, "stale_revision"},
 	{store.ErrPersonIdentityConflict, http.StatusConflict, "person_identity_conflict"},
 	{store.ErrPersonMergeConflict, http.StatusConflict, "person_merge_conflict"},

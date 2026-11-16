@@ -40,6 +40,7 @@ type archiveFixture struct {
 	metadata *store.Store
 	blobs    *blob.Store
 	content  map[string]string
+	discard  func()
 }
 
 type zeroReader struct{}
@@ -141,6 +142,11 @@ func newArchiveFixture(t *testing.T) *archiveFixture {
 	root := t.TempDir()
 	metadata, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
+	return archiveFixtureWithStore(t, root, metadata)
+}
+
+func archiveFixtureWithStore(t *testing.T, root string, metadata *store.Store) *archiveFixture {
+	t.Helper()
 	blobsDir := filepath.Join(root, "blobs")
 	require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
 	blobs, err := blob.New(store.NewPackCatalog(metadata), blobsDir)
@@ -152,6 +158,11 @@ func newArchiveFixture(t *testing.T) *archiveFixture {
 	fixture := &archiveFixture{
 		root: root, metadata: metadata, blobs: blobs,
 		content: map[string]string{"alpha.txt": "alpha backup", "bravo.txt": "bravo backup"},
+	}
+	fixture.discard = func() {
+		require.NoError(t, blobs.Close())
+		require.NoError(t, metadata.Close())
+		require.NoError(t, os.RemoveAll(root))
 	}
 	require.NoError(t, blobs.WithMutation(t.Context(), func() error {
 		for name, content := range fixture.content {
@@ -282,7 +293,11 @@ func TestJSONLBackupRestoresPeopleAndRebuildsAttribution(t *testing.T) {
 }
 
 func TestPhotoBackupRoundTrip(t *testing.T) {
-	fixture := newArchiveFixture(t)
+	checkPhotoBackupRoundTrip(t, newArchiveFixture(t))
+}
+
+func checkPhotoBackupRoundTrip(t *testing.T, fixture *archiveFixture) {
+	t.Helper()
 	ctx := t.Context()
 	hash, size, err := fixture.blobs.WriteContext(t.Context(), strings.NewReader("photo bytes"))
 	require.NoError(t, err)
@@ -317,9 +332,7 @@ func TestPhotoBackupRoundTrip(t *testing.T) {
 	_, err = backupapp.Create(ctx, repo, "photo-round-trip", fixture.metadata, fixture.blobs,
 		backup.CreateOptions{})
 	require.NoError(t, err)
-	require.NoError(t, fixture.blobs.Close())
-	require.NoError(t, fixture.metadata.Close())
-	require.NoError(t, os.RemoveAll(fixture.root))
+	fixture.discard()
 
 	target := filepath.Join(t.TempDir(), "restored")
 	_, err = backupapp.Restore(ctx, repo, "photo-round-trip", backup.RestoreOptions{TargetDir: target})
@@ -368,7 +381,11 @@ func TestPhotoBackupRoundTrip(t *testing.T) {
 }
 
 func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {
-	fixture := newArchiveFixture(t)
+	checkJSONLLooseSnapshotVerifyAndRestore(t, newArchiveFixture(t))
+}
+
+func checkJSONLLooseSnapshotVerifyAndRestore(t *testing.T, fixture *archiveFixture) {
+	t.Helper()
 	wantMetadata := exportMetadata(t, fixture.metadata)
 	sourceStore, err := fixture.metadata.PrimaryBlobStore(t.Context())
 	require.NoError(t, err)
@@ -1334,7 +1351,11 @@ func TestStagedRenditionVerificationReadsLooseZstdAuthority(t *testing.T) {
 }
 
 func TestAuditedIncrementalSnapshotRestoresCompleteProtectedHistory(t *testing.T) {
-	fixture := newArchiveFixture(t)
+	checkAuditedIncrementalSnapshotRestoresCompleteProtectedHistory(t, newArchiveFixture(t))
+}
+
+func checkAuditedIncrementalSnapshotRestoresCompleteProtectedHistory(t *testing.T, fixture *archiveFixture) {
+	t.Helper()
 	writeFile := func(parentID int64, name, content string) store.Node {
 		t.Helper()
 		var node store.Node
@@ -1760,7 +1781,11 @@ func TestLooseAbovePackingLimitSnapshotVerifyAndRestore(t *testing.T) {
 }
 
 func TestPackedSnapshotRequiresAndUsesPackedRestoreTarget(t *testing.T) {
-	fixture := newArchiveFixture(t)
+	checkPackedSnapshotRequiresAndUsesPackedRestoreTarget(t, newArchiveFixture(t))
+}
+
+func checkPackedSnapshotRequiresAndUsesPackedRestoreTarget(t *testing.T, fixture *archiveFixture) {
+	t.Helper()
 	packed, err := fixture.blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
 	require.NoError(t, err)
 	require.Equal(t, 2, packed.BlobsPacked)

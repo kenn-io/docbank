@@ -56,7 +56,7 @@ var referencesCmd = &cobra.Command{
 			return nil
 		}
 		if len(page.Items) == 0 {
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no authoritative references")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no document versions found for this content hash on this page")
 			return nil
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)

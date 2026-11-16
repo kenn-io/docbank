@@ -169,7 +169,7 @@ func (s *Store) migrateLegacyPlainTextTx(
 	report.EligibleRows = len(eligible)
 
 	if len(eligible) != 0 {
-		if err := ensureProcessingProfileTx(ctx, tx, profile); err != nil {
+		if err := ensureProcessingProfileTx(ctx, tx, profile, s.postgresSchema != ""); err != nil {
 			return LegacyMigrationReport{}, fmt.Errorf("recording legacy plain-text profile: %w", err)
 		}
 	}
@@ -181,14 +181,14 @@ func (s *Store) migrateLegacyPlainTextTx(
 		if err != nil {
 			return LegacyMigrationReport{}, err
 		}
-		if err := insertLegacyRenditionBuildTx(ctx, tx, build); err != nil {
+		if err := insertLegacyRenditionBuildTx(ctx, tx, build, s.postgresSchema != ""); err != nil {
 			return LegacyMigrationReport{}, err
 		}
 		report.MigratedBuilds++
 	}
 
 	if err := revokeStaleLegacyPlainTextHeadsTx(
-		ctx, tx, selected, eligible, profile.Fingerprint, blobHash,
+		ctx, tx, selected, eligible, profile.Fingerprint, blobHash, s.postgresSchema != "",
 	); err != nil {
 		return LegacyMigrationReport{}, err
 	}
@@ -215,10 +215,10 @@ func (s *Store) migrateLegacyPlainTextTx(
 			ID: attachmentID, VaultID: s.vaultID, ContentVersionID: version.versionID,
 			BuildID: buildID, Profile: profile, AttachedAt: row.extractedAt,
 		}
-		if err := insertLegacyRenditionAttachmentTx(ctx, tx, attachment); err != nil {
+		if err := insertLegacyRenditionAttachmentTx(ctx, tx, attachment, s.postgresSchema != ""); err != nil {
 			return LegacyMigrationReport{}, err
 		}
-		if err := publishRenditionHeadTx(ctx, tx, RenditionHeadRecord{ContentVersionID: version.versionID, ProcessingProfileFingerprint: profile.Fingerprint, AttachmentID: attachmentID, PublishedAt: row.extractedAt}); err != nil {
+		if err := publishRenditionHeadTx(ctx, tx, RenditionHeadRecord{ContentVersionID: version.versionID, ProcessingProfileFingerprint: profile.Fingerprint, AttachmentID: attachmentID, PublishedAt: row.extractedAt}, s.postgresSchema != ""); err != nil {
 			return LegacyMigrationReport{}, err
 		}
 		report.MigratedAttachments++
@@ -226,15 +226,15 @@ func (s *Store) migrateLegacyPlainTextTx(
 
 	var generation LexicalGeneration
 	if blobHash == "" {
-		generation, err = stageLegacyLexicalGenerationTx(ctx, tx)
+		generation, err = stageLegacyLexicalGenerationTx(ctx, tx, s.postgresSchema != "")
 	} else {
 		var buildIDs []string
 		buildIDs, err = lexicalBuildIDsTx(ctx, tx,
 			`SELECT build_id FROM rendition_builds WHERE source_sha256=$1 ORDER BY build_id`, []any{blobHash})
 		if err == nil {
-			generation, err = appendLexicalGenerationTx(ctx, tx, buildIDs)
+			generation, err = appendLexicalGenerationTx(ctx, tx, buildIDs, s.postgresSchema != "")
 			if errors.Is(err, ErrNotFound) {
-				generation, err = stageLegacyLexicalGenerationTx(ctx, tx)
+				generation, err = stageLegacyLexicalGenerationTx(ctx, tx, s.postgresSchema != "")
 			}
 		}
 	}
@@ -299,7 +299,7 @@ func (s *Store) migrateLegacyPlainTextTx(
 
 func revokeStaleLegacyPlainTextHeadsTx(
 	ctx context.Context, tx *sql.Tx, selected []legacySelectedVersion,
-	eligible map[string]legacyPlainTextRow, profileFingerprint, blobHash string,
+	eligible map[string]legacyPlainTextRow, profileFingerprint, blobHash string, postgres bool,
 ) error {
 	expected := make(map[string]string, len(selected))
 	for _, version := range selected {
@@ -357,8 +357,7 @@ func revokeStaleLegacyPlainTextHeadsTx(
 		return err
 	}
 	for _, head := range stale {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM rendition_heads
-			WHERE content_version_id=$1 AND profile_fingerprint=$2 AND attachment_id=$3`,
+		if _, err := deleteRenditionHeadsTx(ctx, tx, postgres, `content_version_id=$1 AND profile_fingerprint=$2 AND attachment_id=$3`,
 			head.versionID, profileFingerprint, head.attachmentID); err != nil {
 			return fmt.Errorf("revoking stale legacy rendition head %s: %w", head.attachmentID, err)
 		}
@@ -439,7 +438,7 @@ func (s *Store) legacyPlainTextWorkPendingTx(
 		  AND NOT EXISTS (SELECT 1 FROM rendition_heads h
 		                  WHERE h.content_version_id=v.version_id AND h.profile_fingerprint=$5)
 		ORDER BY version_id,blob_hash`,
-		legacyPlainTextExtractor, legacyPlainTextExtractorVersion, ExtractionOK, legacyPlainTextProvider, profileFingerprint)
+		legacyPlainTextExtractor, legacyPlainTextExtractorVersion, ExtractionOK, storedString(s.postgresSchema != "", legacyPlainTextProvider), profileFingerprint)
 	if err != nil {
 		return false, fmt.Errorf("checking unpublished legacy plain-text versions: %w", err)
 	}
@@ -696,6 +695,7 @@ func legacyPlainTextAttachmentID(versionID, buildID string) string {
 
 func insertLegacyRenditionBuildTx(
 	ctx context.Context, tx *sql.Tx, record RenditionBuildRecord,
+	postgres bool,
 ) error {
 	suppressed, err := derivativeBuildSuppressedTx(ctx, tx, record.SourceSHA256, record.ID)
 	if err != nil {
@@ -719,7 +719,7 @@ func insertLegacyRenditionBuildTx(
 		record.ID, record.VaultID, record.SourceSHA256,
 		record.RenditionRequestFingerprint, record.EvidenceLexicalFingerprint,
 		record.CapturedArtifactPolicyFingerprint, string(record.CapturedArtifactPolicy),
-		record.AuthorizationChecksum, record.ProviderOperationID, string(record.ProviderReceipt),
+		record.AuthorizationChecksum, storedString(postgres, record.ProviderOperationID), string(record.ProviderReceipt),
 		record.EvidenceChecksum, record.RenditionChecksum, record.MarkdownChecksum,
 		record.Completeness, boolInt(record.PartialSuccess), boolInt(record.Truncated),
 		mustCatalogJSON(record.Warnings), record.CompletedAt, record.DeclaredArtifactCount,
@@ -733,7 +733,7 @@ func insertLegacyRenditionBuildTx(
 		return fmt.Errorf("checking legacy rendition build %s: %w", record.ID, err)
 	}
 	if inserted != 0 {
-		if err := insertRenditionBuildChildrenTx(ctx, tx, record); err != nil {
+		if err := insertRenditionBuildChildrenTx(ctx, tx, record, postgres); err != nil {
 			return err
 		}
 	} else {
@@ -769,7 +769,7 @@ func legacyPlainTextBuildEqual(left, right RenditionBuildRecord) bool {
 }
 
 func insertLegacyRenditionAttachmentTx(
-	ctx context.Context, tx *sql.Tx, record RenditionAttachmentRecord,
+	ctx context.Context, tx *sql.Tx, record RenditionAttachmentRecord, postgres bool,
 ) error {
 	normalized, err := normalizeRenditionAttachmentRecord(record)
 	if err != nil {
@@ -784,7 +784,7 @@ func insertLegacyRenditionAttachmentTx(
 		normalized.ID, normalized.VaultID, normalized.ContentVersionID, normalized.BuildID,
 		normalized.Profile.Fingerprint, normalized.Profile.RetentionDisclosureFingerprint,
 		normalized.Profile.AttachmentPolicyFingerprint, normalized.Profile.ConsentFingerprint,
-		normalized.Profile.RenditionDisclosureFingerprint, normalized.Profile.TrustBoundary,
+		normalized.Profile.RenditionDisclosureFingerprint, storedString(postgres, normalized.Profile.TrustBoundary),
 		normalized.AttachedAt,
 	)
 	if err != nil {
@@ -809,6 +809,7 @@ func insertLegacyRenditionAttachmentTx(
 
 func stageLegacyLexicalGenerationTx(
 	ctx context.Context, tx *sql.Tx,
+	postgres bool,
 ) (LexicalGeneration, error) {
 	rows, err := readCatalogLexicalManifestRowsTx(ctx, tx, "")
 	if err != nil {
@@ -818,7 +819,7 @@ func stageLegacyLexicalGenerationTx(
 	if err != nil {
 		return LexicalGeneration{}, err
 	}
-	return stageLexicalGenerationRowsTx(ctx, tx, lexicalReplacementGenerationID(rows, buildIDs), buildIDs, rows)
+	return stageLexicalGenerationRowsTx(ctx, tx, lexicalReplacementGenerationID(rows, buildIDs), buildIDs, rows, postgres)
 }
 
 func compareLegacyServingCompatibilityTx(

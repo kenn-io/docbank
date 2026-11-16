@@ -159,7 +159,7 @@ func validateMailboxJob(j MailboxJob) error {
 	}
 	return nil
 }
-func saveMailboxJob(ctx context.Context, tx *sql.Tx, j MailboxJob, insert bool) error {
+func saveMailboxJob(ctx context.Context, tx *sql.Tx, j MailboxJob, insert bool, postgres bool) error {
 	if err := validateMailboxJob(j); err != nil {
 		return err
 	}
@@ -170,17 +170,29 @@ func saveMailboxJob(ctx context.Context, tx *sql.Tx, j MailboxJob, insert bool) 
 	if len(b) > 128<<10 {
 		return ErrMailboxLimit
 	}
+	if postgres {
+		query, err := mailboxJobQueryJSON(j)
+		if err != nil {
+			return err
+		}
+		if insert {
+			_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_jobs(id,owner,container_id,state,claim,job_json,query_json) VALUES($1,$2,$3,$4,$5,$6,$7)`, []byte(j.ID), []byte(j.Owner), []byte(j.ContainerID), j.State, j.Claim, b, query)
+		} else {
+			_, err = tx.ExecContext(ctx, `UPDATE mailbox_jobs SET state=$1,claim=$2,job_json=$3,query_json=$4 WHERE id=$5`, j.State, j.Claim, b, query, []byte(j.ID))
+		}
+		return err
+	}
 	if insert {
-		_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_jobs(id,owner,container_id,state,claim,job_json) VALUES(?,?,?,?,?,?)`, j.ID, j.Owner, j.ContainerID, j.State, j.Claim, b)
+		_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_jobs(id,owner,container_id,state,claim,job_json) VALUES($1,$2,$3,$4,$5,$6)`, storedString(postgres, j.ID), storedString(postgres, j.Owner), storedString(postgres, j.ContainerID), j.State, j.Claim, b)
 	} else {
-		_, err = tx.ExecContext(ctx, `UPDATE mailbox_jobs SET state=?,claim=?,job_json=? WHERE id=?`, j.State, j.Claim, b, j.ID)
+		_, err = tx.ExecContext(ctx, `UPDATE mailbox_jobs SET state=$1,claim=$2,job_json=$3 WHERE id=$4`, j.State, j.Claim, b, storedString(postgres, j.ID))
 	}
 	return err
 }
-func loadMailboxJob(ctx context.Context, q metadataQuerier, owner, id string) (MailboxJob, error) {
+func loadMailboxJob(ctx context.Context, q metadataQuerier, owner, id string, postgres bool) (MailboxJob, error) {
 	var b []byte
 	var state, claim, container string
-	err := q.QueryRowContext(ctx, `SELECT state,claim,container_id,job_json FROM mailbox_jobs WHERE id=$1 AND owner=$2`, id, owner).Scan(&state, &claim, &container, &b)
+	err := q.QueryRowContext(ctx, `SELECT state,claim,container_id,job_json FROM mailbox_jobs WHERE id=$1 AND owner=$2`, storedString(postgres, id), storedString(postgres, owner)).Scan(&state, &claim, &container, &b)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MailboxJob{}, ErrNotFound
 	}
@@ -204,7 +216,7 @@ func decodeMailboxJob(id, owner, state, claim, container string, b []byte) (Mail
 	return j, validateMailboxJob(j)
 }
 func (s *Store) MailboxJob(ctx context.Context, owner, id string) (MailboxJob, error) {
-	return loadMailboxJob(ctx, s.db, owner, id)
+	return loadMailboxJob(ctx, s.db, owner, id, s.postgresSchema != "")
 }
 func (s *Store) MailboxJobs(ctx context.Context, owner, after string, limit int) ([]MailboxJob, error) {
 	if limit < 1 || limit > 100 {
@@ -219,13 +231,17 @@ func (s *Store) MailboxJobs(ctx context.Context, owner, after string, limit int)
 		started = cursor.StartedAt
 	}
 	// Sort only page keys before loading potentially large retained job records.
+	startedSQL := "json_extract(job_json, '$.started_at')"
+	if s.postgresSchema != "" {
+		startedSQL = "(query_json::jsonb ->> 'started_at') COLLATE \"C\""
+	}
 	rows, err := s.db.QueryContext(ctx, `WITH page AS MATERIALIZED (
-		SELECT id,json_extract(job_json, '$.started_at') AS started FROM mailbox_jobs WHERE owner=?
-		AND (?='' OR (json_extract(job_json, '$.started_at'), id) < (?, ?))
-		ORDER BY started DESC, id DESC LIMIT ?
+		SELECT id,`+startedSQL+` AS started FROM mailbox_jobs WHERE owner=$1
+		AND ($2 OR (`+startedSQL+`, id) < ($3, $4))
+		ORDER BY started DESC, id DESC LIMIT $5
 	)
 	SELECT j.id,j.state,j.claim,j.container_id,j.job_json
-	FROM page JOIN mailbox_jobs j ON j.id=page.id`, owner, after, started, after, limit)
+	FROM page JOIN mailbox_jobs j ON j.id=page.id`, storedString(s.postgresSchema != "", owner), after == "", started, storedString(s.postgresSchema != "", after), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -252,9 +268,9 @@ func (s *Store) MailboxJobs(ctx context.Context, owner, after string, limit int)
 	})
 	return out, nil
 }
-func mailboxJobQuota(ctx context.Context, tx *sql.Tx, owner string) error {
+func mailboxJobQuota(ctx context.Context, tx *sql.Tx, owner string, postgres bool) error {
 	var all, owned int
-	err := tx.QueryRowContext(ctx, `SELECT count(*),COALESCE(sum(owner=?),0) FROM mailbox_jobs WHERE state IN ('queued','running')`, owner).Scan(&all, &owned)
+	err := tx.QueryRowContext(ctx, `SELECT count(*),COALESCE(sum(CASE WHEN owner=$1 THEN 1 ELSE 0 END),0) FROM mailbox_jobs WHERE state IN ('queued','running')`, storedString(postgres, owner)).Scan(&all, &owned)
 	if err != nil {
 		return err
 	}
@@ -274,7 +290,7 @@ func (s *Store) BeginMailboxJob(ctx context.Context, owner string, r MailboxJobR
 		return j, err
 	}
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		old, err := loadMailboxJob(ctx, tx, owner, r.ID)
+		old, err := loadMailboxJob(ctx, tx, owner, r.ID, s.postgresSchema != "")
 		if err == nil {
 			if !reflect.DeepEqual(old.MailboxJobRequest, r) {
 				return ErrMailboxConflict
@@ -285,7 +301,7 @@ func (s *Store) BeginMailboxJob(ctx context.Context, owner string, r MailboxJobR
 		if !errors.Is(err, ErrNotFound) {
 			return err
 		}
-		c, err := loadMailboxContainer(ctx, tx, owner, r.ContainerID)
+		c, err := loadMailboxContainer(ctx, tx, owner, r.ContainerID, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
@@ -298,7 +314,7 @@ func (s *Store) BeginMailboxJob(ctx context.Context, owner string, r MailboxJobR
 		if err = validateMailboxLabelTagsTx(ctx, tx, r.Settings.LabelTags); err != nil {
 			return err
 		}
-		if err = mailboxJobQuota(ctx, tx, owner); err != nil {
+		if err = mailboxJobQuota(ctx, tx, owner, s.postgresSchema != ""); err != nil {
 			return err
 		}
 		collection, err := newUUIDv4()
@@ -306,7 +322,7 @@ func (s *Store) BeginMailboxJob(ctx context.Context, owner string, r MailboxJobR
 			return err
 		}
 		j = MailboxJob{MailboxJobRequest: r, Owner: owner, State: mailboxJobQueued, CollectionID: collection, StartedAt: nowRFC3339()}
-		return saveMailboxJob(ctx, tx, j, true)
+		return saveMailboxJob(ctx, tx, j, true, s.postgresSchema != "")
 	})
 	return j, err
 }
@@ -328,7 +344,7 @@ func (s *Store) ClaimMailboxJob(ctx context.Context) (MailboxJob, error) {
 		if err != nil {
 			return err
 		}
-		j, err = loadMailboxJob(ctx, tx, owner, id)
+		j, err = loadMailboxJob(ctx, tx, owner, id, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
@@ -337,16 +353,16 @@ func (s *Store) ClaimMailboxJob(ctx context.Context) (MailboxJob, error) {
 			return err
 		}
 		j.State = mailboxJobRunning
-		return saveMailboxJob(ctx, tx, j, false)
+		return saveMailboxJob(ctx, tx, j, false, s.postgresSchema != "")
 	})
 	return j, err
 }
-func claimedMailboxJob(ctx context.Context, tx *sql.Tx, id, claim string) (MailboxJob, error) {
+func claimedMailboxJob(ctx context.Context, tx *sql.Tx, id, claim string, postgres bool) (MailboxJob, error) {
 	var owner string
-	if err := tx.QueryRowContext(ctx, `SELECT owner FROM mailbox_jobs WHERE id=?`, id).Scan(&owner); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT owner FROM mailbox_jobs WHERE id=$1`, storedString(postgres, id)).Scan(&owner); err != nil {
 		return MailboxJob{}, err
 	}
-	j, err := loadMailboxJob(ctx, tx, owner, id)
+	j, err := loadMailboxJob(ctx, tx, owner, id, postgres)
 	if err != nil {
 		return j, err
 	}
@@ -357,7 +373,7 @@ func claimedMailboxJob(ctx context.Context, tx *sql.Tx, id, claim string) (Mailb
 }
 func (s *Store) CancelMailboxJob(ctx context.Context, owner, id string) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		j, err := loadMailboxJob(ctx, tx, owner, id)
+		j, err := loadMailboxJob(ctx, tx, owner, id, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
@@ -366,10 +382,10 @@ func (s *Store) CancelMailboxJob(ctx context.Context, owner, id string) error {
 		}
 		j.State = "canceled"
 		j.Claim = ""
-		if err = setMailboxPendingOutcome(ctx, tx, &j, "canceled"); err != nil {
+		if err = setMailboxPendingOutcome(ctx, tx, &j, "canceled", s.postgresSchema != ""); err != nil {
 			return err
 		}
-		return saveMailboxJob(ctx, tx, j, false)
+		return saveMailboxJob(ctx, tx, j, false, s.postgresSchema != "")
 	})
 }
 func (s *Store) ResumeMailboxJob(ctx context.Context, owner string, r MailboxJobRequest, continuation bool) (MailboxJob, error) {
@@ -381,7 +397,7 @@ func (s *Store) ResumeMailboxJob(ctx context.Context, owner string, r MailboxJob
 	}
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		j, err = loadMailboxJob(ctx, tx, owner, r.ID)
+		j, err = loadMailboxJob(ctx, tx, owner, r.ID, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
@@ -397,7 +413,7 @@ func (s *Store) ResumeMailboxJob(ctx context.Context, owner string, r MailboxJob
 		if j.State == "partial" && !continuation {
 			return ErrMailboxConflict
 		}
-		if err = mailboxJobQuota(ctx, tx, owner); err != nil {
+		if err = mailboxJobQuota(ctx, tx, owner, s.postgresSchema != ""); err != nil {
 			return err
 		}
 		if continuation {
@@ -406,16 +422,16 @@ func (s *Store) ResumeMailboxJob(ctx context.Context, owner string, r MailboxJob
 		j.State = mailboxJobQueued
 		j.Claim = ""
 		j.Reason = ""
-		if err = setMailboxPendingOutcome(ctx, tx, &j, mailboxOccurrencePending); err != nil {
+		if err = setMailboxPendingOutcome(ctx, tx, &j, mailboxOccurrencePending, s.postgresSchema != ""); err != nil {
 			return err
 		}
-		return saveMailboxJob(ctx, tx, j, false)
+		return saveMailboxJob(ctx, tx, j, false, s.postgresSchema != "")
 	})
 	return j, err
 }
 func (s *Store) FinishMailboxJob(ctx context.Context, id, claim, state, reason string, tail bool) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		j, err := claimedMailboxJob(ctx, tx, id, claim)
+		j, err := claimedMailboxJob(ctx, tx, id, claim, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
@@ -423,7 +439,7 @@ func (s *Store) FinishMailboxJob(ctx context.Context, id, claim, state, reason s
 		j.Reason = reason
 		j.ScannedTail = tail
 		j.Claim = ""
-		return saveMailboxJob(ctx, tx, j, false)
+		return saveMailboxJob(ctx, tx, j, false, s.postgresSchema != "")
 	})
 }
 
@@ -431,7 +447,7 @@ func (s *Store) FinishMailboxJob(ctx context.Context, id, claim, state, reason s
 // every ZIP entry, before publishing any occurrence from this immutable source.
 func (s *Store) VerifyMailboxJobEntries(ctx context.Context, id, claim string, hashes []string) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		j, err := claimedMailboxJob(ctx, tx, id, claim)
+		j, err := claimedMailboxJob(ctx, tx, id, claim, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
@@ -439,7 +455,7 @@ func (s *Store) VerifyMailboxJobEntries(ctx context.Context, id, claim string, h
 			return ErrMailboxConflict
 		}
 		j.EntryHashes = hashes
-		return saveMailboxJob(ctx, tx, j, false)
+		return saveMailboxJob(ctx, tx, j, false, s.postgresSchema != "")
 	})
 }
 func (s *Store) ResetMailboxClaims(ctx context.Context) error {
@@ -453,13 +469,13 @@ func (s *Store) ResetMailboxClaims(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			j, err := loadMailboxJob(ctx, tx, owner, id)
+			j, err := loadMailboxJob(ctx, tx, owner, id, s.postgresSchema != "")
 			if err != nil {
 				return err
 			}
 			j.State = mailboxJobQueued
 			j.Claim = ""
-			if err = saveMailboxJob(ctx, tx, j, false); err != nil {
+			if err = saveMailboxJob(ctx, tx, j, false, s.postgresSchema != ""); err != nil {
 				return err
 			}
 		}
@@ -469,7 +485,7 @@ func (s *Store) ResetMailboxClaims(ctx context.Context) error {
 
 func (s *Store) CommitMailboxOccurrence(ctx context.Context, id, claim string, o MailboxOccurrence, p *MailboxTransferPublication) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		j, err := claimedMailboxJob(ctx, tx, id, claim)
+		j, err := claimedMailboxJob(ctx, tx, id, claim, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
@@ -522,13 +538,13 @@ func (s *Store) CommitMailboxOccurrence(ctx context.Context, id, claim string, o
 		if o.ReceiptID != "" {
 			receipt = o.ReceiptID
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO mailbox_occurrences(job_id,ordinal,receipt_id,occurrence_json) VALUES(?,?,?,?) ON CONFLICT(job_id,ordinal) DO UPDATE SET receipt_id=excluded.receipt_id,occurrence_json=excluded.occurrence_json`, id, o.Ordinal, receipt, b); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO mailbox_occurrences(job_id,ordinal,receipt_id,occurrence_json) VALUES($1,$2,$3,$4) ON CONFLICT(job_id,ordinal) DO UPDATE SET receipt_id=excluded.receipt_id,occurrence_json=excluded.occurrence_json`, storedString(s.postgresSchema != "", id), o.Ordinal, receipt, b); err != nil {
 			return err
 		}
 		j.Checkpoint = o.Ordinal
 		j.Pending = 0
 		j.Canceled = 0
-		return saveMailboxJob(ctx, tx, j, false)
+		return saveMailboxJob(ctx, tx, j, false, s.postgresSchema != "")
 	})
 }
 func (s *Store) MailboxOccurrences(ctx context.Context, owner, id string, after int64, limit int) ([]MailboxOccurrence, error) {
@@ -538,10 +554,10 @@ func (s *Store) MailboxOccurrences(ctx context.Context, owner, id string, after 
 	if _, err := s.MailboxJob(ctx, owner, id); err != nil {
 		return nil, err
 	}
-	return mailboxOccurrences(ctx, s.db, id, after, limit)
+	return mailboxOccurrences(ctx, s.db, id, after, limit, s.postgresSchema != "")
 }
-func mailboxOccurrences(ctx context.Context, q metadataQuerier, id string, after int64, limit int) ([]MailboxOccurrence, error) {
-	rows, err := q.QueryContext(ctx, `SELECT ordinal,receipt_id,occurrence_json FROM mailbox_occurrences WHERE job_id=$1 AND ordinal>$2 ORDER BY ordinal LIMIT $3`, id, after, limit)
+func mailboxOccurrences(ctx context.Context, q metadataQuerier, id string, after int64, limit int, postgres bool) ([]MailboxOccurrence, error) {
+	rows, err := q.QueryContext(ctx, `SELECT ordinal,receipt_id,occurrence_json FROM mailbox_occurrences WHERE job_id=$1 AND ordinal>$2 ORDER BY ordinal LIMIT $3`, storedString(postgres, id), after, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -567,4 +583,19 @@ func mailboxOccurrences(ctx context.Context, q metadataQuerier, id string, after
 		out = append(out, o)
 	}
 	return out, rows.Err()
+}
+
+// Keep paging and tag retention independent of opaque job evidence.
+func mailboxJobQueryJSON(j MailboxJob) (string, error) {
+	ids := make([]string, 0, len(j.Settings.LabelTags))
+	for _, id := range j.Settings.LabelTags {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	raw, err := json.Marshal(struct {
+		StartedAt    string   `json:"started_at"`
+		CollectionID string   `json:"collection_id"`
+		TagIDs       []string `json:"tag_ids"`
+	}{j.StartedAt, j.CollectionID, ids})
+	return string(raw), err
 }

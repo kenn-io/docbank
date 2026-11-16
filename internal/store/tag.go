@@ -318,7 +318,7 @@ func (s *Store) deleteTagTx(ctx context.Context, tx *sql.Tx, current Tag, record
 func (s *Store) deleteTagDefinitionTx(ctx context.Context, tx *sql.Tx, tagID string) error {
 	mapping := "json_each(CAST(j.job_json AS TEXT), '$.settings.label_tags')"
 	if s.postgresSchema != "" {
-		mapping = "jsonb_each_text(j.job_json::jsonb #> '{settings,label_tags}')"
+		mapping = "jsonb_array_elements_text(j.query_json::jsonb -> 'tag_ids')"
 	}
 	var active bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(

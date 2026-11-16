@@ -10,6 +10,7 @@ import (
 )
 
 func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
+	registerFaceCandidateRoutes(api, d, g)
 	huma.Register(api, huma.Operation{
 		OperationID: "createPerson", Method: http.MethodPost, Path: "/api/v1/people",
 		Summary: "Create one canonical person", DefaultStatus: http.StatusCreated,

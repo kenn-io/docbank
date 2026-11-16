@@ -111,6 +111,7 @@
   import PanelResizer from "./PanelResizer.svelte";
   import { readPanelWidth, watchWidth } from "./panelWidth.js";
   import ResultName from "./ResultName.svelte";
+  import { roleListLabel } from "./personRoles.js";
   import { resultColumns } from "./resultColumns.js";
   import ResultsPager from "./ResultsPager.svelte";
   import SnapshotActions, { type SnapshotActionChoice } from "./SnapshotActions.svelte";
@@ -140,7 +141,7 @@
   import { parseNodeVersionLink, resolveNodeVersionLink } from "./nodeVersionLink.js";
   import { APIError, isCurrentSessionError, mutationsInFlight } from "./api-transport.js";
   import { changeNodeTag, documentSearch, liveNodeTags } from "./receipts.js";
-  import { takeFragmentSession, type BrowserSession } from "./browser-session.js";
+  import { rememberSession, takeFragmentSession, type BrowserSession } from "./browser-session.js";
   import { getSignInStatus, signIn, tabSession } from "./web-login.js";
   import { startTelemetryReporting } from "./app-opened.js";
   import { startSessionReporting } from "./session-duration.js";
@@ -193,6 +194,8 @@
     type TagHotkeyBindings,
   } from "./tag-hotkeys.js";
   import { VerifiedUploadChannel } from "./upload.js";
+  import UploadChannelNotice from "./UploadChannelNotice.svelte";
+  import { UploadReconnect, type UploadConnectionState } from "./uploadReconnect.js";
   import {
     evidenceKindLabels,
     naturalSearchFallbackNote,
@@ -891,7 +894,8 @@
     ].filter((photos): photos is Photos => !!photos);
     // The People directory reloads on return, so only an open one refreshes.
     const people = photoPath === "/photos/people" ? peopleView : undefined;
-    if (lists.some((photos) => photos.loading) || people?.loading) return false;
+    if (lists.some((photos) => photos.loading) || people?.loading || people?.suggestions.loading)
+      return false;
     // Documents show the same files, so they reload when the user returns to them.
     pendingPhotoDocuments = true;
     for (const photos of lists)
@@ -905,6 +909,7 @@
         people?.refresh(),
       ]);
       listRefreshed = true;
+      if (people?.suggestions.error) throw new Error(people.suggestions.error);
     } finally {
       // A viewer's unavailable result must land after any older list rows.
       await settleReads(lists.map((photos) => photos.changed({ ...change, listRefreshed })));
@@ -1100,6 +1105,15 @@
   }
   let uploadChannel = $state<VerifiedUploadChannel | null>(null);
   let uploadChannelError = $state("");
+  let uploadConnectionState = $state<UploadConnectionState>("connecting");
+  let uploadReconnect: UploadReconnect | undefined;
+  let reconnectFocus: Element | null = null;
+  let reconnectFocusPending = false;
+  const reconnectUpload = (): void => {
+    reconnectFocus = document.activeElement?.closest('[role="dialog"]') ?? null;
+    reconnectFocusPending = !!document.activeElement?.matches(".notice button");
+    uploadReconnect?.retry();
+  };
   let directory = $state<Node | null>(null);
   let rows = $state<Row[]>([]);
   let stack = $state<Snapshot[]>([]);
@@ -1240,6 +1254,13 @@
   const snapshotActive = $derived(snapshot.state.status !== "idle");
   const tagBrowse = $derived(activeTagID !== "" && activeQuery === "");
   const panelScreen = $derived(activePanel ? panelScreens[activePanel.kind] : null);
+  // Upload drawers show their own channel notice, so the page banner would repeat it.
+  const uploadBannerVisible = $derived(
+    (uploadConnectionState === "failed" ||
+      uploadConnectionState === "manual" ||
+      uploadConnectionState === "fatal") &&
+      !(activePanel && ["photoImport", "upload", "mailbox", "loadFile"].includes(activePanel.kind)),
+  );
   const visibleScreen = $derived<generated.TelemetryEventPropertiesScreen>(
     shortcutHelpOpen
       ? "help"
@@ -1361,6 +1382,7 @@
     selectedSnapshotRows.map((row) => ({
       node_id: row.node_id,
       revision: snapshotTargetRevision(row, snapshot.overlays),
+      name: row.path,
     })),
   );
   const allVisibleSnapshotRowsSelected = $derived(
@@ -1583,6 +1605,7 @@
   });
 
   function activateBrowserSession(session: BrowserSession, keyLogin = false): void {
+    rememberSession(keyLogin ? null : session);
     disposeBrowserSession?.();
     webSession = session.token;
     hasProductions = false;
@@ -1596,28 +1619,51 @@
     const reporter = startTelemetryReporting(session.token);
     telemetryReporting = reporter;
     sessionReporting = startSessionReporting(reporter);
-    const channel = new VerifiedUploadChannel(session, undefined, () => {
-      if (uploadChannel !== channel) return;
-      uploadChannelError = keyLogin
-        ? "The verified upload channel ended. Reload and sign in again before selecting more files."
-        : "The verified upload channel ended. Run `docbank web` again before selecting more files.";
+    uploadConnectionState = "connecting";
+    reconnectFocusPending = false;
+    reconnectFocus = null;
+    const reconnect = new UploadReconnect(session, (state, channel, cause) => {
+      if (!mounted || webSession !== session.token) return;
+      uploadConnectionState = state;
+      if (state === "connected" && channel) {
+        uploadChannel = channel;
+        uploadChannelError = "";
+        if (reconnectFocusPending) {
+          const target = reconnectFocus;
+          reconnectFocus = null;
+          reconnectFocusPending = false;
+          void tick().then(() => {
+            if (!mounted || webSession !== session.token) return;
+            if (!target) {
+              if (document.querySelector('[role="dialog"]')) return;
+              document.querySelector<HTMLElement>(".document-add-trigger")?.focus();
+              return;
+            }
+            if (!target.isConnected) return;
+            target
+              .querySelector<HTMLElement>(
+                ".chooser button:not(:disabled), .controls button:not(:disabled), .tool-body button:not(:disabled)",
+              )
+              ?.focus();
+          });
+        }
+      } else if (state === "fatal") {
+        if (cause instanceof APIError && (cause.status === 401 || cause.status === 403)) {
+          handleFailure(new APIError("Browser session rejected", 401, ""));
+        } else uploadChannelError = cause instanceof Error ? cause.message : String(cause);
+      } else if (state === "failed" || state === "manual") {
+        uploadChannelError = "Upload channel disconnected. Choose Reconnect.";
+      } else if (state === "reconnecting") uploadChannelError = "Reconnecting upload channel";
     });
-    void channel.connect().then(
-      () => {
-        if (mounted && webSession === session.token) uploadChannel = channel;
-        else channel.close();
-      },
-      (cause) => {
-        if (mounted && webSession === session.token)
-          uploadChannelError = cause instanceof Error ? cause.message : String(cause);
-      },
-    );
+    uploadReconnect = reconnect;
+    reconnect.start();
     const reporting = sessionReporting;
     disposeBrowserSession = () => {
       reporting.stop();
       reporter.stop();
       telemetryReporting = undefined;
-      channel.close();
+      reconnect.close();
+      if (uploadReconnect === reconnect) uploadReconnect = undefined;
     };
   }
 
@@ -1889,10 +1935,10 @@
   }
 
   function resetLocalSessionUI(): void {
+    rememberSession(null);
     readerRequest++;
     reader = undefined;
     clearToasts();
-    taggingOutcomeUnknown = false;
     leaveSnapshotMode();
     activePanel = null;
     savedQueryDraft = null;
@@ -2902,6 +2948,7 @@
       if (!inspectorRequestCurrent(request, tagGeneration, session, nodeID, sourceKey)) return;
       selectedLiveNode = listing.node;
       selectedLiveSourceKey = sourceKey ?? "";
+      selectedTagsError = "";
       selectedTags = sortTags(listing.items);
       selectedTagsTotal = listing.total;
       const source = selectedSource;
@@ -3065,11 +3112,14 @@
     batchTagsTargets = targets.map((target) => ({ ...target }));
   }
 
-  function handleBatchTagsChanged(_receipt: BatchTagReceipt): void {
-    // A replay describes a historical success. Reload current observations
-    // instead of overwriting newer rows with the receipt's old revisions.
+  // A replay describes a historical success, so reload current observations
+  // instead of overwriting newer rows with the receipt's old revisions.
+  function refreshTaggedViews(): void {
+    const source = selectedSource;
+    const nodeID = selectedID;
     refreshCurrentView();
-    if (selectedID !== undefined) void loadSelectedTags(selectedID, selectedSource?.key);
+    if (source) void loadSelectedTags(source.nodeID, source.key);
+    else if (nodeID !== undefined) void loadSelectedTags(nodeID);
   }
 
   function leaveSnapshotMode(resumeLive = false): void {
@@ -3354,12 +3404,6 @@
     void hiddenWorkspace?.refresh();
     void loadTagCatalog();
     refreshDocumentsView();
-  }
-
-  let taggingOutcomeUnknown = $state(false);
-  function handleUnknownTagging(): void {
-    taggingOutcomeUnknown = true;
-    refreshCurrentView();
   }
 
   function failToast(cause: unknown, session: string): void {
@@ -4233,6 +4277,15 @@
         {/snippet}
       </TopBar>
 
+      {#if photoMode && uploadBannerVisible}
+        <div class="banner error">
+          <UploadChannelNotice
+            state={uploadConnectionState}
+            message={uploadChannelError}
+            onreconnect={reconnectUpload}
+          />
+        </div>
+      {/if}
       {#if hiddenAccess?.lockError}<div class="photo-access-error">
           <p role="alert">Hidden did not lock. {hiddenAccess.lockError}</p>
           <Button
@@ -4666,11 +4719,17 @@
                                   onchange={(checked) => snapshot.toggleSelection(row, checked)}
                                 />
                               </td>
-                              <td class="name-cell" aria-label={row.path}>
+                              <td
+                                class="name-cell"
+                                aria-label={row.matched_roles?.length
+                                  ? `${row.path}, people evidence: ${roleListLabel(row.matched_roles)}`
+                                  : row.path}
+                              >
                                 <ResultName
                                   name={row.name}
                                   folder={parentPath(row.path)}
                                   mime={row.mime_type}
+                                  roles={row.matched_roles}
                                 />
                               </td>
                               <td class="type-cell col-type"
@@ -4696,7 +4755,7 @@
                 <div class="loading"><Spinner size={16} /> Creating frozen snapshot…</div>
               {:else}
                 <div class="snapshot-failure">
-                  <p>No snapshot results were accepted.</p>
+                  <p>Couldn't load the snapshot results.</p>
                   {#if snapshot.state.query && snapshot.state.options}<Button
                       onclick={runSnapshotAgain}>Run again</Button
                     >{/if}
@@ -4806,6 +4865,15 @@
 
               {#if error}
                 <div class="banner error" role="alert">{error}</div>
+              {/if}
+              {#if uploadBannerVisible}
+                <div class="banner error">
+                  <UploadChannelNotice
+                    state={uploadConnectionState}
+                    message={uploadChannelError}
+                    onreconnect={reconnectUpload}
+                  />
+                </div>
               {/if}
               {#if naturalSearchNote === searchByMeaningOff}
                 <!-- Discovery can finish after the search, so the hint waits for it to confirm. -->
@@ -5434,6 +5502,8 @@
           session={webSession}
           channel={uploadChannel}
           disabledReason={uploadChannelError}
+          connectionState={uploadConnectionState}
+          onreconnect={reconnectUpload}
           onclose={closePanel(panel)}
           oncomplete={async () => {
             await Promise.all([
@@ -5458,6 +5528,8 @@
           directory={panel.target}
           initialPicker={panel.picker}
           disabledReason={uploadChannelError}
+          connectionState={uploadConnectionState}
+          onreconnect={reconnectUpload}
           onclose={closePanel(panel)}
           oncomplete={async () => {
             if (activePanel === panel) await loadDirectory(panel.target.id, false);
@@ -5470,6 +5542,9 @@
           session={webSession}
           channel={uploadChannel}
           directory={panel.target}
+          disabledReason={uploadChannelError}
+          connectionState={uploadConnectionState}
+          onreconnect={reconnectUpload}
           onclose={closePanel(panel)}
           oncomplete={async () => {
             if (activePanel === panel) await loadDirectory(panel.target.id, false);
@@ -5484,6 +5559,9 @@
           session={webSession}
           channel={uploadChannel}
           destination={panel.target.path ?? "/"}
+          disabledReason={uploadChannelError}
+          connectionState={uploadConnectionState}
+          onreconnect={reconnectUpload}
           onclose={closePanel(panel)}
           oncomplete={async () => {
             hasProductions = true;
@@ -5536,10 +5614,12 @@
         targets={batchTagsTargets}
         catalog={tagCatalog}
         disabled={loading}
-        onchanged={handleBatchTagsChanged}
-        onunknown={handleUnknownTagging}
+        onchanged={refreshTaggedViews}
         oncreated={() => void loadTagCatalog(false, true)}
-        onclose={() => (batchTagsTargets = null)}
+        onclose={(recovered) => {
+          batchTagsTargets = null;
+          if (recovered) refreshTaggedViews();
+        }}
         onauthfailure={handleFailure}
       />
     {/if}
@@ -5557,10 +5637,12 @@
         errorMessage={snapshot.actionError}
         onstart={(choice) => void startSnapshotAction(choice)}
         onchanged={handleSnapshotSelectionTagged}
-        onunknown={handleUnknownTagging}
         oncreated={() => void loadTagCatalog(false, true)}
         onimport={(bytes) => void snapshot.importAction(bytes)}
-        onclose={() => snapshot.cancelAction()}
+        onclose={(recovered) => {
+          snapshot.cancelAction();
+          if (recovered) refreshTaggedViews();
+        }}
         onauthfailure={handleFailure}
       />
     {/if}
@@ -5576,14 +5658,6 @@
         onclose={() => snapshot.dismissRecovery()}
         onauthfailure={handleFailure}
       />
-    {/if}
-    {#if taggingOutcomeUnknown}
-      <Modal title="Tagging result unknown" onclose={() => (taggingOutcomeUnknown = false)}>
-        <p role="alert">The result is unknown. Check these documents' tags before trying again.</p>
-        {#snippet footer()}
-          <Button onclick={() => (taggingOutcomeUnknown = false)}>Dismiss</Button>
-        {/snippet}
-      </Modal>
     {/if}
   </div>
 {/if}

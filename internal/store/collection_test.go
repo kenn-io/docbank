@@ -256,7 +256,7 @@ func addCollectionMembership(
 	tb.Helper()
 	ctx := context.Background()
 	require.NoError(tb, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if _, err := ensureIngestRunTx(ctx, tx, run); err != nil {
+		if _, err := s.ensureIngestRunTx(ctx, tx, run); err != nil {
 			return err
 		}
 		fact := metadataProvenance{

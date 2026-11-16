@@ -1161,9 +1161,14 @@ func receiptText(receipts []EmbeddingAttemptReceipt) string {
 
 func TestEmbeddingWorkerPublishesThroughRealCatalogAndBlobStore(t *testing.T) {
 	t.Parallel()
+	checkEmbeddingWorkerPublishesThroughRealCatalogAndBlobStore(t, newPublicationFixture)
+}
+
+func checkEmbeddingWorkerPublishesThroughRealCatalogAndBlobStore(t *testing.T, makeFixture publicationFixtureFactory) {
+	t.Helper()
 	for _, kind := range []document.EmbeddingInputKind{document.EmbeddingInputOriginalFile, document.EmbeddingInputRenditionChunk} {
 		t.Run(string(kind), func(t *testing.T) {
-			fixture, fake, worker, request := newRealEmbeddingWorker(t, kind)
+			fixture, fake, worker, request := embeddingWorkerWithFixture(t, makeFixture, kind)
 			generation := request.InputGeneration
 			processed, err := worker.ScanOnce(t.Context())
 			require.NoError(t, err)
@@ -1225,13 +1230,18 @@ func (embeddingIntegrationTokenizer) Tokenize(text string, limit int) ([]documen
 
 func newRealEmbeddingWorker(tb testing.TB, kind document.EmbeddingInputKind, additionalBindings ...string) (publicationFixture, *embeddingWorkerFixture, *EmbeddingWorker, store.EmbeddingJobRequest) {
 	tb.Helper()
-	fixture, fake, worker, request, _ := newRealEmbeddingWorkerWithDescriptor(tb, kind, nil, additionalBindings...)
+	return embeddingWorkerWithFixture(tb, newPublicationFixture, kind, additionalBindings...)
+}
+
+func embeddingWorkerWithFixture(tb testing.TB, makeFixture publicationFixtureFactory, kind document.EmbeddingInputKind, additionalBindings ...string) (publicationFixture, *embeddingWorkerFixture, *EmbeddingWorker, store.EmbeddingJobRequest) {
+	tb.Helper()
+	fixture, fake, worker, request, _ := embeddingWorkerWithDescriptorFixture(tb, makeFixture, kind, nil, additionalBindings...)
 	return fixture, fake, worker, request
 }
 
-func newRealEmbeddingWorkerWithDescriptor(tb testing.TB, kind document.EmbeddingInputKind, descriptor *document.EmbeddingDescriptor, additionalBindings ...string) (publicationFixture, *embeddingWorkerFixture, *EmbeddingWorker, store.EmbeddingJobRequest, EmbeddingWorkerConfig) {
+func embeddingWorkerWithDescriptorFixture(tb testing.TB, makeFixture publicationFixtureFactory, kind document.EmbeddingInputKind, descriptor *document.EmbeddingDescriptor, additionalBindings ...string) (publicationFixture, *embeddingWorkerFixture, *EmbeddingWorker, store.EmbeddingJobRequest, EmbeddingWorkerConfig) {
 	tb.Helper()
-	fixture := newPublicationFixture(tb)
+	fixture := makeFixture(tb)
 	fake := newEmbeddingWorkerFixture(tb)
 	if descriptor != nil {
 		fake.descriptor = *descriptor
@@ -1392,10 +1402,15 @@ func (catalog *observedEmbeddingCatalog) BeginEmbeddingProviderEgress(ctx contex
 
 func TestEmbeddingWorkerFencesConsentThroughProviderCall(t *testing.T) {
 	t.Parallel()
+	checkEmbeddingWorkerFencesConsentThroughProviderCall(t, newPublicationFixture)
+}
+
+func checkEmbeddingWorkerFencesConsentThroughProviderCall(t *testing.T, makeFixture publicationFixtureFactory) {
+	t.Helper()
 	// The fence's waiters block on channels, so synctest.Wait returns while a
 	// revocation waits for the provider call.
 	synctest.Test(t, func(t *testing.T) {
-		fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+		fixture, fake, worker, request := embeddingWorkerWithFixture(t, makeFixture, document.EmbeddingInputOriginalFile)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		authorized, proceed, started := make(chan struct{}), make(chan struct{}), make(chan struct{})
@@ -1430,7 +1445,12 @@ func TestEmbeddingWorkerFencesConsentThroughProviderCall(t *testing.T) {
 
 func TestEmbeddingWorkerRejectsConsentRevokedBeforeProviderCall(t *testing.T) {
 	t.Parallel()
-	fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+	checkEmbeddingWorkerRejectsConsentRevokedBeforeProviderCall(t, newPublicationFixture)
+}
+
+func checkEmbeddingWorkerRejectsConsentRevokedBeforeProviderCall(t *testing.T, makeFixture publicationFixtureFactory) {
+	t.Helper()
+	fixture, fake, worker, request := embeddingWorkerWithFixture(t, makeFixture, document.EmbeddingInputOriginalFile)
 	_, err := fixture.catalog.RevokeConsent(t.Context(), store.ProcessingConsentRevocationRequest{Principal: request.Authorization.Principal, Scope: request.Authorization.Scope})
 	require.NoError(t, err)
 	_, err = worker.ScanOnce(t.Context())
@@ -1454,7 +1474,12 @@ func (runtime afterEmbeddingPrepare) Prepare(ctx context.Context, work Embedding
 
 func TestEmbeddingWorkerTargetReportsSourceFence(t *testing.T) {
 	t.Parallel()
-	fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+	checkEmbeddingWorkerTargetReportsSourceFence(t, newPublicationFixture)
+}
+
+func checkEmbeddingWorkerTargetReportsSourceFence(t *testing.T, makeFixture publicationFixtureFactory) {
+	t.Helper()
+	fixture, fake, worker, request := embeddingWorkerWithFixture(t, makeFixture, document.EmbeddingInputOriginalFile)
 	version, err := fixture.catalog.ContentVersionByID(t.Context(), request.ContentVersionID)
 	require.NoError(t, err)
 	node, err := fixture.catalog.NodeByID(t.Context(), version.NodeID)
@@ -1476,9 +1501,14 @@ func TestEmbeddingWorkerTargetReportsSourceFence(t *testing.T) {
 
 func TestEmbeddingWorkerAbandonsReplacedRendition(t *testing.T) {
 	t.Parallel()
+	checkEmbeddingWorkerAbandonsReplacedRendition(t, newPublicationFixture)
+}
+
+func checkEmbeddingWorkerAbandonsReplacedRendition(t *testing.T, makeFixture publicationFixtureFactory) {
+	t.Helper()
 	for _, duringProvider := range []bool{false, true} {
 		t.Run(fmt.Sprintf("during-provider=%t", duringProvider), func(t *testing.T) {
-			fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputRenditionChunk)
+			fixture, fake, worker, request := embeddingWorkerWithFixture(t, makeFixture, document.EmbeddingInputRenditionChunk)
 			staged := fixture.stage(t, publicationIDs{"ba", "5a", "9a"}, "replacement evidence", "Example")
 			// A distinct captured-artifact policy permits a new immutable build for
 			// the same source and processing profile.
@@ -1639,9 +1669,14 @@ func (a afterEmbeddingStageAuthority) StageEmbeddingSetWithLease(ctx context.Con
 }
 func TestEmbeddingWorkerRecoversConsentRevokedBeforePublication(t *testing.T) {
 	t.Parallel()
+	checkEmbeddingWorkerRecoversConsentRevokedBeforePublication(t, newPublicationFixture)
+}
+
+func checkEmbeddingWorkerRecoversConsentRevokedBeforePublication(t *testing.T, makeFixture publicationFixtureFactory) {
+	t.Helper()
 	for _, revoke := range []bool{false, true} {
 		t.Run(strconv.FormatBool(revoke), func(t *testing.T) {
-			fixture, _, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+			fixture, _, worker, request := embeddingWorkerWithFixture(t, makeFixture, document.EmbeddingInputOriginalFile)
 			worker.authority = afterEmbeddingStageAuthority{embeddingWorkerAuthority: worker.authority, after: func() {
 				if revoke {
 					_, err := fixture.catalog.RevokeConsent(t.Context(), store.ProcessingConsentRevocationRequest{Principal: request.Authorization.Principal, Scope: request.Authorization.Scope})
@@ -1740,7 +1775,12 @@ func (s *unavailableEmbeddingStore) PublishEmbeddingWork(ctx context.Context, cl
 
 func TestEmbeddingWorkerCancellationDuringClaimPreservesQueuedWork(t *testing.T) {
 	t.Parallel()
-	fixture, _, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+	checkEmbeddingWorkerCancellationDuringClaimPreservesQueuedWork(t, newPublicationFixture)
+}
+
+func checkEmbeddingWorkerCancellationDuringClaimPreservesQueuedWork(t *testing.T, makeFixture publicationFixtureFactory) {
+	t.Helper()
+	fixture, _, worker, request := embeddingWorkerWithFixture(t, makeFixture, document.EmbeddingInputOriginalFile)
 	job, err := fixture.catalog.EnqueueEmbeddingJob(t.Context(), request)
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -1757,11 +1797,16 @@ func TestEmbeddingWorkerCancellationDuringClaimPreservesQueuedWork(t *testing.T)
 
 func TestEmbeddingWorkerReportsCancellationAndCleanupFailure(t *testing.T) {
 	t.Parallel()
+	checkEmbeddingWorkerReportsCancellationAndCleanupFailure(t, newPublicationFixture)
+}
+
+func checkEmbeddingWorkerReportsCancellationAndCleanupFailure(t *testing.T, makeFixture publicationFixtureFactory) {
+	t.Helper()
 	for _, test := range []struct{ targeted, cleanupFails bool }{
 		{false, false}, {false, true}, {true, false}, {true, true},
 	} {
 		t.Run(fmt.Sprintf("targeted=%t/cleanup-fails=%t", test.targeted, test.cleanupFails), func(t *testing.T) {
-			fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+			fixture, fake, worker, request := embeddingWorkerWithFixture(t, makeFixture, document.EmbeddingInputOriginalFile)
 			catalog := &unavailableEmbeddingStore{Store: fixture.catalog}
 			if test.cleanupFails {
 				catalog.releaseErr = errors.New("synthetic storage outage")
@@ -1792,9 +1837,14 @@ func TestEmbeddingWorkerReportsCancellationAndCleanupFailure(t *testing.T) {
 
 func TestEmbeddingWorkerStorageErrorsLeaveClaimsRecoverable(t *testing.T) {
 	t.Parallel()
+	checkEmbeddingWorkerStorageErrorsLeaveClaimsRecoverable(t, newPublicationFixture)
+}
+
+func checkEmbeddingWorkerStorageErrorsLeaveClaimsRecoverable(t *testing.T, makeFixture publicationFixtureFactory) {
+	t.Helper()
 	for _, phase := range []string{"validation", "renewal", "publication"} {
 		t.Run(phase, func(t *testing.T) {
-			fixture, fake, worker, _ := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+			fixture, fake, worker, _ := embeddingWorkerWithFixture(t, makeFixture, document.EmbeddingInputOriginalFile)
 			catalog := &unavailableEmbeddingStore{Store: fixture.catalog}
 			unavailable := errors.New("synthetic storage outage")
 			switch phase {
@@ -1865,7 +1915,12 @@ func TestEmbeddingWorkerBoundsStorageRetries(t *testing.T) {
 }
 func TestEmbeddingWorkerRecoversProviderAuthorization(t *testing.T) {
 	t.Parallel()
-	fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+	checkEmbeddingWorkerRecoversProviderAuthorization(t, newPublicationFixture)
+}
+
+func checkEmbeddingWorkerRecoversProviderAuthorization(t *testing.T, makeFixture publicationFixtureFactory) {
+	t.Helper()
+	fixture, fake, worker, request := embeddingWorkerWithFixture(t, makeFixture, document.EmbeddingInputOriginalFile)
 	fake.runtime.failures[request.BindingID] = []error{errors.New("synthetic credential unavailable")}
 	runtime, err := NewProviderEmbeddingRuntime(&embeddingWorkerProvider{runtime: fake.runtime, binding: request.BindingID, descriptor: fake.descriptor}, fixture.blobs, t.TempDir(), func(error) (EmbeddingProviderFailure, time.Duration) { return EmbeddingProviderAuthorization, 0 })
 	require.NoError(t, err)
@@ -2026,7 +2081,12 @@ func TestEmbeddingWorkerClassifiesOriginalMetadataAndBlobErrors(t *testing.T) {
 
 func TestEmbeddingWorkerRecordsClassifiedInvalidProviderResponse(t *testing.T) {
 	t.Parallel()
-	fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+	checkEmbeddingWorkerRecordsClassifiedInvalidProviderResponse(t, newPublicationFixture)
+}
+
+func checkEmbeddingWorkerRecordsClassifiedInvalidProviderResponse(t *testing.T, makeFixture publicationFixtureFactory) {
+	t.Helper()
+	fixture, fake, worker, request := embeddingWorkerWithFixture(t, makeFixture, document.EmbeddingInputOriginalFile)
 	fake.runtime.failures[request.BindingID] = []error{errors.New("synthetic malformed provider response")}
 	runtime, err := NewProviderEmbeddingRuntime(&embeddingWorkerProvider{runtime: fake.runtime, binding: request.BindingID, descriptor: fake.descriptor}, fixture.blobs, t.TempDir(), func(error) (EmbeddingProviderFailure, time.Duration) { return EmbeddingProviderInvalidResponse, 0 })
 	require.NoError(t, err)
@@ -2072,7 +2132,12 @@ func TestEmbeddingWorkerSpacesReconciliationWithoutDelayingQueuedWork(t *testing
 
 func TestImageEmbeddingRuntimePreviewValidation(t *testing.T) {
 	t.Parallel()
-	f := newPhotoDescriptionFixture(t)
+	checkImageEmbeddingRuntimePreviewValidation(t, newPhotoDescriptionFixture)
+}
+
+func checkImageEmbeddingRuntimePreviewValidation(t *testing.T, makeFixture photoDescriptionFixtureFactory) {
+	t.Helper()
+	f := makeFixture(t)
 	x := newImageEmbeddingService(t, f)
 	registry := x.service.EmbeddingRuntimes()
 	profile := x.service.profiles["images"].record

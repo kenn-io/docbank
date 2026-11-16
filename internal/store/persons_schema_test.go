@@ -30,12 +30,12 @@ func TestPristineMetadataTargetRequiresUntouchedPeopleState(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return requirePristineMetadataTarget(t.Context(), tx)
+		return requirePristineMetadataTarget(t.Context(), tx, false)
 	}))
 	_, err := s.db.ExecContext(t.Context(), `UPDATE document_people_state SET binding_epoch=2 WHERE singleton=1`)
 	require.NoError(t, err)
 	err = s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		return requirePristineMetadataTarget(t.Context(), tx)
+		return requirePristineMetadataTarget(t.Context(), tx, false)
 	})
 	require.ErrorContains(t, err, "not pristine")
 }

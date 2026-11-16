@@ -522,6 +522,9 @@ tr:focus-visible {
   .snapshot-browser {
     grid-template-columns: minmax(0, 1fr);
   }
+  .snapshot-browser:has(.facets) {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
 }
 
 /* ─── Inspector ─────────────────────────────────────────────────────── */

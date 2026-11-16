@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-01
+last_edited: 2026-11-11
 title: Searching
 description: Ranked, prefix-matching search over document names and verified text content.
 ---
@@ -218,10 +218,15 @@ Media-type matching ignores case and stored parameters. For example,
 `text/plain` also matches `text/plain; charset=utf-8`. The filter itself must
 contain no parameters. Directories and historical versions never match it.
 
-The directory filter accepts a path or `id:N`. The CLI resolves it to a stable
-node ID, which JSON echoes as `under_node_id`. Moving or renaming that
-directory does not change which directory the request selects. The directory
-itself is excluded from results.
+The directory filter accepts an absolute virtual path or `id:N`. The daemon
+resolves a path when it handles the search; JSON echoes the authored
+`under_path` and resolved stable `under_node_id`.
+Paths are case-exact and at most 16,384 UTF-8 bytes. A file path fails as
+`not_dir`; a missing or trashed folder fails as `not_found`. An `id:N`
+selector sends `under_node_id`, which keeps selecting that directory after a
+move or rename. The directory itself is excluded from results. HTTP and MCP
+callers may send either `under_path` or `under_node_id`; sending both fails
+validation before retrieval or a provider call.
 
 Time filters require absolute RFC3339 timestamps. Docbank normalizes
 offsets to UTC and echoes the bounds in JSON. The start is inclusive and the
@@ -234,6 +239,33 @@ modification time or the age of an older version.
 QueryV1 advanced expressions accept `person:"Ada Lovelace"` or `person:<person-id>`. Names match exactly after Unicode folding. Duplicate names require an ID; merged IDs resolve to the surviving person. Structured queries use `filters.person_ids`.
 
 Document queries include current published person links and direct assertions. Stale published links stay out until rebuilt. Photo queries match depicted-person assertions across the asset's live image and RAW members, using each member's current version and keep Hidden photos locked.
+
+## Find documents by person and role
+
+Advanced QueryV1 expressions can select what a person did on a current document version. Use a quoted exact name or person ID. Combine the operands with `AND`, `OR`, `NOT`, and other filters. Photo queries reject role operands and `filters.people`; use `person:` or `filters.person_ids` for depicted people.
+
+| Operand | Document roles |
+| --- | --- |
+| `author:` | Author |
+| `from:` | Sender or organizer |
+| `to:` | Recipient, copied or attendee; full access also includes blind copy |
+| `cc:` | Copied |
+| `bcc:` | Blind copy; API-key access only |
+| `custodian:`, `participant:`, `organizer:`, `attendee:` | The named role |
+| `between:(A, B)` | Both people have a non-custodian role on the same version |
+| `mentions:` | Text contains the person's display name or a name alias |
+
+For example, `from:"Mara Okonkwo-Fell"`, `custodian:"Mara Okonkwo-Fell"`, and `between:("Mara Okonkwo-Fell", "Ines Albarrán")` are ordinary queries that can be saved and exported. `between:` accepts exactly two distinct people, separated by a comma or whitespace; invalid pairs report `between: needs two different people`. `mentions:` searches all distinct names as literal phrases and labels a matched result `Mentioned`.
+
+Browser searches refuse `bcc:` and structured `blind_copy` role filters. Their other role searches omit Bcc evidence. API-key and MCP searches retain full evidence. `person:` retains its any-role meaning.
+
+While people evidence is incomplete, a version matches neither a role search nor its `NOT` unless an operator assertion establishes the role; an independent `OR` branch can still match it. Use the document event coverage report to inspect pending and failed work.
+
+The People facet is unavailable while any document in its population has incomplete people evidence, including pending, failed, or unavailable processing.
+
+Structured queries can use `"people":[{"person_id":"00000000-0000-4000-8000-000000000001","roles":["sender","organizer"]}]` inside `filters`. Each entry is required, while its roles are alternatives. The People facet uses safe evidence for every caller and ignores only root `filters.people` entries when counting. Result roles, facet names and counts are frozen with the snapshot; later renames or republishing do not change it. PostgreSQL search is not yet qualified.
+
+In the web app, frozen results show chips beside each name for roles named in positive query operands or people filters that those people hold on the document, such as `Sender` or `Cc`. A chip can appear even when its query branch did not select the result. `Mentioned` marks text that contains a name from a positive `mentions:` operand. The **People** filter group lists up to 50 people with their counts and roles. Selecting a person adds a `filters.people` entry with the roles shown; selecting them again removes only that person's entries.
 
 ## Can I search with filters alone?
 
@@ -592,6 +624,8 @@ names and indexed text. Processing search uses the separate workflow below.
 Saving search choices in QueryV1 does not execute either workflow.
 
 ## Why did a text search find nothing?
+
+A search with no matches reports `needs_ocr` when PDFs in scope have pages without a text layer. See [OCR](document-processing.md#ocr) for options.
 
 An empty CLI text search keeps its usual output and prints hints on stderr:
 how many files in the search scope need a processing profile, how many text

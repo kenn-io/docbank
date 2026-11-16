@@ -12,7 +12,7 @@ import (
 
 func TestNetworkMCPGuardPreservesHostOriginAndBearerBoundary(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	handler, err := wrapHTTPTransport(inner, HTTPOptions{BearerToken: testMCPBearer, listenHost: "0.0.0.0", AllowedHosts: []string{"docbank:7341"}})
+	handler, err := wrapHTTPTransport(inner, HTTPOptions{BearerToken: testMCPBearer, listenHost: "0.0.0.0", AllowedHosts: []string{"docbank:7341"}}, nil)
 	require.NoError(t, err)
 	for _, test := range []struct {
 		host, origin, token string
@@ -40,7 +40,7 @@ func TestNetworkMCPGuardPreservesHostOriginAndBearerBoundary(t *testing.T) {
 			assert.Equal(t, test.status, recorder.Code)
 		})
 	}
-	_, err = wrapHTTPTransport(inner, HTTPOptions{BearerToken: testMCPBearer, AllowedHosts: []string{"*"}})
+	_, err = wrapHTTPTransport(inner, HTTPOptions{BearerToken: testMCPBearer, AllowedHosts: []string{"*"}}, nil)
 	require.Error(t, err)
 }
 

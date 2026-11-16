@@ -24,7 +24,7 @@ func BenchmarkClaimNextEmbeddingWork(b *testing.B) {
 			profile := embeddingCatalogProfile(b)
 			var retained, pending Node
 			require.NoError(b, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-				if err := ensureProcessingProfileTx(ctx, tx, profile); err != nil {
+				if err := ensureProcessingProfileTx(ctx, tx, profile, s.postgresSchema != ""); err != nil {
 					return err
 				}
 				var err error

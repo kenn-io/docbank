@@ -62,6 +62,7 @@ it("inspects and downloads a frozen snapshot version under separately labeled li
       "size",
       "text_coverage",
       "duplicates",
+      "person_role",
     ].map((dimension) => ({
       dimension: dimension as SnapshotPage["facets"][number]["dimension"],
       available: false,

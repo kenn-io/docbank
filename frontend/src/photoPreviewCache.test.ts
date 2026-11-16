@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { storage } from "./photo-test-fixtures.js";
-import { PhotoPreviewCache } from "./photoPreviewCache.js";
+import { PhotoPreviewCache, faceCrop } from "./photoPreviewCache.js";
+import * as api from "./generated/docbank.js";
 import { Photos } from "./photos.svelte.js";
 import { recreatePhotoPreviewCache, revalidatePhotoWorkspace } from "./photoWorkspace.js";
 
@@ -339,3 +340,50 @@ it.each([
     expect(auth).toHaveBeenCalledTimes(status === 401 || hidden ? 1 : 0);
   },
 );
+
+it.each([
+  { label: "candidate face", id: undefined },
+  { label: "named person", id: "person-a" },
+])("prepares and reads a crop for $label", async ({ id }) => {
+  vi.stubGlobal(
+    "Image",
+    class {
+      src = "";
+      naturalWidth = 1000;
+      naturalHeight = 800;
+      decode() {
+        return Promise.resolve();
+      }
+    },
+  );
+  const prepare = vi
+    .spyOn(api, "preparePhotoPreview")
+    .mockResolvedValue({ state: "ready", generation_id: "grid" });
+  const cache = workspace();
+  const get = vi.spyOn(cache, "get").mockResolvedValue(new Blob(["synthetic"]));
+  const releases: (() => void)[] = [];
+  const image = await faceCrop(
+    cache,
+    {
+      asset_id: "asset",
+      content_version_id: "version",
+      generation_id: "",
+      rotation: 0,
+      box: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+    },
+    { ...(id ? { id } : { faceID: "candidate-face" }), hidden: false, size: 96 },
+    new AbortController().signal,
+    (release) => releases.push(release),
+  );
+  expect(image?.url).toMatch(/^blob:/);
+  // Each crop reads through its exact named-person or candidate-face grant.
+  expect(prepare.mock.calls[0]![1]).toEqual({
+    content_version_id: "version",
+    size: "grid",
+    hidden: false,
+    ...(id ? { person_id: id } : { face_id: "candidate-face" }),
+  });
+  expect(get.mock.calls[0]!.slice(0, 2)).toEqual(["asset", "grid"]);
+  expect(get.mock.calls[0]![4]).toEqual(id ? { person_id: id } : { face_id: "candidate-face" });
+  for (const release of releases) release();
+});

@@ -106,6 +106,14 @@ try {
       );
       const result = JSON.parse(await readFile(report, "utf8"));
       assert.equal(result.errors.length, 0, `${mode} runner errors`);
+      const specs = (suites) =>
+        suites.flatMap((suite) => [...(suite.specs ?? []), ...specs(suite.suites ?? [])]);
+      const recipient = specs(result.suites).filter(
+        (spec) =>
+          spec.title === "downloads recipient ZIPs for completed reviews and imports their numbers",
+      );
+      assert.equal(recipient.length, 1, `${mode} must include recipient handoff`);
+      assert.equal(recipient[0].ok, true, `${mode} recipient handoff must pass`);
       const { expected, unexpected, flaky, skipped } = result.stats;
       assert.deepEqual(
         { expected, unexpected, flaky, skipped },

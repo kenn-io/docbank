@@ -23,6 +23,14 @@ export class APIError extends Error {
   }
 }
 
+export class NetworkError extends TypeError {}
+
+export function networkError(cause: unknown, signal?: AbortSignal | null): unknown {
+  return cause instanceof TypeError && !signal?.aborted
+    ? new NetworkError(cause.message, { cause })
+    : cause;
+}
+
 const requestSessionByError = new WeakMap<APIError, string>();
 
 // API failures from browser requests are tied to the tab credential that
@@ -40,7 +48,7 @@ export interface SessionOptions extends RequestInit {
 // Reads that use POST for their request body, so scrolling or typing a search never defers a pass.
 // A missed entry only delays one refresh pass.
 const readOnlyPosts =
-  /^\/api\/v1\/(photos\/(assets\/(query|timeline|flags|[^/]+\/preview)|authored\/prepare|rejects\/preflight|stacks\/group|checkouts\/estimate)|queries\/parse|redaction\/(prepare|resolve|previews))$/;
+  /^\/api\/v1\/(photos\/(assets\/(query|timeline|flags|[^/]+\/preview)|authored\/prepare|rejects\/preflight|stacks\/group|checkouts\/estimate)|queries\/parse|redaction\/(prepare|resolve|previews|recipient-packages))$/;
 
 let mutations = 0;
 
@@ -84,12 +92,17 @@ async function send(
   }
   if (!headers.has("Accept")) headers.set("Accept", "application/json");
   headers.set("X-Docbank-Web-Session", session);
-  const response = await fetch(webURL(url), {
-    ...init,
-    headers,
-    credentials: "same-origin",
-    redirect: "error",
-  });
+  let response: Response;
+  try {
+    response = await fetch(webURL(url), {
+      ...init,
+      headers,
+      credentials: "same-origin",
+      redirect: "error",
+    });
+  } catch (cause) {
+    throw networkError(cause, init.signal);
+  }
   if (!response.ok && !(allowNotModified && response.status === 304)) {
     let problem: Problem = {};
     try {
@@ -128,11 +141,13 @@ export function sessionJSON<T>(url: string, options: SessionOptions): Promise<T>
   return counted(url, options.method, async () => {
     const response = await send(url, options, false);
     if (response.status === 204) return undefined as T;
-    return (
-      options.responseLimit === undefined
-        ? await response.json()
-        : await boundedJSON(response, options.responseLimit, options.signal)
-    ) as T;
+    if (options.responseLimit !== undefined)
+      return (await boundedJSON(response, options.responseLimit, options.signal)) as T;
+    try {
+      return (await response.json()) as T;
+    } catch (cause) {
+      throw networkError(cause, options.signal);
+    }
   });
 }
 

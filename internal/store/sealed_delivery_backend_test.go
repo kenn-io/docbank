@@ -227,7 +227,7 @@ func checkBatesCollectionEvidenceFollowsFrozenSources(t *testing.T, newStore fun
 	snapshot, err := s.SealCollectionSnapshot(ctx, SnapshotSealRequest{SnapshotID: uuid.New().String(),
 		SourceCollectionIDs: []string{run.ID()}, Members: []CollectionSnapshotMember{{
 			Ordinal: 1, OccurrenceID: occurrence, NodeID: node.ID, ContentVersionID: node.CurrentVersionID,
-			BlobSHA256: node.BlobHash, Size: 10, FamilyID: occurrence, FamilyOrder: 1, DisplayName: node.Name,
+			BlobSHA256: node.BlobHash, Size: 10, FamilyID: occurrence, FamilyOrder: 1, DisplayName: "frozen\x00name",
 			FrozenFieldsJSON: "{}", DocumentKind: "other", SourcePageCount: 1, SelectedSourcePages: []int{1},
 			SelectedPDFSHA256: node.BlobHash, Representations: []CollectionSnapshotRepresentation{{
 				OccurrenceID: occurrence, Role: "native", Status: "available", TextAuthority: "none",

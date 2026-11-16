@@ -44,7 +44,7 @@ func TestLegacyAuditedIngestCreationRoundTripsWithoutBindings(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		ingestAdded, err := ensureIngestRunTx(t.Context(), tx, run)
+		ingestAdded, err := s.ensureIngestRunTx(t.Context(), tx, run)
 		if err != nil {
 			return err
 		}

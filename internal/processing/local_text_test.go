@@ -645,3 +645,138 @@ func BenchmarkLocalTextIdleSweep(b *testing.B) {
 		require.Empty(b, targets)
 	}
 }
+
+func TestLocalTextInheritedConsent(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		revoke  bool
+		partial bool
+		active  bool
+	}{
+		{name: "undecided", active: true},
+		{name: "revoked before grant", revoke: true},
+		{name: "revoked after grant", revoke: true},
+		{name: "reapproved after revocation", revoke: true, active: true},
+		{name: "failure"},
+		{name: "revocation"},
+		{name: "partial grant", partial: true},
+		{name: "expired"},
+		{name: "active", active: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t))
+			original := setup.Service.profiles["pdf"]
+			portable := original.portable
+			portable.Rendition = new(*portable.Rendition)
+			portable.Rendition.AuthorizationFingerprint = workerHash(tc.name)
+			service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"inherited": {Profile: portable, RenditionProvider: original.provider, EmbeddingProviders: original.embedders, Tokenizers: original.tokenizers}}})
+			require.NoError(t, err)
+			defer service.Stop()
+			calls := 0
+			setup = &LocalTextSetup{Service: service, Selected: "inherited", Startup: func(_ context.Context, managed bool, mode string) error {
+				require.True(t, managed)
+				require.Equal(t, "local", mode)
+				calls++
+				if tc.name == "failure" {
+					return errors.New("install failed")
+				}
+				if tc.name == "revocation" {
+					_, err := service.RevokeConsent(t.Context())
+					return err
+				}
+				return nil
+			}}
+			if tc.name == "revoked after grant" {
+				require.NoError(t, service.grantProfileConsent(t.Context(), service.profiles["inherited"], nil))
+			}
+			if tc.revoke {
+				_, err = service.RevokeConsent(t.Context())
+				require.NoError(t, err)
+			}
+			if tc.name == "reapproved after revocation" {
+				require.NoError(t, service.grantProfileConsent(t.Context(), service.profiles["inherited"], nil))
+			}
+			if tc.partial {
+				request := service.profileConsentRequests(service.profiles["inherited"])[0]
+				_, err = fixture.catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{Principal: request.Principal, Scope: request.Scope, ProfileFingerprint: request.ProfileFingerprint, DisclosureFingerprint: request.DisclosureFingerprint, InputClasses: request.InputClasses, RetainedArtifactClasses: request.RetainedArtifactClasses})
+				require.NoError(t, err)
+			}
+			if tc.name == "expired" {
+				expiry := time.Now().Add(-time.Hour)
+				require.NoError(t, service.grantProfileConsent(t.Context(), service.profiles["inherited"], &expiry))
+			}
+			if tc.name == "active" {
+				require.NoError(t, service.grantProfileConsent(t.Context(), service.profiles["inherited"], nil))
+			}
+			admitted, err := setup.InitializeInherited(t.Context())
+			if tc.name == "failure" {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, tc.active, admitted)
+			expectedCalls := tc.active || tc.name == "failure" || tc.name == "revocation"
+			require.Equal(t, expectedCalls, calls == 1)
+			active, err := service.ProfileConsentActive(t.Context(), "inherited")
+			require.NoError(t, err)
+			require.Equal(t, tc.active, active)
+		})
+	}
+}
+
+func TestLocalTextInheritedStartupHoldsActivity(t *testing.T) {
+	t.Parallel()
+	_, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t))
+	var activity atomic.Int32
+	setup.ActivityBegin = func() { activity.Add(1) }
+	setup.ActivityEnd = func() { activity.Add(-1) }
+	entered, release := make(chan struct{}), make(chan struct{})
+	setup.Startup = func(ctx context.Context, _ bool, _ string) error {
+		close(entered)
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := setup.InitializeInherited(t.Context())
+		done <- err
+	}()
+	<-entered
+	held := activity.Load()
+	close(release)
+	require.NoError(t, <-done)
+	require.EqualValues(t, 1, held, "startup must hold activity while installing")
+	require.Zero(t, activity.Load(), "startup must release activity after installation")
+}
+
+func TestLocalTextInheritedGrantDoesNotUndoConcurrentRevocation(t *testing.T) {
+	t.Parallel()
+	fixture, original := newLocalTextBackfillFixture(t, newWorkerProvider(t))
+	profile := original.Service.profiles["pdf"]
+	portable := profile.portable
+	portable.Rendition = new(*portable.Rendition)
+	portable.Rendition.AuthorizationFingerprint = workerHash("inherited-revocation-race")
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"inherited": {Profile: portable, RenditionProvider: profile.provider, EmbeddingProviders: profile.embedders, Tokenizers: profile.tokenizers}}})
+	require.NoError(t, err)
+	defer service.Stop()
+	setup := &LocalTextSetup{Service: service, Selected: "inherited"}
+	// InitializeInherited checks eligibility and grants in consecutive calls.
+	// The daemon's shared mutation gate admits revocation between them.
+	eligible, undecided, err := setup.inheritedConsent(t.Context())
+	require.NoError(t, err)
+	require.True(t, eligible)
+	require.True(t, undecided)
+	_, err = service.RevokeConsent(t.Context())
+	require.NoError(t, err)
+	granted, err := service.catalog.GrantConsentSetIfUndecided(t.Context(), service.profileConsentGrants(service.profiles["inherited"], nil))
+	require.NoError(t, err)
+	require.False(t, granted)
+	active, err := service.ProfileConsentActive(t.Context(), "inherited")
+	require.NoError(t, err)
+	require.False(t, active, "a concurrent revocation must remain effective")
+}

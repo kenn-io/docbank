@@ -91,13 +91,13 @@ func (s *Store) sealCollectionSnapshotStreamTx(ctx context.Context, tx *sql.Tx, 
 			batchBytes = 0
 			return nil
 		}
-		if err := matchSnapshotSourcesBatch(ctx, tx, header.SourceCollectionIDs, matchedSources, batch); err != nil {
+		if err := matchSnapshotSourcesBatch(ctx, tx, header.SourceCollectionIDs, matchedSources, batch, s.postgresSchema != ""); err != nil {
 			return err
 		}
-		if err := validateSnapshotMembersTx(ctx, tx, SnapshotSealRequest{Members: batch}); err != nil {
+		if err := validateSnapshotMembersTx(ctx, tx, SnapshotSealRequest{Members: batch}, s.postgresSchema != ""); err != nil {
 			return err
 		}
-		if err := insertCollectionSnapshotMembersTx(ctx, tx, header.SnapshotID, batch); err != nil {
+		if err := insertCollectionSnapshotMembersTx(ctx, tx, header.SnapshotID, batch, s.postgresSchema != ""); err != nil {
 			return err
 		}
 		batch = batch[:0]
@@ -272,7 +272,7 @@ func validSnapshotFamilyGraph(parents, families map[string]string) bool {
 // matchSnapshotSourcesBatch checks active, current-version membership for a
 // bounded set of members. The chunk limit stays below SQLite's 999-parameter
 // floor even with all 64 declared source collections.
-func matchSnapshotSourcesBatch(ctx context.Context, q metadataQuerier, sourceIDs []string, matched map[string]bool, members []CollectionSnapshotMember) error {
+func matchSnapshotSourcesBatch(ctx context.Context, q metadataQuerier, sourceIDs []string, matched map[string]bool, members []CollectionSnapshotMember, postgres bool) error {
 	if len(sourceIDs) == 0 || len(members) == 0 {
 		return nil
 	}
@@ -298,7 +298,7 @@ func matchSnapshotSourcesBatch(ctx context.Context, q metadataQuerier, sourceIDs
 			strings.Join(memberRows, ",") +
 			`), requested_sources(ingest_id) AS (VALUES ` +
 			strings.Join(sourceRows, ",") +
-			`), ` + CollectionMembershipCTE + `
+			`), ` + collectionMembershipSQL(postgres) + `
 			SELECT DISTINCT rm.node_id, cm.ingest_id FROM requested_members rm
 			JOIN nodes n ON n.id=rm.node_id AND n.current_version_id=rm.version_id
 			JOIN collection_members cm ON cm.node_id=rm.node_id

@@ -6,11 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/openaicompat"
 	"go.kenn.io/docbank/document/plaintext"
+	"go.kenn.io/kit/embedlocal"
 )
 
 const LocalTextProfile = "local-text"
@@ -52,7 +52,7 @@ func (c Config) WithLocalText() (Config, error) {
 	embedding, err := LocalTextEmbedding(EmbeddingProfileConfig{
 		Activation: "optional", CompatibilityID: "nomic/search/v1", DescriptorID: openaicompat.ProviderID,
 		Dimensions: 768, DocumentFormatter: openaicompat.DocumentFormatterV1,
-		QueryFormatter: openaicompat.QueryFormatterV1, InputKind: "rendition_chunk", MaxBatchItems: 32,
+		QueryFormatter: openaicompat.QueryFormatterV1, InputKind: "rendition_chunk", MaxBatchItems: embedlocal.BatchItems,
 		MaxInputBytes: 1 << 20, MaxInputTokens: 1024, MaxResponseBytes: 32 << 20,
 		Metric: "cosine", Model: "nomic-embed-text", Normalization: "unit_length", ScalarEncoding: "float32",
 		ModelInput: EmbeddingModelInputConfig{Profile: string(document.ModelInputProfileNomic)},
@@ -61,7 +61,7 @@ func (c Config) WithLocalText() (Config, error) {
 			OverlapTokens: 128, Tokenizer: "unicode-runes", TokenizerRevision: "v1", TruncationPolicy: "reject_indivisible"},
 		Runtime: &EmbeddingRuntimeConfig{AdapterContract: "docbank-openai-compatible-embeddings/v1",
 			ModelRevision: "nomic-embed-text-v1.5", DeploymentEpoch: "nomic-embed-text-v1.5",
-			RequestTimeout: Duration(30 * time.Second), MaxRequestBytes: 2 << 20},
+			RequestTimeout: Duration(embedlocal.RequestTimeout), MaxRequestBytes: 2 << 20},
 	}, "")
 	if err != nil {
 		return c, err

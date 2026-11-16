@@ -38,13 +38,18 @@ func TestMediaTimeSpanPreservesZeroAndRejectsInventedTiming(t *testing.T) {
 }
 
 func TestSearchSkipsUnavailableMediaEvidence(t *testing.T) {
-	for name, blobs := range map[string]MediaEvidenceBlobReader{
-		"missing": missingMediaBlobs{},
-		"corrupt": &mediaBlobFixture{data: map[string][]byte{"missing": bytes.Repeat([]byte("x"), 100)}},
+	for _, test := range []struct {
+		name  string
+		blobs MediaEvidenceBlobReader
+		next  int
+	}{
+		{"missing", missingMediaBlobs{}, 2},
+		{"corrupt", &mediaBlobFixture{data: map[string][]byte{"missing": bytes.Repeat([]byte("x"), 100)}}, 2},
+		{"shared neighbor", missingMediaBlobs{}, 0},
 	} {
-		t.Run(name, func(t *testing.T) {
+		t.Run(test.name, func(t *testing.T) {
 			searcher, backend, _, descriptor := retrievalSearcherFixture(t, true, 2)
-			searcher.mediaEvidence = NewMediaEvidenceResolver(blobs)
+			searcher.mediaEvidence = NewMediaEvidenceResolver(test.blobs)
 			broken := backend.semantic[0]
 			broken.NodeID = 9
 			broken.ContentVersionID = "unavailable-version"
@@ -53,7 +58,7 @@ func TestSearchSkipsUnavailableMediaEvidence(t *testing.T) {
 				GenerationEncodedSize: 100, GenerationChecksum: "checksum", EvidenceFingerprint: "evidence",
 				EvidenceEncodedSize: 100, InputCount: 1}
 			backend.semanticPages = []store.SemanticSearchResolution{
-				{Candidates: []store.SemanticSearchCandidate{broken}, Truncated: true, NextNeighbor: 2},
+				{Candidates: []store.SemanticSearchCandidate{broken}, Truncated: true, NextNeighbor: test.next},
 				{Candidates: backend.semantic, NextNeighbor: 1},
 			}
 			report, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeSemantic, Limit: 1,
@@ -66,7 +71,7 @@ func TestSearchSkipsUnavailableMediaEvidence(t *testing.T) {
 			require.True(t, report.Truncated)
 			require.Empty(t, backend.semanticPages)
 			require.Contains(t, backend.excludedNodes, broken.NodeID)
-			require.Equal(t, 1, backend.neighborCount, "refill advances through the leased neighbors")
+			require.Equal(t, 3-test.next, backend.neighborCount, "refill retains an unfinished shared neighbor")
 		})
 	}
 }

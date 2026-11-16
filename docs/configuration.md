@@ -152,6 +152,7 @@ session_lifetime = "24h"       # key-login lifetime, 1m..2160h; 0 = 24h
 port = 0                # 0 = serve /mcp on the API port; otherwise a loopback port
 credential_binding = "" # empty = HTTP MCP cannot start without an env binding
 allowed_hosts = []      # additional MCP HTTP Host names, optionally with ports
+public_origin = ""      # e.g. https://archive.example.test behind an HTTPS proxy
 
 [backup]
 repo = ""           # no implicit repository; set a path or pass --repo
@@ -231,6 +232,11 @@ exclude_patterns = ["*.swp"]
   See [MCP HTTP credential](#mcp-http-credential).
 - **`[mcp.http] allowed_hosts`**: additional accepted MCP HTTP authorities.
   See [MCP network access](usage/mcp.md#connect-over-a-trusted-network).
+- **`[mcp.http] public_origin`**: the client-facing HTTP or HTTPS origin for
+  MCP behind a proxy. The proxy must preserve the Host header. The origin's
+  authority is accepted without adding it to `allowed_hosts`; use that list for
+  any additional client authorities. If the proxy rewrites Host, the returned
+  URL uses the validated backend origin instead.
 - **`[backup] repo`**: default snapshot repository used when a backup
   command or API request omits `repo`. `~/...` expands against the daemon
   user's home. A relative path is resolved beneath `$DOCBANK_HOME`.
@@ -447,14 +453,28 @@ change at the watched source appends another version.
 Set `profile = "mistral-ocr"` in a `[[watch]]` entry to queue its configured
 processing profile's OCR or text-extraction stage after each added or updated
 version. The profile must include a rendition that accepts original documents;
-photo vision and embedding-only profiles aren't supported here. Omit `profile`
-to use only baseline plain-text extraction.
+photo vision and embedding-only profiles aren't supported here. Omit both routing
+forms to use only baseline plain-text extraction.
+
+For a mixed folder, use `profiles = { document = "docling", presentation = "docling", spreadsheet = "docling", image = "docling", audio_video = "asr" }`
+instead of `profile`. The forms are mutually exclusive. The `document` family
+covers PDF, word-processing files (DOCX, DOC, ODT, RTF), and EPUB ebooks. Keys use search
+`media_family` values: `email`, `document`, `spreadsheet`, `presentation`, `image`,
+`audio_video`, `text`, `source_code`, `web`, `calendar`, `archive`, `cad`, `unknown`.
+Each value names a profile with an original-file rendition. Only the matching
+family's rendition is queued; unmapped families get baseline extraction only.
+The Docbank Docling document adapter accepts PDF, PPTX, XLSX, plain text,
+Markdown, PNG, and JPEG; other files in those families are ineligible.
+Docbank's Docling ASR adapter accepts only MP3 and WAV; M4A, MP4, and MOV files in `audio_video`
+are skipped as ineligible.
+No current automatic transcription adapter extracts MP4 audio. Photo descriptions
+and image embeddings continue to use vault-wide consent, independently of watches.
 
 The rendition stage needs current consent for that profile configuration.
 Without it, files still import with baseline plain-text extraction, but the
 configured rendition stays unprocessed. [Grant consent with `docbank processing build --consent`](usage/document-processing.md)
 for the configured profile to process subsequent imports. `docbank watch list` and
-the web app's All workers table show the profile and whether consent is required,
+the web app's All workers table show each family's profile and whether consent is required,
 expired, or revoked. Scanner errors remain separate. Unsupported files are skipped.
 An unexpected admission failure is logged once. The document stays imported
 and available for manual processing with `docbank processing build`.
@@ -669,6 +689,10 @@ Pin the printed fingerprints in that rendition profile and grant consent for its
 Detection scans visible, included display photos with ready previews. A completed scan, including one with zero faces, prevents automatic and explicit requests from rescanning that version under the same request fingerprint. Changing the model, prompt, endpoint, deployment, or another fingerprinted request policy requires fresh consent and permits a new scan. Backups preserve faces and their measurements, while leaving scan completion behind; restored photos can reconcile after fresh consent, with one new provider call per photo.
 
 ### Document conversion with Docling
+
+For a separately run gateway with durable input and repeatable result storage,
+see [Run a bounded conversion worker](usage/conversion-worker.md). Its stable-key
+protocol is separate from a native Docling endpoint.
 
 The daemon can send an original PDF, PPTX, XLSX, plain text, Markdown, PNG,
 or JPEG to the Docling Serve deployment you run, then retain searchable
@@ -1215,6 +1239,8 @@ Setup moves an indexed compatible Nomic profile to Kit's shared per-user server 
 
 The managed provider uses anonymous loopback requests. Consent identifies the shared service and selection mode, so a new port after restart keeps the grant. Revocation stops indexing and query provider calls. Server startup failure leaves the saved selection unchanged. See [document processing](usage/document-processing.md#set-up-local-text-search).
 
+The built-in local-text profile sends up to 8 inputs per request, waits up to 5 minutes per request, and sends one request at a time. When setup moves an existing compatible profile, its configured batch size and timeout remain in effect. Configured remote endpoints keep their own settings.
+
 #### Runtime settings
 
 An optional `[embedding_profiles.<name>.runtime]` section makes a binding
@@ -1493,6 +1519,7 @@ forwarding headers do not change that peer check.
 | `DOCBANK_MCP_HTTP_TOKEN` | Select an environment-backed MCP HTTP binding. Overrides the TOML binding; resolved only when MCP HTTP is enabled. |
 | `DOCBANK_MCP_HTTP_TOKEN_FILE` | Supply that MCP bearer through a mounted regular file. |
 | `DOCBANK_MCP_HTTP_ALLOWED_HOSTS` | Comma-separated replacement for `[mcp.http] allowed_hosts`. |
+| `DOCBANK_MCP_HTTP_PUBLIC_ORIGIN` | Override `[mcp.http] public_origin`. |
 | `DOCBANK_HOME` | Vault location; see [Vault location](#vault-location) above. |
 | `DOCBANK_LOCK_DIR` | Absolute lock-registry directory for an isolated environment whose account home is unwritable. Defaults to the operating-system account home's `.local/state/docbank/target-locks`, independent of `HOME` and XDG settings. All processes sharing or restoring overlapping vault trees must use the same directory; stop them before changing this setting. Keep it outside vaults and restore targets. Never delete it while any participating process runs. |
 | `DOCBANK_LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) for `docbank daemon run` and `docbank mcp`, foreground or background. Invalid values are ignored and fall back to `info`. |

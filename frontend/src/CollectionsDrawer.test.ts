@@ -124,7 +124,7 @@ describe("collections drawer", () => {
       await screen.findByRole("button", { name: "Browse import Discovery batch" }),
     );
     await fireEvent.click(screen.getByRole("button", { name: "Quality" }));
-    await screen.findByText("Choose a processing profile to inspect coverage.");
+    await screen.findByText("Choose a processing profile to see text processing counts.");
     await fireEvent.click(screen.getByRole("combobox", { name: /Coverage profile/ }));
     await fireEvent.click(await screen.findByRole("option", { name: "archive" }));
     await screen.findByText("Complete: 2");

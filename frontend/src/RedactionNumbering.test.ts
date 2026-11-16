@@ -2,6 +2,8 @@ import { APIError } from "./api-transport.js";
 import { render, fireEvent, screen, cleanup } from "@testing-library/svelte";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import * as numbering from "./redactionNumbering.js";
+import * as bates from "./bates.js";
+import { RecipientPackageController } from "./recipientPackageController.svelte.js";
 import RedactionNumbering from "./RedactionNumbering.svelte";
 import type { NumberingInputs } from "./redactionNumbering.js";
 const ns = {
@@ -229,4 +231,57 @@ it("cancels a publication request without dropping its allocation or frozen inpu
   expect(reserve).toHaveBeenCalledOnce();
   expect(publish.mock.calls[1]![1]).toEqual(publish.mock.calls[0]![1]);
   expect(publish.mock.calls[1]![2]).toEqual(reservation);
+});
+
+it("does not leave a hidden PDF notice to reappear after a recipient ZIP finishes", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(
+    async (url) =>
+      new Response(
+        JSON.stringify(
+          String(url).endsWith(ns.namespace_id)
+            ? { namespace: ns, next_sequence: 3 }
+            : { items: [ns], total: 1 },
+        ),
+      ),
+  );
+  const allocation = "22222222-2222-4222-8222-222222222222";
+  vi.spyOn(numbering, "reserveNumberedRedaction").mockResolvedValue({
+    allocation_id: allocation,
+  } as never);
+  vi.spyOn(numbering, "publishNumberedRedaction").mockResolvedValue({
+    allocation_id: allocation,
+    pages: [{ label: "CASE000003" }, { label: "CASE000004" }],
+  } as never);
+  vi.spyOn(bates, "downloadBatesExport").mockResolvedValue(undefined as never);
+  const packageController = new RecipientPackageController(() => "tab", vi.fn());
+  render(RedactionNumbering, {
+    session: "tab",
+    inputs,
+    title: "Synthetic.pdf",
+    onauthfailure: vi.fn(),
+    onpublished: vi.fn(),
+    packageController,
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Number and keep PDF" }));
+  await screen.findByDisplayValue("3");
+  await fireEvent.click(
+    screen.getByRole("checkbox", { name: "Keep the unredacted original indefinitely" }),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Review numbering" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Reserve and keep PDF" }));
+  const pdf = await screen.findByRole("button", { name: "Download numbered PDF" });
+  // A recipient ZIP for this delivery is still being prepared.
+  packageController.allocation = allocation;
+  packageController.phase = "building";
+  await fireEvent.click(pdf);
+  await Promise.resolve();
+  expect(screen.queryByText(/^Download started/)).toBeNull();
+  // The package finishes, then another delivery's download takes the status line.
+  packageController.phase = "idle";
+  packageController.note("33333333-3333-4333-8333-333333333333", "Elsewhere");
+  await Promise.resolve();
+  expect(screen.queryByText(/^Download started/)).toBeNull();
+  // An idle controller reports this delivery's PDF download in its one line.
+  await fireEvent.click(pdf);
+  expect(await screen.findAllByText(/^Download started/)).toHaveLength(1);
 });

@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { canonicalQuery, highlightSetFingerprint, type HighlightSet, type Query } from "./query.js";
-import { batchTagRequestDigest } from "./batch-tags.js";
+import { receiptFor } from "./test/receiptFor.js";
 import type { SnapshotPage, SnapshotRow } from "./snapshots.js";
 
 afterEach(() => {
@@ -70,6 +70,7 @@ function snapshot(
       "size",
       "text_coverage",
       "duplicates",
+      "person_role",
     ].map((dimension) =>
       dimension === "extension"
         ? {
@@ -407,16 +408,6 @@ it("keeps rapid runs bound to the accepted frozen snapshot while live observatio
   });
   expect(workspaceBodies.at(-1)).toMatchObject({
     page_size: 100,
-    facets: [
-      "collections",
-      "tags",
-      "media_family",
-      "extension",
-      "modified",
-      "size",
-      "text_coverage",
-      "duplicates",
-    ],
   });
 
   expect(creates).toBe(2);
@@ -537,6 +528,7 @@ it("reruns supported facets and sorting from the complete accepted query", async
       "size",
       "text_coverage",
       "duplicates",
+      "person_role",
     ],
   });
 
@@ -687,17 +679,7 @@ it("refreshes live metadata and download authority after tagging an inspected fr
     if (url === "/api/v1/batch/tags") {
       const request = JSON.parse(String(init?.body));
       changed = true;
-      return json({
-        version: 1,
-        operation_id: request.operation_id,
-        request_digest: await batchTagRequestDigest(request),
-        tag_id: tag.id,
-        assign: true,
-        tag_revision: 2,
-        assignment_count: 1,
-        completed_at: "2026-09-11T13:00:00.000000000Z",
-        nodes: [{ node_id: 1, expected_revision: 3, revision: 4, changed: true }],
-      });
+      return json(await receiptFor(request));
     }
     if (url === "/api/daemon/web-download") {
       const request = JSON.parse(String(init?.body));
@@ -1224,17 +1206,7 @@ it("uses the inspector's confirmed revision for Tag selected during Advanced sea
       submitted.push(request.nodes);
       if (request.nodes[0].revision !== nodes[1].revision)
         return json({ code: "stale_revision", detail: "stale_revision" }, 409);
-      return json({
-        version: 1,
-        operation_id: request.operation_id,
-        request_digest: await batchTagRequestDigest(request),
-        tag_id: tag.id,
-        assign: true,
-        tag_revision: 3,
-        assignment_count: 2,
-        completed_at: "2026-09-11T13:00:00.000000000Z",
-        nodes: [{ node_id: 2, expected_revision: 4, revision: 4, changed: false }],
-      });
+      return json(await receiptFor(request, [2]));
     }
     return baseFetch(input, init);
   });

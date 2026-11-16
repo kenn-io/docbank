@@ -10,19 +10,22 @@ import (
 	"go.kenn.io/docbank/document/bundle"
 )
 
-func TestExportCompletedMailboxCollectionPinsImportedVersions(t *testing.T) {
+func checkExportCompletedMailboxCollectionPinsImportedVersions(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
+	_, err := s.ExportMailboxCollectionMembers(t.Context(), "one", uuid.NewString())
+	require.ErrorIs(t, err, ErrNotFound)
 	f := newEmailFixture(t, s, "seed.eml")
 	source, err := emailVersion(t.Context(), s.db, f.publication.ContentVersionID)
 	require.NoError(t, err)
-	c := MailboxContainerRequest{ID: "source", Owner: "one", SHA256: source.BlobHash, Size: source.Size, Format: "mbox"}
+	c := MailboxContainerRequest{ID: "source\x00\\id", Owner: "one", SHA256: source.BlobHash, Size: source.Size, Format: "mbox"}
 	_, err = s.BeginMailboxContainer(t.Context(), c)
 	require.NoError(t, err)
 	require.NoError(t, s.PutMailboxChunk(t.Context(), c.Owner, c.ID, MailboxChunk{Index: 0, SHA256: c.SHA256, Size: c.Size}))
 	_, err = s.SealMailboxContainer(t.Context(), c.Owner, c.ID, c.SHA256, c.Size)
 	require.NoError(t, err)
-	_, err = s.BeginMailboxJob(t.Context(), c.Owner, MailboxJobRequest{ID: "job", ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: MailboxSettings{DestinationID: s.RootID()}})
+	_, err = s.BeginMailboxJob(t.Context(), c.Owner, MailboxJobRequest{ID: "job\x00\\id", ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: MailboxSettings{DestinationID: s.RootID()}})
 	require.NoError(t, err)
 	j, err := s.ClaimMailboxJob(t.Context())
 	require.NoError(t, err)
@@ -78,9 +81,19 @@ func checkExportPublicationReleasedOnlyAfterRetentionCleanup(t *testing.T, open 
 	require.NoError(t, err)
 	plan, err := s.CreateExportPlan(t.Context(), "owner", bundle.PlanRequest{OperationID: uuid.NewString(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "attachment_original"}}})
 	require.NoError(t, err)
+	unrelated, err := s.CreateFile(t.Context(), s.RootID(), "unrelated.bin", fakeHash("e1"), 12, "application/x-custom\x00suffix")
+	require.NoError(t, err)
+	unrelatedSource, err := s.CreateExportSource(t.Context(), "owner", bundle.SourceRequest{OperationID: uuid.NewString(), Kind: "nodes", NodeIDs: []int64{unrelated.ID}}, nil)
+	require.NoError(t, err)
+	unrelatedPlan, err := s.CreateExportPlan(t.Context(), "owner", bundle.PlanRequest{OperationID: uuid.NewString(), SourceID: unrelatedSource.ID, MemberHash: unrelatedSource.MemberHash, Roles: []bundle.RolePolicy{{Role: "original"}}})
+	require.NoError(t, err)
 	require.ErrorIs(t, s.RemoveEmailDocumentPublication(t.Context(), p.OperationID, p.RequestDigest), bundle.ErrRetained)
 	_, err = s.db.ExecContext(t.Context(), `UPDATE export_plans SET expires_at='2000-01-01T00:00:00.000000000Z' WHERE id=$1`, plan.ID)
 	require.NoError(t, err)
 	require.NoError(t, s.CleanupExportAuthority(t.Context()))
 	require.NoError(t, s.RemoveEmailDocumentPublication(t.Context(), p.OperationID, p.RequestDigest))
+	var documents []bundle.Document
+	require.NoError(t, s.WalkExportDocuments(t.Context(), unrelatedPlan.ID, func(d bundle.Document) error { documents = append(documents, d); return nil }))
+	require.Len(t, documents, 1)
+	require.Equal(t, "application/x-custom\x00suffix", documents[0].MediaType)
 }

@@ -3,6 +3,8 @@ package store
 import "errors"
 
 var (
+	// ErrNeedsOwner means the vault needs initialization or recovery by an owner.
+	ErrNeedsOwner = errors.New("vault needs an owner")
 	// ErrInvalidDocumentQuery marks unsupported catalog filters or bounds.
 	ErrInvalidDocumentQuery = errors.New("invalid document query")
 	// ErrInvalidDocumentCursor marks malformed, unauthenticated, wrong-version,

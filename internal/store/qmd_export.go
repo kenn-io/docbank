@@ -111,7 +111,7 @@ func (s *Store) RevalidateQMDExportCandidates(ctx context.Context, candidates []
 	}
 	result := make([]QMDExportLiveCandidate, 0, len(candidates))
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		filterSQL, filterArgs := searchFilterSQL(normalized)
+		filterSQL, filterArgs := searchFilterSQL(normalized, false, 0)
 		for _, candidate := range candidates {
 			args := []any{candidate.NodeID, candidate.ContentVersionID,
 				candidate.ProcessingProfileFingerprint, candidate.AttachmentID,

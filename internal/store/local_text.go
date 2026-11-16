@@ -26,11 +26,15 @@ func (s *Store) MissingProcessingTargetsAfter(ctx context.Context, profile, afte
 		return nil, errors.New("invalid processing backfill bounds")
 	}
 	d := metadataJSONDialect{s.postgresSchema != ""}
+	bindingRows := d.arrayValues(d.text("p.canonical_profile", "embeddings"))
+	if d.postgres {
+		bindingRows = d.arrayValues("p.embedding_bindings_json")
+	}
 	filter := ` WHERE n.trashed_at IS NULL AND v.version_id>$1
  AND (SELECT COUNT(DISTINCT binding_id) FROM (
  SELECT h.binding_id FROM embedding_heads h
  WHERE h.content_version_id=v.version_id AND h.profile_fingerprint=$2 AND h.input_kind<>'image'
- UNION SELECT ` + d.text("value", "name") + ` FROM processing_profiles p CROSS JOIN ` + d.arrayValues(d.text("p.canonical_profile", "embeddings")) + `
+ UNION SELECT ` + d.text("value", "name") + ` FROM processing_profiles p CROSS JOIN ` + bindingRows + `
  WHERE p.profile_fingerprint=$2 AND ` + d.text("value", "input_kind") + `='rendition_chunk'
  AND ` + emptyRenditionChunkSQL("v.version_id", "$2") + `
  ) settled) < $3

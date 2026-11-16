@@ -29,15 +29,39 @@ func faceScanSettledTx(ctx context.Context, tx *sql.Tx, version, detector string
 // face no longer has an active assignment or candidate.
 func (s *Store) protectedDetectionFacesTx(ctx context.Context, tx *sql.Tx, version string) (map[string]bool, error) {
 	protected := map[string]bool{}
+	if s.postgresSchema != "" {
+		rows, err := tx.QueryContext(ctx, `SELECT face_id,NULL::text,NULL::text FROM person_candidate_faces WHERE content_version_id=$1
+            UNION ALL SELECT receipt_id,before_json,after_json FROM photo_change_receipts WHERE operation='face_decision' AND face_version_id=$1`, version)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var id string
+			var before, after []byte
+			if err := rows.Scan(&id, &before, &after); err != nil {
+				return nil, err
+			}
+			if before == nil {
+				protected[id] = true
+				continue
+			}
+			receipt, err := decodeFaceDecisionReceipt(before, after, id)
+			if err != nil {
+				return nil, err
+			}
+			for _, face := range receipt.Before.Faces {
+				protected[face.FaceID] = true
+			}
+		}
+		return protected, rows.Err()
+	}
+
 	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
 	receipts := "photo_change_receipts r INDEXED BY photo_change_receipts_face_version"
 	faces := "json_each(r.before_json,'$.faces')"
 	versionKey := d.text("r.before_json", "content_version_id")
-	if d.postgres {
-		receipts = "photo_change_receipts r"
-		faces = "jsonb_array_elements(r.before_json::jsonb -> 'faces')"
-		versionKey = d.indexedText("r.before_json", "content_version_id")
-	}
+
 	rows, err := tx.QueryContext(ctx, `SELECT face_id FROM person_candidate_faces WHERE content_version_id=$1
  UNION SELECT `+d.text("j.value", "face_id")+` FROM `+receipts+`,`+faces+` j WHERE r.operation='face_decision' AND `+versionKey+`=$1`, version)
 	if err != nil {

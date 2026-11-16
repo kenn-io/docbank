@@ -42,9 +42,8 @@ func (s *Store) discardUnreceiptedPackageFilesTx(ctx context.Context, tx *sql.Tx
 		FROM package_import_receipts receipt,
 			json_each(CAST(receipt.receipt_json AS TEXT),'$.member.representations') rep`
 	if s.postgresSchema != "" {
-		array := `convert_from(receipt.receipt_json,'UTF8')::jsonb #> '{member,representations}'`
-		representations = `SELECT rep.value ->> 'content_version_id' FROM package_import_receipts receipt,
-			jsonb_array_elements(CASE WHEN jsonb_typeof(` + array + `)='array' THEN ` + array + ` ELSE '[]'::jsonb END) rep(value)`
+		representations = `SELECT rep.value FROM package_import_receipts receipt,
+ jsonb_array_elements_text(receipt.query_json::jsonb -> 'versions') rep(value)`
 	}
 	rows, err := tx.QueryContext(ctx, `WITH retained(version_id) AS (
 		SELECT content_version_id FROM package_import_receipts

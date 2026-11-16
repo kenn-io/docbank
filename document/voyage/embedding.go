@@ -532,11 +532,11 @@ func (client *EmbeddingClient) decodeText(body []byte, want int) ([][]float32, e
 	if err := json.Unmarshal(body, &response, json.RejectUnknownMembers(true), json.WithUnmarshalers(json.UnmarshalFunc(providerutil.UnmarshalEmbeddingFloat32))); err != nil {
 		return nil, &ProviderError{Kind: ErrMalformedResponse}
 	}
-	// Voyage may echo each input as an optional text member. Its exact form is
-	// not part of the contract, so ordering relies on index and the echo is
-	// only type-checked before it is discarded.
+	// Voyage may echo each input as an optional text member, and some models
+	// send it as null. Its exact form is not part of the contract, so ordering
+	// relies on index and the echo is only type-checked before it is discarded.
 	for _, item := range response.Data {
-		if len(item.Text) != 0 && item.Text.Kind() != '"' {
+		if len(item.Text) != 0 && item.Text.Kind() != '"' && item.Text.Kind() != 'n' {
 			return nil, &ProviderError{Kind: ErrMalformedResponse}
 		}
 	}

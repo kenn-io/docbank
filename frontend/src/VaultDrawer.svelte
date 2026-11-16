@@ -11,7 +11,13 @@
 
 <script lang="ts">
   import { setContext, untrack } from "svelte";
-  import { Button, SearchByMeaningRow, Spinner, type SearchByMeaningState } from "@kenn-io/kit-ui";
+  import {
+    Button,
+    CopyButton,
+    SearchByMeaningRow,
+    Spinner,
+    type SearchByMeaningState,
+  } from "@kenn-io/kit-ui";
   import DrawerShell from "./DrawerShell.svelte";
   import BackupDrawer from "./BackupDrawer.svelte";
   import StorageDrawer from "./StorageDrawer.svelte";
@@ -117,7 +123,10 @@
         <Button size="sm" onclick={() => onreadsearchbymeaning()}>Try again</Button>
       {/if}
       {#if meaning?.restart_required}
-        <p>Run <code>docbank daemon restart</code> to finish.</p>
+        <div class="restart">
+          <p>Run <code>docbank daemon restart</code> to finish.</p>
+          <CopyButton text="docbank daemon restart" ariaLabel="Copy restart command" />
+        </div>
       {/if}
     </section>
   </DrawerShell>
@@ -160,6 +169,11 @@
     align-items: center;
     gap: var(--space-3);
     color: var(--text-secondary);
+  }
+  .restart {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
   }
   .error {
     color: var(--accent-red);

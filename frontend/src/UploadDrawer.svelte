@@ -1,4 +1,6 @@
 <script lang="ts">
+  import UploadChannelNotice from "./UploadChannelNotice.svelte";
+  import type { UploadConnectionState } from "./uploadReconnect.js";
   import { reportAction, reportFailure } from "./action-events.js";
   import { onDestroy } from "svelte";
   import FileUpIcon from "@lucide/svelte/icons/file-up";
@@ -42,6 +44,8 @@
     channel: UploadTransport;
     directory: Node;
     disabledReason?: string;
+    connectionState?: UploadConnectionState;
+    onreconnect?: () => void;
     initialPicker?: PickerKind;
     onclose: () => void;
     oncomplete: () => void | Promise<void>;
@@ -53,6 +57,8 @@
     channel,
     directory,
     disabledReason = "",
+    connectionState = "fatal",
+    onreconnect = () => {},
     initialPicker,
     onclose,
     oncomplete,
@@ -147,6 +153,7 @@
             refreshNeeded = true;
             progressFor(queued.id, progress);
           },
+          queued.state === "unconfirmed",
         );
         refreshNeeded = true;
         added ||= receipt.status === "added";
@@ -156,7 +163,7 @@
         });
       } catch (cause) {
         if (cause instanceof DOMException && cause.name === "AbortError") {
-          if (transmissionStarted) {
+          if (transmissionStarted || queued.state === "unconfirmed") {
             updateItem(queued.id, {
               state: "unconfirmed",
               error:
@@ -171,15 +178,24 @@
           break;
         }
         if (cause instanceof APIError && cause.status === 401) {
-          updateItem(queued.id, { state: "failed", error: cause.message });
+          updateItem(queued.id, {
+            state: queued.state === "unconfirmed" ? "unconfirmed" : "failed",
+            error: cause.message,
+          });
           authFailed = true;
           onauthfailure(cause);
           break;
         }
-        if (transmissionStarted && !(cause instanceof APIError)) {
+        if (
+          queued.state === "unconfirmed" ||
+          (transmissionStarted && !(cause instanceof APIError))
+        ) {
           updateItem(queued.id, {
             state: "unconfirmed",
-            error: "Upload could not be confirmed. Run `docbank web` again, then retry this file.",
+            error:
+              cause instanceof APIError
+                ? cause.message
+                : "Upload could not be confirmed. Retry this file to check whether it was added.",
           });
           failedCause ??= cause;
           break;
@@ -239,12 +255,15 @@
 </script>
 
 {#snippet uploadFooter()}
+  {#if disabledReason}
+    <UploadChannelNotice state={connectionState} message={disabledReason} size="md" {onreconnect} />
+  {/if}
   {#if running}
     <Button tone="danger" surface="soft" onclick={cancel}>
       <XIcon size="14" aria-hidden="true" />
       Cancel current upload
     </Button>
-  {:else}
+  {:else if items.length}
     <Button
       tone="info"
       surface="solid"
@@ -262,13 +281,9 @@
   ariaLabel="Upload documents"
   closeLabel="Close upload documents"
   onclose={close}
-  footer={items.length ? uploadFooter : undefined}
+  footer={items.length || disabledReason ? uploadFooter : undefined}
 >
   <div class="tool-body">
-    {#if disabledReason}
-      <p class="tool-error" role="alert">{disabledReason}</p>
-    {/if}
-
     <div class="picker" class:picker-empty={items.length === 0}>
       {#if items.length > 0}
         <span

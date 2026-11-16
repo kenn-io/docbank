@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -427,6 +428,35 @@ func TestHTTPTransportValidatesHostAndOriginIndependentlyBeforeAuth(t *testing.T
 	}
 }
 
+func TestHTTPTransportPublicOrigin(t *testing.T) {
+	handler, err := newTestServer().HTTPTransportHandler(HTTPOptions{BearerToken: testMCPBearer, PublicOrigin: "https://archive.example:443"})
+	require.NoError(t, err)
+	for _, test := range []struct {
+		host, origin string
+		tls          bool
+		want         int
+	}{
+		{"archive.example", "https://archive.example:443", false, http.StatusUnauthorized},
+		{"archive.example:443", "https://archive.example", false, http.StatusUnauthorized},
+		{"archive.example", "http://archive.example", false, http.StatusForbidden},
+		{"archive.example", "https://other.example", false, http.StatusForbidden},
+		{"archive.example", "https://archive.example:444", false, http.StatusForbidden},
+		{"127.0.0.1", "https://127.0.0.1", true, http.StatusUnauthorized},
+		{"127.0.0.1", "http://127.0.0.1", true, http.StatusForbidden},
+	} {
+		request := newHTTPDiscoverRequest(t)
+		request.Host = test.host
+		request.Header.Del("Authorization")
+		request.Header.Set("Origin", test.origin)
+		if test.tls {
+			request.TLS = &tls.ConnectionState{}
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		assert.Equal(t, test.want, response.Code, "%s %s", test.host, test.origin)
+	}
+}
+
 func TestHTTPTransportIsPOSTOnlyAndRejectsSessionOrResumeHeaders(t *testing.T) {
 	handler, err := newTestServer().HTTPTransportHandler(HTTPOptions{BearerToken: testMCPBearer})
 	require.NoError(t, err)
@@ -508,7 +538,7 @@ func TestHTTPSubscriptionWithoutCapabilitiesCompletesOverSSE(t *testing.T) {
 func TestHTTPTransportEnforcesBodyAndHeaderLimitsBeforeDispatch(t *testing.T) {
 	var dispatched bool
 	inner := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { dispatched = true })
-	handler, err := wrapHTTPTransport(inner, HTTPOptions{BearerToken: testMCPBearer})
+	handler, err := wrapHTTPTransport(inner, HTTPOptions{BearerToken: testMCPBearer}, nil)
 	require.NoError(t, err)
 
 	bodyRequest := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://127.0.0.1/mcp",
@@ -557,7 +587,7 @@ func TestHTTPTransportBoundsConcurrentActivity(t *testing.T) {
 	handler, err := wrapHTTPTransport(inner, HTTPOptions{
 		BearerToken: testMCPBearer,
 		limits:      httpLimits{MaxConcurrentRequests: 2},
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	firstDone := make(chan *httptest.ResponseRecorder, 1)
@@ -607,7 +637,7 @@ func TestHTTPTransportBuffersJSONResponseBeforeEnforcingExactCap(t *testing.T) {
 				BearerToken: testMCPBearer,
 				limits: httpLimits{MaxResponseBytes: limit, MaxConcurrentRequests: 1,
 					RequestTimeout: time.Second},
-			})
+			}, nil)
 			require.NoError(t, err)
 			response := httptest.NewRecorder()
 
@@ -646,7 +676,7 @@ func TestHTTPTransportSSECapEmitsOnlyCompleteEvents(t *testing.T) {
 			})
 			handler, err := wrapHTTPTransport(inner, HTTPOptions{BearerToken: testMCPBearer,
 				limits: httpLimits{MaxResponseBytes: limit, MaxConcurrentRequests: 1,
-					RequestTimeout: time.Second}})
+					RequestTimeout: time.Second}}, nil)
 			require.NoError(t, err)
 			response := httptest.NewRecorder()
 
@@ -672,7 +702,7 @@ func TestHTTPTransportCapsResponsesAndLogsOnlyStableTelemetry(t *testing.T) {
 			MaxResponseBytes: 128, MaxConcurrentRequests: 1,
 			RequestTimeout: time.Second,
 		},
-	})
+	}, nil)
 	require.NoError(t, err)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, authenticatedRequest(t.Context(), "127.0.0.1:41001"))
@@ -718,7 +748,7 @@ func TestHTTPTransportSocketDeadlinesInterruptSlowIOAndReleaseActivity(t *testin
 			synctest.Test(t, func(t *testing.T) {
 				handler, err := wrapHTTPTransport(test.inner, HTTPOptions{BearerToken: testMCPBearer,
 					limits: httpLimits{MaxConcurrentRequests: 1,
-						MaxResponseBytes: 64, RequestTimeout: 20 * time.Millisecond}})
+						MaxResponseBytes: 64, RequestTimeout: 20 * time.Millisecond}}, nil)
 				require.NoError(t, err)
 				writer := newDeadlineResponseWriter(test.name == "slow response reader")
 				done := make(chan struct{})

@@ -94,7 +94,7 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 			t.Setenv("DOCBANK_HOME", t.TempDir())
 			var localDocuments atomic.Int64
 			handler := func(counter *atomic.Int64) http.Handler {
-				ping := localTextDiscoveryHandler()
+				ping := localTextDiscoveryHandler(embedlocal.TextModel)
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if r.URL.Path != "/v1/embeddings" {
 						ping.ServeHTTP(w, r)

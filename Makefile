@@ -95,6 +95,8 @@ test-pg:
 	# It creates a database for each of about a thousand tests and takes about
 	# five and a half minutes on PostgreSQL 18 in CI, so allow nearly twice that.
 	$(call gotestsum,$(PG_SUITE)-store,./internal/store) -race -parallel 4 -count=1 -timeout 10m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
+	$(call gotestsum,$(PG_SUITE)-backup,./internal/backupapp) -race -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
+	$(call gotestsum,$(PG_SUITE)-processing,./internal/processing) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
 
 test-v:
 	go test -timeout 20m -tags "$(BUILD_TAGS)" -v ./...
@@ -145,8 +147,14 @@ photo-tabs-browser-test: frontend
 	go build -tags "$(BUILD_TAGS)" -o bin/docbank-tabs$(if $(filter Windows_NT,$(OS)),.exe) ./cmd/docbank
 	DOCBANK_PLAYWRIGHT_SUITE=photo-tabs DOCBANK_SCREENSHOT_BINARY="$(CURDIR)/bin/docbank-tabs$(if $(filter Windows_NT,$(OS)),.exe)" DOCBANK_PHOTOS_SCREENSHOT_DIR="$${DOCBANK_PHOTOS_SCREENSHOT_DIR:-$(CURDIR)/bin/photo-tabs-proof}" node frontend/node_modules/@playwright/test/cli.js test photo-tabs.screenshot.ts --config frontend/screenshots/playwright.config.ts --project chromium
 
+# With DOCS_SCREENSHOTS_OUTPUT set, capture the published docs-assets set into
+# $(DOCS_SCREENSHOTS_OUTPUT)/assets using only Docker on the host.
 docs-screenshots:
+ifdef DOCS_SCREENSHOTS_OUTPUT
+	bash frontend/screenshots/run-in-docker.sh "$(DOCS_SCREENSHOTS_OUTPUT)"
+else
 	cd frontend && npm run screenshots
+endif
 
 fmt:
 	go fmt ./...

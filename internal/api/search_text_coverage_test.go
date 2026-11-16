@@ -11,7 +11,7 @@ import (
 
 func TestSearchTextCoverage(t *testing.T) {
 	t.Parallel()
-	ts, s := newTestServer(t, nil)
+	ts, s := newTestServer(t, func(d *api.Deps) { configureAutomaticPDFText(t, d) })
 	_, err := s.CreateFile(t.Context(), s.RootID(), "contract.pdf", testHash("pdf"), 3, "application/pdf")
 	require.NoError(t, err)
 	_, err = s.CreateFile(t.Context(), s.RootID(), "report.docx", testHash("office"), 6, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")

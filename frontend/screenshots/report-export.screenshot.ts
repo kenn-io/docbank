@@ -123,8 +123,8 @@ test("qualifies selected reports and original exports under a mount", async ({ p
       await drawer.getByRole("textbox", { name: "Expression for term 1" }).fill("alpha");
       await drawer.getByText("Options", { exact: true }).click();
       await expect(
-        drawer.getByRole("combobox", { name: /^Coverage policy:/ }),
-      ).toHaveAccessibleName("Coverage policy: Stop on incomplete coverage");
+        drawer.getByRole("combobox", { name: /^Missing information:/ }),
+      ).toHaveAccessibleName("Missing information: Stop report");
       const creating = post("/api/v1/search-exports");
       await drawer.getByRole("button", { name: "Create report", exact: true }).click();
       const response = await creating;
@@ -202,7 +202,7 @@ test("qualifies selected reports and original exports under a mount", async ({ p
       await drawer.getByRole("button", { name: "Add term", exact: true }).click();
       await drawer.getByRole("textbox", { name: "Expression for term 2" }).fill("beta");
       await drawer.getByText("Options", { exact: true }).click();
-      await drawer.getByRole("combobox", { name: /^Coverage policy:/ }).click();
+      await drawer.getByRole("combobox", { name: /^Missing information:/ }).click();
       await page.getByRole("option", { name: "Count available text", exact: true }).click();
       const creating = post("/api/v1/search-exports");
       await drawer.getByRole("button", { name: "Create report", exact: true }).click();
@@ -258,7 +258,7 @@ test("qualifies selected reports and original exports under a mount", async ({ p
         animations: "disabled",
       });
       const revising = post(`/api/v1/search-exports/${parent.id}/revisions`);
-      await drawer.getByRole("button", { name: "Create reviewed revision" }).click();
+      await drawer.getByRole("button", { name: "Create report with these date choices" }).click();
       const revision = await revising;
       expect(revision.status()).toBe(200);
       expect(revision.request().postDataJSON()).toEqual({ choices: [reviewedChoice] });
@@ -314,8 +314,10 @@ test("qualifies selected reports and original exports under a mount", async ({ p
           "1",
         ]);
       }
-      await expect(drawer.getByRole("paragraph").filter({ hasText: "3 scoped" })).toContainText(
-        "3 scoped · 2 searchable · 1 missing text · 0 incomplete families · 1 fallback dates · expires",
+      await expect(
+        drawer.getByRole("paragraph").filter({ hasText: "3 in date ranges" }),
+      ).toContainText(
+        "3 in date ranges · 2 searchable · 1 missing text · 0 with incomplete relationships · 1 dated from vault records · expires",
       );
       await table.scrollIntoViewIfNeeded();
       await page.screenshot({
@@ -491,9 +493,23 @@ print('Verified report evidence, CSV and all three original byte streams')
       expect(response.request().postDataJSON().selected_documents.documents).toEqual(identities);
       expect(response.status()).toBe(409);
       expect(await response.json()).toMatchObject({ code: "report_selection_changed" });
-      await expect(drawer.getByRole("alert")).toHaveText(
-        "Selected documents changed. Refresh the workspace and reselect the intended current versions.",
+      await expect(
+        drawer.getByRole("region", { name: "Selected documents changed" }).getByRole("status"),
+      ).toContainText(
+        "The report didn't run. Some selected documents have a different version or are no longer available.",
       );
+      await page.screenshot({ path: path.join(captures!, "selection-before.png") });
+      await drawer.getByRole("button", { name: "Refresh selection" }).click();
+      await expect(drawer.getByText(/^Selected:/)).toBeVisible();
+      await page.screenshot({ path: path.join(captures!, "selection-after.png") });
+      const include = drawer.getByRole("checkbox", { name: "Include current version" });
+      await expect(include).not.toBeChecked();
+      await include.check();
+      await drawer.getByRole("button", { name: "Use this selection" }).click();
+      await expect(
+        drawer.getByRole("status").filter({ hasText: "Selection updated" }),
+      ).toBeVisible();
+      await page.screenshot({ path: path.join(captures!, "selection-updated.png") });
       await expect(drawer.getByRole("table", { name: "Search report counts" })).toHaveCount(0);
       expect(await history()).toEqual(before);
     });

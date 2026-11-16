@@ -82,7 +82,7 @@ var restoredStatsScope = statsScope{
 	blobs: restoredContentStatsQuery, extractedText: restoredExtractedTextStatsQuery,
 }
 
-func computeStats(ctx context.Context, q rowQuerier, scope statsScope) (Stats, error) {
+func computeStats(ctx context.Context, q rowQuerier, scope statsScope, postgres bool) (Stats, error) {
 	var stats Stats
 	counts := []struct {
 		dst   *int64
@@ -111,7 +111,7 @@ func computeStats(ctx context.Context, q rowQuerier, scope statsScope) (Stats, e
 	if err := q.QueryRowContext(ctx, scope.extractedText).Scan(&stats.ExtractedText); err != nil {
 		return Stats{}, fmt.Errorf("backupapp: extracted text stats: %w", err)
 	}
-	derivatives, hasDerivatives, err := computeDerivativeAuthorityStats(ctx, q)
+	derivatives, hasDerivatives, err := computeDerivativeAuthorityStats(ctx, q, postgres)
 	if err != nil {
 		return Stats{}, err
 	}
@@ -220,7 +220,10 @@ func (a *App) ExcludedPaths() []string {
 	}
 }
 
-type frozenView struct{ tx rowQuerier }
+type frozenView struct {
+	tx       rowQuerier
+	postgres bool
+}
 
 func (v *frozenView) ContentInfo(ctx context.Context) (*backup.ContentInfo, error) {
 	rows, err := v.tx.QueryContext(ctx, authorizedContentRowsQuery)
@@ -249,7 +252,7 @@ func (v *frozenView) ContentInfo(ctx context.Context) (*backup.ContentInfo, erro
 }
 
 func (v *frozenView) Stats(ctx context.Context) (jsontext.Value, error) {
-	stats, err := computeStats(ctx, v.tx, captureStatsScope)
+	stats, err := computeStats(ctx, v.tx, captureStatsScope, v.postgres)
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +306,7 @@ func restoredContentPaths(ctx context.Context, db *sql.DB, allowPackedRestore bo
 func (a *App) RestoredStats(ctx context.Context, db *sql.DB) (jsontext.Value, error) {
 	scope := restoredStatsScope
 	scope.coverage = a.restoreStats.Coverage != nil
-	stats, err := computeStats(ctx, db, scope)
+	stats, err := computeStats(ctx, db, scope, false)
 	if err != nil {
 		return nil, err
 	}

@@ -165,7 +165,7 @@ var packageImportMetadataTables = []metadataRecordCodec{
 		insert: importPackageImportMetadata}),
 }
 
-func importPackageImportMetadata(ctx context.Context, tx *sql.Tx, row metadataPackageImportRow) error {
+func importPackageImportMetadata(ctx context.Context, tx *sql.Tx, row metadataPackageImportRow, postgres bool) error {
 	if pageChecksum(row.CanonicalJSON) != row.Checksum {
 		return ErrPackageConflict
 	}
@@ -176,9 +176,9 @@ func importPackageImportMetadata(ctx context.Context, tx *sql.Tx, row metadataPa
 			return fmt.Errorf("%w: package record %s/%s", ErrPackageConflict, record.PackageID, record.RowID)
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO package_records(package_id,row_id,load_file,row_ordinal,
-			occurrence_id,raw_json,raw_sha256,sensitive) VALUES(?,?,?,?,?,?,?,?)`, record.PackageID,
-			record.RowID, record.LoadFile, record.RowOrdinal, record.OccurrenceID, record.RawJSON,
-			record.RawSHA256, record.Sensitive)
+			occurrence_id,raw_json,raw_sha256,sensitive) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, record.PackageID,
+			record.RowID, storedString(postgres, record.LoadFile), record.RowOrdinal, storedString(postgres, record.OccurrenceID), record.RawJSON,
+			record.RawSHA256, boolInt(record.Sensitive))
 		return err
 	case metadataPackageLabelType:
 		label, err := canonical.Decode[PackageLabelRow](row.CanonicalJSON)
@@ -187,8 +187,8 @@ func importPackageImportMetadata(ctx context.Context, tx *sql.Tx, row metadataPa
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO package_labels(package_id,provenance,label_set,label,
 			occurrence_id,content_version_id,artifact_id,page_number,page_state,endpoint)
-			VALUES(?,?,?,?,?,?,?,?,?,?)`, label.PackageID, label.Provenance, label.LabelSet, label.Label,
-			label.OccurrenceID, label.ContentVersionID, nullableString(label.ArtifactID),
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, label.PackageID, label.Provenance, storedString(postgres, label.LabelSet), storedString(postgres, label.Label),
+			storedString(postgres, label.OccurrenceID), label.ContentVersionID, storedNullableString(postgres, label.ArtifactID),
 			label.PageNumber, label.PageState, label.Endpoint)
 		return err
 	case metadataPackageImportReceiptType:
@@ -196,10 +196,7 @@ func importPackageImportMetadata(ctx context.Context, tx *sql.Tx, row metadataPa
 		if err != nil || validatePackageImportReceipt(receipt) != nil || receipt.RecordedAt == "" {
 			return fmt.Errorf("%w: package import receipt %s", ErrPackageConflict, receipt.ReceiptID)
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO package_import_receipts(receipt_id,package_id,record_key,
-			occurrence_id,content_version_id,state,receipt_json,recorded_at) VALUES(?,?,?,?,?,?,?,?)`,
-			receipt.ReceiptID, receipt.PackageID, receipt.RecordKey, receipt.OccurrenceID,
-			nullableString(receipt.ContentVersionID), receipt.State, receipt.ReceiptJSON, receipt.RecordedAt)
+		err = insertPackageImportReceiptTx(ctx, tx, receipt, postgres)
 		return err
 	case metadataPackageImportJobType:
 		job, err := canonical.Decode[packageImportJobRow](row.CanonicalJSON)
@@ -214,7 +211,7 @@ func importPackageImportMetadata(ctx context.Context, tx *sql.Tx, row metadataPa
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO package_import_jobs(id,owner,operation_id,request_sha256,
 			preflight_id,package_id,state,epoch,token,job_json,created_at,updated_at)
-			VALUES(?,?,?,?,?,?,?,0,'',?,?,?)`, job.ID, job.Owner, job.OperationID, job.RequestSHA256,
+			VALUES($1,$2,$3,$4,$5,$6,$7,0,'',$8,$9,$10)`, job.ID, storedString(postgres, job.Owner), job.OperationID, job.RequestSHA256,
 			job.PreflightID, job.PackageID, job.State, job.JobJSON, job.CreatedAt, job.UpdatedAt)
 		return err
 	default:

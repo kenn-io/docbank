@@ -86,13 +86,13 @@ func (s *Store) CaptureVectorIndexSource(ctx context.Context, vectorSpaceID stri
 	var source VectorIndexSource
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		source, err = captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
+		source, err = s.captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
 		return err
 	})
 	return source, err
 }
 
-func captureVectorIndexSourceTx(ctx context.Context, tx *sql.Tx, vectorSpaceID string) (_ VectorIndexSource, retErr error) {
+func (s *Store) captureVectorIndexSourceTx(ctx context.Context, tx *sql.Tx, vectorSpaceID string) (_ VectorIndexSource, retErr error) {
 	if _, err := loadVectorSpaceTx(ctx, tx, vectorSpaceID); err != nil {
 		return VectorIndexSource{}, err
 	}
@@ -101,11 +101,12 @@ func captureVectorIndexSourceTx(ctx context.Context, tx *sql.Tx, vectorSpaceID s
 		return VectorIndexSource{}, err
 	}
 	source := VectorIndexSource{VectorSpaceID: vectorSpaceID}
+	var faceMembers []VectorIndexMember
 	rows, err := tx.QueryContext(ctx, `SELECT es.embedding_set_id,vs.vector_set_id,vs.payload_blob_hash,vs.payload_size,
 		es.input_kind,es.binding_id,g.generation_id,g.source_version_id,g.profile_fingerprint,g.evidence_fingerprint,g.chunk_policy_fingerprint,
 		(es.profile_fingerprint=h.profile_fingerprint AND es.vector_space_id=h.vector_space_id AND
 		CASE WHEN es.input_kind='image' THEN
-			`+imageEmbeddingPreviewEligibilitySQL("embedding_generation_inputs", "?")+`
+			`+s.imageEmbeddingPreviewEligibilitySQL("embedding_generation_inputs", "$1")+`
 		ELSE `+embeddingAttachmentEligibilitySQL("es.content_version_id", "es.profile_fingerprint", "g.attachment_id")+` END)
 		FROM embedding_heads h
 		JOIN embedding_sets es ON es.embedding_set_id=h.embedding_set_id
@@ -113,7 +114,7 @@ func captureVectorIndexSourceTx(ctx context.Context, tx *sql.Tx, vectorSpaceID s
 		JOIN embedding_input_generations g ON g.generation_id=es.input_generation_id
 		JOIN content_versions v ON v.version_id=es.content_version_id
 		JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id AND n.trashed_at IS NULL
-		WHERE h.vector_space_id=?`, fingerprints.GridRecipe, vectorSpaceID)
+		WHERE h.vector_space_id=$2`, fingerprints.GridRecipe, vectorSpaceID)
 	if err != nil {
 		return VectorIndexSource{}, fmt.Errorf("listing vector index logical membership: %w", err)
 	}
@@ -129,6 +130,10 @@ func captureVectorIndexSourceTx(ctx context.Context, tx *sql.Tx, vectorSpaceID s
 			&generation.EvidenceFingerprint, &generation.ChunkPolicyFingerprint, &eligible); err != nil {
 			return VectorIndexSource{}, err
 		}
+		if kind == document.EmbeddingInputFace {
+			faceMembers = append(faceMembers, member)
+			continue
+		}
 		if kind == document.EmbeddingInputImage {
 			if err := validateImageEmbeddingGeneration(generation, binding); err != nil {
 				return VectorIndexSource{}, err
@@ -140,6 +145,23 @@ func captureVectorIndexSourceTx(ctx context.Context, tx *sql.Tx, vectorSpaceID s
 	}
 	if err := rows.Err(); err != nil {
 		return VectorIndexSource{}, err
+	}
+	// PostgreSQL cannot issue a face lookup while capture rows remain open.
+	if err := rows.Close(); err != nil {
+		return VectorIndexSource{}, err
+	}
+	for _, member := range faceMembers {
+		set, err := loadEmbeddingSetTx(ctx, tx, member.EmbeddingSetID)
+		if err != nil {
+			return VectorIndexSource{}, err
+		}
+		eligible, err := embeddingSetEligibleTx(ctx, tx, set)
+		if err != nil {
+			return VectorIndexSource{}, err
+		}
+		if eligible {
+			source.Members = append(source.Members, member)
+		}
 	}
 	if len(source.Members) == 0 {
 		return VectorIndexSource{}, ErrNotFound
@@ -157,7 +179,7 @@ type vectorSourceMemo struct {
 // vectorIndexSourceChecksumTx reads the revision and membership in the consumer's snapshot.
 func (s *Store) vectorIndexSourceChecksumTx(ctx context.Context, tx *sql.Tx, space string) (string, error) {
 	var revision int64
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT revision FROM vector_membership_epochs WHERE vector_space_id=?),0)`, space).Scan(&revision); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT revision FROM vector_membership_epochs WHERE vector_space_id=$1),0)`, space).Scan(&revision); err != nil {
 		return "", err
 	}
 	s.vectorSourceMu.Lock()
@@ -166,7 +188,7 @@ func (s *Store) vectorIndexSourceChecksumTx(ctx context.Context, tx *sql.Tx, spa
 	if ok && memo.revision == revision {
 		return memo.checksum, nil
 	}
-	source, err := captureVectorIndexSourceTx(ctx, tx, space)
+	source, err := s.captureVectorIndexSourceTx(ctx, tx, space)
 	if err != nil {
 		return "", err
 	}
@@ -222,17 +244,17 @@ func (s *Store) ListVectorIndexSpaces(ctx context.Context) (_ []string, retErr e
 // so a concurrent publication cannot lose a head for live membership.
 func (s *Store) RetireEmptyVectorIndexHead(ctx context.Context, vectorSpaceID string, at time.Time) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		_, err := captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
+		_, err := s.captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
 		if err == nil {
 			return ErrVectorIndexSourceStale
 		}
 		if !errors.Is(err, ErrNotFound) {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM vector_index_heads WHERE vector_space_id=?`, vectorSpaceID); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM vector_index_heads WHERE vector_space_id=$1`, vectorSpaceID); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE vector_index_build_jobs SET lease_expires_at=? WHERE vector_space_id=?`, at.UTC().Format(timestampLayout), vectorSpaceID)
+		_, err = tx.ExecContext(ctx, `UPDATE vector_index_build_jobs SET lease_expires_at=$1 WHERE vector_space_id=$2`, at.UTC().Format(timestampLayout), vectorSpaceID)
 		return err
 	})
 }
@@ -257,7 +279,7 @@ func (s *Store) ClaimVectorIndexBuild(ctx context.Context, vectorSpaceID, source
 		SourceManifestChecksum: sourceChecksum, Owner: owner, ExpiresAt: expires}
 	claimed := false
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		current, err := captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
+		current, err := s.captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
 		if errors.Is(err, ErrNotFound) || err == nil && current.ManifestChecksum != sourceChecksum {
 			return ErrVectorIndexSourceStale
 		}
@@ -267,13 +289,13 @@ func (s *Store) ClaimVectorIndexBuild(ctx context.Context, vectorSpaceID, source
 		var token int64
 		var rawExpiry, priorSource string
 		err = tx.QueryRowContext(ctx, `SELECT fencing_token,lease_expires_at,source_manifest_checksum
-			FROM vector_index_build_jobs WHERE vector_space_id=?`, vectorSpaceID).Scan(&token, &rawExpiry, &priorSource)
+			FROM vector_index_build_jobs WHERE vector_space_id=$1`, vectorSpaceID).Scan(&token, &rawExpiry, &priorSource)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			claim.FencingToken = 1
 			_, err = tx.ExecContext(ctx, `INSERT INTO vector_index_build_jobs(
 				vector_space_id,source_manifest_checksum,owner,fencing_token,lease_expires_at)
-				VALUES(?,?,?,?,?)`, vectorSpaceID, sourceChecksum, owner, claim.FencingToken,
+				VALUES($1,$2,$3,$4,$5)`, vectorSpaceID, sourceChecksum, storedString(s.postgresSchema != "", owner), claim.FencingToken,
 				expires.Format(timestampLayout))
 		case err != nil:
 			return err
@@ -287,8 +309,8 @@ func (s *Store) ClaimVectorIndexBuild(ctx context.Context, vectorSpaceID, source
 			}
 			claim.FencingToken = token + 1
 			_, err = tx.ExecContext(ctx, `UPDATE vector_index_build_jobs SET
-				source_manifest_checksum=?,owner=?,fencing_token=?,lease_expires_at=?
-				WHERE vector_space_id=? AND fencing_token=?`, sourceChecksum, owner,
+				source_manifest_checksum=$1,owner=$2,fencing_token=$3,lease_expires_at=$4
+				WHERE vector_space_id=$5 AND fencing_token=$6`, sourceChecksum, storedString(s.postgresSchema != "", owner),
 				claim.FencingToken, expires.Format(timestampLayout), vectorSpaceID, token)
 		}
 		if err != nil {
@@ -307,9 +329,9 @@ func (s *Store) ClaimVectorIndexBuild(ctx context.Context, vectorSpaceID, source
 // history so cleanup from an older attempt cannot affect a newer owner.
 func (s *Store) AbandonVectorIndexBuild(ctx context.Context, claim VectorIndexBuildClaim, at time.Time) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE vector_index_build_jobs SET lease_expires_at=?
-            WHERE vector_space_id=? AND source_manifest_checksum=? AND owner=? AND fencing_token=?`,
-			at.UTC().Format(timestampLayout), claim.VectorSpaceID, claim.SourceManifestChecksum, claim.Owner, claim.FencingToken)
+		_, err := tx.ExecContext(ctx, `UPDATE vector_index_build_jobs SET lease_expires_at=$1
+            WHERE vector_space_id=$2 AND source_manifest_checksum=$3 AND owner=$4 AND fencing_token=$5`,
+			at.UTC().Format(timestampLayout), claim.VectorSpaceID, claim.SourceManifestChecksum, storedString(s.postgresSchema != "", claim.Owner), claim.FencingToken)
 		return err
 	})
 }
@@ -318,7 +340,7 @@ func requireVectorIndexBuildClaimTx(ctx context.Context, tx *sql.Tx, claim Vecto
 	var source, owner, rawExpiry string
 	var token int64
 	err := tx.QueryRowContext(ctx, `SELECT source_manifest_checksum,owner,fencing_token,lease_expires_at
-		FROM vector_index_build_jobs WHERE vector_space_id=?`, claim.VectorSpaceID).Scan(
+		FROM vector_index_build_jobs WHERE vector_space_id=$1`, claim.VectorSpaceID).Scan(
 		&source, &owner, &token, &rawExpiry)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrVectorIndexBuildFenced
@@ -362,9 +384,9 @@ func (s *Store) StageVectorIndexGeneration(ctx context.Context, claim VectorInde
 		if err := requireVectorIndexBuildClaimTx(ctx, tx, claim, at); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO vector_index_generations(
+		result, err := tx.ExecContext(ctx, `INSERT INTO vector_index_generations(
 			generation_id,vector_space_id,source_manifest_checksum,index_manifest_checksum,
-			generation_bytes,byte_size,row_count,built_at) VALUES(?,?,?,?,?,?,?,?)`, record.ID,
+			generation_bytes,byte_size,row_count,built_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(generation_id) DO NOTHING`, record.ID,
 			record.VectorSpaceID, record.SourceManifestChecksum, record.IndexManifestChecksum,
 			record.Bytes, len(record.Bytes), record.RowCount, record.BuiltAt)
 		if err != nil {
@@ -399,7 +421,7 @@ func (s *Store) PublishVectorIndexGeneration(ctx context.Context, claim VectorIn
 		// immutable source metadata while holding mutation admission.
 		var space, source string
 		err := tx.QueryRowContext(ctx, `SELECT vector_space_id,source_manifest_checksum
-			FROM vector_index_generations WHERE generation_id=?`, generationID).Scan(&space, &source)
+			FROM vector_index_generations WHERE generation_id=$1`, generationID).Scan(&space, &source)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -409,7 +431,7 @@ func (s *Store) PublishVectorIndexGeneration(ctx context.Context, claim VectorIn
 		if space != claim.VectorSpaceID || source != claim.SourceManifestChecksum {
 			return ErrVectorIndexBuildFenced
 		}
-		current, err := captureVectorIndexSourceTx(ctx, tx, claim.VectorSpaceID)
+		current, err := s.captureVectorIndexSourceTx(ctx, tx, claim.VectorSpaceID)
 		if errors.Is(err, ErrNotFound) || err == nil && current.ManifestChecksum != claim.SourceManifestChecksum {
 			return ErrVectorIndexSourceStale
 		}
@@ -417,14 +439,14 @@ func (s *Store) PublishVectorIndexGeneration(ctx context.Context, claim VectorIn
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO vector_index_heads(
-			vector_space_id,generation_id,source_manifest_checksum) VALUES(?,?,?)
+			vector_space_id,generation_id,source_manifest_checksum) VALUES($1,$2,$3)
 			ON CONFLICT(vector_space_id) DO UPDATE SET generation_id=excluded.generation_id,
 			source_manifest_checksum=excluded.source_manifest_checksum`, claim.VectorSpaceID,
 			generationID, claim.SourceManifestChecksum); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE vector_index_build_jobs SET lease_expires_at=?
-			WHERE vector_space_id=? AND fencing_token=?`, at.UTC().Format(timestampLayout), claim.VectorSpaceID, claim.FencingToken)
+		_, err = tx.ExecContext(ctx, `UPDATE vector_index_build_jobs SET lease_expires_at=$1
+			WHERE vector_space_id=$2 AND fencing_token=$3`, at.UTC().Format(timestampLayout), claim.VectorSpaceID, claim.FencingToken)
 		return err
 	})
 }
@@ -464,7 +486,7 @@ type VectorIndexHead struct {
 func (s *Store) ActiveVectorIndexHead(ctx context.Context, vectorSpaceID string) (VectorIndexHead, error) {
 	var head VectorIndexHead
 	err := s.db.QueryRowContext(ctx, `SELECT generation_id,source_manifest_checksum
-		FROM vector_index_heads WHERE vector_space_id=?`, vectorSpaceID).Scan(&head.GenerationID, &head.SourceManifestChecksum)
+		FROM vector_index_heads WHERE vector_space_id=$1`, vectorSpaceID).Scan(&head.GenerationID, &head.SourceManifestChecksum)
 	if errors.Is(err, sql.ErrNoRows) {
 		return head, ErrNotFound
 	}
@@ -472,19 +494,23 @@ func (s *Store) ActiveVectorIndexHead(ctx context.Context, vectorSpaceID string)
 }
 
 func (s *Store) ActiveVectorIndexGeneration(ctx context.Context, vectorSpaceID string) (VectorIndexGenerationRecord, error) {
-	var generationID, source string
-	err := s.db.QueryRowContext(ctx, `SELECT generation_id,source_manifest_checksum
-		FROM vector_index_heads WHERE vector_space_id=?`, vectorSpaceID).Scan(&generationID, &source)
-	if errors.Is(err, sql.ErrNoRows) {
-		return VectorIndexGenerationRecord{}, ErrNotFound
-	}
-	if err != nil {
-		return VectorIndexGenerationRecord{}, err
-	}
-	record, err := loadVectorIndexGenerationTx(ctx, s.db, generationID)
-	if err == nil && (record.VectorSpaceID != vectorSpaceID || record.SourceManifestChecksum != source) {
-		return VectorIndexGenerationRecord{}, errors.New("vector index head does not match generation")
-	}
+	var record VectorIndexGenerationRecord
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		var generationID, source string
+		err := tx.QueryRowContext(ctx, `SELECT generation_id,source_manifest_checksum
+			FROM vector_index_heads WHERE vector_space_id=$1`, vectorSpaceID).Scan(&generationID, &source)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		record, err = loadVectorIndexGenerationTx(ctx, tx, generationID)
+		if err == nil && (record.VectorSpaceID != vectorSpaceID || record.SourceManifestChecksum != source) {
+			return errors.New("vector index head does not match generation")
+		}
+		return err
+	})
 	return record, err
 }
 
@@ -534,7 +560,7 @@ func (s *Store) AcquireVectorIndexGeneration(ctx context.Context, vectorSpaceID,
 	err = s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var generationID string
 		if err := tx.QueryRowContext(ctx, `SELECT generation_id FROM vector_index_heads
-			WHERE vector_space_id=?`, vectorSpaceID).Scan(&generationID); errors.Is(err, sql.ErrNoRows) {
+			WHERE vector_space_id=$1`, vectorSpaceID).Scan(&generationID); errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		} else if err != nil {
 			return err
@@ -557,16 +583,16 @@ func (s *Store) AcquireVectorIndexGeneration(ctx context.Context, vectorSpaceID,
 		return lease, err
 	}
 	err = s.withBookkeepingTx(ctx, func(tx *sql.Tx) error {
-		return insertVectorIndexReaderLeaseTx(ctx, tx, lease, owner)
+		return insertVectorIndexReaderLeaseTx(ctx, tx, lease, owner, s.postgresSchema != "")
 	})
 	return lease, err
 }
 
-func insertVectorIndexReaderLeaseTx(ctx context.Context, tx *sql.Tx, lease VectorIndexReaderLease, owner string) error {
+func insertVectorIndexReaderLeaseTx(ctx context.Context, tx *sql.Tx, lease VectorIndexReaderLease, owner string, postgres bool) error {
 	result, err := tx.ExecContext(ctx, `INSERT INTO vector_index_reader_leases(
 		lease_id,generation_id,owner,fencing_token,lease_expires_at)
-		SELECT ?,generation_id,?,?,? FROM vector_index_heads WHERE vector_space_id=? AND generation_id=?`,
-		lease.ID, owner, lease.FencingToken, lease.ExpiresAt.Format(timestampLayout), lease.Generation.VectorSpaceID, lease.Generation.ID)
+		SELECT $1,generation_id,$2,$3,$4 FROM vector_index_heads WHERE vector_space_id=$5 AND generation_id=$6`,
+		lease.ID, storedString(postgres, owner), lease.FencingToken, lease.ExpiresAt.Format(timestampLayout), lease.Generation.VectorSpaceID, lease.Generation.ID)
 	if err != nil {
 		return err
 	}
@@ -585,7 +611,7 @@ func (s *Store) ReleaseVectorIndexGeneration(ctx context.Context, leaseID string
 		var token int64
 		var rawExpiry string
 		err := tx.QueryRowContext(ctx, `SELECT fencing_token,lease_expires_at
-			FROM vector_index_reader_leases WHERE lease_id=?`, leaseID).Scan(&token, &rawExpiry)
+			FROM vector_index_reader_leases WHERE lease_id=$1`, leaseID).Scan(&token, &rawExpiry)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrVectorIndexLeaseFenced
 		}
@@ -594,11 +620,11 @@ func (s *Store) ReleaseVectorIndexGeneration(ctx context.Context, leaseID string
 		}
 		expires, parseErr := time.Parse(timestampLayout, rawExpiry)
 		if parseErr != nil || token != fencingToken || !expires.After(at.UTC()) {
-			_, _ = tx.ExecContext(ctx, `DELETE FROM vector_index_reader_leases WHERE lease_id=?`, leaseID)
+			_, _ = tx.ExecContext(ctx, `DELETE FROM vector_index_reader_leases WHERE lease_id=$1`, leaseID)
 			return ErrVectorIndexLeaseFenced
 		}
 		_, err = tx.ExecContext(ctx, `DELETE FROM vector_index_reader_leases
-			WHERE lease_id=? AND fencing_token=?`, leaseID, fencingToken)
+			WHERE lease_id=$1 AND fencing_token=$2`, leaseID, fencingToken)
 		return err
 	})
 }
@@ -607,7 +633,7 @@ func (s *Store) ReclaimVectorIndexGenerations(ctx context.Context, at time.Time)
 	removed := 0
 	err := s.withBookkeepingTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM vector_index_reader_leases
-			WHERE lease_expires_at<=?`, at.UTC().Format(timestampLayout)); err != nil {
+			WHERE lease_expires_at<=$1`, at.UTC().Format(timestampLayout)); err != nil {
 			return err
 		}
 		result, err := tx.ExecContext(ctx, `DELETE FROM vector_index_generations
@@ -616,7 +642,7 @@ func (s *Store) ReclaimVectorIndexGenerations(ctx context.Context, at time.Time)
 			  AND NOT EXISTS(SELECT 1 FROM vector_index_build_jobs j
 			      WHERE j.vector_space_id=vector_index_generations.vector_space_id
 			        AND j.source_manifest_checksum=vector_index_generations.source_manifest_checksum
-			        AND j.lease_expires_at>?)`, at.UTC().Format(timestampLayout))
+			        AND j.lease_expires_at>$1)`, at.UTC().Format(timestampLayout))
 		if err != nil {
 			return err
 		}
@@ -639,7 +665,7 @@ func (s *Store) ReplaceVectorIndexUnavailableCoverage(ctx context.Context, cover
 			for _, missing := range item.Missing {
 				if _, err := tx.ExecContext(ctx, `INSERT INTO vector_index_unavailable_coverage(
 					vector_space_id,source_manifest_checksum,embedding_set_id,vector_set_id,
-					payload_blob_hash,external_reembedding_required) VALUES(?,?,?,?,?,1)`,
+					payload_blob_hash,external_reembedding_required) VALUES($1,$2,$3,$4,$5,1)`,
 					item.VectorSpaceID, item.SourceManifestChecksum, missing.EmbeddingSetID,
 					missing.VectorSetID, missing.PayloadBlobHash); err != nil {
 					return err
@@ -663,10 +689,10 @@ func (s *Store) VectorIndexPublicationPending(ctx context.Context, space string)
 	}
 	var pending bool
 	err = s.db.QueryRowContext(ctx, `SELECT NOT EXISTS (
- SELECT 1 FROM vector_index_heads WHERE vector_space_id=? AND source_manifest_checksum=?
+ SELECT 1 FROM vector_index_heads WHERE vector_space_id=$1 AND source_manifest_checksum=$2
  ) AND NOT EXISTS (
  SELECT 1 FROM vector_index_unavailable_coverage
- WHERE vector_space_id=? AND source_manifest_checksum=? AND external_reembedding_required=1
+ WHERE vector_space_id=$3 AND source_manifest_checksum=$4 AND external_reembedding_required=1
  )`, space, source.ManifestChecksum, space, source.ManifestChecksum).Scan(&pending)
 	return pending, err
 }

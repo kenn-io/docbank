@@ -149,6 +149,7 @@ export interface PhotoImportTransport {
     sourceID: string,
     signal: AbortSignal,
     onprogress: (progress: TransferProgress) => void,
+    knownHashes?: Map<File, string>,
   ): Promise<PhotoImportPlan>;
   // An empty entry in hashes is a file not hashed yet. The upload hashes it
   // first and fills in its entry, so a retry reuses the hash.
@@ -190,6 +191,8 @@ interface UploadMessage {
   mime_type?: string;
   expected_hash?: string;
   expected_size?: number;
+  check_existing?: boolean;
+  verified_size?: number;
   receipt?: UploadReceipt;
   status?: number;
   code?: string;
@@ -203,12 +206,15 @@ export interface UploadTransport {
     expectedHash: string,
     signal: AbortSignal,
     onprogress: (progress: TransferProgress) => void,
+    checkExisting?: boolean,
   ): Promise<UploadReceipt>;
 }
 
 export class UploadChannelError extends Error {
   override readonly name = "UploadChannelError";
 }
+
+export class UploadProofError extends Error {}
 
 type SocketFactory = (url: string) => WebSocket;
 
@@ -272,8 +278,8 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     const authenticated = await this.nextMessage(undefined, uploadHandshakeTimeoutMs);
     const proof = expectedProof(this.session.uploadSecret, this.session.token, nonce);
     if (authenticated.type !== "authenticated" || authenticated.proof !== proof) {
-      this.fail();
-      throw new Error(
+      this.retire(false);
+      throw new UploadProofError(
         "The upload endpoint could not prove it is the current Docbank daemon. No file bytes were sent.",
       );
     }
@@ -289,6 +295,7 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     expectedHash: string,
     signal: AbortSignal,
     onprogress: (progress: TransferProgress) => void,
+    checkExisting = false,
   ): Promise<UploadReceipt> {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN || this.unusable) {
       throw this.channelError();
@@ -308,10 +315,33 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
         mime_type: file.type || "application/octet-stream",
         expected_hash: expectedHash,
         expected_size: file.size,
+        check_existing: checkExisting,
       });
-      const ready = await this.nextMessage(signal, uploadResponseTimeoutMs);
+      let ready = await this.nextMessage(signal, uploadResponseTimeoutMs);
       this.requireMessage(ready, requestID);
+      let verifiedSize = 0;
+      while (checkExisting && ready.type === "verification_progress") {
+        if (
+          !Number.isSafeInteger(ready.verified_size) ||
+          ready.verified_size! <= verifiedSize ||
+          ready.verified_size! > file.size
+        ) {
+          throw this.protocolError();
+        }
+        verifiedSize = ready.verified_size!;
+        ready = await this.nextMessage(signal, uploadResponseTimeoutMs);
+        this.requireMessage(ready, requestID);
+      }
       this.throwProblem(ready);
+      if (checkExisting && ready.type === "receipt" && ready.receipt?.status === "skipped") {
+        try {
+          validateUploadReceipt(ready.receipt, parentID, name, expectedHash, file.size);
+        } catch (cause) {
+          this.fail();
+          throw new UploadChannelError(cause instanceof Error ? cause.message : String(cause));
+        }
+        return ready.receipt;
+      }
       if (ready.type !== "ready") throw this.protocolError();
       readyForBytes = true;
       const terminal = await this.transmit(requestID, file, signal, onprogress);
@@ -343,12 +373,13 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     sourceID: string,
     signal: AbortSignal,
     onprogress: (progress: TransferProgress) => void,
+    knownHashes?: Map<File, string>,
   ): Promise<PhotoImportPlan> {
     if (this.busy) throw new UploadChannelError("Another browser upload is already active.");
     throwIfAborted(signal);
     this.busy = true;
     const requestID = randomUUID();
-    const hashes = new Map<File, string>();
+    const hashes = new Map(knownHashes);
     try {
       this.send(photoImportDeclaration(files, destination, sourceID, requestID, hashes));
       let plan = await this.nextMessage();
@@ -784,9 +815,7 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
   }
 
   private channelError(): Error {
-    return new UploadChannelError(
-      "The verified upload channel ended. Run `docbank web` again before selecting files.",
-    );
+    return new UploadChannelError("The verified upload channel ended.");
   }
 
   private fail(): void {

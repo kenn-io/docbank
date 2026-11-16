@@ -26,11 +26,11 @@ func newRedactionReserveCommand() *cobra.Command {
 			if !daemonconn.IsCanonicalUUIDv4(namespace) || start < 1 {
 				return usageError(errors.New("--namespace must be a canonical UUIDv4 and --start must be positive"))
 			}
-			inputs, err := readRedactionInputs(args[0], args[1])
+			inputs, err := readRedactionInputs(cmd.Context(), args[0], args[1])
 			if err != nil {
 				return err
 			}
-			review, err := readRedactionReview(args[2], inputs)
+			review, err := readRedactionReview(cmd.Context(), args[2], inputs)
 			if err != nil {
 				return err
 			}

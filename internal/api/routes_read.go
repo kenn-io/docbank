@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"net/http"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -107,6 +108,10 @@ func setContentVersionHeaders(hctx huma.Context, version store.ContentVersion) {
 func streamContentVersion(
 	ctx context.Context, d Deps, version store.ContentVersion,
 ) (*huma.StreamResponse, error) {
+	return streamContentVersionWithFailure(ctx, d, version, false)
+}
+
+func streamContentVersionWithFailure(ctx context.Context, d Deps, version store.ContentVersion, abort bool) (*huma.StreamResponse, error) {
 	f, _, err := d.Blobs.OpenStreamContext(ctx, version.BlobHash)
 	if err != nil {
 		return nil, NewError(http.StatusInternalServerError, "internal",
@@ -119,6 +124,8 @@ func streamContentVersion(
 		// at EOF. Reuse that result only after a complete, verified transfer.
 		if _, err := io.Copy(hctx.BodyWriter(), f); err == nil && f.Verified() {
 			hctx.SetHeader("Content-Digest", contentDigest(mustDecodeHash(version.BlobHash)))
+		} else if abort {
+			panic(http.ErrAbortHandler)
 		}
 	}}, nil
 }
@@ -154,6 +161,17 @@ func streamContentVersionRange(ctx context.Context, d Deps, version store.Conten
 }
 
 func registerReadRoutes(api huma.API, d Deps) {
+	rejectEmptyUnderPath := func(ctx huma.Context, next func(huma.Context)) {
+		url := ctx.URL()
+		if slices.Contains(url.Query()["under_path"], "") {
+			if err := huma.WriteErr(api, ctx, http.StatusUnprocessableEntity, "under_path must not be empty"); err != nil {
+				d.Logger.DebugContext(ctx.Context(), "write empty search path rejection", "error", err)
+			}
+			return
+		}
+		next(ctx)
+	}
+
 	huma.Register(api, huma.Operation{
 		OperationID: "getNode", Method: http.MethodGet, Path: "/api/v1/nodes/{id}",
 		Summary: "Stat a node by id (live or trashed)",
@@ -413,6 +431,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 	type textCoverageOutput struct{ Body SearchTextCoverage }
 	huma.Register(api, huma.Operation{
 		OperationID: "search-text-coverage", Method: http.MethodGet, Path: "/api/v1/search/text-coverage",
+		Middlewares: huma.Middlewares{rejectEmptyUnderPath},
 		Summary:     "Count files waiting for searchable text",
 		Description: "Counts current live files in the search scope that need processing or await native text extraction. Call after an empty text search.",
 	}, func(ctx context.Context, in *struct {
@@ -421,6 +440,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 		TagID          string `query:"tag_id" pattern:"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"`
 		MIMEType       string `query:"mime_type" maxLength:"255"`
 		UnderNodeID    int64  `query:"under_node_id" minimum:"1"`
+		UnderPath      string `query:"under_path" maxLength:"16384" pattern:"^/"`
 		ModifiedSince  string `query:"modified_since" maxLength:"64"`
 		ModifiedBefore string `query:"modified_before" maxLength:"64"`
 	}) (*textCoverageOutput, error) {
@@ -433,10 +453,17 @@ func registerReadRoutes(api huma.API, d Deps) {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 		}
 		opts := searchFilterOptions(&DocumentSourceFenceFilters{SourcePresent: in.SourcePresent, TagID: in.TagID,
-			MIMEType: mimeType, UnderNodeID: in.UnderNodeID, ModifiedSince: since, ModifiedBefore: before})
+			MIMEType: mimeType, UnderNodeID: in.UnderNodeID, UnderPath: in.UnderPath, ModifiedSince: since, ModifiedBefore: before})
 		opts.PDFFilter = in.PDFFilter
 		profile, noTextLayer := pdfSearchTextCoverage(d)
-		coverage, err := d.Store.SearchTextCoverage(ctx, opts, profile, noTextLayer)
+		var unqueuedPDF func(string, int64) bool
+		if d.PDFText != nil {
+			unqueuedPDF, err = d.PDFText.UnqueuedPending(ctx)
+			if err != nil {
+				return nil, FromStoreError(err)
+			}
+		}
+		coverage, err := d.Store.SearchTextCoverage(ctx, opts, profile, noTextLayer, unqueuedPDF)
 		if err != nil {
 			if _, ok := errors.AsType[*query.ExpressionError](err); ok {
 				return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
@@ -449,14 +476,15 @@ func registerReadRoutes(api huma.API, d Deps) {
 	type searchOutput struct{ Body SearchReport }
 	huma.Register(api, huma.Operation{
 		OperationID: "search", Method: http.MethodGet, Path: "/api/v1/search",
-		Summary: "Search live document names and extracted text",
+		Middlewares: huma.Middlewares{rejectEmptyUnderPath},
+		Summary:     "Search live document names and extracted text",
 		Description: "Name matches retain their established BM25 order and appear first; " +
 			"content-only matches follow in their own BM25 order. Every hit names its match source. " +
 			"The query may be empty when a tag or modification-time bound makes the page bounded; " +
 			"such filter-only results are ordered by modification time descending. " +
 			"An optional stable tag ID requires that assignment for every result. An optional " +
 			"parameter-free MIME type matches the current file version with or without parameters. " +
-			"An optional live directory node ID restricts results to its descendants. Optional " +
+			"An optional live directory node ID or absolute path restricts results to its descendants; supply only one. Optional " +
 			"absolute modification timestamps form an inclusive-since, exclusive-before interval. " +
 			"source_present=true excludes documents whose watched source is observed gone; push-owned documents remain included. " +
 			"fuzzy=true appends bounded ASCII one-edit filename/path discovery after ordinary " +
@@ -471,6 +499,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 		TagID          string `query:"tag_id" pattern:"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"`
 		MIMEType       string `query:"mime_type" maxLength:"255"`
 		UnderNodeID    int64  `query:"under_node_id" minimum:"1"`
+		UnderPath      string `query:"under_path" maxLength:"16384" pattern:"^/"`
 		ModifiedSince  string `query:"modified_since" maxLength:"64"`
 		ModifiedBefore string `query:"modified_before" maxLength:"64"`
 	}) (*searchOutput, error) {
@@ -487,8 +516,17 @@ func registerReadRoutes(api huma.API, d Deps) {
 		opts := store.SearchOptions{
 			PDFFilter:     in.PDFFilter,
 			SourcePresent: in.SourcePresent,
-			TagID:         in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID,
+			TagID:         in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID, UnderPath: in.UnderPath,
 			ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
+		}
+		if opts.UnderPath != "" {
+			opts, err = d.Store.NormalizeSearchOptions(ctx, opts)
+			if err != nil {
+				if _, ok := errors.AsType[*query.ExpressionError](err); ok {
+					return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
+				}
+				return nil, FromStoreError(err)
+			}
 		}
 		var hits []store.SearchHit
 		var truncated bool
@@ -509,7 +547,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 		out := &searchOutput{Body: SearchReport{
 			Hits: []SearchHit{}, Limit: in.Limit, Truncated: truncated, Fuzzy: fuzzy,
 			PDFFilter:     in.PDFFilter,
-			SourcePresent: in.SourcePresent, TagID: in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID,
+			SourcePresent: in.SourcePresent, TagID: in.TagID, MIMEType: mimeType, UnderNodeID: opts.UnderNodeID, UnderPath: in.UnderPath,
 			ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
 		}}
 		for _, h := range hits {

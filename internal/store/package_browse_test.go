@@ -167,3 +167,48 @@ func publishPackageTestIngest(t *testing.T, s *Store, run IngestRun, name string
 	require.NoError(t, err)
 	return node
 }
+
+func checkPackageLabelCandidatesPreserveByteKeys(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	t.Parallel()
+	s := open(t)
+	job, record, template, receipt := receivedRecordPublication(t, s)
+	var labels []PackageLabelRow
+	for _, set := range []string{"set\x00one", `set\one`, `set\two`} {
+		for index, artifact := range []string{"artifact\x00one", `artifact\one`, `artifact\two`} {
+			label := template[0]
+			label.LabelSet, label.ArtifactID = set, artifact
+			label.Endpoint, label.PageNumber = "page", index+1
+			labels = append(labels, label)
+		}
+	}
+	_, err := s.CommitPackageRecordWithLease(t.Context(), job.ID, job.Epoch, job.Token, record, labels, receipt)
+	require.NoError(t, err)
+	for _, set := range []string{"set\x00one", `set\one`, `set\two`} {
+		t.Run(set, func(t *testing.T) {
+			var artifacts []string
+			after := ""
+			for range 3 {
+				page, next, err := s.PackageLabelCandidates(t.Context(), "EXT000001", job.PackageID, set, "received", after, 1)
+				require.NoError(t, err)
+				require.Len(t, page, 1)
+				require.Equal(t, set, page[0].LabelSet)
+				artifacts = append(artifacts, page[0].ArtifactID)
+				after = next
+			}
+			require.Empty(t, after)
+			require.Equal(t, []string{"artifact\x00one", `artifact\one`, `artifact\two`}, artifacts)
+		})
+	}
+	var sets []string
+	after := ""
+	for range 9 {
+		page, next, err := s.PackageLabelCandidates(t.Context(), "EXT000001", "", "", "", after, 1)
+		require.NoError(t, err)
+		require.Len(t, page, 1)
+		sets = append(sets, page[0].LabelSet)
+		after = next
+	}
+	require.Empty(t, after)
+	require.Equal(t, []string{"set\x00one", "set\x00one", "set\x00one", `set\one`, `set\one`, `set\one`, `set\two`, `set\two`, `set\two`}, sets)
+}

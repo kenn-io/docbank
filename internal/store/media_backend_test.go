@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/pgtest"
 	"go.kenn.io/docbank/internal/store/pgschema"
 )
@@ -264,6 +266,7 @@ func checkMediaRevocationRemovesInputBoundRendition(t *testing.T, open func(*tes
 	t.Helper()
 	s := open(t)
 	ctx := t.Context()
+	principal := `operator\name`
 	seedRenditionCatalogVersions(t, s)
 	file, err := s.CreateFile(ctx, s.RootID(), "recording.wav", catalogSourceHash, 20, "audio/wav")
 	require.NoError(t, err)
@@ -271,9 +274,9 @@ func checkMediaRevocationRemovesInputBoundRendition(t *testing.T, open func(*tes
 	require.NoError(t, err)
 	sourceID := testSHA256([]byte("rendition-media-source"))
 	publication := MediaPublicationRequest{
-		Operation: testMediaOperation("submit_supplied_media", "operator:synthetic"),
+		Operation: testMediaOperation("submit_supplied_media", principal),
 		SourceID:  sourceID, ContentVersion: version, CaptureJSON: "{}",
-		Occurrence: MediaOccurrenceInput{SourceID: sourceID, Principal: "operator:synthetic", Ref: "recording", Revision: "1", MessageJSON: "{}"},
+		Occurrence: MediaOccurrenceInput{SourceID: sourceID, Principal: principal, Ref: "recording", Revision: "1", MessageJSON: "{}"},
 	}
 	publication.Operation.SourceID = sourceID
 	retained, err := s.RetainSuppliedMedia(ctx, publication)
@@ -288,8 +291,9 @@ func checkMediaRevocationRemovesInputBoundRendition(t *testing.T, open func(*tes
 	input.Operation.SourceID = sourceID
 	_, err = s.ImportMediaInputArtifact(ctx, input)
 	require.NoError(t, err)
-	profile := catalogProcessingProfile(t, false)
+	profile := embeddingCatalogProfile(t)
 	request := renditionJobTestRequest(version.ID, profile)
+	request.Authorization.Principal = principal
 	request.ExecutionIdentity.Upload.InputBinding = input.InputID
 	request.ExecutionIdentity.Upload.MediaFamily, request.ExecutionIdentity.Authorization.MediaFamily = "audio", "audio"
 	request.ExecutionIdentity.Upload.MediaType, request.ExecutionIdentity.Authorization.MediaType = "audio/wav", "audio/wav"
@@ -303,17 +307,51 @@ func checkMediaRevocationRemovesInputBoundRendition(t *testing.T, open func(*tes
 	require.NoError(t, err)
 	build := catalogRenditionBuild(s, profile)
 	build.ID = job.ID
+	build.EvidenceChecksum = embeddingCatalogEvidence(t).Checksum
 	require.NoError(t, s.StageRenditionJobBuild(ctx, claim, build, at))
 	_, err = s.StageRenditionJobGeneration(ctx, claim, testSHA256([]byte("media-generation")), at)
 	require.NoError(t, err)
 	published, err := s.PublishRenditionJob(ctx, claim, at)
 	require.NoError(t, err)
 	require.Equal(t, 1, published.PublishedWaiterCount)
-	_, err = s.ActiveRendition(ctx, version.ID, profile.Fingerprint)
+	active, err := s.ActiveRendition(ctx, version.ID, profile.Fingerprint)
 	require.NoError(t, err)
+	embedding := embeddingSetFixture(ctx, s, version.ID, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", active.Attachment.ID)
+	require.NoError(t, s.StageEmbeddingSet(ctx, embedding))
+	require.NoError(t, s.PublishEmbeddingHead(ctx, EmbeddingHeadRecord{
+		FencingToken: 1, Key: EmbeddingHeadKey{ContentVersionID: version.ID, BindingID: embedding.BindingID, InputKind: embedding.InputKind},
+		SetID: embedding.ID, VectorSpaceID: embedding.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+	}))
+	original := embeddingSetFixture(ctx, s, version.ID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+	require.NoError(t, s.StageEmbeddingSet(ctx, original))
+	require.NoError(t, s.PublishEmbeddingHead(ctx, EmbeddingHeadRecord{
+		FencingToken: 1, Key: EmbeddingHeadKey{ContentVersionID: version.ID, BindingID: original.BindingID, InputKind: original.InputKind},
+		SetID: original.ID, VectorSpaceID: original.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime,
+	}))
+	require.NoError(t, s.RecordEmbeddingFailure(ctx, EmbeddingFailureRecord{
+		ContentVersionID: version.ID, ProcessingProfileFingerprint: profile.Fingerprint,
+		BindingID: "chunk-alt", InputKind: document.EmbeddingInputRenditionChunk,
+		AttachmentID: active.Attachment.ID, FencingToken: 1,
+		FailureCode: EmbeddingFailureProviderUnavailable, FailedAt: embeddingCatalogTime,
+	}))
+	checkRetentionMetadata(t, s)
+	source, err := s.CaptureVectorIndexSource(ctx, embedding.VectorSpace.ID)
+	require.NoError(t, err)
+	require.Len(t, source.Members, 2)
+	require.Equal(t, source.ManifestChecksum, memoVectorSourceChecksum(t, s, source.VectorSpaceID))
 	require.NoError(t, revokeTestOccurrence(ctx, s, publication.Operation.Principal, retained.OccurrenceID))
 	_, err = s.ActiveRendition(ctx, version.ID, profile.Fingerprint)
 	require.ErrorIs(t, err, ErrNotFound)
+	after, err := s.CaptureVectorIndexSource(ctx, source.VectorSpaceID)
+	require.NoError(t, err)
+	require.Len(t, after.Members, 1)
+	require.Equal(t, original.ID, after.Members[0].EmbeddingSetID, "revocation keeps original-file embeddings")
+	require.NotEqual(t, source.ManifestChecksum, after.ManifestChecksum)
+	require.Equal(t, after.ManifestChecksum, memoVectorSourceChecksum(t, s, source.VectorSpaceID), "revocation must invalidate the cached chunk membership")
+	require.NoError(t, s.withReadTx(ctx, func(tx *sql.Tx) error {
+		_, err := loadEmbeddingSetTx(ctx, tx, embedding.ID)
+		return err
+	}))
 	_, err = s.RenditionBuild(ctx, job.ID)
 	require.NoError(t, err, "revocation removes serving authority, not retained evidence")
 	_, _, err = s.EnqueueRenditionJob(ctx, request)

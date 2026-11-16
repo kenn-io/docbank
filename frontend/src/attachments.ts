@@ -1,4 +1,4 @@
-import { APIError, sessionResponse } from "./api-transport.js";
+import { APIError, networkError, sessionResponse } from "./api-transport.js";
 import * as generated from "./generated/docbank.js";
 import type { RelatedSelectedSource, SelectedSource } from "./selectedSource.js";
 
@@ -227,7 +227,9 @@ async function readBoundedJSON(
   try {
     while (true) {
       signal.throwIfAborted();
-      const chunk = await reader.read();
+      const chunk = await reader.read().catch((cause: unknown) => {
+        throw networkError(cause, signal);
+      });
       if (chunk.done) break;
       size += chunk.value.byteLength;
       if (size > jsonByteLimit) invalid("JSON byte limit exceeded");
@@ -246,7 +248,13 @@ async function readBoundedJSON(
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    invalid("invalid UTF-8");
+  }
+  return JSON.parse(text) as unknown;
 }
 export async function readRelationPage(
   session: string,

@@ -28,7 +28,7 @@ func (c *Connection) ReserveNumberedPDF(ctx context.Context, request processing.
 		return result, err
 	}
 	var response *http.Response
-	_, err = c.apiWithResponseLimit(&response, processing.MaxRedactionResponseBytes).ReserveNumberedPDF(runtime.WithStreamingResponse(ctx), &apiclient.ReserveNumberedPDFRequestOptions{Body: &request})
+	_, err = c.redactionAPI(&response).ReserveNumberedPDF(runtime.WithStreamingResponse(ctx), &apiclient.ReserveNumberedPDFRequestOptions{Body: &request})
 	if err != nil {
 		if code, known := ProblemCode(err); known {
 			switch code {

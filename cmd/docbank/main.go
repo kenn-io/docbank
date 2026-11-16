@@ -3,12 +3,14 @@ package main
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/kit/agentsetup"
 )
 
 func main() {
@@ -23,6 +25,9 @@ func runProcess(args []string, stdout, stderr io.Writer) int {
 	legacy, _, _ := rootCmd.Find(args)
 	warnLegacyCommand(legacy)
 	if cmd, err := executeCommand(); err != nil {
+		if errors.Is(err, agentsetup.ErrNotReady) {
+			return exitGeneral
+		}
 		code := commandExitCode(err, commandStarted)
 		hint := strings.TrimPrefix(commandErrorHint(cmd, err, code, commandStarted), "hint: ")
 		hint = strings.Join(strings.Fields(hint), " ")

@@ -739,7 +739,7 @@
                   <dd>{plan.embedded_previews ?? 0}</dd>
                 </div>{/if}
               <div>
-                <dt>Payload</dt>
+                <dt>Size and files</dt>
                 <dd>{formatBytes(plan.role_bytes)} · {plan.role_entries.toLocaleString()} files</dd>
               </div>
               {#if plan.counts && !plan.photo_render}

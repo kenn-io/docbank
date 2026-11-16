@@ -16,6 +16,8 @@ import (
 
 func TestAgentSessionArchiveSurvivesPackedBackupRestore(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	source := t.TempDir()
 	repo := filepath.Join(t.TempDir(), "backup")
 	relativeSource := filepath.Join("codex", "project-alpha", "2026-07", "session-01.jsonl")

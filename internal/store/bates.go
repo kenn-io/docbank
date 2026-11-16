@@ -154,7 +154,7 @@ func (s *Store) PreviewBatesRange(ctx context.Context, r BatesPlanRequest) (Bate
 	if err != nil {
 		return BatesPlan{}, err
 	}
-	if err := validateBatesPages(ctx, tx, r); err != nil {
+	if err := validateBatesPages(ctx, tx, r, s.postgresSchema != ""); err != nil {
 		return BatesPlan{}, err
 	}
 	plan.StartSequence, plan.EndSequence, err = batesRange(cursor, r.StartAt, int64(len(r.Pages)), plan.Namespace.Padding)
@@ -312,14 +312,14 @@ func BatesRequestDigest(r BatesPlanRequest) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
-func validateBatesPages(ctx context.Context, tx *sql.Tx, r BatesPlanRequest) error {
+func validateBatesPages(ctx context.Context, tx *sql.Tx, r BatesPlanRequest, postgres bool) error {
 	if len(r.Pages) > MaxBatesExportPages {
 		return ErrBatesPageLimit
 	}
 	if len(r.Pages) == 0 {
 		return ErrBatesPageCountMismatch
 	}
-	expected, err := expectedBatesPagesLimited(ctx, tx, r.SnapshotID, MaxBatesExportPages)
+	expected, err := expectedBatesPagesLimited(ctx, tx, r.SnapshotID, MaxBatesExportPages, postgres)
 	if err != nil {
 		return err
 	}
@@ -365,14 +365,14 @@ func (s *Store) SnapshotBatesPages(ctx context.Context, snapshotID string) ([]Ba
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	pages, err := expectedBatesPagesLimited(ctx, tx, snapshotID, MaxBatesExportPages)
+	pages, err := expectedBatesPagesLimited(ctx, tx, snapshotID, MaxBatesExportPages, s.postgresSchema != "")
 	if err != nil {
 		return nil, err
 	}
 	return pages, tx.Commit()
 }
 
-func expectedBatesPagesLimited(ctx context.Context, tx metadataQuerier, snapshotID string, limit int) ([]BatesPageInput, error) {
+func expectedBatesPagesLimited(ctx context.Context, tx metadataQuerier, snapshotID string, limit int, postgres bool) ([]BatesPageInput, error) {
 	var expected []BatesPageInput
 	for after := 0; ; {
 		members, err := loadSnapshotMemberRows(ctx, tx, snapshotID, after, 250)
@@ -383,7 +383,7 @@ func expectedBatesPagesLimited(ctx context.Context, tx metadataQuerier, snapshot
 			break
 		}
 		for _, member := range members {
-			member.Representations, err = loadSnapshotRepresentationRows(ctx, tx, snapshotID, member.OccurrenceID)
+			member.Representations, err = loadSnapshotRepresentationRows(ctx, tx, snapshotID, member.OccurrenceID, postgres)
 			if err != nil {
 				return nil, err
 			}
@@ -465,7 +465,7 @@ func (s *Store) reserveBatesRangeTx(ctx context.Context, tx *sql.Tx, r BatesPlan
 		if err != nil {
 			return err
 		}
-		if err := validateBatesPages(ctx, tx, r); err != nil {
+		if err := validateBatesPages(ctx, tx, r, s.postgresSchema != ""); err != nil {
 			return err
 		}
 		start, end, err := batesRange(cursor, r.StartAt, int64(len(r.Pages)), namespace.Padding)
@@ -491,7 +491,7 @@ func (s *Store) reserveBatesRangeTx(ctx context.Context, tx *sql.Tx, r BatesPlan
 		for i, page := range r.Pages {
 			label := batesLabel(namespace, start+int64(i))
 			_, err = tx.ExecContext(ctx, `INSERT INTO bates_page_labels(allocation_id,ordinal,namespace_id,sequence,occurrence_id,
-				source_page,output_page,label) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, id, i+1, r.NamespaceID, start+int64(i), page.OccurrenceID,
+				source_page,output_page,label) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, id, i+1, r.NamespaceID, start+int64(i), storedString(s.postgresSchema != "", page.OccurrenceID),
 				page.SourcePage, i+1, label)
 			if err != nil {
 				return fmt.Errorf("%w: %w", ErrBatesReservationConflict, err)

@@ -304,7 +304,7 @@ func (s *Store) publishEmailGenerationTx(ctx context.Context, tx *sql.Tx, p Emai
 			return err
 		}
 		// Re-selecting the same inventory leaves its valid body and timestamps alone.
-		if _, err = tx.ExecContext(ctx, `DELETE FROM rendition_heads WHERE attachment_id IN (
+		if _, err = deleteRenditionHeadsTx(ctx, tx, s.postgresSchema != "", `attachment_id IN (
    SELECT b.rendition_attachment_id FROM email_body_results b JOIN email_attachments a ON a.attachment_id=b.email_attachment_id
    WHERE a.content_version_id=$1 AND a.attachment_id<>$2) AND NOT EXISTS (SELECT 1 FROM email_heads WHERE content_version_id=$3 AND attachment_id=$4)`, version.ID, attachment.ID, version.ID, attachment.ID); err != nil {
 			return err
@@ -533,7 +533,7 @@ func selectedEmailRecipeFingerprint(
 func (s *Store) missingEmailVersionIDsQuery() string {
 	mime := "instr(lower(COALESCE(mime_type,'')),'message/rfc822')>0"
 	if s.postgresSchema != "" {
-		mime = "strpos(lower(COALESCE(mime_type,'')),'message/rfc822')>0"
+		mime = "strpos(lower(encode(COALESCE(mime_type,''),'escape')),'message/rfc822')>0"
 	}
 	return `SELECT version_id FROM content_versions
 		WHERE version_id>$1

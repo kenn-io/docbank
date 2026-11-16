@@ -477,10 +477,10 @@ func TestCanonicalCurrentSchemaDerivationDoesNotCacheErrors(t *testing.T) { //no
 	schemaSQL = schemaSQLWithAddedColumn(t, originalSchema, "blobs", "synthetic_derivation_retry_269")
 	driver := &flakySchemaDriver{Driver: DefaultSQLiteDriver()}
 
-	_, err := canonicalCurrentSchemaColumns(t.Context(), driver)
+	_, err := canonicalCurrentSchemaColumns(t.Context(), driver, "")
 	require.ErrorContains(t, err, "synthetic derivation failure")
 
-	columns, err := canonicalCurrentSchemaColumns(t.Context(), driver)
+	columns, err := canonicalCurrentSchemaColumns(t.Context(), driver, "")
 	require.NoError(t, err)
 	assert.Contains(t, columns["blobs"], "synthetic_derivation_retry_269")
 }
@@ -492,11 +492,11 @@ func TestCanonicalCurrentSchemaDerivationSeparatesSameNamedDrivers(t *testing.T)
 	plain := &schemaVariantDriver{Driver: base}
 	variant := &schemaVariantDriver{Driver: base, extraColumn: extraColumn}
 
-	columns, err := canonicalCurrentSchemaColumns(t.Context(), plain)
+	columns, err := canonicalCurrentSchemaColumns(t.Context(), plain, "")
 	require.NoError(t, err)
 	assert.NotContains(t, columns["blobs"], extraColumn)
 
-	columns, err = canonicalCurrentSchemaColumns(t.Context(), variant)
+	columns, err = canonicalCurrentSchemaColumns(t.Context(), variant, "")
 	require.NoError(t, err)
 	assert.Contains(t, columns["blobs"], extraColumn)
 }
@@ -678,7 +678,7 @@ func TestOpenCutsOverEveryReleasedSchemaV2LayoutThroughJSONL(t *testing.T) {
 					Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred,
 				})
 				require.NoError(t, err)
-				kind, err := classifyDatabaseSchema(t.Context(), driver.driver, backup)
+				kind, err := classifyDatabaseSchema(t.Context(), driver.driver, backup, "")
 				require.NoError(t, err)
 				assert.Equal(t, 2, kind.version)
 				assert.NotNil(t, kind.source)
@@ -718,7 +718,7 @@ func TestOpenCutsOverReleasedSchemaV3ThroughJSONL(t *testing.T) {
 				Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred,
 			})
 			require.NoError(t, err)
-			kind, err := classifyDatabaseSchema(t.Context(), test.driver, backup)
+			kind, err := classifyDatabaseSchema(t.Context(), test.driver, backup, "")
 			require.NoError(t, err)
 			assert.Equal(t, 3, kind.version)
 			assert.NotNil(t, kind.source)
@@ -1147,7 +1147,7 @@ func TestV090CutoverPublicationFailureRestoresReleasedDatabase(t *testing.T) { /
 		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred,
 	})
 	require.NoError(t, err)
-	kind, err := classifyDatabaseSchema(t.Context(), driver, db)
+	kind, err := classifyDatabaseSchema(t.Context(), driver, db, "")
 	require.NoError(t, err)
 	assert.Equal(t, 1, kind.version, "the released source is restored after publication fails")
 	assert.NotNil(t, kind.source)

@@ -13,15 +13,28 @@ import (
 // embedded-prefix rule on both database engines.
 const CollectionMembershipCTE = `collection_members AS (` + collectionMembershipSelect + `)`
 
-const collectionMembershipSelect = `
+const notEmbeddedCollectionKind = "NOT (LOWER(i.source_kind) LIKE 'embedded:%')"
+
+func collectionMembershipSQL(postgres bool) string {
+	if postgres {
+		return `collection_members AS (` + collectionMembershipPrefix + "NOT (" + (provenanceSQLDialect{postgres: true}).embedded("i.source_kind") + ")" + collectionMembershipSuffix + `)`
+	}
+	return CollectionMembershipCTE
+}
+
+const collectionMembershipPrefix = `
     SELECT DISTINCT p.ingest_id, p.node_id
     FROM provenance p
     JOIN ingests i ON i.id = p.ingest_id
     JOIN nodes n ON n.id = p.node_id
-    WHERE LOWER(i.source_kind) NOT LIKE 'embedded:%'
+    WHERE `
+
+const collectionMembershipSuffix = `
       AND n.kind = 'file' AND n.trashed_at IS NULL
       AND NOT EXISTS (SELECT 1 FROM provenance later WHERE later.supersedes = p.identity)
 `
+
+const collectionMembershipSelect = collectionMembershipPrefix + notEmbeddedCollectionKind + collectionMembershipSuffix
 
 // matchedCollectionMembershipCTE consumes matched_members(node_id).
 const matchedCollectionMembershipCTE = `collection_members AS (` + collectionMembershipSelect + `
@@ -68,19 +81,19 @@ func scanCollection(row interface{ Scan(args ...any) error }) (Collection, error
 }
 
 func collectionSummaryByID(
-	ctx context.Context, q rowQuerier, id string,
+	ctx context.Context, q rowQuerier, id string, postgres bool,
 ) (Collection, error) {
 	// Bind the membership filter directly so SQLite can apply it before
 	// materializing the DISTINCT CTE. Joining through i.id first computes
 	// every collection's membership, including unrelated imports.
-	collection, err := scanCollection(q.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
+	collection, err := scanCollection(q.QueryRowContext(ctx, `WITH `+collectionMembershipSQL(postgres)+`
 		SELECT `+collectionColumns+`
 		FROM ingests i
 		LEFT JOIN collection_members cm ON cm.ingest_id=$1
 		LEFT JOIN nodes n ON n.id=cm.node_id
 		LEFT JOIN content_versions cv ON cv.version_id=n.current_version_id
 		LEFT JOIN collection_labels l ON l.ingest_id=i.id
-		WHERE i.id=$2 AND LOWER(i.source_kind) NOT LIKE 'embedded:%'
+		WHERE i.id=$2 AND NOT (`+(provenanceSQLDialect{postgres: postgres}).embedded("i.source_kind")+`)
 		GROUP BY i.id, i.source_kind, i.source_desc, i.started_at,
 			l.ingest_id, l.label, l.revision, l.updated_at
 		HAVING COUNT(cm.node_id)>0 OR l.ingest_id IS NOT NULL`, id, id))
@@ -100,7 +113,7 @@ func (s *Store) Collections(
 	}
 	// Share membership discovery between the total and page. Only selected
 	// collections need file and byte totals; an empty page still returns a total.
-	rows, err := s.db.QueryContext(ctx, `WITH `+CollectionMembershipCTE+`,
+	rows, err := s.db.QueryContext(ctx, `WITH `+collectionMembershipSQL(s.postgresSchema != "")+`,
 		eligible AS (SELECT DISTINCT ingest_id FROM collection_members),
 		totals AS (SELECT COUNT(*) AS total FROM eligible),
 		selected AS (
@@ -154,7 +167,7 @@ func (s *Store) CollectionByID(ctx context.Context, id string) (Collection, erro
 	if err := validateUUIDv4(id); err != nil {
 		return Collection{}, fmt.Errorf("collection %q: %w", id, ErrNotFound)
 	}
-	return collectionSummaryByID(ctx, s.db, id)
+	return collectionSummaryByID(ctx, s.db, id, s.postgresSchema != "")
 }
 
 // CollectionMembers returns one current member page and collection summary
@@ -173,11 +186,11 @@ func (s *Store) CollectionMembers(
 		return CollectionMemberPage{}, fmt.Errorf("starting collection member snapshot: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	collection, err := collectionSummaryByID(ctx, tx, id)
+	collection, err := collectionSummaryByID(ctx, tx, id, s.postgresSchema != "")
 	if err != nil {
 		return CollectionMemberPage{}, err
 	}
-	rows, err := tx.QueryContext(ctx, `WITH `+CollectionMembershipCTE+`
+	rows, err := tx.QueryContext(ctx, `WITH `+collectionMembershipSQL(s.postgresSchema != "")+`
 		SELECT `+nodeCols+`
 		FROM `+nodeFrom+`
 		JOIN collection_members cm ON cm.node_id=n.id

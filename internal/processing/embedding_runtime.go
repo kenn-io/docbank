@@ -87,6 +87,8 @@ func (runtime *ProviderEmbeddingRuntime) Prepare(ctx context.Context, work Embed
 		return EmbeddingExecution{}, ErrEmbeddingRuntimeUnavailable
 	}
 	switch work.Binding.InputKind {
+	case document.EmbeddingInputFace:
+		return runtime.prepareFaces(ctx, work)
 	case document.EmbeddingInputImage:
 		blobs, ok := runtime.blobs.(*blob.Store)
 		if runtime.catalog == nil || !ok {
@@ -100,19 +102,8 @@ func (runtime *ProviderEmbeddingRuntime) Prepare(ctx context.Context, work Embed
 			return EmbeddingExecution{}, err
 		}
 		policy := directEmbeddingInspectionPolicy(work)
-		policy.Filename, policy.DeclaredMediaType = "preview.jpg", "image/jpeg"
-		policy.InputKind = document.RenditionInputDerivedUpload
-		policy.ExpectedBytes, policy.ExpectedSHA256 = int64(len(data)), workerHashBytes(data)
 		policy.MaxPixels = 1024 * 1024
-		capability, err := media.InspectCapability(ctx, bytes.NewReader(data), policy)
-		if err != nil || !capability.Eligible {
-			return EmbeddingExecution{}, errors.Join(ErrEmbeddingInputRejected, err)
-		}
-		source, err := upload.Authorize(ctx, upload.Source{Reader: io.NopCloser(bytes.NewReader(data)), Directory: runtime.spoolDirectory}, capability, upload.UploadMetadata{Filename: "preview.jpg"})
-		if err != nil {
-			return EmbeddingExecution{}, err
-		}
-		return EmbeddingExecution{Provider: runtime.provider, Inputs: []document.EmbeddingInput{{Key: work.ContentVersionID, Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputImage, Source: source}}, Classify: runtime.classify}, nil
+		return runtime.prepareJPEG(ctx, data, policy, []document.EmbeddingInput{{Key: work.ContentVersionID, Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputImage}})
 
 	case document.EmbeddingInputRenditionChunk:
 		hydrated, err := hydrateEmbeddingGeneration(ctx, runtime.blobs, work.InputGeneration)
@@ -217,6 +208,25 @@ func readExactEmbeddingBlob(ctx context.Context, blobs embeddingRuntimeBlobs, ha
 	return data, nil
 }
 
+func (runtime *ProviderEmbeddingRuntime) prepareJPEG(ctx context.Context, data []byte, policy media.InspectionPolicy, inputs []document.EmbeddingInput) (EmbeddingExecution, error) {
+	policy.Filename, policy.DeclaredMediaType = "preview.jpg", "image/jpeg"
+	policy.InputKind = document.RenditionInputDerivedUpload
+	policy.ExpectedBytes, policy.ExpectedSHA256 = int64(len(data)), workerHashBytes(data)
+	capability, err := media.InspectCapability(ctx, bytes.NewReader(data), policy)
+	if err != nil || !capability.Eligible {
+		return EmbeddingExecution{}, errors.Join(ErrEmbeddingInputRejected, err)
+	}
+	for i := range inputs {
+		source, err := upload.Authorize(ctx, upload.Source{Reader: io.NopCloser(bytes.NewReader(data)), Directory: runtime.spoolDirectory}, capability, upload.UploadMetadata{Filename: "preview.jpg"})
+		if err != nil {
+			closeEmbeddingInputs(inputs)
+			return EmbeddingExecution{}, err
+		}
+		inputs[i].Source = source
+	}
+	return EmbeddingExecution{Provider: runtime.provider, Inputs: inputs, Classify: runtime.classify}, nil
+}
+
 func directEmbeddingInspectionPolicy(work EmbeddingWork) media.InspectionPolicy {
 	maximum := work.Binding.MaxInputBytes
 	return media.InspectionPolicy{
@@ -236,6 +246,9 @@ func directEmbeddingInspectionPolicy(work EmbeddingWork) media.InspectionPolicy 
 
 func (runtime *ProviderEmbeddingRuntime) ImageGeneration(ctx context.Context, profile store.ProcessingProfileRecord, binding document.EmbeddingBindingV1, versionID string) (store.EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error) {
 	blobs, ok := runtime.blobs.(*blob.Store)
+	if binding.InputKind == document.EmbeddingInputFace {
+		return runtime.faceGeneration(ctx, profile, binding, versionID)
+	}
 	if !ok || runtime.catalog == nil || !runtime.provider.Descriptor().SupportsTextQuery {
 		return store.EmbeddingInputGenerationRecord{}, document.EmbeddingDescriptor{}, &store.ImagePreparationError{Err: ErrEmbeddingRuntimeUnavailable}
 	}

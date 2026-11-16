@@ -40,15 +40,21 @@ func checkEmbeddingWriteRevision(t *testing.T, open func(*testing.T) *Store) {
 	require.Equal(t, revision, s.WriteRevision(), "empty claims leave the vault idle")
 }
 
-func TestEmbeddingWriteRevisionIgnoresSearchBookkeeping(t *testing.T) {
+func checkVectorReaderAcceptedOwnersAndBookkeeping(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, _, source := newPublishedVectorIndexFixture(t)
+	s, _, source := publishedVectorIndexFixture(t, open(t))
 	now := time.Now().UTC()
 	generation := vectorIndexGenerationFixture("reader-revision", source, []byte("index"), now)
 	require.NoError(t, putVectorIndexGenerationForTest(t, s, generation))
 	revision := s.WriteRevision()
-	lease, err := s.AcquireVectorIndexGeneration(t.Context(), source.VectorSpaceID, "reader", now, time.Minute)
+	owner := "reader\\one\x00two"
+	lease, err := s.AcquireVectorIndexGeneration(t.Context(), source.VectorSpaceID, owner, now, time.Minute)
 	require.NoError(t, err)
+	require.Equal(t, generation, lease.Generation)
+	var stored string
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT owner FROM vector_index_reader_leases WHERE lease_id=$1`, lease.ID).Scan(&stored))
+	require.Equal(t, owner, stored)
 	require.Equal(t, revision, s.WriteRevision(), "search acquisition keeps discovery settled")
 	require.NoError(t, s.ReleaseVectorIndexGeneration(t.Context(), lease.ID, lease.FencingToken, now))
 	require.Equal(t, revision, s.WriteRevision(), "search release keeps discovery settled")

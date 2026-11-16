@@ -66,17 +66,17 @@ func checkMixedCaseEmbeddedSource(t *testing.T, s *Store) {
 	assert.Equal(t, "/opaque/evidence.jpg", facts.Items[0].OriginalPath)
 
 	// Validation must also reject the state the old PostgreSQL writes admitted.
-	require.NoError(t, validateCollectionLabelMetadataState(ctx, s.db))
+	require.NoError(t, validateCollectionLabelMetadataState(ctx, s.db, s.postgresSchema != ""))
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO collection_labels(ingest_id,label,revision,updated_at) VALUES($1,'Evidence',1,$2)`, embedded.ID(), embedded.record.StartedAt); err != nil {
 			return err
 		}
 		// A retained label must not bypass either collection's eligibility check.
-		_, err := collectionSummaryByID(ctx, tx, embedded.ID())
+		_, err := collectionSummaryByID(ctx, tx, embedded.ID(), s.postgresSchema != "")
 		require.ErrorIs(t, err, ErrNotFound)
-		_, _, err = collectionLabelTx(ctx, tx, embedded.ID())
+		_, _, err = collectionLabelTx(ctx, tx, embedded.ID(), s.postgresSchema != "")
 		require.ErrorIs(t, err, ErrNotFound)
-		return validateCollectionLabelMetadataState(ctx, tx)
+		return validateCollectionLabelMetadataState(ctx, tx, s.postgresSchema != "")
 	})
 	require.ErrorContains(t, err, "collection label references a caller-supplied ingest")
 	require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion, s.postgresSchema != ""))

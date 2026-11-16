@@ -180,6 +180,13 @@ func (s *Store) refreshTrashedNodeWorkTx(ctx context.Context, tx *sql.Tx, nodes 
 	if s.postgresSchema == "" {
 		return nil
 	}
+	ids := make([]int64, 0, len(nodes))
+	for id := range nodes {
+		ids = append(ids, id)
+	}
+	if err := invalidateNodeVectorMembershipTx(ctx, tx, true, ids, false); err != nil {
+		return err
+	}
 	for id, node := range nodes {
 		var before *Node
 		if id == prior.ID {

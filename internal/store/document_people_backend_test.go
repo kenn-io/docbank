@@ -34,6 +34,47 @@ func checkDocumentPeopleAuthorityInputs(t *testing.T, newStore func(*testing.T) 
 	require.Equal(t, person, input.Persons[person.PersonID])
 }
 
+func checkDocumentPeopleEvidenceIDs(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	t.Parallel()
+	s := newStore(t)
+	ctx := t.Context()
+	person, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	_, err = s.AddPersonIdentity(ctx, person.PersonID, person.Revision, PersonIdentity{
+		Kind: "email", ValueDisplay: "ada@example.test", Origin: "operator",
+		EvidenceKind: "operator_assertion", EvidenceID: "known-address", Confidence: "operator_asserted",
+	})
+	require.NoError(t, err)
+	version, target := ingestDocumentEventTarget(t, s, "evidence.txt", "a1")
+	_, err = s.db.ExecContext(ctx, `INSERT INTO document_event_state(singleton,contract_version,deriver_fingerprint,input_epoch,publication_epoch,updated_at) VALUES(1,$1,$2,1,1,$3)`,
+		document.DocumentEventsContractV1, fakeHash("e0"), nowRFC3339())
+	require.NoError(t, err)
+	record := documentEventRecord(t, s.VaultID(), version.ID, "a1")
+	record.Events[0].EvidenceID = "metadata/\x00\\claim"
+	record.Sources[0].EvidenceID = "metadata/\x00\\claim"
+	raw := mustMarshalDocumentEvents(t, record)
+	_, err = s.PublishDocumentEvents(ctx, target, fakeHash("e0"), requireDocumentEventInputsSHA256(t, s, target), raw)
+	require.NoError(t, err)
+	input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
+	require.NoError(t, err)
+	require.Len(t, input.Actors, 1)
+	require.Equal(t, "metadata/\x00\\claim", input.Actors[0].EvidenceID)
+	require.Len(t, input.Bindings["email:ada@example.test"], 1)
+	require.Equal(t, person.PersonID, input.Bindings["email:ada@example.test"][0].PersonID)
+	_, err = s.PublishDocumentPeople(ctx, documentPeoplePublicationForInput(t, input))
+	require.NoError(t, err)
+	edges, head, err := s.DocumentPeopleForVersion(ctx, version.ID)
+	require.NoError(t, err)
+	require.Equal(t, documentPeopleStatePublished, head.State)
+	require.Len(t, edges, 1)
+	require.Equal(t, person.PersonID, edges[0].PersonID)
+	require.Equal(t, "metadata/\x00\\claim", edges[0].EvidenceID)
+	var evidenceID string
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT evidence_id FROM document_people WHERE content_version_id=$1`, version.ID).Scan(&evidenceID))
+	require.Equal(t, "metadata/\x00\\claim", evidenceID)
+}
+
 func checkDocumentPeopleSnapshotsPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()

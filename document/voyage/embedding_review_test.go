@@ -95,6 +95,7 @@ func TestContextualEmbeddingStrictlyRejectsDocumentedShapeDrift(t *testing.T) {
 		{"model drift", []byte(strings.Replace(string(valid), voyage.ContextualModel, "voyage-context-drift", 1))},
 		{"chunker drift", []byte(strings.Replace(string(valid), `"1.0.0"`, `"2.0.0"`, 1))},
 		{"text drift", []byte(strings.Replace(string(valid), texts[0], "PRIVATE_RETURNED_TEXT", 1))},
+		{"null text", []byte(strings.Replace(string(valid), `"`+texts[0]+`"`, `null`, 1))},
 		{"partial indices", contextualOfficialBody(t, texts[:1], []int{0})},
 		{"duplicate index", contextualOfficialBody(t, []string{texts[0], texts[0]}, []int{0, 0})},
 	}

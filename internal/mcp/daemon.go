@@ -11,6 +11,7 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/store"
 )
 
 const daemonAcquisitionTimeout = 45 * time.Second
@@ -44,6 +45,9 @@ type daemonLease struct {
 	close      func(*daemonconn.Connection) error
 	newContext func() (context.Context, context.CancelFunc)
 	keyPolicy  daemonconn.APIKeyExclusionPolicy
+
+	// suppliedConnection belongs to the caller, never to an individual relay.
+	suppliedConnection *daemonconn.Connection
 }
 
 type leasedDaemonClient struct {
@@ -127,6 +131,29 @@ func (lease *daemonLease) acquire(ctx context.Context) (leasedDaemonClient, erro
 	lease.mu.Unlock()
 	go lease.completeAcquisition(acquiring)
 	return waitForDaemonAcquisition(ctx, acquiring)
+}
+
+// transferConnection discovers the current daemon or proves the supplied daemon
+// on a separate socket. It never borrows the cached read connection.
+func (lease *daemonLease) transferConnection(ctx context.Context) (*daemonconn.Connection, error) {
+	var c *daemonconn.Connection
+	var err error
+	if supplied := lease.suppliedConnection; supplied != nil {
+		c, err = supplied.TransferConnection(ctx)
+	} else {
+		c, err = lease.ensure(ctx)
+	}
+	if err != nil {
+		return nil, daemonStartupAcquisitionError(err)
+	}
+	lease.mu.Lock()
+	allowed := lease.keyPolicy == nil || lease.keyPolicy.Allows(c)
+	lease.mu.Unlock()
+	if !allowed {
+		_ = lease.close(c)
+		return nil, errDaemonCredentialReuse
+	}
+	return c, nil
 }
 
 func (lease *daemonLease) replace(
@@ -310,6 +337,9 @@ func daemonAcquisitionError(err error) error {
 
 func sanitizedDaemonError(message, cause error) error {
 	facts, _ := daemonconn.ExtractProblemFacts(cause)
+	if errors.Is(cause, store.ErrInvalidSearchScope) {
+		facts = daemonconn.ProblemFacts{Code: "validation", MappedError: store.ErrInvalidSearchScope}
+	}
 	// Answer profile selection can fail locally within a daemon read. Retain
 	// only its stable codes, never the native error or its provider details.
 	if native, ok := errors.AsType[*api.Error](cause); ok {

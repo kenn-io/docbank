@@ -539,7 +539,7 @@ func (s *Store) writePhotoAuthoredValuesTx(ctx context.Context, tx *sql.Tx, resu
 }
 
 // persistPhotoRepresentativeReceiptTx records a choice that changes no file.
-func persistPhotoRepresentativeReceiptTx(ctx context.Context, tx *sql.Tx, result PhotoAuthoredReceipt) (PhotoAuthoredReceipt, error) {
+func (s *Store) persistPhotoRepresentativeReceiptTx(ctx context.Context, tx *sql.Tx, result PhotoAuthoredReceipt) (PhotoAuthoredReceipt, error) {
 	result.Before, result.After = []PhotoAuthoredSnapshot{}, []PhotoAuthoredSnapshot{}
 	var err error
 	if result.ReceiptID, err = newUUIDv4(); err != nil {
@@ -548,10 +548,10 @@ func persistPhotoRepresentativeReceiptTx(ctx context.Context, tx *sql.Tx, result
 	if err := checkPhotoAuthoredReceiptSize(result); err != nil {
 		return result, err
 	}
-	return result, persistPhotoAuthoredReceiptTx(ctx, tx, result)
+	return result, s.persistPhotoAuthoredReceiptTx(ctx, tx, result)
 }
 
-func persistPhotoAuthoredReceiptTx(ctx context.Context, tx *sql.Tx, result PhotoAuthoredReceipt) error {
+func (s *Store) persistPhotoAuthoredReceiptTx(ctx context.Context, tx *sql.Tx, result PhotoAuthoredReceipt) error {
 	operation := "authored"
 	if result.UndoOf != "" {
 		operation = "authored_undo"
@@ -559,7 +559,7 @@ func persistPhotoAuthoredReceiptTx(ctx context.Context, tx *sql.Tx, result Photo
 	if result.Sidecar != nil {
 		operation = "authored_sidecar"
 	}
-	return writePhotoReceiptTx(ctx, tx, photoReceipt{ReceiptID: result.ReceiptID, Operation: operation, BeforeRevision: 0, AfterRevision: 1, Before: result.Before, After: result.afterState()})
+	return s.writePhotoReceiptTx(ctx, tx, photoReceipt{ReceiptID: result.ReceiptID, Operation: operation, BeforeRevision: 0, AfterRevision: 1, Before: result.Before, After: result.afterState()})
 }
 
 // photoAuthoredAccessTx keeps a person's edits and undo of hidden photos behind the unlock session.

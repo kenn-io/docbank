@@ -106,6 +106,9 @@ type exportBatesFileInput struct {
 	AllocationID    string `json:"allocation_id"`
 	DestinationPath string `json:"destination_path"`
 	Overwrite       bool   `json:"overwrite"`
+	PreparationPath string `json:"preparation_path"`
+	MasksPath       string `json:"masks_path"`
+	ReviewPath      string `json:"review_path"`
 }
 
 type exportBatesFileOutput struct {
@@ -306,8 +309,18 @@ func exportBatesFile(ctx context.Context, lease *daemonLease, raw []byte, logger
 	if _, err := uuid.Parse(input.AllocationID); err != nil {
 		return exportBatesFileOutput{}, invalidToolArgumentsError()
 	}
-	if err := validateBatesDestination(input.DestinationPath, input.Overwrite); err != nil {
+	full, err := input.reviewed()
+	if err != nil {
 		return exportBatesFileOutput{}, err
+	}
+	if err := validateBatesDestination(input.DestinationPath, input.Overwrite); err != nil {
+		if full {
+			return exportBatesFileOutput{}, reviewedBatesLocalError(ctx, err)
+		}
+		return exportBatesFileOutput{}, err
+	}
+	if full {
+		return exportReviewedBatesFile(ctx, lease, input, logger)
 	}
 	parent := filepath.Dir(input.DestinationPath)
 	stage, err := filepublish.CreateStage(parent, ".docbank-bates-")
@@ -428,6 +441,8 @@ func batesWriteToolHandler(
 			output, err = reserveBatesRange(ctx, lease, request.Params.Arguments)
 		case publishBatesExportToolDefinition.name:
 			output, err = publishBatesExport(ctx, lease, request.Params.Arguments)
+		case publishNumberedPDFToolDefinition.name:
+			output, err = publishNumberedPDF(ctx, lease, request.Params.Arguments)
 		case exportBatesFileToolDefinition.name:
 			output, err = exportBatesFile(ctx, lease, request.Params.Arguments, logger)
 		default:

@@ -27,6 +27,7 @@ import (
 
 func registerProcessingRoutes(api huma.API, d Deps) {
 	registerLocalTextRoutes(api, d)
+	registerFaceSetupRoutes(api, d)
 	registerTextCitationRoute(api, d)
 	registerRedactionPreparationRoute(api, d)
 	registerTextNavigationRoutes(api, d)
@@ -644,9 +645,12 @@ func parseByteRange(value string, size int64) (int64, int64, error) {
 }
 
 func fromProcessingCoverage(report processing.Coverage) CoverageReport {
-	result := CoverageReport{VaultUID: report.VaultUID, ProfileFingerprint: report.ProfileFingerprint,
+	result := CoverageReport{VaultUID: report.VaultUID, ProfileFingerprint: report.ProfileFingerprint, PageCoverage: report.PageCoverage, PageCoverageUnavailable: report.PageCoverageUnavailable,
 		State: report.State, Renditions: fromProcessingCoverageClass(report.Renditions),
 		Embeddings: make([]CoverageClass, len(report.Embeddings))}
+	for _, gap := range report.PagesWithoutText {
+		result.PagesWithoutText = append(result.PagesWithoutText, PageTextGap{ContentVersionID: gap.ContentVersionID, Pages: gap.Pages})
+	}
 	for index, item := range report.Embeddings {
 		result.Embeddings[index] = fromProcessingCoverageClass(item)
 	}
@@ -928,6 +932,6 @@ func searchFilterOptions(filters *DocumentSourceFenceFilters) store.SearchOption
 		return store.SearchOptions{}
 	}
 	return store.SearchOptions{SourcePresent: filters.SourcePresent, TagID: filters.TagID,
-		MIMEType: filters.MIMEType, UnderNodeID: filters.UnderNodeID,
+		MIMEType: filters.MIMEType, UnderNodeID: filters.UnderNodeID, UnderPath: filters.UnderPath,
 		ModifiedSince: filters.ModifiedSince, ModifiedBefore: filters.ModifiedBefore}
 }

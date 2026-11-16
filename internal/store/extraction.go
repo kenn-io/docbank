@@ -263,7 +263,7 @@ func (s *Store) SeedTextExtractionQueue(
 			  ON e.blob_hash=v.blob_hash AND e.extractor=$2
 			WHERE NOT EXISTS (SELECT 1 FROM text_searchable_versions sv WHERE sv.version_id=v.version_id)
 			   OR e.blob_hash IS NULL OR e.extractor_version < $1
-			ORDER BY v.version_id`, version, extractor)
+			ORDER BY v.version_id`, version, storedString(s.postgresSchema != "", extractor))
 		if err != nil {
 			return fmt.Errorf("discovering text extraction work: %w", err)
 		}
@@ -501,7 +501,7 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 		var storedText sql.NullString
 		err := tx.QueryRowContext(ctx, `
 			SELECT extractor_version,status,text FROM extracted_text
-			WHERE blob_hash=$1 AND extractor=$2`, result.BlobHash, result.Extractor,
+			WHERE blob_hash=$1 AND extractor=$2`, result.BlobHash, storedString(s.postgresSchema != "", result.Extractor),
 		).Scan(&storedVersion, &storedStatus, &storedText)
 		if err == nil && result.ExtractorVersion < storedVersion {
 			return fmt.Errorf(
@@ -521,10 +521,10 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 		}
 		var extractErr, text any
 		if result.Error != "" {
-			extractErr = result.Error
+			extractErr = storedString(s.postgresSchema != "", result.Error)
 		}
 		if result.Status == ExtractionOK {
-			text = result.Text
+			text = storedString(s.postgresSchema != "", result.Text)
 		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO extracted_text(
@@ -537,7 +537,7 @@ func (s *Store) RecordExtraction(ctx context.Context, result ExtractionResult) e
 			  attempts=extracted_text.attempts+1,
 			  text=excluded.text,
 			  extracted_at=excluded.extracted_at`,
-			result.BlobHash, result.Extractor, result.ExtractorVersion,
+			result.BlobHash, storedString(s.postgresSchema != "", result.Extractor), result.ExtractorVersion,
 			result.Status, extractErr, text, nowRFC3339()); err != nil {
 			return fmt.Errorf("recording text extraction: %w", err)
 		}

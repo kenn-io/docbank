@@ -47,6 +47,9 @@ func redactionBrowserRequestAllowed(r *http.Request) bool {
 	if r.URL.RawQuery != "" {
 		return false
 	}
+	if r.URL.Path == recipientPackagesPath {
+		return r.Method == http.MethodPost || r.Method == http.MethodDelete
+	}
 	if r.URL.Path == redactionPreviewsPath {
 		return r.Method == http.MethodPost || r.Method == http.MethodDelete
 	}
@@ -96,7 +99,7 @@ func (s *Server) serveRedactionPreview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, NewError(401, "unauthorized", "authentication required"))
 		return
 	}
-	ctx, done, err := redactionPreviewDeadline(w, r, 10*time.Minute)
+	ctx, done, err := redactionPreviewDeadline(w, r)
 	if err != nil {
 		writeError(w, redactionProblem(r.Context(), err))
 		return
@@ -250,7 +253,8 @@ func writeRedactionPreviewJSON(w http.ResponseWriter, status int, value any) {
 	_, _ = w.Write(data)
 }
 
-func redactionPreviewDeadline(w http.ResponseWriter, r *http.Request, timeout time.Duration) (context.Context, func(), error) {
+func redactionPreviewDeadline(w http.ResponseWriter, r *http.Request) (context.Context, func(), error) {
+	const timeout = 10 * time.Minute
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	controller := http.NewResponseController(w)
 	deadline, _ := ctx.Deadline()
@@ -284,7 +288,7 @@ func redactionPreviewDeadline(w http.ResponseWriter, r *http.Request, timeout ti
 }
 
 func deliverRedactionPreview(w http.ResponseWriter, r *http.Request, service *processing.Service, owner, id, part string, page int, reviewSHA, archiveSHA string) {
-	ctx, done, err := redactionPreviewDeadline(w, r, 10*time.Minute)
+	ctx, done, err := redactionPreviewDeadline(w, r)
 	if err != nil {
 		writeError(w, redactionProblem(r.Context(), err))
 		return
@@ -329,8 +333,9 @@ func deliverRedactionPreview(w http.ResponseWriter, r *http.Request, service *pr
 	}
 }
 
+const defaultResponse = "default"
+
 func registerRedactionPreviewOpenAPI(api huma.API) {
-	const defaultResponse = "default"
 	schemas := api.OpenAPI().Components.Schemas
 	manifest := schemas.Schema(reflect.TypeFor[processing.RedactionPreview](), true, "")
 	problem := schemas.Schema(reflect.TypeFor[Error](), true, "")

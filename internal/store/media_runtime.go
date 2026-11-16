@@ -76,8 +76,7 @@ func (s *Store) SuppliedMediaContentVersion(
 	err := s.db.QueryRowContext(ctx, `SELECT v.content_version_id FROM media_source_versions v
 		JOIN content_versions c ON c.version_id=v.content_version_id
 		WHERE v.source_id=$1 AND v.revision=(SELECT MAX(revision) FROM media_source_versions WHERE source_id=$2)
-			AND c.blob_hash=$3 AND c.size=$4`,
-		sourceID, sourceID, sourceSHA256, sourceBytes).Scan(&versionID)
+			AND c.blob_hash=$3 AND c.size=$4`, storedString(s.postgresSchema != "", sourceID), storedString(s.postgresSchema != "", sourceID), sourceSHA256, sourceBytes).Scan(&versionID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ContentVersion{}, ErrNotFound
 	}
@@ -108,7 +107,7 @@ func (s *Store) SuppliedTranscriptForSource(
 		WHERE o.caller_principal=$1 AND o.visible=1 AND i.kind='transcript'
 		  AND i.source_id=o.source_id AND v.source_id=o.source_id
 		  AND o.source_version_id=v.source_version_id AND c.blob_hash=$2
-		ORDER BY i.created_at DESC,i.input_id DESC LIMIT 1`, principal, sourceSHA256).Scan(
+		ORDER BY i.created_at DESC,i.input_id DESC LIMIT 1`, storedString(s.postgresSchema != "", principal), sourceSHA256).Scan(
 		&result.InputID, &result.OccurrenceID, &result.SourceVersionID,
 		&result.ContentVersionID, &result.InputSHA256, &result.Kind,
 		&result.Origin, &result.Provider, &result.Language)
@@ -150,10 +149,10 @@ func (s *Store) SuppliedTranscriptForSourceID(
 		  AND i.source_id=$3 AND i.source_id=o.source_id
 		  AND o.source_version_id=v.source_version_id AND v.source_id=$4
 		  AND c.blob_hash=$5`
-	args := []any{principal, kind, sourceID, sourceID, sourceSHA256}
+	args := []any{storedString(s.postgresSchema != "", principal), kind, storedString(s.postgresSchema != "", sourceID), storedString(s.postgresSchema != "", sourceID), sourceSHA256}
 	if inputID != "" {
 		query += " AND i.input_id=$6"
-		args = append(args, inputID)
+		args = append(args, storedString(s.postgresSchema != "", inputID))
 	} else {
 		query += " ORDER BY i.created_at DESC,i.input_id DESC LIMIT 1"
 	}
@@ -189,10 +188,10 @@ func (s *Store) SuppliedTranscriptForSourceVersion(
 		WHERE o.caller_principal=$1 AND o.visible=1 AND i.kind=$2
 		  AND i.source_id=$3 AND i.source_version_id=$4
 		  AND o.source_id=i.source_id AND o.source_version_id=i.source_version_id`
-	args := []any{principal, kind, sourceID, sourceVersionID}
+	args := []any{storedString(s.postgresSchema != "", principal), kind, storedString(s.postgresSchema != "", sourceID), storedString(s.postgresSchema != "", sourceVersionID)}
 	if inputID != "" {
 		query += " AND i.input_id=$5"
-		args = append(args, inputID)
+		args = append(args, storedString(s.postgresSchema != "", inputID))
 	} else {
 		query += " ORDER BY i.created_at DESC,i.input_id DESC LIMIT 1"
 	}
@@ -223,8 +222,7 @@ func (s *Store) SuppliedTranscriptBindingForSource(
 		JOIN content_versions c ON c.version_id=v.content_version_id
 		WHERE i.input_id=$1 AND o.caller_principal=$2 AND o.visible=1 AND i.kind=$3
 		  AND i.source_id=o.source_id AND v.source_id=o.source_id
-		  AND o.source_version_id=v.source_version_id AND c.blob_hash=$4`,
-		inputID, principal, kind, sourceSHA256).Scan(&result.InputID, &result.OccurrenceID,
+		  AND o.source_version_id=v.source_version_id AND c.blob_hash=$4`, storedString(s.postgresSchema != "", inputID), storedString(s.postgresSchema != "", principal), kind, sourceSHA256).Scan(&result.InputID, &result.OccurrenceID,
 		&result.SourceVersionID, &result.ContentVersionID, &result.InputSHA256,
 		&result.Kind, &result.Origin, &result.Provider, &result.Language)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -255,8 +253,7 @@ func (s *Store) MediaInputBindingVisible(
 	err := s.db.QueryRowContext(ctx, `SELECT o.visible FROM media_input_artifacts i
 		JOIN media_occurrences o ON o.occurrence_id=i.occurrence_id
 		WHERE i.input_id=$1 AND i.source_id=$2 AND i.source_version_id=$3
-			AND o.caller_principal=$4 AND o.source_version_id=i.source_version_id`,
-		inputID, sourceID, sourceVersionID, principal).Scan(&visible)
+			AND o.caller_principal=$4 AND o.source_version_id=i.source_version_id`, storedString(s.postgresSchema != "", inputID), storedString(s.postgresSchema != "", sourceID), storedString(s.postgresSchema != "", sourceVersionID), storedString(s.postgresSchema != "", principal)).Scan(&visible)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -311,21 +308,19 @@ func (s *Store) RetainSuppliedMedia(
 			}
 			request.ContentVersion = version
 		}
-		if err := ensureSuppliedMediaSourceTx(ctx, tx, request.SourceID); err != nil {
+		if err := s.ensureSuppliedMediaSourceTx(ctx, tx, request.SourceID); err != nil {
 			return "", err
 		}
 		var sourceVersionID string
 		var revision int64
 		err := tx.QueryRowContext(ctx, `SELECT source_version_id,revision FROM media_source_versions
 			WHERE source_id=$1 AND content_version_id=$2
-				AND revision=(SELECT MAX(revision) FROM media_source_versions WHERE source_id=$3)`,
-			request.SourceID, request.ContentVersion.ID, request.SourceID).Scan(&sourceVersionID, &revision)
+				AND revision=(SELECT MAX(revision) FROM media_source_versions WHERE source_id=$3)`, storedString(s.postgresSchema != "", request.SourceID), request.ContentVersion.ID, storedString(s.postgresSchema != "", request.SourceID)).Scan(&sourceVersionID, &revision)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return "", err
 		}
 		if errors.Is(err, sql.ErrNoRows) {
-			if scanErr := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(revision),0) FROM media_source_versions WHERE source_id=$1`,
-				request.SourceID).Scan(&revision); scanErr != nil {
+			if scanErr := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(revision),0) FROM media_source_versions WHERE source_id=$1`, storedString(s.postgresSchema != "", request.SourceID)).Scan(&revision); scanErr != nil {
 				return "", scanErr
 			}
 			if revision != 0 {
@@ -336,7 +331,7 @@ func (s *Store) RetainSuppliedMedia(
 				return "", err
 			}
 		}
-		storedOccurrence, found, err := mediaOccurrenceByRevisionTx(ctx, tx,
+		storedOccurrence, found, err := s.mediaOccurrenceByRevisionTx(ctx, tx,
 			request.Occurrence.Principal, request.Occurrence.Ref, request.Occurrence.Revision)
 		if err != nil {
 			return "", err
@@ -449,10 +444,13 @@ func (s *Store) MediaProcessingContinuations(
 	if limit < 1 || limit > 250 {
 		return nil, errors.New("media continuation limit must be between 1 and 250")
 	}
-	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
+	state := (metadataJSONDialect{postgres: s.postgresSchema != ""}).text("receipt_json", "operation_state")
+	if s.postgresSchema != "" {
+		state = "receipt_operation_state"
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT receipt_json FROM media_operations
-		WHERE verb IN ('submit_supplied_media','retry_media') AND `+d.text("receipt_json", "operation_state")+`='queued'
-			AND principal=$1 AND operation_id>$2 ORDER BY operation_id LIMIT $3`, principal, after, limit)
+		WHERE verb IN ('submit_supplied_media','retry_media') AND `+state+`='queued'
+			AND principal=$1 AND operation_id>$2 ORDER BY operation_id LIMIT $3`, storedString(s.postgresSchema != "", principal), after, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -512,17 +510,21 @@ func (s *Store) updateMediaProcessingReceipt(
 		if err := validateMediaReceipt(string(encoded)); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE media_operations SET receipt_json=$1,updated_at=$2
-			WHERE operation_id=$3 AND principal=$4`, string(encoded), nowRFC3339(), operationID, principal)
+		if s.postgresSchema != "" {
+			_, err = tx.ExecContext(ctx, `UPDATE media_operations SET receipt_json=$1,updated_at=$2,receipt_source_version_id=$3,receipt_operation_state=$4 WHERE operation_id=$5 AND principal=$6`, string(encoded), nowRFC3339(), []byte(result.SourceVersionID), []byte(result.OperationState), operationID, []byte(principal))
+		} else {
+			_, err = tx.ExecContext(ctx, `UPDATE media_operations SET receipt_json=$1,updated_at=$2 WHERE operation_id=$3 AND principal=$4`, string(encoded), nowRFC3339(), operationID, principal)
+		}
+
 		return err
 	})
 	return result, err
 }
 
-func ensureSuppliedMediaSourceTx(ctx context.Context, tx *sql.Tx, sourceID string) error {
+func (s *Store) ensureSuppliedMediaSourceTx(ctx context.Context, tx *sql.Tx, sourceID string) error {
 	var kind, provider, originScope, identity string
 	err := tx.QueryRowContext(ctx, `SELECT kind,provider,origin_scope,identity_sha256
-		FROM media_sources WHERE source_id=$1`, sourceID).Scan(&kind, &provider, &originScope, &identity)
+		FROM media_sources WHERE source_id=$1`, storedString(s.postgresSchema != "", sourceID)).Scan(&kind, &provider, &originScope, &identity)
 	if err == nil {
 		if kind != "supplied_media" || provider != "" || originScope != "" || identity != sourceID {
 			return ErrMediaSourceConflict
@@ -534,7 +536,7 @@ func ensureSuppliedMediaSourceTx(ctx context.Context, tx *sql.Tx, sourceID strin
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO media_sources(
 		source_id,kind,provider,origin_scope,identity_sha256,created_at
-	) VALUES($1, 'supplied_media', '', '', $2, $3)`, sourceID, sourceID, nowRFC3339()); err != nil {
+	) VALUES($1, 'supplied_media', '', '', $2, $3)`, storedString(s.postgresSchema != "", sourceID), sourceID, nowRFC3339()); err != nil {
 		return fmt.Errorf("creating supplied media source: %w", err)
 	}
 	return nil

@@ -237,8 +237,10 @@ func checkAuditEnrollmentPhotoReceiptPostgres(t *testing.T) {
 	require.NoError(t, err)
 	afterJSON, err := json.Marshal(receipt.afterState(), json.Deterministic(true))
 	require.NoError(t, err)
+	lookup, err := photoReceiptQueryJSON("authored", string(afterJSON))
+	require.NoError(t, err)
 	_, err = setup.ExecContext(t.Context(), `UPDATE documents.photo_change_receipts
- SET before_json=$1,after_json=$2 WHERE receipt_id=$3`, string(beforeJSON), string(afterJSON), receipt.ReceiptID)
+ SET before_json=$1,after_json=$2,query_json=$3 WHERE receipt_id=$4`, string(beforeJSON), string(afterJSON), lookup, receipt.ReceiptID)
 	require.NoError(t, err)
 
 	_, err = destination.EnableInitialAudit(t.Context(), plan)

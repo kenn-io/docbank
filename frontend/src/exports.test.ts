@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import {
   copyExportMembers,
+  retryExportRequest,
   sealExportSource,
   parseExportJob,
   parseExportPlan,
@@ -12,6 +13,7 @@ import {
   validateExportOptions,
   sealPhotoExportSource,
 } from "./exports.js";
+import { APIError } from "./api-transport.js";
 import { snapshotMemberHash } from "./snapshots.js";
 
 const id = "11111111-1111-4111-8111-111111111111";
@@ -456,4 +458,40 @@ it("validates photo settings and binds source and plan requests", async () => {
     kind: "photos",
     photos: selection,
   });
+});
+
+it("retries an ambiguous export failure once with the same request", async () => {
+  const run = vi
+    .fn()
+    .mockRejectedValueOnce(new TypeError("Connection lost"))
+    .mockResolvedValue("sealed");
+  expect(await retryExportRequest(run, new AbortController().signal)).toBe("sealed");
+  expect(run).toHaveBeenCalledTimes(2);
+});
+
+it.each([
+  new APIError("Rate limited", 429, "rate_limit"),
+  new APIError("Timed out", 503, "export_timeout"),
+])("does not retry an export rejection: $message", async (error) => {
+  const run = vi.fn().mockRejectedValue(error);
+  await expect(retryExportRequest(run, new AbortController().signal)).rejects.toBe(error);
+  expect(run).toHaveBeenCalledTimes(1);
+});
+
+it("does not retry an export after cancellation", async () => {
+  const controller = new AbortController();
+  const reason = new Error("Cancelled");
+  const run = vi.fn().mockImplementation(() => {
+    controller.abort(reason);
+    return Promise.reject(new TypeError("Connection lost"));
+  });
+  await expect(retryExportRequest(run, controller.signal)).rejects.toBe(reason);
+  expect(run).toHaveBeenCalledTimes(1);
+});
+
+it("stops after the second export server failure", async () => {
+  const failure = new APIError("Unavailable", 503, "unavailable");
+  const run = vi.fn().mockRejectedValue(failure);
+  await expect(retryExportRequest(run, new AbortController().signal)).rejects.toBe(failure);
+  expect(run).toHaveBeenCalledTimes(2);
 });

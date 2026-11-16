@@ -9,12 +9,14 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,6 +26,7 @@ import (
 
 	"github.com/spf13/cobra"
 	kitdaemon "go.kenn.io/kit/daemon"
+	"go.kenn.io/kit/embedlocal"
 	kitlogging "go.kenn.io/kit/logging"
 	"go.kenn.io/kit/packstore"
 	"go.kenn.io/kit/telemetry/posthog"
@@ -329,6 +332,14 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		logger.Warn("read local text selection; indexing remains inactive", "error", err)
 		choice = config.LocalTextConfig{}
 	}
+	inherited := false
+	if err == nil && choice.Profile == "" {
+		choice, err = inheritedLocalText(processingProfiles)
+		if err != nil {
+			logger.Warn("read shared search by meaning choice; indexing remains inactive", "error", err)
+		}
+		inherited = choice.Profile != ""
+	}
 	baseConfig := cfg
 	candidateProfiles := func(mode, name string) (map[string]processing.ProfileConfig, config.Config, error) {
 		candidate, err := localTextCandidate(baseConfig, mode, name)
@@ -357,9 +368,16 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	}
 
 	for _, watch := range cfg.Watches {
-		if watch.Profile != "" {
-			if _, ok := processingProfiles[watch.Profile]; !ok {
-				return fmt.Errorf("watch %q profile %q has no executable runtime", watch.Name, watch.Profile)
+		names := []string{watch.Profile}
+		for _, family := range slices.Sorted(maps.Keys(watch.Profiles)) {
+			names = append(names, watch.Profiles[family])
+		}
+		for _, name := range names {
+			if name == "" {
+				continue
+			}
+			if _, ok := processingProfiles[name]; !ok {
+				return fmt.Errorf("watch %q profile %q has no executable runtime", watch.Name, name)
 			}
 		}
 	}
@@ -379,6 +397,11 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		return fmt.Errorf("configured processing profile %q conflicts with the built-in media profile", suppliedName)
 	}
 	processingProfiles[suppliedName] = suppliedProfile
+	faceProfile, err := localFaceProfile()
+	if err != nil {
+		return fmt.Errorf("configure local faces: %w", err)
+	}
+	processingProfiles[config.LocalFacesProfile] = faceProfile
 	captionName, captionProfile, err := processing.NewSuppliedCaptionProfile(s, blobs, "daemon:operator")
 	if err != nil {
 		return fmt.Errorf("configuring supplied caption profile: %w", err)
@@ -408,11 +431,11 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	}
 
 	tracker := api.NewActivityTracker()
-	var restartPending atomic.Bool
+	var restartPending, inheritedReady atomic.Bool
 	localText := &processing.LocalTextSetup{Service: processingService, Selected: choice.Profile,
 		ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
 		Startup: localTextStartup,
-		Save:    localTextSave(layout.Root, &restartPending, saveLocalText),
+		Save:    localTextSave(layout.Root, &restartPending, saveLocalText, logger),
 	}
 	localText.Candidate = func(mode, name string) (*processing.Service, error) {
 		profiles, _, err := candidateProfiles(mode, name)
@@ -423,11 +446,6 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 			MediaMaxBytes: cfg.Media.MaxSourceBytes,
 			Principal:     "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(), Lifecycle: sigCtx})
 		return service, err
-	}
-	if choice.Profile != "" {
-		if err := jobSupervisor.StartWorker("embed:local-text", func(ctx context.Context) error { return localText.Backfill(ctx, logger) }); err != nil {
-			return err
-		}
 	}
 	pdfText := &processing.PDFTextRunner{Service: processingService}
 	if err := pdfText.Initialize(sigCtx); err != nil {
@@ -471,6 +489,32 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		}
 	}
 
+	faces := &processing.FaceSetup{Service: processingService,
+		Startup: func(ctx context.Context) error {
+			_, err := localEmbeddingOrigin(ctx, embedlocal.FaceModel, nil)
+			return err
+		},
+		OnEnabled: func() error {
+			err := jobSupervisor.StartWorker("process:face-suggestions", func(ctx context.Context) error { return processingService.FaceSuggestionBackfill(ctx, logger) })
+			if err != nil && !errors.Is(err, jobs.ErrDuplicate) {
+				return fmt.Errorf("starting face suggestions: %w", err)
+			}
+			return nil
+		},
+	}
+	enabled, err := faces.IsEnabled(sigCtx)
+	if err != nil {
+		return fmt.Errorf("checking face suggestions consent: %w", err)
+	}
+	heads, err := s.HasFaceVectorHeads(sigCtx)
+	if err != nil {
+		return fmt.Errorf("checking face vector heads: %w", err)
+	}
+	if enabled || heads {
+		if err := faces.OnEnabled(); err != nil {
+			return err
+		}
+	}
 	if processingService.HasPhotoFaceDetectionProfiles() {
 		if err := jobSupervisor.StartWorker("process:photo-face-detection", func(ctx context.Context) error {
 			return processingService.PhotoFaceDetectionBackfill(ctx, logger, renditionWorkers)
@@ -588,7 +632,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		defer func() { _ = connection.Close() }()
 		mcpServer := docmcp.NewServerWithConnection(connection, docmcp.ServerOptions{Logger: logger})
 		options := docmcp.HTTPOptions{
-			BearerToken: mcpToken, AllowedHosts: cfg.MCP.HTTP.AllowedHosts, Logger: logger,
+			BearerToken: mcpToken, AllowedHosts: cfg.MCP.HTTP.AllowedHosts, PublicOrigin: cfg.MCP.HTTP.PublicOrigin, Logger: logger,
 		}
 		if cfg.MCPHTTPSharesAPIListener() {
 			handler, err := docmcp.PrepareHTTPHandler(context.WithoutCancel(ctx), mcpServer, cfg.Server.BindAddr, options)
@@ -640,11 +684,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		if err != nil {
 			return fmt.Errorf("configuring watch %q: %w", watchConfig.Name, err)
 		}
-		if watchConfig.Profile != "" {
-			watcher.AfterImport = func(ctx context.Context, node store.Node) error {
-				return processingService.AdmitImportedRendition(ctx, node, watchConfig.Profile)
-			}
-		}
+		watcher.AfterImport = watchImportAdmission(watchConfig, processingService.AdmitImportedRendition)
 		if err := jobSupervisor.StartWorker("watch:"+watchConfig.Name, watcher.Run); err != nil {
 			return fmt.Errorf("starting watch %q: %w", watchConfig.Name, err)
 		}
@@ -731,9 +771,9 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		BackupScheduleWake: backupScheduleWake,
 		Jobs:               jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
 		WebLoginEnabled: webLoginEnabled, APIAddress: addr,
-		Processing: processingService, LocalText: localText,
+		Processing: processingService, LocalText: localText, PDFText: pdfText, Faces: faces,
 		LocalTextStatus: func(ctx context.Context) (api.LocalTextStatus, error) {
-			return localTextStatus(ctx, processingProfiles, processingService, restartPending.Load())
+			return localTextStatus(ctx, processingProfiles, processingService, restartPending.Load(), inherited, inheritedReady.Load())
 		}, EnsureEmail: processing.EnsureEmailTarget,
 		PublishEmailDocuments: processing.PublishEmailDocuments,
 		PageRuntime:           pageRuntime,
@@ -790,6 +830,13 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	if mcpURL != "" {
 		logger.Info("docbank MCP HTTP listening", "url", mcpURL)
 	}
+	if choice.Profile != "" {
+		if err := jobSupervisor.StartWorker("embed:local-text", func(ctx context.Context) error {
+			return runLocalText(ctx, localText, inherited, &inheritedReady, logger)
+		}); err != nil {
+			return err
+		}
+	}
 	if ready != nil {
 		ready(serveReady{tracker: tracker, jobs: jobSupervisor})
 	}
@@ -822,11 +869,12 @@ func drainHTTPServer(server *http.Server) func(context.Context) error {
 	}
 }
 
-// withMCPRoute serves hosted MCP at /mcp ahead of the API middleware. The MCP
-// transport applies its own bearer, Host, and Origin checks.
+// withMCPRoute serves hosted MCP and its public icon aliases ahead of the API
+// middleware. The MCP transport applies its own bearer, Host, and Origin checks.
 func withMCPRoute(api, mcp http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == mcpHTTPPath {
+		switch r.URL.Path {
+		case mcpHTTPPath, docmcp.OriginalDownloadPath, "/icon.png", "/favicon.ico":
 			mcp.ServeHTTP(w, r)
 			return
 		}
@@ -1458,4 +1506,14 @@ func localTextIdle(ctx context.Context, tracker *api.ActivityTracker, timeout ti
 		return false
 	}
 	return tracker.IdleFor() >= timeout
+}
+
+func watchImportAdmission(watch config.WatchConfig, admit func(context.Context, store.Node, string) error) func(context.Context, store.Node) error {
+	return func(ctx context.Context, node store.Node) error {
+		name := watch.ProcessingProfileFor(node.MimeType, node.Name)
+		if name == "" {
+			return nil
+		}
+		return admit(ctx, node, name)
+	}
 }

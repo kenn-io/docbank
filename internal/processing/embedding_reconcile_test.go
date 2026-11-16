@@ -21,6 +21,7 @@ type countedReconcileCatalog struct {
 	enqueued           int
 	pauseClaims        bool
 	beforePrepareImage func()
+	afterValidation    func(EmbeddingWorkClaim)
 }
 
 func (c *countedReconcileCatalog) ReconcileEmbeddingJobs(ctx context.Context, request store.EmbeddingReconcileRequest) (store.EmbeddingReconcileResult, error) {
@@ -44,9 +45,24 @@ func (c *countedReconcileCatalog) ClaimNextEmbeddingWork(ctx context.Context, ow
 	return c.Store.ClaimNextEmbeddingWork(ctx, owner, at, lease, fingerprints)
 }
 
+func (c *countedReconcileCatalog) ValidateEmbeddingWork(ctx context.Context, claim EmbeddingWorkClaim, work EmbeddingWork, at time.Time) error {
+	err := c.Store.ValidateEmbeddingWork(ctx, claim, work, at)
+	if err == nil && c.afterValidation != nil {
+		hook := c.afterValidation
+		c.afterValidation = nil
+		hook(claim)
+	}
+	return err
+}
+
 func TestEmbeddingWorkerWakesForConsentAndExpiry(t *testing.T) {
 	t.Parallel()
-	f, _, worker, request, config := newRealEmbeddingWorkerWithDescriptor(t, document.EmbeddingInputOriginalFile, nil)
+	checkEmbeddingWorkerWakesForConsentAndExpiry(t, newPublicationFixture)
+}
+
+func checkEmbeddingWorkerWakesForConsentAndExpiry(t *testing.T, makeFixture publicationFixtureFactory) {
+	t.Helper()
+	f, _, worker, request, config := embeddingWorkerWithDescriptorFixture(t, makeFixture, document.EmbeddingInputOriginalFile, nil)
 	catalog := &countedReconcileCatalog{Store: f.catalog, pauseClaims: true}
 	worker.catalog = catalog
 	now := time.Now().UTC()
@@ -233,10 +249,15 @@ func TestEmbeddingWorkerSettlesOnlyPermanentInputFailures(t *testing.T) {
 
 func TestEmbeddingWorkerRecoversBlobOperationContextErrors(t *testing.T) {
 	t.Parallel()
+	checkEmbeddingWorkerRecoversBlobOperationContextErrors(t, newPublicationFixture)
+}
+
+func checkEmbeddingWorkerRecoversBlobOperationContextErrors(t *testing.T, makeFixture publicationFixtureFactory) {
+	t.Helper()
 	for _, inputErr := range []error{context.DeadlineExceeded, errors.New("synthetic blob temporarily unavailable")} {
 		t.Run(inputErr.Error(), func(t *testing.T) {
 			t.Parallel()
-			f, _, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputRenditionChunk)
+			f, _, worker, request := embeddingWorkerWithFixture(t, makeFixture, document.EmbeddingInputRenditionChunk)
 			job, err := f.catalog.EnqueueEmbeddingJob(t.Context(), request)
 			require.NoError(t, err)
 			now := time.Now().UTC()

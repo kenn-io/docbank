@@ -80,7 +80,7 @@
     {:else if error && !rendition}
       <div class="load-error">
         <p role="alert">{error}</p>
-        <p>The active rendition has no readable verified mirror right now.</p>
+        <p>Docbank couldn't load this document's saved Markdown text.</p>
         <Button size="sm" onclick={() => void load()}>Try again</Button>
       </div>
     {:else if rendition}
@@ -97,7 +97,7 @@
               tone={rendition?.completeness === "complete" ? "success" : "warning"}
               >{titleCase(rendition?.completeness ?? "")}</Chip
             >{/snippet}
-          <p>The YAML identity envelope was verified and is hidden from document prose.</p>
+          <p>Docbank checked the document metadata and left it out of the text below.</p>
         </Card>
         <Card
           level="default"

@@ -128,6 +128,11 @@ func CallDocumentReadTool(ctx context.Context, reader *api.DocumentReader, req *
 
 func readToolFailure(logger *slog.Logger, name string, err error) (*sdkmcp.CallToolResult, error) {
 	logOperationError(logger, name, err)
+	if name == originalDownloadTool.name && errors.Is(err, errProcessingOutcomeUnknown) {
+		if result, ok := toolErrorResult(toolErrorOutput{Code: "download_url_unavailable", Message: "The download URL could not be returned; request a fresh URL."}); ok {
+			return result, nil
+		}
+	}
 	if name == "answer_question" {
 		facts, _ := toolProblemFacts(err)
 		code := facts.Code

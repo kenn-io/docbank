@@ -38,7 +38,7 @@ var backendMaintenanceEffects = []backendMaintenance{
  photo_xmp_unsettled_receipt_delete`},
 	{"audit photo export queue", "audit_photo_queue.go: queueAuditPhotosTx", "enrollment contracts; deletion of authority/memberships is unqualified", `
  photo_xmp_unsettled_membership_insert photo_xmp_unsettled_authority_insert`},
-	{"audit deletion queue", "unported: metadata import/restore", "must queue affected photos when replacing authority/memberships", `
+	{"audit deletion queue", "no retained-authority deletion path", "metadata-import requires a pristine target; in-place replacement is unsupported", `
  photo_xmp_unsettled_membership_delete photo_xmp_unsettled_authority_delete`},
 	{"photo metadata publication", "document_maintenance.go: refreshSourceMetadataPhotosTx", "metadata-events contracts; head deletion during recovery remains unqualified", `
  photo_timeline_technical_insert photo_timeline_technical_delete
@@ -47,8 +47,8 @@ var backendMaintenanceEffects = []backendMaintenance{
  photo_xmp_unsettled_head_insert photo_xmp_unsettled_head_update`},
 	{"photo XMP publication", "photo_xmp.go: settlePhotoXMPTx; document_maintenance.go: refreshPhotoAssetWorkTx", "photo-edit contracts; receipts are replaced rather than updated", `
  photo_xmp_unsettled_receipt_insert photo_xmp_unsettled_receipt_update`},
-	{"photo metadata recovery", "unported: source-head recovery", "must refresh export work when heads are removed", `photo_xmp_unsettled_head_delete`},
-	{"people candidates", "person_candidates.go: retainPersonCandidate", "people-curation contracts cover inserts; evidence replacement during metadata restore remains unqualified", `
+	{"photo metadata recovery", "metadata_postgres.go: refreshImportedCatalogsTx", "metadata-import rebuilds fresh projections; retained source-head deletion is unsupported", `photo_xmp_unsettled_head_delete`},
+	{"people candidates", "person_candidates.go: retainPersonCandidate", "people-curation and metadata-import contracts; imported face memberships are rebuilt from retained evidence", `
  person_candidate_faces_insert person_candidate_faces_update`},
 	{"lexical indexes", "unported: search", "must preserve eligible rows and index access; schema comparison excludes FTS virtual/shadow tables", `
  nodes_fts_insert nodes_fts_delete nodes_fts_update
@@ -57,7 +57,7 @@ var backendMaintenanceEffects = []backendMaintenance{
  photo_suggestion_fts_insert photo_suggestion_fts_update photo_suggestion_fts_delete
  tag_fts_insert tag_fts_update tag_fts_delete
  rendition_lexical_index_insert rendition_lexical_index_delete`},
-	{"processing authority", "consent.go; INSERT-only grants and revocations; setup owns incarnation", "renditions contracts; restore incarnation replacement remains unqualified", `
+	{"processing authority", "consent.go; INSERT-only grants and revocations; setup owns incarnation", "renditions and metadata-import contracts; a restored vault keeps fresh incarnation authority", `
  current_processing_incarnation_immutable_update current_processing_incarnation_immutable_delete
  processing_incarnations_immutable_update processing_incarnations_immutable_delete
  processing_consent_grants_immutable_update processing_consent_grants_immutable_delete
@@ -76,7 +76,7 @@ var backendMaintenanceEffects = []backendMaintenance{
  embedding_vector_spaces_immutable_update embedding_input_generations_immutable_update
  embedding_generation_inputs_immutable_update embedding_vector_sets_immutable_update
  embedding_vector_rows_immutable_update embedding_sets_immutable_update`},
-	{"vector source membership epochs", "unported: vector_index.go", "SQLite-only derived state; PostgreSQL ranked search remains unqualified", `
+	{"vector source membership epochs", "vector_membership.go; publication, deletion, version, trash and photo writers", "vector-index-publication contracts; original/chunk/image membership only; face capture and ranked/lexical search remain unqualified", `
  vector_source_embedding_heads_insert vector_source_embedding_heads_update vector_source_embedding_heads_delete
  vector_source_rendition_heads_insert vector_source_rendition_heads_update vector_source_rendition_heads_delete
  vector_source_visual_preview_generations_insert vector_source_visual_preview_generations_delete

@@ -128,7 +128,7 @@ func TestToolCatalogBudgetRejectsOversize(t *testing.T) {
 func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 	tools := toolCatalog(ServerOptions{})
 	wantNames := []string{
-		"read_document_content",
+		"read_document_content", "get_original_download_url",
 		"resolve_text_citation", "check_answer", "get_text_outline", "read_text_section",
 		"get_kata_context",
 		"get_export_plan", "get_export_problems",
@@ -149,7 +149,7 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		assert.Equal(t, wantNames[index], tool.Name)
 		require.NotNil(t, tool.Annotations)
 		assert.True(t, tool.Annotations.ReadOnlyHint)
-		assert.True(t, tool.Annotations.IdempotentHint)
+		assert.Equal(t, tool.Name != "get_original_download_url", tool.Annotations.IdempotentHint)
 		assert.Equal(t, new(false), tool.Annotations.DestructiveHint)
 		assert.Equal(t, new(tool.Name == "get_kata_context" || tool.Name == "search_documents" || tool.Name == "answer_question"), tool.Annotations.OpenWorldHint)
 		assertSchemaContract(t, tool.InputSchema)
@@ -164,13 +164,13 @@ func TestWriteToolsAreIndependentConstructionTimeOptIns(t *testing.T) {
 	enabledTools := toolCatalog(ServerOptions{AllowProcessing: true, AllowPackageWrites: true})
 	enabled := catalogNames(enabledTools)
 	require.Equal(t, append(append([]string{}, readOnly...), "start_processing", "preflight_load_file_package", "start_package_import",
-		"resolve_package_custodian", "assign_package_custodian", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export",
+		"resolve_package_custodian", "assign_package_custodian", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export", "publish_numbered_pdf",
 		"export_bates_file", "export_load_file_package"), enabled)
 
 	for _, write := range enabledTools[len(readOnly):] {
 		require.NotNil(t, write.Annotations)
 		assert.False(t, write.Annotations.ReadOnlyHint)
-		assert.Equal(t, slices.Contains([]string{"start_package_import", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export"}, write.Name), write.Annotations.IdempotentHint)
+		assert.Equal(t, slices.Contains([]string{"start_package_import", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export", "publish_numbered_pdf"}, write.Name), write.Annotations.IdempotentHint)
 		assert.Equal(t, new(write.Name == "assign_package_custodian" || write.Name == "export_bates_file" ||
 			write.Name == "export_load_file_package"), write.Annotations.DestructiveHint)
 		assert.Equal(t, new(true), write.Annotations.OpenWorldHint)
@@ -183,8 +183,8 @@ func TestWriteToolsAreIndependentConstructionTimeOptIns(t *testing.T) {
 		{},
 		{options: ServerOptions{AllowProcessing: true}, writes: []string{"start_processing"}},
 		{options: ServerOptions{AllowKataWrites: true}, writes: []string{"cite_kata_evidence"}},
-		{options: ServerOptions{AllowPackageWrites: true}, writes: []string{"preflight_load_file_package", "start_package_import", "resolve_package_custodian", "assign_package_custodian", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export", "export_bates_file", "export_load_file_package"}},
-		{options: ServerOptions{AllowProcessing: true, AllowPackageWrites: true}, writes: []string{"start_processing", "preflight_load_file_package", "start_package_import", "resolve_package_custodian", "assign_package_custodian", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export", "export_bates_file", "export_load_file_package"}},
+		{options: ServerOptions{AllowPackageWrites: true}, writes: []string{"preflight_load_file_package", "start_package_import", "resolve_package_custodian", "assign_package_custodian", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export", "publish_numbered_pdf", "export_bates_file", "export_load_file_package"}},
+		{options: ServerOptions{AllowProcessing: true, AllowPackageWrites: true}, writes: []string{"start_processing", "preflight_load_file_package", "start_package_import", "resolve_package_custodian", "assign_package_custodian", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export", "publish_numbered_pdf", "export_bates_file", "export_load_file_package"}},
 	} {
 		server := newServerWithOptions(testImplementation(), test.options)
 		discovery := decodeResult(t, exchangeRaw(t, server, requestFor("server/discover", nil)))
@@ -450,6 +450,9 @@ func TestExpectedDomainErrorsAreBoundedToolResults(t *testing.T) {
 		message   string
 	}{
 		{name: "not found", err: store.ErrNotFound, code: "not_found"},
+		{name: "not directory", err: fmt.Errorf("private scope detail: %w", store.ErrNotDir),
+			code: "not_dir", redaction: "private scope detail", message: "The requested node is not a directory."},
+		{name: "daemon not directory", err: daemonProblem("not_dir"), code: "not_dir", message: "The requested node is not a directory."},
 		{name: "stale version", err: store.ErrProcessingSourceFenceStaleVersion, code: "stale_version"},
 		{name: "consent", err: daemonconn.ErrProcessingConsent, code: "consent_required"},
 		{name: "cursor", err: store.ErrDocumentCursorExpired, code: "cursor_expired", message: "The cursor expired; restart the listing from the first page."},

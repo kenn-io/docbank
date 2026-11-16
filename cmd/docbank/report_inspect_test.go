@@ -71,7 +71,7 @@ func TestReportCLIInspection(t *testing.T) {
 	output, err = runCLI(t, "search-export", "show", summary.ID)
 	require.NoError(t, err)
 	require.Contains(t, output, summary.ID)
-	require.Contains(t, output, "coverage:")
+	require.Contains(t, output, "documents in date ranges:")
 	output, err = runCLI(t, "search-export", "history", "--limit", "1", "--json")
 	require.NoError(t, err)
 	var history store.TermReportHistoryPage

@@ -21,7 +21,7 @@ func TestWorkspaceClientRoundTripsExactPagesAndSavedRuns(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	facets := []string{"size", "tags"}
+	facets := []string{"size", "tags", "person_role"}
 	first, err := c.CreateWorkspaceQuery(t.Context(), api.WorkspaceQueryCreateRequest{
 		Query: api.QueryPayload(`{}`), PageSize: 50, Facets: facets,
 	})

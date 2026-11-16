@@ -1752,10 +1752,25 @@ export interface CoverageClass {
   unavailable: number;
 }
 
+export type CoverageReportPageCoverage = typeof CoverageReportPageCoverage[keyof typeof CoverageReportPageCoverage];
+
+
+export const CoverageReportPageCoverage = {
+  partial: 'partial',
+} as const;
+
+export interface PageTextGap {
+  content_version_id: string;
+  pages: number[];
+}
+
 export interface CoverageReport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   embeddings: CoverageClass[];
+  page_coverage?: CoverageReportPageCoverage;
+  page_coverage_unavailable?: boolean;
+  pages_without_text?: PageTextGap[];
   /** @pattern ^[0-9a-f]{64}$ */
   profile_fingerprint: string;
   renditions: CoverageClass;
@@ -2333,6 +2348,11 @@ export interface DocumentSourceFenceFilters {
   tag_id?: string;
   /** @minimum 1 */
   under_node_id?: number;
+  /**
+     * @maxLength 16384
+     * @pattern ^/
+     */
+  under_path?: string;
 }
 
 export type DocumentSearchScopeKind = typeof DocumentSearchScopeKind[keyof typeof DocumentSearchScopeKind];
@@ -3313,11 +3333,101 @@ export interface ExportJob {
   state: string;
 }
 
+export interface PersonFacePreview {
+  asset_id: string;
+  box?: FaceBox;
+  content_version_id: string;
+  generation_id: string;
+  rotation: number;
+}
+
+export interface FaceSuggestionFace {
+  assertion_id?: string;
+  box: FaceBox;
+  content_version_id: string;
+  created_at: string;
+  detector_fingerprint?: string;
+  dismissed: boolean;
+  /** @nullable */
+  eyes_open?: boolean | null;
+  face_id: string;
+  /** @nullable */
+  facing?: number | null;
+  hidden: boolean;
+  person_id?: string;
+  person_name?: string;
+  photo_recorded_at: string;
+  preview: PersonFacePreview;
+  /** @maxItems 1000 */
+  rejected_person_ids?: string[];
+  revision: number;
+  /** @nullable */
+  roll?: number | null;
+  /** @nullable */
+  smile?: boolean | null;
+}
+
+export interface FaceCandidate {
+  candidate_id: string;
+  display_name: string;
+  faces: FaceSuggestionFace[];
+  revision: number;
+  suggested_person_id?: string;
+}
+
+export type FaceCandidateDecisionRequestAction = typeof FaceCandidateDecisionRequestAction[keyof typeof FaceCandidateDecisionRequestAction];
+
+
+export const FaceCandidateDecisionRequestAction = {
+  link: 'link',
+  reject: 'reject',
+  new_person: 'new_person',
+} as const;
+
+export interface FaceCandidateDecisionRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  action: FaceCandidateDecisionRequestAction;
+  /** @maxLength 200 */
+  display_name?: string;
+  /** @maxItems 48 */
+  face_ids?: string[];
+  person_id?: string;
+}
+
+export interface FaceCandidateDecisionResult {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  candidate_id: string;
+  revision: number;
+  state: string;
+}
+
+export interface FaceCandidatePage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: FaceCandidate[];
+  total: number;
+}
+
+export interface FaceSetupApplyRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  consent: boolean;
+  /** @pattern ^[0-9a-f]{64}$ */
+  plan_fingerprint: string;
+}
+
 export interface GPSBounds {
   east: string;
   north: string;
   south: string;
   west: string;
+}
+
+export interface PersonFilter {
+  person_id: string;
+  roles: string[];
 }
 
 export interface Filters {
@@ -3380,6 +3490,7 @@ export interface Filters {
   modified_before?: string;
   no_tags?: boolean;
   paths?: string[];
+  people?: PersonFilter[];
   person_ids?: string[];
   /** @nullable */
   rating_max?: number | null;
@@ -3718,6 +3829,7 @@ export const WatchProcessingStatusConsentState = {
 export interface WatchProcessingStatus {
   consent_state?: WatchProcessingStatusConsentState;
   error?: string;
+  media_family?: string;
   profile: string;
 }
 
@@ -3741,6 +3853,7 @@ export interface Job {
   paused: boolean;
   processed_bytes?: number;
   processing?: WatchProcessingStatus;
+  processing_routes?: WatchProcessingStatus[];
   started_at: string;
   status: JobStatus;
   /** Why configured watch tags are unavailable. */
@@ -4580,6 +4693,26 @@ export interface NumberedReservationRequest {
   start_at: number;
 }
 
+export interface OriginalDownloadSelection {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  blob_hash: string;
+  /** @minimum 1 */
+  node_id: number;
+  /** @minimum 0 */
+  size: number;
+  vault_id: string;
+}
+
+export interface OriginalDownloadTicket {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  expires_in_seconds: number;
+  name: string;
+  url: string;
+}
+
 export interface OutputCounts {
   attachment_pdfs: number;
   attachments: number;
@@ -5256,14 +5389,6 @@ export interface PersonExternalUID {
   uid: string;
 }
 
-export interface PersonFacePreview {
-  asset_id: string;
-  box?: FaceBox;
-  content_version_id: string;
-  generation_id: string;
-  rotation: number;
-}
-
 export interface PersonFacePreviewPage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -5424,6 +5549,15 @@ export const SavedQueryFiltersSchemaMediaFamiliesItem = {
   cad: 'cad',
   unknown: 'unknown',
 } as const;
+
+export interface SavedQueryPersonFilterSchema {
+  person_id: string;
+  /**
+     * @minItems 1
+     * @maxItems 64
+     */
+  roles: string[];
+}
 
 export type SavedQueryFiltersSchemaTextCoverageItem = typeof SavedQueryFiltersSchemaTextCoverageItem[keyof typeof SavedQueryFiltersSchemaTextCoverageItem];
 
@@ -5593,6 +5727,8 @@ export interface SavedQueryFiltersSchema {
   no_tags?: boolean | null;
   /** @maxItems 64 */
   paths?: string[];
+  /** @maxItems 64 */
+  people?: SavedQueryPersonFilterSchema[];
   /** @maxItems 64 */
   person_ids?: string[];
   /**
@@ -6200,7 +6336,11 @@ export interface WorkspaceFacetValue {
   count: number;
   key: string;
   label: string;
+  /** @maxItems 11 */
+  roles?: string[];
   selected: boolean;
+  /** @maxItems 64 */
+  selected_person_ids?: string[];
 }
 
 export type PhotoBrowsePageFacetsItem = {
@@ -7201,6 +7341,7 @@ export interface PreparePhotoPreviewRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   content_version_id: string;
+  face_id?: string;
   hidden?: boolean;
   person_id?: string;
   size: PreparePhotoPreviewRequestSize;
@@ -7483,6 +7624,18 @@ export interface ProcessingProfileSummary {
   reranking_available?: boolean;
 }
 
+export interface Profile {
+  columns: string[];
+  date_format: string;
+  declared_timezone: string;
+  encoding: string;
+  field: number;
+  header_row: boolean;
+  id: string;
+  newline_in_field: number;
+  qualifier: number;
+}
+
 export type PromotePhotoNodeRequestKind = typeof PromotePhotoNodeRequestKind[keyof typeof PromotePhotoNodeRequestKind];
 
 
@@ -7640,6 +7793,53 @@ export interface QueryPreview {
   dependencies: QueryDependency[];
   query: SavedQueryV1Schema;
   query_fingerprint: string;
+}
+
+export interface RecipientPackageFile {
+  path: string;
+  sha256: string;
+  size: number;
+}
+
+export interface RecipientPackageDocument {
+  allocation_id: string;
+  artifact_manifest_sha256: string;
+  document_id: string;
+  labels: string[];
+  namespace_id: string;
+  ordinal: number;
+  page_count: number;
+  pdf: RecipientPackageFile;
+  recipe_sha256: string;
+  review_sha256: string;
+  text: RecipientPackageFile;
+}
+
+export interface RecipientPackageReceipt {
+  contract: string;
+  dat_profile: Profile;
+  document_count: number;
+  documents: RecipientPackageDocument[];
+  load_file: RecipientPackageFile;
+  mapping: RecipientPackageFile;
+  opt_profile: Profile;
+  page_count: number;
+  page_map: RecipientPackageFile;
+}
+
+export interface RecipientPackageDownload {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  allocation_id: string;
+  contract: string;
+  expires_at: string;
+  id: string;
+  name: string;
+  receipt: RecipientPackageReceipt;
+  sha256: string;
+  size: number;
+  url: string;
+  verification: string;
 }
 
 export interface RedactionFileDigest {
@@ -7839,6 +8039,13 @@ export interface RenditionTextProfile {
   name: string;
 }
 
+export type RenditionTextReceiptPageCoverage = typeof RenditionTextReceiptPageCoverage[keyof typeof RenditionTextReceiptPageCoverage];
+
+
+export const RenditionTextReceiptPageCoverage = {
+  unavailable: 'unavailable',
+} as const;
+
 export type RenditionTextReceiptState = typeof RenditionTextReceiptState[keyof typeof RenditionTextReceiptState];
 
 
@@ -7868,6 +8075,8 @@ export interface RenditionTextReceipt {
   attachment_id: string;
   build_id: string;
   generation_id: string;
+  page_coverage?: RenditionTextReceiptPageCoverage;
+  pages_without_text?: number[];
   profile: RenditionTextProfile;
   source: RenditionTextSource;
   state: RenditionTextReceiptState;
@@ -7979,6 +8188,8 @@ export interface RepositoryClaim {
 }
 
 export interface SelectedDocuments {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
   documents?: Identity[];
 }
 
@@ -8154,6 +8365,7 @@ export const SavedQueryRunRequestFacetsItem = {
   size: 'size',
   text_coverage: 'text_coverage',
   duplicates: 'duplicates',
+  person_role: 'person_role',
 } as const;
 
 export type SavedQueryRunRequestPageSize = typeof SavedQueryRunRequestPageSize[keyof typeof SavedQueryRunRequestPageSize];
@@ -8168,7 +8380,7 @@ export const SavedQueryRunRequestPageSize = {
 export interface SavedQueryRunRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @maxItems 8 */
+  /** @maxItems 9 */
   facets?: SavedQueryRunRequestFacetsItem[];
   page_size?: SavedQueryRunRequestPageSize;
   photos?: boolean;
@@ -8224,6 +8436,8 @@ export interface WorkspaceQueryRow {
   excerpt?: string;
   /** Display-file flag in a photo snapshot; absent in a document snapshot. */
   flag?: WorkspaceQueryRowFlag;
+  /** @maxItems 16 */
+  matched_roles?: string[];
   media_family: string;
   mime_type: string;
   modified_at: string;
@@ -8259,7 +8473,7 @@ export interface WorkspaceQueryResponse {
   created_at: string;
   dependencies: WorkspaceQueryDependency[];
   expires_at: string;
-  /** @maxItems 8 */
+  /** @maxItems 9 */
   facets: WorkspaceQueryResponseFacetsItem[];
   fallback_reason?: string;
   generation: WorkspaceQueryGeneration;
@@ -8332,6 +8546,7 @@ export interface SearchReport {
   tag_id?: string;
   truncated: boolean;
   under_node_id?: number;
+  under_path?: string;
 }
 
 export type SearchTextCoverageFamiliesItem = typeof SearchTextCoverageFamiliesItem[keyof typeof SearchTextCoverageFamiliesItem];
@@ -8349,6 +8564,13 @@ export interface SearchTextCoverage {
   families: SearchTextCoverageFamiliesItem[];
   /** @minimum 0 */
   no_text: number;
+  /** @minimum 0 */
+  pages_without_text: number;
+  pdf_page_coverage_partial: boolean;
+  /** @minimum 0 */
+  pdf_page_coverage_unavailable: number;
+  /** @minimum 0 */
+  pdfs_without_text: number;
   /** @minimum 0 */
   pending: number;
 }
@@ -8785,6 +9007,16 @@ export interface TermReportHistoryPage {
   total: number;
 }
 
+export interface TermReportSelectionItem {
+  current?: Identity;
+  modified?: string;
+  name?: string;
+  path?: string;
+  selected: Identity;
+  selected_recorded?: string;
+  status: string;
+}
+
 export interface TextOutlineEntry {
   /**
      * @minimum 1
@@ -9115,6 +9347,7 @@ export interface WatchedInbox {
   minimum_age: string;
   name: string;
   processing?: WatchProcessingStatus;
+  processing_routes?: WatchProcessingStatus[];
   scan_interval: string;
   settle_time: string;
   source: string;
@@ -9153,6 +9386,7 @@ export const WorkspaceQueryCreateRequestFacetsItem = {
   size: 'size',
   text_coverage: 'text_coverage',
   duplicates: 'duplicates',
+  person_role: 'person_role',
 } as const;
 
 export type WorkspaceQueryCreateRequestPageSize = typeof WorkspaceQueryCreateRequestPageSize[keyof typeof WorkspaceQueryCreateRequestPageSize];
@@ -9167,7 +9401,7 @@ export const WorkspaceQueryCreateRequestPageSize = {
 export interface WorkspaceQueryCreateRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @maxItems 8 */
+  /** @maxItems 9 */
   facets?: WorkspaceQueryCreateRequestFacetsItem[];
   page_size?: WorkspaceQueryCreateRequestPageSize;
   photos?: boolean;
@@ -9964,6 +10198,10 @@ cursor?: string;
  */
 photo_summary?: boolean;
 /**
+ * Rank people by similarity to this face
+ */
+face_id?: string;
+/**
  * Rank name groups by their newest visible depicted evidence, then by name. Namesakes stay together.
  */
 recent_first?: boolean;
@@ -9992,6 +10230,23 @@ export type RetirePersonHeaders = {
 
 export type SplitPersonHeaders = {
 'If-Match': string;
+};
+
+export type ListFaceCandidatesParams = {
+/**
+ * @minimum 1
+ * @maximum 250
+ */
+limit?: number;
+/**
+ * @minimum 0
+ * @maximum 10000
+ */
+offset?: number;
+};
+
+export type DecideFaceCandidateHeaders = {
+'If-Match'?: string;
 };
 
 export type DeletePhotoAlbumHeaders = {
@@ -10044,6 +10299,7 @@ export type HidePhotoAssetHeaders = {
 
 export type ReadPhotoPreviewParams = {
 person_id?: string;
+face_id?: string;
 };
 
 export type ReadPhotoPreviewHeaders = {
@@ -10270,6 +10526,11 @@ mime_type?: string;
  */
 under_node_id?: number;
 /**
+ * @maxLength 16384
+ * @pattern ^/
+ */
+under_path?: string;
+/**
  * @maxLength 64
  */
 modified_since?: string;
@@ -10310,6 +10571,11 @@ mime_type?: string;
  * @minimum 1
  */
 under_node_id?: number;
+/**
+ * @maxLength 16384
+ * @pattern ^/
+ */
+under_path?: string;
 /**
  * @maxLength 64
  */
@@ -16884,6 +17150,77 @@ export const getPeopleCoverage = async ( options?: Parameters<typeof sessionJSON
 
 
 
+export const getListFaceCandidatesUrl = (params?: ListFaceCandidatesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/people/face-candidates?${stringifiedParams}` : `/api/v1/people/face-candidates`
+}
+
+/**
+ * @summary Review suggested face groups
+ */
+export const listFaceCandidates = async (params?: ListFaceCandidatesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<FaceCandidatePage> => {
+
+  return sessionJSON<FaceCandidatePage>(getListFaceCandidatesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getDecideFaceCandidateUrl = (candidateId: string,) => {
+
+
+
+
+  return `/api/v1/people/face-candidates/${encodeURIComponent(String(candidateId))}/decision`
+}
+
+/**
+ * @summary Confirm or dismiss a suggested face group
+ */
+export const decideFaceCandidate = async (candidateId: string,
+    faceCandidateDecisionRequest: NonReadonly<FaceCandidateDecisionRequest>,
+    headers?: DecideFaceCandidateHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<FaceCandidateDecisionResult> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<FaceCandidateDecisionResult>(getDecideFaceCandidateUrl(candidateId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(faceCandidateDecisionRequest)
+  }
+);}
+
+
+
 export const getRebuildDocumentPeopleUrl = () => {
 
 
@@ -19122,6 +19459,68 @@ return sessionJSON<ProcessingConsentRevocationReceipt>(getRevokeProcessingConsen
 
 
 
+export const getPlanFacesUrl = () => {
+
+
+
+
+  return `/api/v1/processing/faces/plans`
+}
+
+/**
+ * @summary Preview local face suggestions
+ */
+export const planFaces = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<LocalTextPlan> => {
+
+  return sessionJSON<LocalTextPlan>(getPlanFacesUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+export const getApplyFacesUrl = () => {
+
+
+
+
+  return `/api/v1/processing/faces/setup`
+}
+
+/**
+ * @summary Enable local face suggestions
+ */
+export const applyFaces = async (faceSetupApplyRequest: NonReadonly<FaceSetupApplyRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<LocalTextPlan> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<LocalTextPlan>(getApplyFacesUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(faceSetupApplyRequest)
+  }
+);}
+
+
+
 export const getStartDocumentProcessingUrl = () => {
 
 
@@ -19851,6 +20250,68 @@ return sessionJSON<BatesExport>(getPublishNumberedPDFUrl(),
 
 
 
+export const getDiscardRecipientPackagesUrl = () => {
+
+
+
+
+  return `/api/v1/redaction/recipient-packages`
+}
+
+/**
+ * @summary Cancel this owner's recipient package and transfer
+ */
+export const discardRecipientPackages = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+  return sessionJSON<void>(getDiscardRecipientPackagesUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export const getBuildRecipientPackageUrl = () => {
+
+
+
+
+  return `/api/v1/redaction/recipient-packages`
+}
+
+/**
+ * @summary Prepare a recipient ZIP from one completed numbered review
+ */
+export const buildRecipientPackage = async (redactionRenderRequest: NonReadonly<RedactionRenderRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<RecipientPackageDownload> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<RecipientPackageDownload>(getBuildRecipientPackageUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(redactionRenderRequest)
+  }
+);}
+
+
+
 export const getRenderNativePDFUrl = () => {
 
 
@@ -20387,7 +20848,7 @@ export const getSearchUrl = (params?: SearchParams,) => {
 }
 
 /**
- * Name matches retain their established BM25 order and appear first; content-only matches follow in their own BM25 order. Every hit names its match source. The query may be empty when a tag or modification-time bound makes the page bounded; such filter-only results are ordered by modification time descending. An optional stable tag ID requires that assignment for every result. An optional parameter-free MIME type matches the current file version with or without parameters. An optional live directory node ID restricts results to its descendants. Optional absolute modification timestamps form an inclusive-since, exclusive-before interval. source_present=true excludes documents whose watched source is observed gone; push-owned documents remain included. fuzzy=true appends bounded ASCII one-edit filename/path discovery after ordinary hits and includes a coverage receipt; it requires a nonblank query, and text outside the supplemental syntax reports not_run.
+ * Name matches retain their established BM25 order and appear first; content-only matches follow in their own BM25 order. Every hit names its match source. The query may be empty when a tag or modification-time bound makes the page bounded; such filter-only results are ordered by modification time descending. An optional stable tag ID requires that assignment for every result. An optional parameter-free MIME type matches the current file version with or without parameters. An optional live directory node ID or absolute path restricts results to its descendants; supply only one. Optional absolute modification timestamps form an inclusive-since, exclusive-before interval. source_present=true excludes documents whose watched source is observed gone; push-owned documents remain included. fuzzy=true appends bounded ASCII one-edit filename/path discovery after ordinary hits and includes a coverage receipt; it requires a nonblank query, and text outside the supplemental syntax reports not_run.
  * @summary Search live document names and extracted text
  */
 export const search = async (params?: SearchParams, options?: Parameters<typeof sessionJSON>[1]): Promise<SearchReport> => {
@@ -20505,6 +20966,44 @@ return sessionJSON<Summary>(getCreateTermReportUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(request)
+  }
+);}
+
+
+
+export const getRefreshTermReportSelectionUrl = () => {
+
+
+
+
+  return `/api/v1/search-exports/selection`
+}
+
+/**
+ * @summary Compare selected document versions
+ */
+export const refreshTermReportSelection = async (selectedDocuments: NonReadonly<SelectedDocuments>, options?: Parameters<typeof sessionJSON>[1]): Promise<TermReportSelectionItem[]> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TermReportSelectionItem[]>(getRefreshTermReportSelectionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(selectedDocuments)
   }
 );}
 
@@ -22059,6 +22558,45 @@ return sessionResponse<Blob>(getGetContentVersionBytesUrl(versionId),
     method: 'GET',
     headers: { ...headers, ...getHeaders(options?.headers) }
 
+  }
+);}
+
+
+
+export const getPrepareOriginalDownloadUrl = (versionId: string,) => {
+
+
+
+
+  return `/api/v1/versions/${encodeURIComponent(String(versionId))}/download-ticket`
+}
+
+/**
+ * @summary Issue a single-use original download URL valid for two minutes
+ */
+export const prepareOriginalDownload = async (versionId: string,
+    originalDownloadSelection: NonReadonly<OriginalDownloadSelection>, options?: Parameters<typeof sessionJSON>[1]): Promise<OriginalDownloadTicket> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<OriginalDownloadTicket>(getPrepareOriginalDownloadUrl(versionId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(originalDownloadSelection)
   }
 );}
 

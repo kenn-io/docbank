@@ -377,7 +377,7 @@ func (s *Store) createFileWithOperationTx(
 	}
 	var storedMime any
 	if mimeType != "" {
-		storedMime = mimeType
+		storedMime = storedString(s.postgresSchema != "", mimeType)
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO content_versions (

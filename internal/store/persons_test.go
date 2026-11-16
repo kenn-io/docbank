@@ -37,7 +37,7 @@ func checkPersonIdentityAuthorityAndSharedContactPoints(t *testing.T, newStore f
 	ada, err := s.CreatePerson(ctx, "Ada Lovelace", "operator")
 	require.NoError(t, err)
 	identity := PersonIdentity{Kind: "email", ValueDisplay: "Ada@EXAMPLE.TEST", Origin: "operator",
-		EvidenceKind: "operator_assertion", EvidenceID: "claim-1", Confidence: "operator_asserted"}
+		EvidenceKind: "operator_assertion", EvidenceID: "claim\x00\\evidence", Confidence: "operator_asserted"}
 	added, err := s.AddPersonIdentity(ctx, ada.PersonID, ada.Revision, identity)
 	require.NoError(t, err)
 	require.Equal(t, "ada@example.test", added.ValueNormalized)
@@ -54,6 +54,7 @@ func checkPersonIdentityAuthorityAndSharedContactPoints(t *testing.T, newStore f
 	require.NoError(t, err)
 	require.Len(t, identities, 1)
 	require.Equal(t, added.IdentityID, identities[0].IdentityID)
+	require.Equal(t, "claim\x00\\evidence", identities[0].EvidenceID)
 	require.ErrorIs(t, s.RemovePersonIdentity(ctx, ada.PersonID, added.IdentityID, ada.Revision-1), ErrStaleRevision)
 	require.NoError(t, s.RemovePersonIdentity(ctx, ada.PersonID, added.IdentityID, ada.Revision))
 	identities, err = s.PersonIdentities(ctx, ada.PersonID)
@@ -422,7 +423,7 @@ func checkPeopleRecentFirstAfterNaming(t *testing.T, newStore func(*testing.T) *
 					candidate := candidateForTest(t, "face:"+face.FaceID, "Ada", ada.PersonID, []PersonCandidateOccurrence{{ContentVersionID: node.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: face.FaceID}})
 					candidate.Reason = "face_match"
 					opened := openCandidateForTest(t, s, candidate)
-					_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: opened.CandidateID, ExpectedRevision: opened.Revision, Action: "link", PersonID: ada.PersonID})
+					_, err = s.DecidePersonCandidate(ctx, nil, CandidateDecision{CandidateID: opened.CandidateID, ExpectedRevision: opened.Revision, Action: "link", PersonID: ada.PersonID})
 				} else {
 					_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, PhotoFaceDecisionRequest{Action: "name", FaceID: face.FaceID, Revision: face.Revision, PersonID: ada.PersonID})
 				}

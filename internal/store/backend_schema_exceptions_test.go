@@ -3,12 +3,8 @@ package store
 // These exact exceptions describe the current boundary, not permission to omit
 // future objects. The comparison fails when an exception is stale or resolved.
 var sqliteOnlyBackendTables = map[string]string{
-	"vector_membership_epochs":          "vector index lifecycle is unqualified",
-	"photo_timeline_pending":            "SQLite trigger intermediate; PostgreSQL recomputes directly in document_maintenance.go",
-	"photo_xmp_unsettled_pending":       "SQLite trigger intermediate; PostgreSQL queues directly in document_maintenance.go",
-	"vector_index_build_jobs":           "vector index lifecycle is unqualified",
-	"vector_index_reader_leases":        "vector index lifecycle is unqualified",
-	"vector_index_unavailable_coverage": "vector index lifecycle is unqualified",
+	"photo_timeline_pending":      "SQLite trigger intermediate; PostgreSQL recomputes directly in document_maintenance.go",
+	"photo_xmp_unsettled_pending": "SQLite trigger intermediate; PostgreSQL queues directly in document_maintenance.go",
 }
 
 // Secondary access paths await their query/workload qualification. Tables also

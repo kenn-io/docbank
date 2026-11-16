@@ -2,8 +2,22 @@ package store
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 )
+
+// mimeBaseSQL preserves SQLite substring behavior when NUL precedes a parameter.
+func mimeBaseSQL(postgres bool, column string) string {
+	if !postgres {
+		return "lower(trim(CASE WHEN instr(" + column + ",';')=0 THEN " + column + " ELSE substr(" + column + ",1,instr(" + column + ",';')-1) END))"
+	}
+	return `lower(trim(CASE
+ WHEN position(';'::bytea in ` + column + `)>0
+  AND position('\x00'::bytea in ` + column + `)>0
+  AND position('\x00'::bytea in ` + column + `)<position(';'::bytea in ` + column + `)
+ THEN encode(substring(` + column + ` from 1 for position('\x00'::bytea in ` + column + `)-1),'escape')
+ ELSE split_part(encode(` + column + `,'escape'),';',1) END))`
+}
 
 // PDFTextTargetsAfter lists live PDFs without the profile's text, optionally
 // including versions whose job is still waiting to publish.
@@ -11,10 +25,7 @@ func (s *Store) PDFTextTargetsAfter(ctx context.Context, profile, after string, 
 	if limit < 1 || limit > 1000 {
 		return nil, errors.New("invalid PDF backfill bounds")
 	}
-	mimeType := "lower(trim(CASE WHEN instr(v.mime_type,';')=0 THEN v.mime_type ELSE substr(v.mime_type,1,instr(v.mime_type,';')-1) END))"
-	if s.postgresSchema != "" {
-		mimeType = "lower(trim(split_part(v.mime_type,';',1)))"
-	}
+	mimeType := mimeBaseSQL(s.postgresSchema != "", "v.mime_type")
 	waiting := ""
 	if !includeWaiting {
 		waiting = ` AND NOT ` + pdfWaitingSQL("v.version_id", "$2")
@@ -34,6 +45,38 @@ func (s *Store) PDFTextTargetsAfter(ctx context.Context, profile, after string, 
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+func pdfOmissionCandidateSQL(d metadataJSONDialect, alias string) string {
+	return alias + ".unit_count < " + d.number(alias+".provider_receipt_json", "usage.units")
+}
+
+// PDFTextCandidates returns active builds whose metadata records omitted pages.
+func (s *Store) PDFTextCandidates(ctx context.Context, versions []string, profile string) (map[string]string, error) {
+	d := metadataJSONDialect{s.postgresSchema != ""}
+	encoded, err := json.Marshal(versions)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT h.content_version_id, b.build_id FROM rendition_heads h
+		JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
+		 AND a.content_version_id=h.content_version_id AND a.profile_fingerprint=h.profile_fingerprint
+		JOIN rendition_builds b ON b.build_id=a.build_id
+		WHERE h.content_version_id IN (SELECT value FROM `+d.arrayValues("$1")+`) AND h.profile_fingerprint=$2
+		 AND `+pdfOmissionCandidateSQL(d, "b"), string(encoded), profile)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	builds := make(map[string]string)
+	for rows.Next() {
+		var version, build string
+		if err := rows.Scan(&version, &build); err != nil {
+			return nil, err
+		}
+		builds[version] = build
+	}
+	return builds, rows.Err()
 }
 
 func pdfWaitingSQL(version, profile string) string {

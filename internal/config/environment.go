@@ -56,6 +56,9 @@ func applyEnvironment(c Config) (Config, error) {
 }
 
 func applyMCPEnvironment(c Config) Config {
+	if value := os.Getenv("DOCBANK_MCP_HTTP_PUBLIC_ORIGIN"); value != "" {
+		c.MCP.HTTP.PublicOrigin = value
+	}
 	if value := os.Getenv("DOCBANK_MCP_HTTP_ALLOWED_HOSTS"); value != "" {
 		c.MCP.HTTP.AllowedHosts = strings.Split(value, ",")
 		for i := range c.MCP.HTTP.AllowedHosts {

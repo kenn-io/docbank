@@ -237,7 +237,7 @@ func (s *Store) CommitPhotoCheckoutEntry(ctx context.Context, c PhotoCheckout, e
 			return err
 		}
 		after := checkoutCommitState{c.ID, c.LastOperationID, e.FileID, version.ID, hash, size}
-		if err := writePhotoReceiptTx(ctx, tx, photoReceipt{Operation: "checkout_commit", AssetID: e.AssetID, BeforeRevision: node.Revision, AfterRevision: version.NodeRevision, Before: before, After: after}); err != nil {
+		if err := s.writePhotoReceiptTx(ctx, tx, photoReceipt{Operation: "checkout_commit", AssetID: e.AssetID, BeforeRevision: node.Revision, AfterRevision: version.NodeRevision, Before: before, After: after}); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE photo_checkout_entries SET version_id=$1,blob_hash=$2,size=$3,base_held=1,working_state='clean' WHERE checkout_id=$4 AND file_id=$5`, version.ID, hash, size, c.ID, e.FileID); err != nil {
@@ -305,7 +305,7 @@ func (s *Store) CheckPhotoCheckoutCommitEntry(ctx context.Context, c PhotoChecko
 func (s *Store) checkoutCommitEntryRecorded(ctx context.Context, q metadataQuerier, operationID, fileID string) (bool, error) {
 	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
 	var exists bool
-	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_change_receipts WHERE operation='checkout_commit' AND `+d.text("after_json", "operation_id")+`=$1 AND `+d.text("after_json", "file_id")+`=$2)`, operationID, fileID).Scan(&exists)
+	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_change_receipts WHERE operation='checkout_commit' AND `+d.text(d.receiptColumn(""), "operation_id")+`=$1 AND `+d.text(d.receiptColumn(""), "file_id")+`=$2)`, operationID, fileID).Scan(&exists)
 	return exists, err
 }
 

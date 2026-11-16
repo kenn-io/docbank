@@ -1,7 +1,13 @@
 import {
+  decideFaceCandidate,
+  decidePhotoFace,
+  listFaceCandidates,
   listPeople,
   renamePerson,
   mergePerson,
+  type FaceCandidate,
+  type FaceCandidateDecisionRequest,
+  type FaceSuggestionFace,
   type Person,
   type PersonMergeReceipt,
   type PersonSummary,
@@ -77,6 +83,7 @@ export class People {
   private writer?: AbortController;
   private disposed = false;
   private cursorExpired = false;
+  readonly suggestions: Suggestions = new Suggestions(this);
   constructor(
     readonly session: string,
     readonly onauthfailure: (cause: unknown) => void,
@@ -100,6 +107,7 @@ export class People {
     this.error = "";
     this.merge = undefined;
     this.writeError = "";
+    this.suggestions.conceal();
   }
   async load(query = this.query, more = false) {
     if (this.disposed) return;
@@ -119,13 +127,15 @@ export class People {
     this.error = "";
     this.cursorExpired = false;
     try {
-      const page = await this.run(() => {
+      const reading = this.run(() => {
         request.signal.throwIfAborted();
         return listPeople(
           { query, limit: peoplePageSize, photo_summary: true, ...(cursor ? { cursor } : {}) },
           { session: this.session, signal: request.signal },
         );
       });
+      if (!more && !this.suggestions.started) void this.suggestions.load();
+      const page = await reading;
       if (!request.signal.aborted) {
         this.items = [
           ...new Map(
@@ -150,8 +160,13 @@ export class People {
   // as another tab's rename or merge. It keeps the search, at least as many
   // cards as were loaded, and the selection, with fresh names and revisions.
   // A failure keeps the current cards and throws so the photo event pass
-  // retries.
+  // retries. Suggestions follow all card pages, and the pass waits for both.
   async refresh() {
+    await this.refreshCards().finally(() =>
+      this.suggestions.started ? this.suggestions.load() : undefined,
+    );
+  }
+  async refreshCards() {
     if (this.disposed || this.loading || this.access?.lockError) return;
     const request = (this.controller = new AbortController());
     const { query } = this;
@@ -352,6 +367,315 @@ export class People {
     } finally {
       if (!request.signal.aborted) this.busy = false;
     }
+  }
+  dispose() {
+    this.disposed = true;
+    this.conceal();
+    this.writer?.abort();
+    this.suggestions.dispose();
+  }
+}
+
+export const suggestionTitle = (candidate: FaceCandidate) =>
+  candidate.suggested_person_id ? `Is this ${candidate.display_name}?` : "Who is this?";
+const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+export const suggestionCounts = (faces: readonly FaceSuggestionFace[]) =>
+  `${plural(faces.length, "face")} · ${plural(new Set(faces.map((face) => face.preview.asset_id)).size, "photo")}`;
+
+// A review follows one group through face removals. removed holds the faces
+// taken out in this sheet, so a reread that still lists one cannot restore it;
+// a review without a candidate has nothing left.
+export type SuggestionReview = {
+  candidate?: FaceCandidate;
+  title: string;
+  removed: readonly string[];
+};
+export type NameSearch = {
+  query: string;
+  people: PersonSummary[];
+  nextCursor?: string;
+  pendingCursor?: string;
+  incompleteName?: string;
+  status: "idle" | "loading" | "ready" | "error" | "invalid";
+  error: string;
+};
+const idleNames = (): NameSearch => ({ query: "", people: [], status: "idle", error: "" });
+
+export async function readNamePage(
+  state: NameSearch,
+  options: {
+    session: string;
+    face?: string;
+    signal: AbortSignal;
+    run: <T>(request: () => Promise<T>) => Promise<T>;
+    failure: (cause: unknown) => string;
+  },
+): Promise<NameSearch> {
+  if (new TextEncoder().encode(state.query.trim()).length > 200)
+    return { ...state, status: "invalid", error: "Name must be 200 bytes or fewer." };
+  try {
+    const page = await options.run(() => {
+      options.signal.throwIfAborted();
+      return listPeople(
+        {
+          query: state.query.trim(),
+          limit: 100,
+          recent_first: true,
+          ...(options.face && options.face !== "mark" ? { face_id: options.face } : {}),
+          ...(state.pendingCursor ? { cursor: state.pendingCursor } : {}),
+        },
+        { session: options.session, signal: options.signal },
+      );
+    });
+    return {
+      ...state,
+      // Similarity changes can repeat a person across pages.
+      people: [
+        ...new Map(
+          [...state.people, ...page.items].map((person) => [person.person_id, person]),
+        ).values(),
+      ],
+      nextCursor: page.next_cursor,
+      incompleteName:
+        page.next_cursor && page.same_name_continues ? page.items.at(-1)!.display_name_folded : "",
+      status: "ready",
+      error: "",
+    };
+  } catch (cause) {
+    return {
+      ...state,
+      ...(cause instanceof APIError && cause.code === "cursor_expired"
+        ? { people: [], pendingCursor: undefined, nextCursor: undefined, incompleteName: "" }
+        : {}),
+      status: "error",
+      error: options.failure(cause),
+    };
+  }
+}
+// reviewFaces lists the faces a review still shows, in the server's timeline order.
+export const reviewFaces = ({ candidate, removed }: SuggestionReview) =>
+  (candidate?.faces ?? []).filter((face) => !removed.includes(face.face_id));
+
+// Suggestions holds the People view's face candidates and the review sheet.
+// It shares the cards' session, Hidden access, and concealment.
+export class Suggestions {
+  items = $state.raw<FaceCandidate[]>([]);
+  total = $state(0);
+  offset = $state(0);
+  loading = $state(false);
+  error = $state("");
+  busy = $state(false);
+  writeError = $state("");
+  review = $state.raw<SuggestionReview>();
+  names = $state.raw<NameSearch>(idleNames());
+  started = false;
+  private controller?: AbortController;
+  private writer?: AbortController;
+  private search?: AbortController;
+  private epoch = 0;
+  private disposed = false;
+  constructor(readonly people: People) {}
+  conceal() {
+    this.writer?.abort();
+    this.busy = false;
+    this.controller?.abort();
+    this.search?.abort();
+    this.epoch++;
+    this.started = false;
+    this.items = [];
+    this.total = 0;
+    this.offset = 0;
+    this.loading = false;
+    this.error = "";
+    this.review = undefined;
+    this.names = idleNames();
+    this.writeError = "";
+  }
+  private read(offset: number, signal: AbortSignal) {
+    return this.people.run(() => {
+      signal.throwIfAborted();
+      return listFaceCandidates(
+        { limit: peoplePageSize, offset },
+        {
+          session: this.people.session,
+          signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+        },
+      );
+    });
+  }
+  private current(request: AbortController, epoch: number) {
+    return (
+      !this.disposed &&
+      epoch === this.epoch &&
+      this.controller === request &&
+      !request.signal.aborted
+    );
+  }
+  async load(more = false) {
+    if (this.disposed || this.people.access?.lockError) return;
+    this.started = true;
+    this.controller?.abort();
+    const request = (this.controller = new AbortController());
+    const epoch = this.epoch;
+    const wanted = more
+      ? this.offset + peoplePageSize
+      : Math.max(this.items.length, peoplePageSize);
+    this.loading = true;
+    this.error = "";
+    let rows: FaceCandidate[] = more ? [...this.items] : [];
+    let offset = more ? this.offset : 0;
+    try {
+      let total = 0;
+      do {
+        const page = await this.read(offset, request.signal);
+        if (!this.current(request, epoch)) return;
+        offset += page.items.length;
+        rows = [
+          ...new Map([...rows, ...page.items].map((item) => [item.candidate_id, item])).values(),
+        ];
+        total = page.total;
+        if (!page.items.length) {
+          offset = total;
+          break;
+        }
+      } while (offset < Math.min(wanted, total));
+      this.items = rows;
+      this.total = total;
+      this.offset = offset;
+    } catch (cause) {
+      if (this.current(request, epoch)) {
+        this.error = this.people.failure(cause);
+      }
+    } finally {
+      if (this.current(request, epoch)) this.loading = false;
+    }
+  }
+  retry() {
+    return this.load();
+  }
+  open(candidate: FaceCandidate) {
+    if (this.busy || this.disposed) return;
+    this.search?.abort();
+    this.writeError = "";
+    this.names = idleNames();
+    this.review = { candidate, title: suggestionTitle(candidate), removed: [] };
+  }
+  close() {
+    if (this.busy || this.disposed) return;
+    this.search?.abort();
+    this.writeError = "";
+    this.names = idleNames();
+    this.review = undefined;
+  }
+  // searchNames lists people for the "Who is this?" name picker, closest to
+  // the group's first face when it has a vector.
+  async searchNames(query: string, more = false) {
+    if (this.disposed || !this.review) return;
+    this.search?.abort();
+    const request = (this.search = new AbortController());
+    const epoch = this.epoch;
+    const current = () =>
+      !this.disposed && epoch === this.epoch && this.search === request && !request.signal.aborted;
+    const face = this.review && reviewFaces(this.review)[0];
+    const previous = more ? this.names : idleNames();
+    const cursor = more
+      ? previous.status === "error"
+        ? previous.pendingCursor
+        : previous.nextCursor
+      : undefined;
+    this.names = { ...previous, query, pendingCursor: cursor, status: "loading", error: "" };
+    const next = await readNamePage(this.names, {
+      session: this.people.session,
+      face: face?.face_id,
+      signal: request.signal,
+      run: (read) => this.people.run(read),
+      failure: (cause) => (current() ? this.people.failure(cause) : ""),
+    });
+    if (current()) this.names = next;
+  }
+  private async write(send: (signal: AbortSignal) => Promise<unknown>, settled: () => void) {
+    if (this.busy || this.disposed || !this.review?.candidate) return false;
+    const request = (this.writer = new AbortController());
+    const epoch = this.epoch;
+    this.busy = true;
+    this.writeError = "";
+    try {
+      await send(request.signal);
+      if (request.signal.aborted || epoch !== this.epoch) return false;
+      settled();
+      await this.load();
+      return !request.signal.aborted && epoch === this.epoch;
+    } catch (cause) {
+      if (request.signal.aborted || epoch !== this.epoch) return false;
+      this.writeError = this.people.failure(cause);
+      if (cause instanceof APIError && [404, 409, 412].includes(cause.status)) {
+        this.search?.abort();
+        this.review = undefined;
+        this.names = idleNames();
+        await this.load();
+      }
+      return false;
+    } finally {
+      if (!request.signal.aborted && epoch === this.epoch && !this.disposed) this.busy = false;
+    }
+  }
+  // Reject a proposed name durably. An unnamed crop is omitted from this review.
+  removeFace(face: FaceSuggestionFace) {
+    const review = this.review;
+    const person = review?.candidate?.suggested_person_id;
+    if (review && !person) {
+      const next = { ...review, removed: [...review.removed, face.face_id] };
+      this.review = reviewFaces(next).length ? next : { ...next, candidate: undefined };
+      return Promise.resolve(true);
+    }
+    return this.write(
+      (signal) =>
+        this.people.run(() =>
+          decidePhotoFace(
+            face.content_version_id,
+            {
+              action: "reject",
+              face_id: face.face_id,
+              revision: face.revision,
+              operation_id: randomUUID(),
+              ...(person ? { person_id: person } : {}),
+            },
+            { session: this.people.session, signal },
+          ),
+        ),
+      () => {
+        this.search?.abort();
+        this.review = undefined;
+        this.names = idleNames();
+      },
+    );
+  }
+  // decide settles the whole group and closes the sheet. A confirmation
+  // changes people's photos, so the cards refresh too.
+  async decide(decision: FaceCandidateDecisionRequest) {
+    const candidate = this.review?.candidate;
+    if (!candidate) return false;
+    if (decision.action !== "reject")
+      decision = { ...decision, face_ids: reviewFaces(this.review!).map((face) => face.face_id) };
+    const saved = await this.write(
+      (signal) =>
+        this.people.run(() =>
+          decideFaceCandidate(
+            candidate.candidate_id,
+            decision,
+            { "If-Match": `"${candidate.revision}"` },
+            { session: this.people.session, signal },
+          ),
+        ),
+      () => {
+        this.search?.abort();
+        this.names = idleNames();
+        this.review = undefined;
+      },
+    );
+    if (saved && decision.action !== "reject")
+      await this.people.refreshCards().catch(() => undefined);
+    return saved;
   }
   dispose() {
     this.disposed = true;

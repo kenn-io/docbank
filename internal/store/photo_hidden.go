@@ -382,7 +382,7 @@ func (s *Store) editPhotoHidden(ctx context.Context, passcode, operation, nextHa
 				}
 				next := asset
 				next.HiddenAt = nil
-				if _, err := commitPhotoAssetTx(ctx, tx, asset, next, "unhide"); err != nil {
+				if _, err := s.commitPhotoAssetTx(ctx, tx, asset, next, "unhide"); err != nil {
 					return err
 				}
 				if err := s.refreshPhotoAssetWorkTx(ctx, tx, asset.ID); err != nil {

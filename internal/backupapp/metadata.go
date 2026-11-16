@@ -54,7 +54,17 @@ type derivativeClassAccumulator struct {
 	blobs    map[string]struct{}
 }
 
-func computeDerivativeAuthorityStats(ctx context.Context, q rowQuerier) (*DerivativeAuthorityStats, bool, error) {
+func backupTableExists(ctx context.Context, q rowQuerier, postgres bool, name string) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=$1)`
+	if postgres {
+		query = `SELECT to_regclass($1) IS NOT NULL`
+	}
+	var exists bool
+	err := q.QueryRowContext(ctx, query, name).Scan(&exists)
+	return exists, err
+}
+
+func computeDerivativeAuthorityStats(ctx context.Context, q rowQuerier, postgres bool) (*DerivativeAuthorityStats, bool, error) {
 	classes := make(map[string]*derivativeClassAccumulator)
 	roleOrder := store.PersistedRenditionArtifactRoles()
 	get := func(classification, class string) *derivativeClassAccumulator {
@@ -110,9 +120,8 @@ func computeDerivativeAuthorityStats(ctx context.Context, q rowQuerier) (*Deriva
 	}
 
 	if err := func() error {
-		var present bool
-		if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master
-			WHERE type='table' AND name='visual_preview_generations')`).Scan(&present); err != nil {
+		present, err := backupTableExists(ctx, q, postgres, "visual_preview_generations")
+		if err != nil {
 			return fmt.Errorf("detecting visual preview catalog: %w", err)
 		}
 		if !present {
@@ -183,8 +192,8 @@ func computeDerivativeAuthorityStats(ctx context.Context, q rowQuerier) (*Deriva
 	}
 
 	if err := func() error {
-		var present bool
-		if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='page_images')`).Scan(&present); err != nil {
+		present, err := backupTableExists(ctx, q, postgres, "page_images")
+		if err != nil {
 			return err
 		}
 		if !present {
@@ -216,8 +225,8 @@ func computeDerivativeAuthorityStats(ctx context.Context, q rowQuerier) (*Deriva
 		return nil, false, fmt.Errorf("backupapp: page image authority: %w", err)
 	}
 	if err := func() error {
-		var present bool
-		if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='export_role_roots')`).Scan(&present); err != nil {
+		present, err := backupTableExists(ctx, q, postgres, "export_role_roots")
+		if err != nil {
 			return err
 		}
 		if !present {
@@ -350,7 +359,7 @@ func (s *metadataSnapshot) Stats(ctx context.Context) (jsontext.Value, error) {
 	if s.closed {
 		return nil, errors.New("backupapp: metadata snapshot is closed")
 	}
-	return (&frozenView{tx: s.tx}).Stats(ctx)
+	return (&frozenView{tx: s.tx, postgres: s.tx.IsPostgres()}).Stats(ctx)
 }
 
 func (s *metadataSnapshot) Close() error {

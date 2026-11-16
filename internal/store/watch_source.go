@@ -30,13 +30,15 @@ func (s *Store) RebindWatchedSource(ctx context.Context, watchName, oldRef, newR
 		if owned {
 			return fmt.Errorf("watched node %d is already owned by push", expectedNodeID)
 		}
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM push_sources WHERE push_name=$1 AND source_ref=$2)`, watchName, newRef).Scan(&occupied); err != nil {
-			return err
+		if ValidatePushName(watchName) == nil && ValidatePushRef(newRef) == nil {
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM push_sources WHERE push_name=$1 AND source_ref=$2)`, watchName, newRef).Scan(&occupied); err != nil {
+				return err
+			}
 		}
 		if occupied {
 			return fmt.Errorf("watched destination %q/%q is owned by push", watchName, newRef)
 		}
-		old, err := watchSourceTx(ctx, tx, watchName, oldRef)
+		old, err := watchSourceTx(ctx, tx, watchName, oldRef, s.postgresSchema != "")
 		retry := errors.Is(err, ErrNotFound)
 		if err != nil && !retry {
 			return err
@@ -44,7 +46,7 @@ func (s *Store) RebindWatchedSource(ctx context.Context, watchName, oldRef, newR
 		if !retry && old.nodeID != expectedNodeID {
 			return fmt.Errorf("watched source %q/%q has another node", watchName, oldRef)
 		}
-		destination, err := watchSourceTx(ctx, tx, watchName, newRef)
+		destination, err := watchSourceTx(ctx, tx, watchName, newRef, s.postgresSchema != "")
 		switch {
 		case err == nil && (!retry || destination.nodeID != expectedNodeID):
 			return fmt.Errorf("watched destination %q/%q is occupied", watchName, newRef)
@@ -64,10 +66,10 @@ func (s *Store) RebindWatchedSource(ctx context.Context, watchName, oldRef, newR
 			return fmt.Errorf("watched node %d: %w", node.ID, ErrNotFile)
 		}
 		if retry {
-			_, err := tx.ExecContext(ctx, `DELETE FROM watch_source_absences WHERE watch_name=$1 AND source_ref=$2`, watchName, newRef)
+			_, err := tx.ExecContext(ctx, `DELETE FROM watch_source_absences WHERE watch_name=$1 AND source_ref=$2`, storedString(s.postgresSchema != "", watchName), storedString(s.postgresSchema != "", newRef))
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE watch_sources SET source_ref=$1 WHERE watch_name=$2 AND source_ref=$3 AND node_id=$4`, newRef, watchName, oldRef, expectedNodeID)
+		result, err := tx.ExecContext(ctx, `UPDATE watch_sources SET source_ref=$1 WHERE watch_name=$2 AND source_ref=$3 AND node_id=$4`, storedString(s.postgresSchema != "", newRef), storedString(s.postgresSchema != "", watchName), storedString(s.postgresSchema != "", oldRef), expectedNodeID)
 		if err != nil {
 			return fmt.Errorf("rebinding watched source: %w", err)
 		}
@@ -78,7 +80,7 @@ func (s *Store) RebindWatchedSource(ctx context.Context, watchName, oldRef, newR
 		if count != 1 {
 			return fmt.Errorf("rebinding watched source: %w", ErrNotFound)
 		}
-		_, err = tx.ExecContext(ctx, `DELETE FROM watch_source_absences WHERE watch_name=$1 AND source_ref=$2`, watchName, newRef)
+		_, err = tx.ExecContext(ctx, `DELETE FROM watch_source_absences WHERE watch_name=$1 AND source_ref=$2`, storedString(s.postgresSchema != "", watchName), storedString(s.postgresSchema != "", newRef))
 		return err
 	})
 	if err != nil {

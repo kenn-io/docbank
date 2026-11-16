@@ -1029,7 +1029,7 @@ func writeDaemonASRConfig(root string, cfg config.Config) error {
 	}
 	watches := make([]map[string]any, 0, len(cfg.Watches))
 	for _, watch := range cfg.Watches {
-		watches = append(watches, map[string]any{"name": watch.Name, "source": watch.Source, "destination": watch.Destination, "profile": watch.Profile, "capture_on_change": watch.CaptureOnChange, "scan_interval": watch.ScanInterval.Std().String()})
+		watches = append(watches, map[string]any{"name": watch.Name, "source": watch.Source, "destination": watch.Destination, "profile": watch.Profile, "profiles": watch.Profiles, "capture_on_change": watch.CaptureOnChange, "scan_interval": watch.ScanInterval.Std().String()})
 	}
 	if err := toml.NewEncoder(&encoded).Encode(map[string]any{
 		"server":              map[string]string{"api_key": cfg.Server.APIKey},

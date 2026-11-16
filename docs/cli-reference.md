@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-04
+last_edited: 2026-11-13
 title: CLI reference
 description: Every docbank command, with its flags, output formats, and error behavior.
 ---
@@ -867,7 +867,7 @@ resolvable path.
 The default limit is 100. `--limit` accepts 1–1000 and `--offset` continues a
 bounded result. `--json` emits the page envelope with `items`, `total`, `limit`,
 and `offset`. A cataloged physical blob with no retained content version is not
-a match. The command reports `no authoritative references`.
+a match. The command reports `no document versions found for this content hash on this page`.
 
 ## docbank document revert
 
@@ -1120,9 +1120,11 @@ the match: `text/plain` includes `text/plain; charset=utf-8`. MIME filtering
 excludes directories and retained non-current versions.
 
 `--under` accepts an absolute virtual path or stable `id:N` selector for one
-live directory and searches its descendants. The CLI resolves paths before the
-request and the daemon uses the resulting stable directory ID. The directory
-itself is excluded. A file, missing node, or trashed directory is rejected.
+live directory and searches its descendants. The CLI sends paths as
+`under_path`; the daemon resolves the path and pins its stable directory ID
+for the request. JSON echoes both the authored path and `under_node_id`.
+The directory itself is excluded. A file, missing node, or trashed directory
+is rejected.
 
 `--modified-since` and `--modified-before` accept absolute RFC3339 timestamps
 and filter the live node's current modification time. The lower bound is
@@ -1152,8 +1154,9 @@ unchanged.
 
 For ordinary lexical search, the typed report contains `hits`, the applied
 `limit`, and a `truncated` boolean. A filtered report also echoes the stable
-`tag_id`, normalized `mime_type`, stable `under_node_id`, and canonical
-`modified_since` / `modified_before` bounds when supplied. An empty result uses
+`tag_id`, normalized `mime_type`, stable `under_node_id`, authored `under_path`
+when selected by path, and canonical `modified_since` / `modified_before`
+bounds when supplied. An empty result uses
 `"hits": []`.
 
 The daemon indexes current UTF-8 `text/*`, JSON, and JSONL blobs up to 16 MiB
@@ -1191,6 +1194,7 @@ adds `degraded_error`. Fuzzy lexical search adds `fuzzy` status and
 `fuzzy_reasons`. Processing headers include coverage and complete/scoped
 document counts. With `--explain`, the header adds trace stage/count pairs.
 With `--rerank`, it adds outcome, candidate count, and any failure cause.
+When similar search lacks a source embedding, the header adds `next=` with the planning command.
 
 Each hit is one line with selector, match, and path. Processing hits add the
 daemon score, a lexical/semantic/hybrid match kind, and a short excerpt.
@@ -1247,13 +1251,16 @@ Use `docbank search --similar-to id:42 --profile private_text` with repeated
 `--source-version <uuid>` values to find files like one selected current
 version. Include that version in the source fence. `--version <uuid>` pins the
 selection; omission uses the node's current version. The fence accepts 1 to
-4,096 versions. `--binding`, `--limit` from 1 to 100, and `--agent` or `--json` are supported.
+4,096 versions. `--binding`, `--limit` from 1 to 100, and `--agent` or `--json`
+are supported.
 The default limit is 20 content groups.
 
 Similarity uses stored embeddings locally. It excludes the source node, groups
 identical content, and reports how many other eligible copies each group has.
-Missing source embeddings return `unavailable`. Query text, `--mode`,
-`--explain`, `--rerank`, and lexical filters cannot accompany `--similar-to`.
+When the source embedding is missing, human and agent output show a
+`docbank processing plan` command. JSON reports `state: unavailable` and the
+missing coverage. Query text, `--mode`, `--explain`, `--rerank`, and lexical
+filters cannot accompany `--similar-to`.
 
 ## docbank export
 
@@ -1299,6 +1306,7 @@ version 1 request format, date choices, counts, and retention limits.
 ```
 docbank processing vision-fingerprints [--task <descriptor-id>] --model <model> --trust-boundary <boundary> --endpoint <origin> --deployment-fingerprint <sha256>
 docbank processing local [--server auto|local]
+docbank processing faces
 docbank processing profiles [--json]
 docbank processing probe --profile <name> --seeds <dir> [--overwrite]
 docbank processing coverage <version-uuid> --profile <name> [--json]
@@ -1312,6 +1320,8 @@ docbank processing status <job-id> [--json]
 `probe` runs Mistral capability checks locally with the processing profile's policy, credential, and egress settings. It writes the manifest to the rendition runtime's configured `capability_manifest` path. Supply five synthetic native seeds and use `--overwrite` to replace an existing manifest. After saving, it prints the profile's `descriptor_fingerprint` and `disclosure_fingerprint`. See [Mistral OCR configuration](configuration.md#document-ocr-with-mistral).
 
 `local` previews text indexing for this vault and future imports, including provider disclosures, then enables it without a prompt and downloads any missing server and model files. An indexed compatible Nomic profile keeps its extractor, chunks, and vectors when it moves to the shared server; setup previews a rebuild when another model requires a new built-in index. It saves the selected profile and server outside `config.toml`, then restarts and reconnects the daemon. Both `auto` and `local` select Kit's shared per-user server. See [Local text search](usage/document-processing.md#set-up-local-text-search).
+
+`faces` previews local face suggestions, downloads any missing runtime and model assets, and enables suggestions without a prompt. Faces in Hidden photos are included. If an older text embeddings server needs a restart, stop the reported server and rerun the command. See [People](usage/people.md).
 
 `profiles` lists names the daemon can execute, their rendition and embedding
 bindings, and profile fingerprints. The default configuration lists none.
@@ -1511,6 +1521,14 @@ See [Model Context Protocol](usage/mcp.md) for client setup, tool and resource
 catalogs, transport limits, caching, and unsupported capabilities. For read-only
 HTTP hosting in the daemon process, see [docbank daemon](#docbank-daemon).
 
+### docbank agent setup
+
+```text
+docbank agent setup [--agent claude|codex] [--check] [--json] [--print]
+```
+
+Registers the selected vault with installed Claude Code and Codex clients. `--check` reports readiness without installing; `--print` prints manual commands. Setup enables Codex's MCP feature, which causes an under-development feature notice each session. Re-running setup registers the read-only tools and replaces extra arguments, including `--allow-*`; use `docbank mcp config` for write tools.
+
 ### docbank mcp config
 
 ```text
@@ -1531,7 +1549,7 @@ secret stays unresolved. With no selected binding, printing uses the listener's
 conventional `DOCBANK_MCP_HTTP_TOKEN` variable. HTTP write flags belong on a standalone listener's
 startup command.
 
-Clients must support MCP `2026-07-28`. With Codex 0.164.0, run
+Clients must support MCP `2026-07-28`. The Codex snippet includes a reminder to run
 `codex features enable mcp_2026_07_28` once to persist the client's MCP protocol
 support in `config.toml` for either transport. Then launch with plain `codex`.
 Generated Codex stdio configuration also sets
@@ -1999,7 +2017,7 @@ docbank watch list [--json]
 Lists the daemon's effective watched-inbox configuration in stable name order:
 the machine-local source, virtual-tree destination, complete settle window,
 minimum source age (`0s` when disabled), scan interval, exclusion count, and
-current runner state. `TAGS` shows quoted tag names and any unavailable-tag error. The final `PROCESSING` column shows the profile and any consent wait or status error, or `-` without a profile.
+current runner state. `TAGS` shows quoted tag names and any unavailable-tag error. The final `PROCESSING` column shows the profile and any consent wait or status error, or `-` without a profile. Mapped watches show comma-separated `family=profile` entries with a separate consent note for each route.
 A waiting watcher shows `idle`; it shows `running` while
 ingesting a file. Human output quotes source and destination paths so
 terminal control characters cannot disguise them. `--json` includes the

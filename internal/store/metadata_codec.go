@@ -21,7 +21,7 @@ type metadataRecordCodec interface {
 	sqlTable() string
 	export(ctx context.Context, q metadataQuerier, write metadataWrite) error
 	validateRows(ctx context.Context, q metadataQuerier) error
-	importRecord(ctx context.Context, tx *sql.Tx, raw jsontext.Value) error
+	importRecord(ctx context.Context, tx *sql.Tx, raw jsontext.Value, postgres bool) error
 }
 
 // metadataTable describes one backup record kind by its struct tags. A regular
@@ -30,6 +30,8 @@ type metadataRecordCodec interface {
 // JSON text), and pointer fields are nullable. An `omitempty` pointer field is
 // nullable but not required, so an import line may carry it or leave it out. A
 // `json:"-"` field with a `db` tag is a constant column set by the template.
+// `db:"column,bytes"` keeps a string or nullable string lossless in PostgreSQL
+// BYTEA while SQLite uses TEXT. It never changes the JSON representation.
 // Irregular kinds set hooks and keep their own code.
 type metadataTable[T any] struct {
 	record      T      // template: Type plus constant fields; import decodes into a copy
@@ -39,7 +41,7 @@ type metadataTable[T any] struct {
 	checkExport bool // the kind's exporter validated each row before writing it
 	decode      func(jsontext.Value, *T) error
 	exportAll   func(context.Context, metadataQuerier, metadataWrite) error
-	insert      func(context.Context, *sql.Tx, T) error
+	insert      func(context.Context, *sql.Tx, T, bool) error
 	name        string
 	plan        *metadataColumnPlan
 }
@@ -48,6 +50,7 @@ type metadataColumn struct {
 	index int
 	name  string
 	json  bool
+	bytes bool
 }
 
 type metadataColumnPlan struct {
@@ -88,11 +91,20 @@ func metadataColumnPlanFor(recordType reflect.Type) *metadataColumnPlan {
 		field := recordType.Field(index)
 		if column, ok := field.Tag.Lookup("db"); ok {
 			name, option, _ := strings.Cut(column, ",")
-			if slices.Contains(names, name) || (option != "" && option != "json") {
+			if slices.Contains(names, name) || (option != "" && option != "json" && option != "bytes") {
 				panic(fmt.Sprintf("metadata record %s has an invalid db tag %q", recordType, column))
 			}
+			if option == "bytes" {
+				typ := field.Type
+				if typ.Kind() == reflect.Pointer {
+					typ = typ.Elem()
+				}
+				if typ.Kind() != reflect.String {
+					panic(fmt.Sprintf("metadata byte string %s.%s is not a string", recordType, field.Name))
+				}
+			}
 			names = append(names, name)
-			plan.columns = append(plan.columns, metadataColumn{index: index, name: name, json: option == "json"})
+			plan.columns = append(plan.columns, metadataColumn{index: index, name: name, json: option == "json", bytes: option == "bytes"})
 		}
 		wire, options, _ := strings.Cut(field.Tag.Get("json"), ",")
 		if wire == "" || wire == "-" {
@@ -181,7 +193,7 @@ func (t *metadataTable[T]) scan(ctx context.Context, q metadataQuerier, check bo
 	return rowsError(words, rows)
 }
 
-func (t *metadataTable[T]) importRecord(ctx context.Context, tx *sql.Tx, raw jsontext.Value) error {
+func (t *metadataTable[T]) importRecord(ctx context.Context, tx *sql.Tx, raw jsontext.Value, postgres bool) error {
 	value := t.record
 	decode := t.decode
 	if decode == nil {
@@ -196,19 +208,33 @@ func (t *metadataTable[T]) importRecord(ctx context.Context, tx *sql.Tx, raw jso
 		}
 	}
 	if t.insert != nil {
-		return t.insert(ctx, tx, value)
+		return t.insert(ctx, tx, value, postgres)
 	}
-	return insertMetadataRecord(ctx, tx, t.table, value)
+	return insertMetadataRecord(ctx, tx, t.table, value, postgres)
 }
 
 // insertMetadataRecord writes every `db`-tagged field of record into table.
-func insertMetadataRecord(ctx context.Context, tx *sql.Tx, table string, record any) error {
+func insertMetadataRecord(ctx context.Context, tx *sql.Tx, table string, record any, postgres bool) error {
 	value := reflect.ValueOf(record)
 	plan := metadataColumnPlanFor(value.Type())
 	args := make([]any, len(plan.columns))
 	for position, column := range plan.columns {
 		field := value.Field(column.index)
 		switch {
+		case field.Kind() == reflect.Bool:
+			args[position] = boolInt(field.Bool())
+		case field.Kind() == reflect.Pointer && field.Type().Elem().Kind() == reflect.Bool:
+			if !field.IsNil() {
+				args[position] = boolInt(field.Elem().Bool())
+			}
+		case column.bytes && postgres:
+			if field.Kind() == reflect.Pointer {
+				if field.IsNil() {
+					continue
+				}
+				field = field.Elem()
+			}
+			args[position] = []byte(field.String())
 		case !column.json:
 			args[position] = field.Interface()
 		case field.Type() == jsontextValueType:
@@ -217,7 +243,7 @@ func insertMetadataRecord(ctx context.Context, tx *sql.Tx, table string, record 
 			args[position] = mustCatalogJSON(field.Interface())
 		}
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO `+table+`(`+plan.list+`) VALUES(`+placeholders(len(args))+`)`, args...)
+	_, err := tx.ExecContext(ctx, `INSERT INTO `+table+`(`+plan.list+`) VALUES(`+numberedPlaceholders(len(args), 0)+`)`, args...)
 	return err
 }
 
@@ -261,7 +287,7 @@ func metadataFieldMaps(codecs map[string]metadataRecordCodec) (map[string][]stri
 // plus the state tables no record restores. nodes and processing_incarnations
 // start with bootstrap rows, so requirePristineMetadataTarget compares them to
 // those rows instead.
-func pristineMetadataTableSum(codecs map[string]metadataRecordCodec) string {
+func pristineMetadataTableSum(codecs map[string]metadataRecordCodec, postgres bool) string {
 	tables := slices.Clone(metadataPristineStateTables)
 	for _, codec := range codecs {
 		if table := codec.sqlTable(); table != "" && table != "nodes" && table != "processing_incarnations" {
@@ -270,6 +296,11 @@ func pristineMetadataTableSum(codecs map[string]metadataRecordCodec) string {
 	}
 	slices.Sort(tables)
 	tables = slices.Compact(tables)
+	if postgres {
+		tables = slices.DeleteFunc(tables, func(table string) bool {
+			return slices.Contains([]string{"content_fts", "vector_index_build_jobs", "vector_index_reader_leases", "vector_index_unavailable_coverage"}, table)
+		})
+	}
 	terms := make([]string, len(tables))
 	for index, table := range tables {
 		terms[index] = `(SELECT COUNT(*) FROM ` + table + `)`

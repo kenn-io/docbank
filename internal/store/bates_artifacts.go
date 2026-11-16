@@ -47,7 +47,7 @@ func (s *Store) BatesPublicationPlan(ctx context.Context, allocationID string) (
 	if err != nil {
 		return BatesAllocation{}, nil, err
 	}
-	inputs, err := expectedBatesPagesLimited(ctx, tx, allocation.SnapshotID, MaxBatesExportPages)
+	inputs, err := expectedBatesPagesLimited(ctx, tx, allocation.SnapshotID, MaxBatesExportPages, s.postgresSchema != "")
 	if err != nil {
 		return BatesAllocation{}, nil, err
 	}
@@ -134,7 +134,7 @@ func (s *Store) PublishBatesArtifact(ctx context.Context, publication BatesArtif
 		}
 		for _, page := range publication.Pages {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO bates_artifact_pages(artifact_id,ordinal,occurrence_id,source_blob_sha256,source_page,output_page,label)
-				VALUES($1,$2,$3,$4,$5,$6,$7)`, publication.ArtifactID, page.Ordinal, page.OccurrenceID, page.SourceBlobSHA256,
+				VALUES($1,$2,$3,$4,$5,$6,$7)`, publication.ArtifactID, page.Ordinal, storedString(s.postgresSchema != "", page.OccurrenceID), page.SourceBlobSHA256,
 				page.SourcePage, page.OutputPage, page.Label); err != nil {
 				return err
 			}

@@ -128,7 +128,7 @@ func (s *Store) PublishSourceMetadata(
 			return errors.New("source metadata extractor identity already has different evidence")
 		}
 		generation = stored
-		inserted, err := insertPhotoTechnicalMetadataTx(ctx, tx, generation.GenerationID, photoFields)
+		inserted, err := s.insertPhotoTechnicalMetadataTx(ctx, tx, generation.GenerationID, photoFields)
 		if err != nil {
 			return fmt.Errorf("recording photo technical metadata: %w", err)
 		}

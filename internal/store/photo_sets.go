@@ -196,7 +196,7 @@ func insertPhotoSet(ctx context.Context, tx *sql.Tx, name string) (PhotoSet, err
 	return set, err
 }
 
-func writePhotoSetReceipts(ctx context.Context, tx *sql.Tx, operation string, before, after PhotoSet, ids []string) error {
+func (s *Store) writePhotoSetReceipts(ctx context.Context, tx *sql.Tx, operation string, before, after PhotoSet, ids []string) error {
 	for offset := 0; ; offset += 256 {
 		end := min(offset+256, len(ids))
 		state := func(set PhotoSet) any {
@@ -205,7 +205,7 @@ func writePhotoSetReceipts(ctx context.Context, tx *sql.Tx, operation string, be
 				AssetIDs []string `json:"asset_ids"`
 			}{set, ids[offset:end]}
 		}
-		if err := writePhotoReceiptTx(ctx, tx, photoReceipt{Operation: operation, SetID: after.ID, BeforeRevision: before.Revision, AfterRevision: after.Revision, Before: state(before), After: state(after)}); err != nil {
+		if err := s.writePhotoReceiptTx(ctx, tx, photoReceipt{Operation: operation, SetID: after.ID, BeforeRevision: before.Revision, AfterRevision: after.Revision, Before: state(before), After: state(after)}); err != nil {
 			return err
 		}
 		if end == len(ids) {
@@ -223,7 +223,7 @@ func (s *Store) CreatePhotoSet(ctx context.Context, name string) (PhotoSet, erro
 		if err != nil {
 			return err
 		}
-		return writePhotoSetReceipts(ctx, tx, "set_create", PhotoSet{}, out, nil)
+		return s.writePhotoSetReceipts(ctx, tx, "set_create", PhotoSet{}, out, nil)
 	})
 	return out, err
 }
@@ -239,13 +239,13 @@ func photoSetForMutation(ctx context.Context, tx *sql.Tx, id string, revision in
 	return set, nil
 }
 
-func commitPhotoSet(ctx context.Context, tx *sql.Tx, before, after PhotoSet, operation string, ids []string) (PhotoSet, error) {
+func (s *Store) commitPhotoSet(ctx context.Context, tx *sql.Tx, before, after PhotoSet, operation string, ids []string) (PhotoSet, error) {
 	after.Revision++
 	after.UpdatedAt = nowRFC3339()
 	if _, err := tx.ExecContext(ctx, `UPDATE photo_sets SET name=$1,starred=$2,revision=$3,cover_asset_id=$4,updated_at=$5,deleted_at=$6 WHERE set_id=$7`, after.Name, boolInt(after.Starred), after.Revision, nullablePhotoString(after.CoverAssetID), after.UpdatedAt, nullablePhotoString(after.DeletedAt), after.ID); err != nil {
 		return PhotoSet{}, err
 	}
-	return after, writePhotoSetReceipts(ctx, tx, operation, before, after, ids)
+	return after, s.writePhotoSetReceipts(ctx, tx, operation, before, after, ids)
 }
 
 // UpdatePhotoSet applies one album property decision at the expected revision.
@@ -287,7 +287,7 @@ func (s *Store) UpdatePhotoSet(ctx context.Context, id string, revision int64, n
 			out.CoverAssetID = *cover
 		}
 		if out.Name != before.Name || out.Starred != before.Starred || !equalPhotoOptional(out.CoverAssetID, before.CoverAssetID) {
-			out, err = commitPhotoSet(ctx, tx, before, out, "set_update", nil)
+			out, err = s.commitPhotoSet(ctx, tx, before, out, "set_update", nil)
 			if err != nil {
 				return err
 			}
@@ -316,7 +316,7 @@ func (s *Store) DeletePhotoSet(ctx context.Context, id string, revision int64) (
 		out = before
 		out.CoverAssetID = nil
 		out.DeletedAt = new(nowRFC3339())
-		out, err = commitPhotoSet(ctx, tx, before, out, "set_delete", ids)
+		out, err = s.commitPhotoSet(ctx, tx, before, out, "set_delete", ids)
 		return err
 	})
 	return out, err
@@ -363,7 +363,7 @@ func (s *Store) DuplicatePhotoSet(ctx context.Context, id string, revision int64
 		if err != nil {
 			return err
 		}
-		if err := writePhotoSetReceipts(ctx, tx, "set_duplicate", PhotoSet{}, out, ids); err != nil {
+		if err := s.writePhotoSetReceipts(ctx, tx, "set_duplicate", PhotoSet{}, out, ids); err != nil {
 			return err
 		}
 		out, err = s.photoSetResponse(ctx, tx, out)
@@ -607,7 +607,7 @@ func (s *Store) changePhotoSetMembersTx(ctx context.Context, tx *sql.Tx, before 
 	if add {
 		operation = "set_add"
 	}
-	return commitPhotoSet(ctx, tx, before, out, operation, changed)
+	return s.commitPhotoSet(ctx, tx, before, out, operation, changed)
 }
 
 func (s *Store) photoSetResponse(ctx context.Context, q metadataQuerier, set PhotoSet) (PhotoSet, error) {

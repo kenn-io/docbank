@@ -117,6 +117,17 @@ environment_variable = "DOCBANK_MCP_HTTP_TOKEN"
 		cfg.CredentialBindings["mcp-http"].EnvironmentVariable)
 }
 
+func TestLoadMCPHTTPPublicOrigin(t *testing.T) {
+	dir := privateTestConfigDir(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte("[web]\nenabled=false\n[mcp.http]\npublic_origin='https://archive.example'\n"), 0o600))
+	cfg, err := Load(dir)
+	require.NoError(t, err)
+	require.NoError(t, cfg.Validate())
+	require.Equal(t, "https://archive.example", cfg.MCP.HTTP.PublicOrigin)
+	cfg.MCP.HTTP.PublicOrigin = "https://archive.example/path"
+	require.ErrorContains(t, cfg.Validate(), "public_origin")
+}
+
 func TestValidateMCPHTTPCredentialBindingIsNamedAndDefined(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -351,6 +362,10 @@ func TestProcessingProfilesRejectInvalidReferencesAndPolicies(t *testing.T) {
 		mutate func(*Config)
 		want   string
 	}{
+		{"reserved face profile", func(c *Config) {
+			c.ProcessingProfiles[LocalFacesProfile] = c.ProcessingProfiles["archive"]
+			delete(c.ProcessingProfiles, "archive")
+		}, `profile "local-faces" is reserved`},
 		{"unknown rendition", func(c *Config) {
 			c.ProcessingProfiles["archive"] = withProcessing(c.ProcessingProfiles["archive"], func(p *ProcessingProfileConfig) { p.Rendition = "missing" })
 		}, "rendition"},
@@ -836,6 +851,33 @@ func TestLoadParsesWatchedInboxesAndAppliesDefaults(t *testing.T) {
 	assert.Equal(t, 5*time.Second, c.Watches[1].ScanInterval.Std())
 	assert.False(t, c.Watches[1].CaptureOnChange)
 	require.NoError(t, c.Validate())
+}
+
+func TestLoadWatchProfileRoutes(t *testing.T) {
+	for _, tc := range []struct {
+		name, value string
+		wantError   bool
+		want        WatchProfiles
+	}{
+		{"string", `"asr"`, true, nil},
+		{"non-string value", `{ document = 42 }`, true, nil},
+		{"table", `{ document = "docs" }`, false, WatchProfiles{"document": "docs"}},
+		{"empty table", `{}`, false, WatchProfiles{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := privateTestConfigDir(t)
+			body := "[[watch]]\nname = 'first'\nprofiles = {}\n[[watch]]\nname = 'second'\nprofiles = " + tc.value + "\n"
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(body), 0600))
+			cfg, err := Load(dir)
+			if tc.wantError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, cfg.Watches, 2)
+			assert.Equal(t, tc.want, cfg.Watches[1].Profiles)
+		})
+	}
 }
 
 func TestWatchDefaultExcludes(t *testing.T) {
@@ -1426,4 +1468,42 @@ func TestWatchProcessingProfileValidation(t *testing.T) {
 	rendition.AdapterContract = document.VisionAdapterContract
 	cfg.RenditionProfiles["primary"] = rendition
 	require.ErrorContains(t, cfg.Validate(), "requires an original-document rendition")
+}
+
+func TestWatchProcessingProfileMapValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name, shorthand string
+		routes          map[string]string
+		want            string
+	}{
+		{name: "mapped", routes: map[string]string{"document": "archive", "audio_video": "archive"}},
+		{name: "deterministic errors", routes: map[string]string{"aaa": "archive", "bbb": "archive", "ccc": "archive", "ddd": "archive", "eee": "archive", "fff": "archive", "ggg": "archive", "hhh": "archive", "iii": "archive", "jjj": "archive"}, want: `unknown media family "aaa"`},
+		{name: "exclusive", shorthand: "archive", routes: map[string]string{"document": "archive"}, want: "mutually exclusive"},
+		{name: "empty map exclusive", shorthand: "archive", routes: map[string]string{}, want: "mutually exclusive"},
+		{name: "empty", routes: map[string]string{"document": ""}, want: "not defined"},
+		{name: "undefined", routes: map[string]string{"document": "missing"}, want: "not defined"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validProcessingConfig()
+			cfg.Watches = []WatchConfig{{Name: "inbox", Source: t.TempDir(), Destination: "/inbox", SettleTime: Duration(time.Second), ScanInterval: Duration(time.Second), Profile: tc.shorthand, Profiles: tc.routes}}
+			if tc.want == "" {
+				require.NoError(t, cfg.Validate())
+			} else {
+				require.ErrorContains(t, cfg.Validate(), tc.want)
+			}
+		})
+	}
+}
+
+func TestWatchProcessingProfileFor(t *testing.T) {
+	watch := WatchConfig{Profiles: map[string]string{"document": "docling", "audio_video": "asr"}}
+	for _, tc := range []struct{ mime, name, want string }{
+		{"application/pdf", "report.pdf", "docling"},
+		{"audio/wav", "memo.wav", "asr"},
+		{"text/plain", "notes.txt", ""},
+	} {
+		assert.Equal(t, tc.want, watch.ProcessingProfileFor(tc.mime, tc.name))
+	}
+	shorthand := WatchConfig{Profile: "all"}
+	assert.Equal(t, "all", shorthand.ProcessingProfileFor("application/pdf", "report.pdf"))
 }

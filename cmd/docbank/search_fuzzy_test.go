@@ -56,10 +56,23 @@ func TestSearchFuzzyEmptyLimitedOutput(t *testing.T) {
 		require.NoError(t, writeSearchReport(cmd, report, "", ""))
 		require.Contains(t, out.String(), "no matches")
 		if receipt != nil && receipt.Status != "complete" {
-			require.Contains(t, out.String(), "incomplete")
+			require.Contains(t, out.String(), "some filename matches may be missing")
 			require.Contains(t, out.String(), "--under")
 		} else {
-			require.NotContains(t, out.String(), "incomplete")
+			require.NotContains(t, out.String(), "some filename matches may be missing")
 		}
+	}
+}
+
+func TestSearchUnderPathHumanSummary(t *testing.T) {
+	for _, tc := range []struct{ path, want string }{
+		{"/cases", `directory "/cases"`},
+		{"", "directory ID id:42"},
+	} {
+		var out bytes.Buffer
+		cmd := &cobra.Command{}
+		cmd.SetOut(&out)
+		require.NoError(t, writeSearchReport(cmd, api.SearchReport{UnderNodeID: 42}, "", tc.path))
+		require.Contains(t, out.String(), tc.want)
 	}
 }

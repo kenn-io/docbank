@@ -156,7 +156,7 @@ func (s *Store) resolveFilteredProcessingSourceFenceSnapshot(
 	if err != nil {
 		return ProcessingSourceFenceResolution{}, err
 	}
-	observed, err := liveSearchScopeCount(ctx, snapshot, normalized)
+	observed, err := s.liveSearchScopeCount(ctx, snapshot, normalized)
 	if err != nil {
 		return ProcessingSourceFenceResolution{}, fmt.Errorf("counting source-fence scope: %w", err)
 	}
@@ -165,7 +165,7 @@ func (s *Store) resolveFilteredProcessingSourceFenceSnapshot(
 			ObservedScopeCount: observed,
 		}
 	}
-	filterSQL, args := searchFilterSQL(normalized)
+	filterSQL, args := searchFilterSQL(normalized, false, 0)
 	rows, err := snapshot.QueryContext(ctx, `SELECT cv.version_id FROM `+nodeFrom+`
 		WHERE n.kind='file' AND n.trashed_at IS NULL `+filterSQL+`
 		ORDER BY cv.version_id`, args...)

@@ -207,7 +207,7 @@ func IsInitialIngestAdmissionError(err error) bool {
 func (s *Store) ensureIngestRunForMutationTx(
 	ctx context.Context, tx *sql.Tx, run IngestRun,
 ) (bool, error) {
-	inserted, err := ensureIngestRunTx(ctx, tx, run)
+	inserted, err := s.ensureIngestRunTx(ctx, tx, run)
 	if err == nil || run.initialLabel == nil {
 		return inserted, err
 	}

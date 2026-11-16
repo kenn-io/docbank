@@ -34,7 +34,7 @@ func TestRecipientSelection(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "selection.json")
 			require.NoError(t, os.WriteFile(path, []byte(data), 0600))
-			selection, err := readRecipientSelection(path)
+			selection, err := readRecipientSelection(t.Context(), path)
 			if name != "valid" {
 				require.Error(t, err)
 				require.Equal(t, 2, commandExitCode(err, false))

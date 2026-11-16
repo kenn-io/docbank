@@ -106,7 +106,7 @@ describe("sanitized Markdown drawer", () => {
     });
 
     expect(await screen.findByText(/no verified rendition mirror is readable/i)).toBeTruthy();
-    expect(screen.getByText(/no readable verified mirror/i)).toBeTruthy();
+    expect(screen.getByText(/couldn.t load this document.s saved Markdown text/i)).toBeTruthy();
     expect(container.querySelector(".rendition-body")).toBeNull();
   });
 });

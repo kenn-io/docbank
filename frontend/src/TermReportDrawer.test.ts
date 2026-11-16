@@ -196,7 +196,7 @@ it("merges continued date evidence into one document card and retains its choice
   await fireEvent.input(screen.getByRole("textbox", { name: "Reason" }), {
     target: { value: "Checked the first source date" },
   });
-  await fireEvent.click(screen.getByRole("button", { name: "More evidence" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Load more dates" }));
   expect(await screen.findByText("Document 2")).toBeTruthy();
   expect(screen.getAllByText("Document 1")).toHaveLength(1);
   const firstCard = screen.getByRole("group", { name: "Document 1" });
@@ -210,7 +210,7 @@ it("merges continued date evidence into one document card and retains its choice
     "Checked the first source date",
   );
   expect(screen.getByRole("radio", { name: /2026-03-17/ })).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "More evidence" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Load more dates" })).toBeNull();
 });
 
 it.each([false, true])(
@@ -284,7 +284,9 @@ it.each([false, true])(
     await fireEvent.input(screen.getByRole("textbox", { name: "Reason" }), {
       target: { value: "Checked the source date" },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Create reviewed revision" }));
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Create report with these date choices" }),
+    );
     expect(await screen.findByRole("alert")).toHaveProperty(
       "textContent",
       "Enter a reviewed date and source timezone for each interpreted date.",
@@ -297,7 +299,9 @@ it.each([false, true])(
     await fireEvent.input(screen.getByRole("textbox", { name: "Source timezone" }), {
       target: { value: "UTC" },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Create reviewed revision" }));
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Create report with these date choices" }),
+    );
     await waitFor(() => expect(revisions).toHaveLength(1));
     expect(revisions[0].choices[0]).toMatchObject({
       action: "interpret",
@@ -323,7 +327,9 @@ it.each([false, true])(
     await fireEvent.click(screen.getByRole("option", { name: "created" }));
     await fireEvent.click(screen.getByRole("combobox", { name: /^Action/ }));
     await fireEvent.click(screen.getByRole("option", { name: "Select source date" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Create reviewed revision" }));
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Create report with these date choices" }),
+    );
     await waitFor(() => expect(revisions).toHaveLength(2));
     expect(revisions[1].choices[0]).toMatchObject({ action: "select" });
     expect(revisions[1].choices[0]).not.toHaveProperty("reviewed_role");
@@ -454,7 +460,7 @@ it("keeps selected history fixed, clears review choices, and explains date-scope
     selected_documents: { documents },
     date_choices: [],
   });
-  expect(await screen.findByText(/1 scoped · 1 searchable/)).toBeTruthy();
+  expect(await screen.findByText(/1 in date ranges · 1 searchable/)).toBeTruthy();
   await fireEvent.input(screen.getByRole("textbox", { name: "Expression for term 1" }), {
     target: { value: "beta" },
   });
@@ -465,9 +471,9 @@ it("keeps selected history fixed, clears review choices, and explains date-scope
     ),
   );
   await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
-  expect(await screen.findByRole("alert")).toHaveProperty(
-    "textContent",
-    "Selected documents changed. Refresh the workspace and reselect the intended current versions.",
+  const conflict = await screen.findByRole("region", { name: "Selected documents changed" });
+  expect(within(conflict).getByRole("status").textContent).toContain(
+    "The report didn't run. Some selected documents have a different version or are no longer available.",
   );
   expect(submitted).toHaveLength(2);
 });
@@ -536,9 +542,9 @@ it.each(["beta", ""])(
     expect(screen.getByRole("radio", { name: "All documents" }).getAttribute("aria-checked")).toBe(
       "true",
     );
-    expect(screen.getByRole("combobox", { name: /^Coverage policy:/ })).toHaveProperty(
+    expect(screen.getByRole("combobox", { name: /^Missing information:/ })).toHaveProperty(
       "textContent",
-      expect.stringContaining("Stop on incomplete coverage"),
+      expect.stringContaining("Stop report"),
     );
     expect(screen.getByRole("textbox", { name: "Report timezone" })).toHaveProperty("value", "UTC");
     expect(screen.queryByRole("checkbox", { name: /New source/ })).toBeNull();
@@ -602,4 +608,207 @@ it("loads imports for the Searches page only once a report is started", async ()
   await fireEvent.click(screen.getByRole("radio", { name: "Selected imports" }));
   expect(await screen.findByRole("checkbox", { name: /New source/ })).toBeTruthy();
   expect(collectionReads()).toBe(1);
+});
+
+it("requires acceptance before using current document versions", async () => {
+  const old = {
+    node_id: 1,
+    version_id: "20000000-0000-4000-8000-000000000001",
+    sha256: "a".repeat(64),
+  };
+  const current = {
+    ...old,
+    version_id: "20000000-0000-4000-8000-000000000002",
+    sha256: "b".repeat(64),
+  };
+  const trashed = { ...old, node_id: 2 };
+  const missing = { ...old, node_id: 3 };
+  const submissions: any[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+    if (init?.method === "GET") return json({ items: [], total: 0 });
+    if (String(url).endsWith("/selection"))
+      return json([
+        {
+          selected: old,
+          current,
+          name: "changed.txt",
+          modified: "2026-09-20T12:00:00Z",
+          status: "changed",
+        },
+        { selected: trashed, name: "trash.txt", status: "trashed" },
+        { selected: missing, status: "missing" },
+      ]);
+    submissions.push(JSON.parse(String(init?.body)));
+    if (submissions.length > 1) return json(oldSummary);
+    return new Response(
+      JSON.stringify({ code: "report_selection_changed", detail: "Selection changed" }),
+      { status: 409, headers: { "Content-Type": "application/problem+json" } },
+    );
+  });
+  render(TermReportDrawer, {
+    session: "session",
+    initialExpression: "alpha",
+    initialDocuments: [old, trashed, missing],
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Refresh selection" }));
+  expect(await screen.findByText("In trash")).toBeTruthy();
+  expect(screen.getByText("No longer available")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Use this selection" })).toHaveProperty(
+    "disabled",
+    true,
+  );
+  const checkbox = screen.getByRole("checkbox", { name: "Include current version" });
+  expect(checkbox).toHaveProperty("checked", false);
+  await fireEvent.click(checkbox);
+  await fireEvent.click(screen.getByRole("button", { name: "Use this selection" }));
+  expect(submissions).toHaveLength(1);
+  expect(screen.getByText("Selection updated")).toBeTruthy();
+  expect(
+    screen.getByText(
+      "1 document now uses its current version. 2 documents were left out. Create the report again.",
+    ),
+  ).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+  await waitFor(() => expect(submissions).toHaveLength(2));
+  expect(submissions[1].selected_documents.documents).toEqual([current]);
+});
+
+it("shows a selection conflict after editing a term", async () => {
+  const document = {
+    node_id: 1,
+    version_id: "20000000-0000-4000-8000-000000000001",
+    sha256: "a".repeat(64),
+  };
+  let finish!: (response: Response) => void;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+    if (init?.method === "GET") return json({ items: [], total: 0 });
+    return new Promise<Response>((resolve) => {
+      finish = resolve;
+    });
+  });
+  render(TermReportDrawer, {
+    session: "session",
+    initialExpression: "alpha",
+    initialDocuments: [document],
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+  await fireEvent.input(screen.getByRole("textbox", { name: "Expression for term 1" }), {
+    target: { value: "beta" },
+  });
+  finish(
+    new Response(
+      JSON.stringify({ code: "report_selection_changed", detail: "Selection changed" }),
+      { status: 409, headers: { "Content-Type": "application/problem+json" } },
+    ),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Create report" })).toHaveProperty("disabled", false),
+  );
+  expect(screen.getByRole("button", { name: "Refresh selection" })).toBeTruthy();
+});
+
+it("rejects an unknown refresh status without changing the selection", async () => {
+  const document = {
+    node_id: 1,
+    version_id: "20000000-0000-4000-8000-000000000001",
+    sha256: "a".repeat(64),
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+    if (init?.method === "GET") return json({ items: [], total: 0 });
+    if (String(url).endsWith("/selection")) return json([{ selected: document, status: "future" }]);
+    return new Response(JSON.stringify({ code: "report_selection_changed" }), {
+      status: 409,
+      headers: { "Content-Type": "application/problem+json" },
+    });
+  });
+  render(TermReportDrawer, {
+    session: "session",
+    initialExpression: "alpha",
+    initialDocuments: [document],
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Refresh selection" }));
+  expect(await screen.findByText(/selection response was incomplete or invalid/)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Use this selection" })).toBeNull();
+});
+
+it("shows paths and both version dates for matching document names", async () => {
+  const one = {
+    node_id: 1,
+    version_id: "20000000-0000-4000-8000-000000000001",
+    sha256: "a".repeat(64),
+  };
+  const two = { ...one, node_id: 2 };
+  const current = { ...one, version_id: "20000000-0000-4000-8000-000000000002" };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+    if (init?.method === "GET") return json({ items: [], total: 0 });
+    if (String(url).endsWith("/selection"))
+      return json(
+        [one, two].map((selected, index) => ({
+          selected,
+          current: { ...current, node_id: selected.node_id },
+          name: "file.txt",
+          path: index ? "/two/file.txt" : "/one/file.txt",
+          selected_recorded: "2026-01-01T00:00:01Z",
+          modified: index ? "2025-01-01T00:00:00Z" : "2026-01-01T00:00:30Z",
+          status: "changed",
+        })),
+      );
+    return new Response(JSON.stringify({ code: "report_selection_changed" }), {
+      status: 409,
+      headers: { "Content-Type": "application/problem+json" },
+    });
+  });
+  render(TermReportDrawer, {
+    session: "session",
+    initialExpression: "alpha",
+    initialDocuments: [one, two],
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Refresh selection" }));
+  expect(await screen.findByText("one/file.txt")).toBeTruthy();
+  expect(screen.getByText("two/file.txt")).toBeTruthy();
+  expect(screen.getByText(/Current: different version/)).toBeTruthy();
+  expect(screen.getAllByText(/^Selected: .*Current:/)).toHaveLength(2);
+});
+
+it("clears the conflict after a successful rerun", async () => {
+  const document = {
+    node_id: 1,
+    version_id: "20000000-0000-4000-8000-000000000001",
+    sha256: "a".repeat(64),
+  };
+  let attempts = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+    if (init?.method === "GET") return json({ items: [], total: 0 });
+    if (++attempts > 1) return json(oldSummary);
+    return new Response(JSON.stringify({ code: "report_selection_changed" }), {
+      status: 409,
+      headers: { "Content-Type": "application/problem+json" },
+    });
+  });
+  render(TermReportDrawer, {
+    session: "session",
+    initialExpression: "alpha",
+    initialDocuments: [document],
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+  await screen.findByRole("button", { name: "Refresh selection" });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Create report" })).toHaveProperty("disabled", false),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+  await screen.findByText("Counts ready", { exact: false });
+  expect(screen.queryByRole("button", { name: "Refresh selection" })).toBeNull();
 });

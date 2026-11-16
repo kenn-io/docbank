@@ -182,11 +182,11 @@ func (s *Store) StageEmbeddingSet(ctx context.Context, record EmbeddingSetRecord
 		return err
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return stageEmbeddingSetTx(ctx, tx, record)
+		return stageEmbeddingSetTx(ctx, tx, record, s.postgresSchema != "")
 	})
 }
 
-func stageEmbeddingSetTx(ctx context.Context, tx *sql.Tx, record EmbeddingSetRecord) error {
+func stageEmbeddingSetTx(ctx context.Context, tx *sql.Tx, record EmbeddingSetRecord, postgres bool) error {
 	if err := validateEmbeddingSetFencesTx(ctx, tx, record); err != nil {
 		return err
 	}
@@ -202,13 +202,13 @@ func stageEmbeddingSetTx(ctx context.Context, tx *sql.Tx, record EmbeddingSetRec
 	record.VectorSet.Payload = nil
 	record.InputGeneration.GenerationJSON = nil
 	record.InputGeneration.EvidenceJSON = nil
-	if err := insertVectorSpaceTx(ctx, tx, record.VectorSpace); err != nil {
+	if err := insertVectorSpaceTx(ctx, tx, record.VectorSpace, postgres); err != nil {
 		return err
 	}
-	if err := insertInputGenerationTx(ctx, tx, record.InputGeneration); err != nil {
+	if err := insertInputGenerationTx(ctx, tx, record.InputGeneration, postgres); err != nil {
 		return err
 	}
-	if err := insertVectorSetTx(ctx, tx, record.VectorSet); err != nil {
+	if err := insertVectorSetTx(ctx, tx, record.VectorSet, postgres); err != nil {
 		return err
 	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO embedding_sets(
@@ -473,11 +473,11 @@ func (s *Store) PublishEmbeddingHead(ctx context.Context, record EmbeddingHeadRe
 		return fmt.Errorf("publishing embedding head: %w", err)
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return publishEmbeddingHeadTx(ctx, tx, record)
+		return publishEmbeddingHeadTx(ctx, tx, record, s.postgresSchema != "")
 	})
 }
 
-func publishEmbeddingHeadTx(ctx context.Context, tx *sql.Tx, record EmbeddingHeadRecord) error {
+func publishEmbeddingHeadTx(ctx context.Context, tx *sql.Tx, record EmbeddingHeadRecord, postgres bool) error {
 	set, err := loadEmbeddingSetTx(ctx, tx, record.SetID)
 	if err != nil {
 		return fmt.Errorf("publishing embedding head: %w", err)
@@ -510,6 +510,15 @@ func publishEmbeddingHeadTx(ctx context.Context, tx *sql.Tx, record EmbeddingHea
 	if newerFailure {
 		return fmt.Errorf("publishing embedding head: stale or reused fencing token: %w", ErrEmbeddingAuthorityStale)
 	}
+	var priorSet, priorSpace string
+	if postgres {
+		err := tx.QueryRowContext(ctx, `SELECT embedding_set_id,vector_space_id FROM embedding_heads
+		 WHERE content_version_id=$1 AND profile_fingerprint=$2 AND binding_id=$3 AND input_kind=$4`,
+			record.Key.ContentVersionID, record.ProcessingProfileFingerprint, record.Key.BindingID, record.Key.InputKind).Scan(&priorSet, &priorSpace)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO embedding_heads(
 		content_version_id,binding_id,input_kind,embedding_set_id,vector_space_id,
 		profile_fingerprint,published_at,fencing_token
@@ -533,6 +542,12 @@ func publishEmbeddingHeadTx(ctx context.Context, tx *sql.Tx, record EmbeddingHea
 	}
 	if changed != 1 {
 		return fmt.Errorf("publishing embedding head: stale or reused fencing token: %w", ErrEmbeddingAuthorityStale)
+	}
+	if postgres && (priorSet != record.SetID || priorSpace != record.VectorSpaceID) {
+		if err := invalidateVectorMembershipTx(ctx, tx, true, `SELECT CAST($1 AS TEXT) AS vector_space_id
+		 UNION SELECT $2 WHERE $2<>''`, record.VectorSpaceID, priorSpace); err != nil {
+			return err
+		}
 	}
 	_, err = tx.ExecContext(ctx, `DELETE FROM embedding_failures
 		WHERE content_version_id=$1 AND profile_fingerprint=$2 AND binding_id=$3 AND input_kind=$4`,
@@ -808,7 +823,7 @@ func validateEmbeddingVectorSet(vectorSet EmbeddingVectorSetRecord, space Embedd
 			return err
 		}
 	}
-	if vectorSet.RowCount != len(vectorSet.rows) || vectorSet.RowCount != len(generation.Inputs) ||
+	if vectorSet.RowCount != len(vectorSet.rows) || (vectorSet.RowCount != len(generation.Inputs) && generation.ChunkPolicyFingerprint != FaceEmbeddingPolicyFingerprint()) ||
 		vectorSet.RowCount < 1 || vectorSet.RowCount > maxEmbeddingCatalogRows {
 		return errors.New("embedding vector-set row count does not match input generation")
 	}
@@ -849,7 +864,14 @@ func validateEmbeddingVectorSet(vectorSet EmbeddingVectorSetRecord, space Embedd
 		if row.RowID != row.InputID {
 			return errors.New("embedding vector row ID does not match canonical input key")
 		}
-		if row.InputID != generation.Inputs[index].ID || row.Checksum != generation.Inputs[index].RenderedChecksum {
+		expectedIndex := index
+		if generation.ChunkPolicyFingerprint == FaceEmbeddingPolicyFingerprint() {
+			expectedIndex = slices.IndexFunc(generation.Inputs, func(input EmbeddingInputReference) bool { return input.ID == row.InputID })
+			if expectedIndex < 0 || index > 0 && vectorSet.rows[index-1].InputID >= row.InputID {
+				return errors.New("face vector rows must follow input order")
+			}
+		}
+		if row.InputID != generation.Inputs[expectedIndex].ID || row.Checksum != generation.Inputs[expectedIndex].RenderedChecksum {
 			return errors.New("embedding vector rows do not match ordered generation inputs and checksums")
 		}
 		seenRows[row.RowID], seenInputs[row.InputID] = struct{}{}, struct{}{}
@@ -976,6 +998,11 @@ func validateEmbeddingSetFencesTx(ctx context.Context, tx *sql.Tx, record Embedd
 	if record.InputKind == document.EmbeddingInputRenditionChunk && record.InputGeneration.AttachmentID == "" {
 		return errors.New("chunk embedding set requires rendition attachment authority")
 	}
+	if record.InputKind == document.EmbeddingInputFace {
+		if err := validateFaceEmbeddingPreviewTx(ctx, tx, record.InputGeneration); err != nil {
+			return err
+		}
+	}
 	if record.InputKind == document.EmbeddingInputImage {
 		if err := validateImageEmbeddingPreviewTx(ctx, tx, record.InputGeneration); err != nil {
 			return err
@@ -1046,6 +1073,11 @@ func validateEmbeddingBindingAuthority(record EmbeddingSetRecord, binding docume
 		descriptor.CompatibilityID != binding.CompatibilityID || descriptor.ModelInput != binding.ModelInput || !slices.Contains(descriptor.InputKinds, binding.InputKind) {
 		return errors.New("embedding descriptor differs from binding")
 	}
+	if record.InputKind == document.EmbeddingInputFace {
+		if err := validateFaceEmbeddingGeneration(record.InputGeneration, binding.Name); err != nil {
+			return err
+		}
+	}
 	if record.InputKind == document.EmbeddingInputImage {
 		if err := validateImageEmbeddingGeneration(record.InputGeneration, binding.Name); err != nil {
 			return err
@@ -1078,7 +1110,7 @@ func validateEmbeddingBindingAuthority(record EmbeddingSetRecord, binding docume
 	return nil
 }
 
-func insertVectorSpaceTx(ctx context.Context, tx *sql.Tx, record EmbeddingVectorSpaceRecord) error {
+func insertVectorSpaceTx(ctx context.Context, tx *sql.Tx, record EmbeddingVectorSpaceRecord, postgres bool) error {
 	descriptorJSON, err := encodeCanonicalEmbeddingDescriptor(record.Descriptor)
 	if err != nil {
 		return fmt.Errorf("encoding E1 descriptor: %w", err)
@@ -1089,9 +1121,9 @@ func insertVectorSpaceTx(ctx context.Context, tx *sql.Tx, record EmbeddingVector
 		descriptor_fingerprint,compatibility_id,dimensions,metric,normalization,
 		scalar_encoding,document_formatter,query_formatter,model_input_fingerprint
 	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT DO NOTHING`, record.ID, record.ContractVersion, descriptorJSON,
-		record.ProviderDescriptor, record.ProviderRevision, record.DescriptorFingerprint,
-		record.CompatibilityID, record.Dimensions, record.Metric, record.Normalization,
-		record.ScalarEncoding, record.DocumentFormatter, record.QueryFormatter,
+		storedString(postgres, record.ProviderDescriptor), storedString(postgres, record.ProviderRevision), record.DescriptorFingerprint,
+		storedString(postgres, record.CompatibilityID), record.Dimensions, record.Metric, record.Normalization,
+		record.ScalarEncoding, storedString(postgres, record.DocumentFormatter), storedString(postgres, record.QueryFormatter),
 		record.ModelInputFingerprint)
 	if err != nil {
 		return fmt.Errorf("inserting embedding vector space: %w", err)
@@ -1107,7 +1139,7 @@ func insertVectorSpaceTx(ctx context.Context, tx *sql.Tx, record EmbeddingVector
 	return nil
 }
 
-func insertInputGenerationTx(ctx context.Context, tx *sql.Tx, record EmbeddingInputGenerationRecord) error {
+func insertInputGenerationTx(ctx context.Context, tx *sql.Tx, record EmbeddingInputGenerationRecord, postgres bool) error {
 	var attachment any
 	if record.AttachmentID != "" {
 		attachment = record.AttachmentID
@@ -1136,14 +1168,14 @@ func insertInputGenerationTx(ctx context.Context, tx *sql.Tx, record EmbeddingIn
 	for order, input := range record.Inputs {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO embedding_generation_inputs(
 			generation_id,input_id,input_order,rendered_checksum) VALUES($1,$2,$3,$4)`,
-			record.ID, input.ID, order, input.RenderedChecksum); err != nil {
+			record.ID, storedString(postgres, input.ID), order, input.RenderedChecksum); err != nil {
 			return fmt.Errorf("inserting embedding input: %w", err)
 		}
 	}
 	return nil
 }
 
-func insertVectorSetTx(ctx context.Context, tx *sql.Tx, record EmbeddingVectorSetRecord) error {
+func insertVectorSetTx(ctx context.Context, tx *sql.Tx, record EmbeddingVectorSetRecord, postgres bool) error {
 	result, err := tx.ExecContext(ctx, `INSERT INTO embedding_vector_sets(
 		vector_set_id,contract_version,vector_space_id,payload_blob_hash,payload_size,payload_checksum,
 		manifest_checksum,row_count,dimensions) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`, record.ID,
@@ -1163,7 +1195,7 @@ func insertVectorSetTx(ctx context.Context, tx *sql.Tx, record EmbeddingVectorSe
 	for order, row := range record.rows {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO embedding_vector_rows(
 			vector_set_id,row_id,row_order,input_id,dimensions,checksum) VALUES($1,$2,$3,$4,$5,$6)`,
-			record.ID, row.RowID, order, row.InputID, row.Dimensions, row.Checksum); err != nil {
+			record.ID, storedString(postgres, row.RowID), order, storedString(postgres, row.InputID), row.Dimensions, row.Checksum); err != nil {
 			return fmt.Errorf("inserting embedding vector row: %w", err)
 		}
 	}
@@ -1171,29 +1203,67 @@ func insertVectorSetTx(ctx context.Context, tx *sql.Tx, record EmbeddingVectorSe
 }
 
 func loadEmbeddingSetTx(ctx context.Context, tx metadataQuerier, id string) (EmbeddingSetRecord, error) {
-	var result EmbeddingSetRecord
-	err := tx.QueryRowContext(ctx, `SELECT embedding_set_id,vault_uid,binding_id,input_kind,
-		content_version_id,profile_fingerprint,embedding_input_fingerprint,vector_space_id,input_generation_id,
-		vector_set_id,created_at FROM embedding_sets WHERE embedding_set_id=$1`, id).Scan(
-		&result.ID, &result.VaultID, &result.BindingID, &result.InputKind,
-		&result.ContentVersionID, &result.ProcessingProfileFingerprint, &result.EmbeddingInputFingerprint, &result.VectorSpace.ID,
-		&result.InputGeneration.ID, &result.VectorSet.ID, &result.CreatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return EmbeddingSetRecord{}, ErrNotFound
-	}
+	records, err := loadEmbeddingSetsTx(ctx, tx, []string{id})
 	if err != nil {
-		return EmbeddingSetRecord{}, fmt.Errorf("loading embedding set: %w", err)
-	}
-	if result.VectorSpace, err = loadVectorSpaceTx(ctx, tx, result.VectorSpace.ID); err != nil {
 		return EmbeddingSetRecord{}, err
 	}
-	if result.InputGeneration, err = loadInputGenerationTx(ctx, tx, result.InputGeneration.ID); err != nil {
-		return EmbeddingSetRecord{}, err
+	record, ok := records[id]
+	if !ok {
+		return record, ErrNotFound
 	}
-	if result.VectorSet, err = loadVectorSetTx(ctx, tx, result.VectorSet.ID); err != nil {
-		return EmbeddingSetRecord{}, err
+	return record, nil
+}
+
+func loadEmbeddingSetsTx(ctx context.Context, tx metadataQuerier, ids []string) (map[string]EmbeddingSetRecord, error) {
+	if len(ids) == 0 {
+		return map[string]EmbeddingSetRecord{}, nil
 	}
-	return result, nil
+	ids = slices.Compact(slices.Sorted(slices.Values(ids)))
+	records := map[string]EmbeddingSetRecord{}
+	var inputs, vectors []string
+	err := queryInChunks(ctx, tx, `SELECT embedding_set_id,vault_uid,binding_id,input_kind,
+ content_version_id,profile_fingerprint,embedding_input_fingerprint,vector_space_id,input_generation_id,
+ vector_set_id,created_at FROM embedding_sets WHERE embedding_set_id IN (`, ids, func(rows *sql.Rows) error {
+		var r EmbeddingSetRecord
+		if err := rows.Scan(&r.ID, &r.VaultID, &r.BindingID, &r.InputKind, &r.ContentVersionID, &r.ProcessingProfileFingerprint, &r.EmbeddingInputFingerprint, &r.VectorSpace.ID, &r.InputGeneration.ID, &r.VectorSet.ID, &r.CreatedAt); err != nil {
+			return err
+		}
+		records[r.ID] = r
+		inputs = append(inputs, r.InputGeneration.ID)
+		vectors = append(vectors, r.VectorSet.ID)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("loading embedding set: %w", err)
+	}
+	generations, err := loadInputGenerationsTx(ctx, tx, inputs)
+	if err != nil {
+		return nil, err
+	}
+	sets, err := loadVectorSetsTx(ctx, tx, vectors)
+	if err != nil {
+		return nil, err
+	}
+	spaces := map[string]EmbeddingVectorSpaceRecord{}
+	for id, r := range records {
+		space, ok := spaces[r.VectorSpace.ID]
+		if !ok {
+			space, err = loadVectorSpaceTx(ctx, tx, r.VectorSpace.ID)
+			if err != nil {
+				return nil, err
+			}
+			spaces[space.ID] = space
+		}
+		r.VectorSpace = space
+		if r.InputGeneration, ok = generations[r.InputGeneration.ID]; !ok {
+			return nil, ErrNotFound
+		}
+		if r.VectorSet, ok = sets[r.VectorSet.ID]; !ok {
+			return nil, ErrNotFound
+		}
+		records[id] = r
+	}
+	return records, nil
 }
 
 func loadVectorSpaceTx(ctx context.Context, tx metadataQuerier, id string) (EmbeddingVectorSpaceRecord, error) {
@@ -1253,95 +1323,122 @@ func decodeCanonicalEmbeddingDescriptor(data []byte) (document.EmbeddingDescript
 }
 
 func loadInputGenerationTx(ctx context.Context, tx metadataQuerier, id string) (EmbeddingInputGenerationRecord, error) {
-	var record EmbeddingInputGenerationRecord
-	var attachment sql.NullString
-	var count int
-	var generationBlob sql.NullString
-	err := tx.QueryRowContext(ctx, `SELECT generation_id,generation_blob_hash,generation_encoded_size,generation_checksum,source_version_id,
-		profile_fingerprint,evidence_fingerprint,tokenizer_fingerprint,
-		chunk_policy_fingerprint,formatter_fingerprint,attachment_context_fingerprint,
-		attachment_id,input_count,created_at
-		FROM embedding_input_generations WHERE generation_id=$1`, id).Scan(&record.ID,
-		&generationBlob, &record.GenerationEncodedSize, &record.GenerationChecksum, &record.SourceVersionID, &record.ProcessingProfileFingerprint,
-		&record.EvidenceFingerprint, &record.TokenizerFingerprint, &record.ChunkPolicyFingerprint,
-		&record.FormatterFingerprint, &record.AttachmentContextFingerprint, &attachment,
-		&count, &record.CreatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	records, err := loadInputGenerationsTx(ctx, tx, []string{id})
+	if err != nil {
+		return EmbeddingInputGenerationRecord{}, err
+	}
+	record, ok := records[id]
+	if !ok {
 		return record, ErrNotFound
-	}
-	if err != nil {
-		return record, err
-	}
-	if attachment.Valid {
-		record.AttachmentID = attachment.String
-	}
-	if generationBlob.Valid {
-		record.GenerationBlobHash = generationBlob.String
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT input_id,rendered_checksum
-		FROM embedding_generation_inputs WHERE generation_id=$1 ORDER BY input_order`, id)
-	if err != nil {
-		return record, err
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var input EmbeddingInputReference
-		if err := rows.Scan(&input.ID, &input.RenderedChecksum); err != nil {
-			return record, err
-		}
-		record.Inputs = append(record.Inputs, input)
-		if len(record.Inputs) > maxEmbeddingCatalogRows {
-			return record, errors.New("embedding input generation exceeds bounded count")
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return record, err
-	}
-	if len(record.Inputs) != count {
-		return record, errors.New("embedding input generation count is corrupt")
 	}
 	return record, nil
 }
 
+func loadInputGenerationsTx(ctx context.Context, tx metadataQuerier, ids []string) (map[string]EmbeddingInputGenerationRecord, error) {
+	if len(ids) == 0 {
+		return map[string]EmbeddingInputGenerationRecord{}, nil
+	}
+	ids = slices.Compact(slices.Sorted(slices.Values(ids)))
+	records := map[string]EmbeddingInputGenerationRecord{}
+	counts := map[string]int{}
+	err := queryInChunks(ctx, tx, `SELECT generation_id,COALESCE(generation_blob_hash,''),generation_encoded_size,generation_checksum,source_version_id,
+ profile_fingerprint,evidence_fingerprint,tokenizer_fingerprint,chunk_policy_fingerprint,formatter_fingerprint,attachment_context_fingerprint,
+ COALESCE(attachment_id,''),input_count,created_at FROM embedding_input_generations WHERE generation_id IN (`, ids, func(rows *sql.Rows) error {
+		var r EmbeddingInputGenerationRecord
+		var count int
+		if err := rows.Scan(&r.ID, &r.GenerationBlobHash, &r.GenerationEncodedSize, &r.GenerationChecksum, &r.SourceVersionID, &r.ProcessingProfileFingerprint, &r.EvidenceFingerprint, &r.TokenizerFingerprint, &r.ChunkPolicyFingerprint, &r.FormatterFingerprint, &r.AttachmentContextFingerprint, &r.AttachmentID, &count, &r.CreatedAt); err != nil {
+			return err
+		}
+		records[r.ID], counts[r.ID] = r, count
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	for chunk := range slices.Chunk(ids, photoSelectionChunkSize) {
+		err = queryRows(ctx, tx, `SELECT generation_id,input_id,rendered_checksum FROM embedding_generation_inputs WHERE generation_id IN (`+numberedPlaceholders(len(chunk), 0)+`) ORDER BY generation_id,input_order`, anyArgs(chunk), func(rows *sql.Rows) error {
+			var id string
+			var input EmbeddingInputReference
+			if err := rows.Scan(&id, &input.ID, &input.RenderedChecksum); err != nil {
+				return err
+			}
+			r := records[id]
+			r.Inputs = append(r.Inputs, input)
+			if len(r.Inputs) > maxEmbeddingCatalogRows {
+				return errors.New("embedding input generation exceeds bounded count")
+			}
+			records[id] = r
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	for id, r := range records {
+		if len(r.Inputs) != counts[id] {
+			return nil, errors.New("embedding input generation count is corrupt")
+		}
+	}
+	return records, nil
+}
+
 func loadVectorSetTx(ctx context.Context, tx metadataQuerier, id string) (EmbeddingVectorSetRecord, error) {
-	var record EmbeddingVectorSetRecord
-	err := tx.QueryRowContext(ctx, `SELECT vector_set_id,contract_version,vector_space_id,payload_blob_hash,
-		payload_size,payload_checksum,manifest_checksum,row_count,dimensions
-		FROM embedding_vector_sets WHERE vector_set_id=$1`, id).Scan(&record.ID,
-		&record.ContractVersion, &record.VectorSpaceID, &record.PayloadBlobHash, &record.PayloadSize, &record.PayloadChecksum,
-		&record.ManifestChecksum, &record.RowCount, &record.Dimensions)
-	if errors.Is(err, sql.ErrNoRows) {
+	records, err := loadVectorSetsTx(ctx, tx, []string{id})
+	if err != nil {
+		return EmbeddingVectorSetRecord{}, err
+	}
+	record, ok := records[id]
+	if !ok {
 		return record, ErrNotFound
 	}
-	if err != nil {
-		return record, err
-	}
-	if record.RowCount < 1 || record.RowCount > maxEmbeddingCatalogRows {
-		return record, errors.New("embedding vector-set count is corrupt")
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT row_id,input_id,dimensions,checksum
-		FROM embedding_vector_rows WHERE vector_set_id=$1 ORDER BY row_order`, id)
-	if err != nil {
-		return record, err
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var row EmbeddingVectorRowRecord
-		if err := rows.Scan(&row.RowID, &row.InputID, &row.Dimensions, &row.Checksum); err != nil {
-			return record, err
-		}
-		record.rows = append(record.rows, row)
-		if len(record.rows) > record.RowCount {
-			return record, errors.New("embedding vector-set rows exceed declared count")
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return record, err
-	}
-	if len(record.rows) != record.RowCount || embeddingVectorManifestChecksum(record.rows) != record.ManifestChecksum {
-		return record, errors.New("embedding vector-set manifest is corrupt")
-	}
 	return record, nil
+}
+
+func loadVectorSetsTx(ctx context.Context, tx metadataQuerier, ids []string) (map[string]EmbeddingVectorSetRecord, error) {
+	if len(ids) == 0 {
+		return map[string]EmbeddingVectorSetRecord{}, nil
+	}
+	ids = slices.Compact(slices.Sorted(slices.Values(ids)))
+	records := map[string]EmbeddingVectorSetRecord{}
+	err := queryInChunks(ctx, tx, `SELECT vector_set_id,contract_version,vector_space_id,payload_blob_hash,payload_size,payload_checksum,manifest_checksum,row_count,dimensions FROM embedding_vector_sets WHERE vector_set_id IN (`, ids, func(rows *sql.Rows) error {
+		var r EmbeddingVectorSetRecord
+		if err := rows.Scan(&r.ID, &r.ContractVersion, &r.VectorSpaceID, &r.PayloadBlobHash, &r.PayloadSize, &r.PayloadChecksum, &r.ManifestChecksum, &r.RowCount, &r.Dimensions); err != nil {
+			return err
+		}
+		if r.RowCount < 1 || r.RowCount > maxEmbeddingCatalogRows {
+			return errors.New("embedding vector-set count is corrupt")
+		}
+		records[r.ID] = r
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	for chunk := range slices.Chunk(ids, photoSelectionChunkSize) {
+		err = queryRows(ctx, tx, `SELECT vector_set_id,row_id,input_id,dimensions,checksum FROM embedding_vector_rows WHERE vector_set_id IN (`+numberedPlaceholders(len(chunk), 0)+`) ORDER BY vector_set_id,row_order`, anyArgs(chunk), func(rows *sql.Rows) error {
+			var id string
+			var row EmbeddingVectorRowRecord
+			if err := rows.Scan(&id, &row.RowID, &row.InputID, &row.Dimensions, &row.Checksum); err != nil {
+				return err
+			}
+			r := records[id]
+			r.rows = append(r.rows, row)
+			if len(r.rows) > r.RowCount {
+				return errors.New("embedding vector-set rows exceed declared count")
+			}
+			records[id] = r
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	for _, r := range records {
+		if len(r.rows) != r.RowCount || embeddingVectorManifestChecksum(r.rows) != r.ManifestChecksum {
+			return nil, errors.New("embedding vector-set manifest is corrupt")
+		}
+	}
+	return records, nil
 }
 
 func embeddingSetEligibleTx(ctx context.Context, tx *sql.Tx, set EmbeddingSetRecord) (bool, error) {
@@ -1353,6 +1450,14 @@ func embeddingSetEligibleTx(ctx context.Context, tx *sql.Tx, set EmbeddingSetRec
 	}
 	if live != 1 {
 		return false, nil
+	}
+	if set.InputKind == document.EmbeddingInputFace {
+		if err := validateFaceEmbeddingGenerationTx(ctx, tx, set.InputGeneration, set.BindingID); err != nil {
+			if errors.Is(err, ErrEmbeddingJobFenced) || errors.Is(err, ErrNotFound) {
+				return false, nil
+			}
+			return false, err
+		}
 	}
 	if set.InputKind == document.EmbeddingInputImage {
 		if err := validateImageEmbeddingGenerationTx(ctx, tx, set.InputGeneration, set.BindingID); err != nil {
@@ -1438,7 +1543,7 @@ func validateEmbeddingFailureRecord(record EmbeddingFailureRecord) error {
 
 func validateEmbeddingInputKind(kind EmbeddingInputKind) error {
 	switch kind {
-	case document.EmbeddingInputRenditionChunk, document.EmbeddingInputOriginalFile, document.EmbeddingInputImage:
+	case document.EmbeddingInputRenditionChunk, document.EmbeddingInputOriginalFile, document.EmbeddingInputImage, document.EmbeddingInputFace:
 		return nil
 	default:
 		return fmt.Errorf("embedding input kind %q is unsupported", kind)
@@ -1530,7 +1635,7 @@ func (s *Store) StageEmbeddingSetWithLease(ctx context.Context, record Embedding
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if err := requireEmbeddingWorkerLeaseTx(ctx, tx, rootID, fencingToken,
-			record.InputGeneration.ID, at); err != nil {
+			record.InputGeneration.ID, at, s.postgresSchema != ""); err != nil {
 			return err
 		}
 		// Retrying publication may stage the same content again. Its first
@@ -1543,7 +1648,7 @@ func (s *Store) StageEmbeddingSetWithLease(ctx context.Context, record Embedding
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		return stageEmbeddingSetTx(ctx, tx, record)
+		return stageEmbeddingSetTx(ctx, tx, record, s.postgresSchema != "")
 	})
 }
 
@@ -1569,7 +1674,7 @@ func (s *Store) PublishEmbeddingHeadWithLease(ctx context.Context, record Embedd
 	var authorization ProviderOperationAuthorization
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		authorization, err = publishEmbeddingHeadWithLeaseTx(ctx, tx, s.vaultID, record, consent, prior, rootID, fencingToken, at)
+		authorization, err = publishEmbeddingHeadWithLeaseTx(ctx, tx, s.vaultID, record, consent, prior, rootID, fencingToken, at, s.postgresSchema != "")
 		return err
 	})
 	return authorization, err
@@ -1577,25 +1682,25 @@ func (s *Store) PublishEmbeddingHeadWithLease(ctx context.Context, record Embedd
 
 func publishEmbeddingHeadWithLeaseTx(ctx context.Context, tx *sql.Tx, vaultID string, record EmbeddingHeadRecord,
 	consent ProviderOperationAuthorizationRequest, prior ProviderOperationAuthorization,
-	rootID string, fencingToken int64, at time.Time,
+	rootID string, fencingToken int64, at time.Time, postgres bool,
 ) (ProviderOperationAuthorization, error) {
 	set, err := loadEmbeddingSetTx(ctx, tx, record.SetID)
 	if err != nil {
 		return ProviderOperationAuthorization{}, err
 	}
-	if err := requireEmbeddingWorkerLeaseTx(ctx, tx, rootID, fencingToken, set.InputGeneration.ID, at); err != nil {
+	if err := requireEmbeddingWorkerLeaseTx(ctx, tx, rootID, fencingToken, set.InputGeneration.ID, at, postgres); err != nil {
 		return ProviderOperationAuthorization{}, err
 	}
 	consent.PriorAuthorization = &prior
-	authorization, err := authorizeProviderOperationTx(ctx, tx, vaultID, consent, at.UTC())
+	authorization, err := authorizeProviderOperationTx(ctx, tx, vaultID, consent, at.UTC(), postgres)
 	if err != nil {
 		return ProviderOperationAuthorization{}, err
 	}
-	return authorization, publishEmbeddingHeadTx(ctx, tx, record)
+	return authorization, publishEmbeddingHeadTx(ctx, tx, record, postgres)
 }
 
 func requireEmbeddingWorkerLeaseTx(ctx context.Context, tx *sql.Tx, rootID string,
-	fencingToken int64, generationID string, at time.Time,
+	fencingToken int64, generationID string, at time.Time, postgres bool,
 ) error {
 	if rootID == "" || fencingToken <= 0 || generationID == "" || at.IsZero() {
 		return ErrCurrentRenditionRootFenced
@@ -1603,7 +1708,7 @@ func requireEmbeddingWorkerLeaseTx(ctx context.Context, tx *sql.Tx, rootID strin
 	var expiresAt string
 	err := tx.QueryRowContext(ctx, `SELECT expires_at FROM current_rendition_roots
 		WHERE root_id=$1 AND root_kind=$2 AND target_kind=$3 AND target_id=$4
-		  AND fencing_token=$5 AND active=1`, rootID, RenditionRootWorkerLease,
+		  AND fencing_token=$5 AND active=1`, storedString(postgres, rootID), RenditionRootWorkerLease,
 		RenditionRootEmbeddingGeneration, generationID, fencingToken).Scan(&expiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrCurrentRenditionRootFenced

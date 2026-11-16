@@ -4,7 +4,6 @@ import (
 	json "encoding/json/v2"
 	"fmt"
 	"net/http"
-	"strings"
 	"testing"
 	"testing/synctest"
 
@@ -83,33 +82,48 @@ func TestVoyageRetainedTextDocumentAndQuery(t *testing.T) {
 	}
 }
 
-func TestVoyageTextAllowsOnlyOptionalStringText(t *testing.T) {
-	for _, test := range []struct {
-		name, extra string
-		valid       bool
-	}{
-		{"text", `,"text":"document envelope: passage"`, true},
-		{"unknown", `,"unreviewed":"synthetic"`, false}, {"wrong type", `,"text":42`, false},
-		{"null text", `,"text":null`, false}, {"duplicate text", `,"text":"a","text":"b"`, false},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			body := string(voyageTextBody(t, voyage.TextModel, []int{0}, []int{1}))
-			body = strings.Replace(body, `"index":0`, `"index":0`+test.extra, 1)
-			// The malformed-response retry backs off on fake time.
-			synctest.Test(t, func(t *testing.T) {
-				profile := voyageTextProfile(t, voyage.EmbeddingModeText)
-				provider := newVoyageMemoryProvider(t, profile, embeddingSecrets{"credential:voyage": "synthetic-secret"}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-					w.Header().Set("Content-Type", "application/json")
-					_, _ = w.Write([]byte(body))
-				}))
-				_, err := provider.Embed(t.Context(), []document.EmbeddingInput{{Key: "chunk", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "passage"}}, voyageAuthorization(profile.Descriptor))
-				if test.valid {
-					require.NoError(t, err)
-				} else {
-					require.ErrorIs(t, err, voyage.ErrMalformedResponse)
-				}
+func TestVoyageTextAllowsMissingNullOrStringText(t *testing.T) {
+	for _, target := range []struct {
+		model     string
+		dimension int
+	}{{voyage.TextModel, 256}, {"voyage-4-large", 1024}} {
+		for _, test := range []struct {
+			name, extra string
+			valid       bool
+		}{
+			{"missing text", ``, true}, {"string text", `,"text":"document envelope: passage"`, true},
+			{"null text", `,"text":null`, true}, {"number text", `,"text":42`, false},
+			{"boolean text", `,"text":false`, false}, {"object text", `,"text":{}`, false},
+			{"array text", `,"text":[]`, false}, {"duplicate text", `,"text":"a","text":"b"`, false},
+			{"duplicate null text", `,"text":null,"text":null`, false}, {"unknown", `,"unreviewed":"synthetic"`, false},
+		} {
+			t.Run(target.model+"/"+test.name, func(t *testing.T) {
+				vector := make([]float32, target.dimension)
+				vector[1] = 1
+				item, err := json.Marshal(map[string]any{"object": "embedding", "embedding": vector, "index": 0})
+				require.NoError(t, err)
+				item = append(item[:len(item)-1], test.extra+"}"...)
+				body := fmt.Sprintf(`{"object":"list","data":[%s],"model":%q,"usage":{"total_tokens":2}}`, item, target.model)
+				// The malformed-response retry backs off on fake time.
+				synctest.Test(t, func(t *testing.T) {
+					profile := voyageTextProfile(t, voyage.EmbeddingModeText)
+					profile.Descriptor.Model, profile.Descriptor.Dimension = target.model, target.dimension
+					profile = refingerprintVoyageProfile(t, profile)
+					provider := newVoyageMemoryProvider(t, profile, embeddingSecrets{"credential:voyage": "synthetic-secret"}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = w.Write([]byte(body))
+					}))
+					result, err := provider.Embed(t.Context(), []document.EmbeddingInput{{Key: "chunk", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "passage"}}, voyageAuthorization(profile.Descriptor))
+					if test.valid {
+						require.NoError(t, err)
+						require.Len(t, result.Vectors, 1)
+						assert.Equal(t, vector, result.Vectors[0].Values)
+					} else {
+						require.ErrorIs(t, err, voyage.ErrMalformedResponse)
+					}
+				})
 			})
-		})
+		}
 	}
 }
 

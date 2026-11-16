@@ -42,7 +42,7 @@ func TestQuerySnapshotScale(t *testing.T) { //nolint:paralleltest // reports tim
 			for seeded < target {
 				batchEnd := min(seeded+1000, target)
 				require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-					if _, err := ensureIngestRunTx(t.Context(), tx, run); err != nil {
+					if _, err := s.ensureIngestRunTx(t.Context(), tx, run); err != nil {
 						return err
 					}
 					for index := seeded; index < batchEnd; index++ {

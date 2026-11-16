@@ -37,6 +37,7 @@ var cliSearchTasks = []struct{ query, command string }{
 	{"list browser sign-in sessions", "docbank web sessions"},
 	{"revoke a browser sign-in session", "docbank web sessions revoke"},
 	{"print MCP client configuration", "docbank mcp config"},
+	{"connect Claude Code and Codex to docbank", "docbank agent setup"},
 }
 
 func TestCLISearchTasks(t *testing.T) {

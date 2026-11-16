@@ -1,6 +1,7 @@
 package processing
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"testing"
@@ -10,12 +11,18 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/vectorindex"
 	"go.kenn.io/docbank/internal/vectorworker"
 )
 
 func TestVectorIndexFailedReadReleasesBuildClaim(t *testing.T) {
 	t.Parallel()
-	fixture, _, embedding, _ := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+	checkVectorIndexFailedReadReleasesBuildClaim(t, newPublicationFixture)
+}
+
+func checkVectorIndexFailedReadReleasesBuildClaim(t *testing.T, makeFixture publicationFixtureFactory) {
+	t.Helper()
+	fixture, _, embedding, _ := embeddingWorkerWithFixture(t, makeFixture, document.EmbeddingInputOriginalFile)
 	_, err := embedding.ScanOnce(t.Context())
 	require.NoError(t, err)
 	spaces, err := fixture.catalog.ListVectorIndexSpaces(t.Context())
@@ -73,7 +80,12 @@ func TestVectorIndexRebuildWaitsForMaintenanceAdmission(t *testing.T) {
 
 func TestVectorIndexWorkerRetiresTrashedSource(t *testing.T) {
 	t.Parallel()
-	fixture, _, embedding, _ := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+	checkVectorIndexWorkerRetiresTrashedSource(t, newPublicationFixture)
+}
+
+func checkVectorIndexWorkerRetiresTrashedSource(t *testing.T, makeFixture publicationFixtureFactory) {
+	t.Helper()
+	fixture, _, embedding, _ := embeddingWorkerWithFixture(t, makeFixture, document.EmbeddingInputOriginalFile)
 	_, err := embedding.ScanOnce(t.Context())
 	require.NoError(t, err)
 	spaces, err := fixture.catalog.ListVectorIndexSpaces(t.Context())
@@ -100,7 +112,12 @@ func TestVectorIndexWorkerRetiresTrashedSource(t *testing.T) {
 
 func TestVectorIndexMaintenanceCanRunDuringPayloadRead(t *testing.T) {
 	t.Parallel()
-	fixture, _, embedding, _ := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+	checkVectorIndexMaintenanceCanRunDuringPayloadRead(t, newPublicationFixture)
+}
+
+func checkVectorIndexMaintenanceCanRunDuringPayloadRead(t *testing.T, makeFixture publicationFixtureFactory) {
+	t.Helper()
+	fixture, _, embedding, _ := embeddingWorkerWithFixture(t, makeFixture, document.EmbeddingInputOriginalFile)
 	_, err := embedding.ScanOnce(t.Context())
 	require.NoError(t, err)
 	spaces, err := fixture.catalog.ListVectorIndexSpaces(t.Context())
@@ -151,4 +168,71 @@ func TestVectorIndexMissingPayloadWaitsForMaintenanceBeforeAbandoning(t *testing
 		require.NoError(t, restoreErr, "maintenance admission must not turn unavailable coverage into a terminal cleanup timeout")
 		require.Len(t, report.Unavailable, 1)
 	})
+}
+
+func TestVectorIndexRestoresRetainedVectors(t *testing.T) {
+	t.Parallel()
+	checkVectorIndexRestoresRetainedVectors(t, newPublicationFixture)
+}
+
+func checkVectorIndexRestoresRetainedVectors(t *testing.T, makeFixture publicationFixtureFactory) {
+	t.Helper()
+	for _, kind := range []document.EmbeddingInputKind{document.EmbeddingInputOriginalFile, document.EmbeddingInputRenditionChunk} {
+		t.Run(string(kind), func(t *testing.T) {
+			fixture, provider, embedding, _ := embeddingWorkerWithFixture(t, makeFixture, kind)
+			count, err := embedding.ScanOnce(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, 1, count)
+			calls := provider.runtime.calls()
+			spaces, err := fixture.catalog.ListVectorIndexSpaces(t.Context())
+			require.NoError(t, err)
+			require.Len(t, spaces, 1)
+			space := spaces[0]
+			source, err := fixture.catalog.CaptureVectorIndexSource(t.Context(), space)
+			require.NoError(t, err)
+			require.Len(t, source.Members, 1)
+			member := source.Members[0]
+			payload, err := fixture.catalog.ReadVectorIndexVectorSet(t.Context(), fixture.blobs, member)
+			require.NoError(t, err)
+			require.NoError(t, fixture.blobs.Remove(member.PayloadBlobHash))
+			indexer, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
+				Catalog: fixture.catalog, Mutate: newTestOperationGate().MutateContext, Owner: "restore-index",
+				BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
+				ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
+					return fixture.catalog.ReadVectorIndexVectorSet(ctx, fixture.blobs, member)
+				},
+			})
+			require.NoError(t, err)
+			report, err := indexer.Restore(t.Context())
+			require.NoError(t, err)
+			require.Empty(t, report.Rebuilt)
+			require.Len(t, report.Unavailable, 1)
+			require.Equal(t, []store.VectorIndexUnavailableSet{{EmbeddingSetID: member.EmbeddingSetID, VectorSetID: member.VectorSetID, PayloadBlobHash: member.PayloadBlobHash}}, report.Unavailable[0].Missing)
+			require.True(t, report.Unavailable[0].ExternalReembeddingRequired)
+			pending, err := fixture.catalog.VectorIndexPublicationPending(t.Context(), space)
+			require.NoError(t, err)
+			require.False(t, pending)
+			_, err = fixture.catalog.ActiveVectorIndexGeneration(t.Context(), space)
+			require.ErrorIs(t, err, store.ErrNotFound)
+			receipt, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(payload))
+			require.NoError(t, err)
+			require.Equal(t, member.PayloadBlobHash, receipt.Hash)
+			report, err = indexer.Restore(t.Context())
+			require.NoError(t, err)
+			require.Empty(t, report.Unavailable)
+			require.Len(t, report.Rebuilt, 1)
+			active, err := fixture.catalog.ActiveVectorIndexGeneration(t.Context(), space)
+			require.NoError(t, err)
+			require.Equal(t, report.Rebuilt[0], active)
+			index, err := vectorindex.OpenGeneration(bytes.NewReader(active.Bytes), int64(len(active.Bytes)))
+			require.NoError(t, err)
+			query := make([]float32, index.Metadata().Dimension)
+			query[0] = 1
+			hits, err := index.Search(query, 1)
+			require.NoError(t, err)
+			require.Len(t, hits, 1)
+			require.Equal(t, member.VectorSetID, hits[0].SetID)
+			require.Equal(t, calls, provider.runtime.calls(), "index recovery must not invoke the provider")
+		})
+	}
 }

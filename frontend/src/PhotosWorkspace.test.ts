@@ -183,8 +183,10 @@ it.each([false, true])(
     );
     await waitFor(() => expect(photos.loading).toBe(false));
     await tick();
-    expect(scroll.scrollTop).toBe(1000);
-    expect(photos.scrollTop).toBe(1000);
+    // The geometry mock reads each cell's top from its style, which jsdom serializes to six
+    // significant digits as browsers do, so the restored anchor can land a fraction of a pixel off.
+    expect(scroll.scrollTop).toBeCloseTo(1000);
+    expect(photos.scrollTop).toBeCloseTo(1000);
     photos.dispose();
     await cache.dispose();
   },

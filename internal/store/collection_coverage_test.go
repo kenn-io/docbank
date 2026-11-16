@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json/jsontext"
 	"fmt"
 	"strings"
 	"testing"
@@ -286,6 +287,14 @@ func collectionCoveragePublish(t *testing.T, s *Store, node Node, profile Proces
 	case "none":
 		build.Units = nil
 		build.LexicalSegments = nil
+	case "candidate_empty":
+		build.Units = nil
+		build.LexicalSegments = nil
+		build.ProviderReceipt = jsontext.Value(`{"provider":"synthetic","request_id":"request-1","usage":{"units":1}}`)
+	case "candidate_serving":
+		build.ProviderReceipt = jsontext.Value(`{"provider":"synthetic","request_id":"request-1","usage":{"units":2}}`)
+	case "candidate_complete":
+		build.ProviderReceipt = jsontext.Value(`{"provider":"synthetic","request_id":"request-1","usage":{"units":1}}`)
 	case "empty_segments", "blank_segments":
 		text := ""
 		if state == "blank_segments" {

@@ -27,7 +27,12 @@ import (
 
 func TestRenditionWorkerPublishesNormalizedBuildAndAllAuthorizedWaiters(t *testing.T) {
 	t.Parallel()
-	fixture := newPublicationFixture(t)
+	checkRenditionWorkerPublishesNormalizedBuildAndAllAuthorizedWaiters(t, newPublicationFixture)
+}
+
+func checkRenditionWorkerPublishesNormalizedBuildAndAllAuthorizedWaiters(t *testing.T, newFixture publicationFixtureFactory) {
+	t.Helper()
+	fixture := newFixture(t)
 	provider := newWorkerProvider(t)
 	profile := workerProcessingProfile(t, provider.Descriptor())
 	fixture.profile = profile
@@ -495,7 +500,12 @@ func TestRenditionWorkerPostEgressCatalogRetryCancelsWithoutTombstone(t *testing
 
 func TestRenditionWorkerPersistsAmbiguousOutcomeWithoutResubmission(t *testing.T) {
 	t.Parallel()
-	fixture := newPublicationFixture(t)
+	checkRenditionWorkerPersistsAmbiguousOutcomeWithoutResubmission(t, newPublicationFixture)
+}
+
+func checkRenditionWorkerPersistsAmbiguousOutcomeWithoutResubmission(t *testing.T, newFixture publicationFixtureFactory) {
+	t.Helper()
+	fixture := newFixture(t)
 	provider := newWorkerProvider(t)
 	provider.renderErr = workerProviderError(t, document.RenditionErrorAmbiguousSubmission)
 	profile := workerProcessingProfile(t, provider.Descriptor())
@@ -776,7 +786,12 @@ func TestRenditionWorkerQuarantinesSealTimeInvalidUpload(t *testing.T) {
 
 func TestRenditionWorkerRetainsProviderCheckpointAcrossLocalStagingFailure(t *testing.T) {
 	t.Parallel()
-	fixture := newPublicationFixture(t)
+	checkRenditionWorkerRetainsProviderCheckpointAcrossLocalStagingFailure(t, newPublicationFixture)
+}
+
+func checkRenditionWorkerRetainsProviderCheckpointAcrossLocalStagingFailure(t *testing.T, newFixture publicationFixtureFactory) {
+	t.Helper()
+	fixture := newFixture(t)
 	baseProvider := newWorkerProvider(t)
 	provider := &resumableWorkerProvider{workerProvider: baseProvider}
 	profile := workerProcessingProfile(t, provider.Descriptor())
@@ -809,7 +824,12 @@ func TestRenditionWorkerRetainsProviderCheckpointAcrossLocalStagingFailure(t *te
 
 func TestRenditionWorkerResumesAmbiguousProviderOutcomeWithDurableHandle(t *testing.T) {
 	t.Parallel()
-	fixture := newPublicationFixture(t)
+	checkRenditionWorkerResumesAmbiguousProviderOutcomeWithDurableHandle(t, newPublicationFixture)
+}
+
+func checkRenditionWorkerResumesAmbiguousProviderOutcomeWithDurableHandle(t *testing.T, newFixture publicationFixtureFactory) {
+	t.Helper()
+	fixture := newFixture(t)
 	baseProvider := newWorkerProvider(t)
 	providerErr, err := document.NewRenditionProviderError(
 		document.RenditionErrorAmbiguousSubmission, time.Nanosecond,
@@ -993,7 +1013,12 @@ func TestRenditionWorkerQuarantinesMalformedDurableSnapshot(t *testing.T) {
 
 func TestRenditionWorkerReselectsAuthorizedWaiterWhenBeginConsentChanges(t *testing.T) {
 	t.Parallel()
-	fixture := newPublicationFixture(t)
+	checkRenditionWorkerReselectsAuthorizedWaiterWhenBeginConsentChanges(t, newPublicationFixture)
+}
+
+func checkRenditionWorkerReselectsAuthorizedWaiterWhenBeginConsentChanges(t *testing.T, newFixture publicationFixtureFactory) {
+	t.Helper()
+	fixture := newFixture(t)
 	provider := newWorkerProvider(t)
 	profile := workerProcessingProfile(t, provider.Descriptor())
 	fixture.profile = profile
@@ -1057,7 +1082,12 @@ func TestRenditionWorkerReselectsAuthorizedWaiterWhenBeginConsentChanges(t *test
 
 func TestRenditionWorkerFailsClosedWhenConsentIsRevokedBeforeEgress(t *testing.T) {
 	t.Parallel()
-	fixture := newPublicationFixture(t)
+	checkRenditionWorkerFailsClosedWhenConsentIsRevokedBeforeEgress(t, newPublicationFixture)
+}
+
+func checkRenditionWorkerFailsClosedWhenConsentIsRevokedBeforeEgress(t *testing.T, newFixture publicationFixtureFactory) {
+	t.Helper()
+	fixture := newFixture(t)
 	provider := newWorkerProvider(t)
 	profile := workerProcessingProfile(t, provider.Descriptor())
 	fixture.profile = profile
@@ -1134,7 +1164,12 @@ func TestRenditionWorkerRejectsPreparedExecutionIdentityDriftBeforeEgress(t *tes
 
 func TestRenditionWorkerReclaimsStagedBuildWithoutCallingProviderAgain(t *testing.T) {
 	t.Parallel()
-	fixture := newPublicationFixture(t)
+	checkRenditionWorkerReclaimsStagedBuildWithoutCallingProviderAgain(t, newPublicationFixture)
+}
+
+func checkRenditionWorkerReclaimsStagedBuildWithoutCallingProviderAgain(t *testing.T, newFixture publicationFixtureFactory) {
+	t.Helper()
+	fixture := newFixture(t)
 	provider := newWorkerProvider(t)
 	profile := workerProcessingProfile(t, provider.Descriptor())
 	fixture.profile = profile
@@ -1795,9 +1830,14 @@ func TestRenditionProviderRetryDelayEscalatesAndCaps(t *testing.T) {
 
 func TestRenditionWorkerRejectsChangedSourcesBeforeEgress(t *testing.T) {
 	t.Parallel()
+	checkRenditionWorkerRejectsChangedSourcesBeforeEgress(t, newPublicationFixture)
+}
+
+func checkRenditionWorkerRejectsChangedSourcesBeforeEgress(t *testing.T, newFixture publicationFixtureFactory) {
+	t.Helper()
 	for _, mutation := range []string{"unchanged", "replace", "trash", "revoke"} {
 		t.Run(mutation, func(t *testing.T) {
-			fixture := newPublicationFixture(t)
+			fixture := newFixture(t)
 			provider := newWorkerProvider(t)
 			descriptor := provider.descriptor
 			descriptor.Fingerprint = ""
@@ -1863,6 +1903,11 @@ func TestRenditionWorkerRejectsChangedSourcesBeforeEgress(t *testing.T) {
 
 func TestRenditionWorkerRejectsResumeAfterSourceChanges(t *testing.T) {
 	t.Parallel()
+	checkRenditionWorkerRejectsResumeAfterSourceChanges(t, newPublicationFixture)
+}
+
+func checkRenditionWorkerRejectsResumeAfterSourceChanges(t *testing.T, newFixture publicationFixtureFactory) {
+	t.Helper()
 	for _, scenario := range []struct {
 		mutation string
 		shared   bool
@@ -1874,7 +1919,7 @@ func TestRenditionWorkerRejectsResumeAfterSourceChanges(t *testing.T) {
 			name += "/shared"
 		}
 		t.Run(name, func(t *testing.T) {
-			fixture := newPublicationFixture(t)
+			fixture := newFixture(t)
 			base := newWorkerProvider(t)
 			descriptor := base.descriptor
 			descriptor.Fingerprint = ""

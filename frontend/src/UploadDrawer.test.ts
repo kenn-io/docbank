@@ -12,6 +12,34 @@ afterEach(() => {
 });
 
 describe("upload documents drawer", () => {
+  it("offers recovery when reconnecting fails", async () => {
+    const reconnect = vi.fn();
+    render(UploadDrawer, {
+      session: "session",
+      channel: { uploadFile: vi.fn() },
+      directory: {
+        id: 3,
+        name: "Reports",
+        path: "/Reports",
+        kind: "dir",
+        size: 0,
+        revision: 1,
+        created_at: "2026-07-28T00:00:00Z",
+        modified_at: "2026-07-28T00:00:00Z",
+      },
+      disabledReason: "Disconnected",
+      connectionState: "failed",
+      onreconnect: reconnect,
+      onclose: vi.fn(),
+      oncomplete: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+
+    expect(screen.getByRole("alert").textContent).toContain("Run `docbank web` again");
+    await fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+    expect(reconnect).toHaveBeenCalledOnce();
+  });
+
   it.each(["added", "skipped"] as const)(
     "hashes and uploads selected files before refreshing the directory: %s",
     async (status) => {
@@ -96,6 +124,7 @@ describe("upload documents drawer", () => {
         hash,
         expect.any(AbortSignal),
         expect.any(Function),
+        false,
       );
     },
   );
@@ -284,9 +313,28 @@ describe("upload documents drawer", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Upload 2 files" }));
 
     expect(await screen.findByText("Unconfirmed")).toBeTruthy();
-    expect(screen.getByText(/Run `docbank web` again, then retry this file/)).toBeTruthy();
+    expect(screen.getByText(/Retry this file to check whether it was added/)).toBeTruthy();
     expect(channel.uploadFile).toHaveBeenCalledOnce();
     await waitFor(() => expect(complete).toHaveBeenCalledOnce());
+    vi.mocked(channel.uploadFile).mockRejectedValue(new upload.UploadChannelError("Lookup failed"));
+    await fireEvent.click(screen.getByRole("button", { name: "Upload 2 files" }));
+    await waitFor(() => expect(channel.uploadFile).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Unconfirmed")).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "Upload 2 files" }));
+    await waitFor(() => expect(channel.uploadFile).toHaveBeenCalledTimes(3));
+    expect(vi.mocked(channel.uploadFile).mock.calls[1][5]).toBe(true);
+    expect(vi.mocked(channel.uploadFile).mock.calls[2][5]).toBe(true);
+    vi.mocked(channel.uploadFile).mockRejectedValue(
+      new APIError(
+        "Stored content could not be verified. Run docbank vault verify to identify the problem.",
+        409,
+        "content_unavailable",
+      ),
+    );
+    await fireEvent.click(await screen.findByRole("button", { name: "Upload 2 files" }));
+    expect(await screen.findByText(/Run docbank vault verify/)).toBeTruthy();
+    expect(screen.getByText("Unconfirmed")).toBeTruthy();
+    expect(vi.mocked(channel.uploadFile).mock.calls[3][5]).toBe(true);
   });
 });
 

@@ -14,6 +14,7 @@ import (
 const (
 	openAPIStringType   = "string"
 	openAPIBinaryFormat = "binary"
+	openAPIUUIDFormat   = "uuid"
 )
 const openAPIQueryLocation = "query"
 const openAPIPathLocation = "path"
@@ -231,12 +232,20 @@ type CoverageClass struct {
 	Total                     int    `json:"total" minimum:"0"`
 }
 
+type PageTextGap struct {
+	ContentVersionID string `json:"content_version_id" format:"uuid"`
+	Pages            []int  `json:"pages"`
+}
+
 type CoverageReport struct {
-	VaultUID           string          `json:"vault_uid" format:"uuid"`
-	ProfileFingerprint string          `json:"profile_fingerprint" pattern:"^[0-9a-f]{64}$"`
-	State              string          `json:"state"`
-	Renditions         CoverageClass   `json:"renditions"`
-	Embeddings         []CoverageClass `json:"embeddings"`
+	VaultUID                string          `json:"vault_uid" format:"uuid"`
+	ProfileFingerprint      string          `json:"profile_fingerprint" pattern:"^[0-9a-f]{64}$"`
+	State                   string          `json:"state"`
+	Renditions              CoverageClass   `json:"renditions"`
+	Embeddings              []CoverageClass `json:"embeddings"`
+	PagesWithoutText        []PageTextGap   `json:"pages_without_text,omitzero"`
+	PageCoverage            string          `json:"page_coverage,omitempty" enum:"partial"`
+	PageCoverageUnavailable bool            `json:"page_coverage_unavailable,omitzero"`
 }
 
 type DocumentSearchScope struct {
@@ -931,9 +940,13 @@ type FuzzyReceipt struct {
 
 // SearchTextCoverage reports recoverable gaps in the current search scope.
 type SearchTextCoverage struct {
-	NoText   int      `json:"no_text" minimum:"0"`
-	Families []string `json:"families" enum:"pdf,office,other"`
-	Pending  int      `json:"pending" minimum:"0"`
+	NoText                     int      `json:"no_text" minimum:"0"`
+	Families                   []string `json:"families" enum:"pdf,office,other"`
+	Pending                    int      `json:"pending" minimum:"0"`
+	PDFsWithoutText            int      `json:"pdfs_without_text" minimum:"0"`
+	PagesWithoutText           int      `json:"pages_without_text" minimum:"0"`
+	PDFPageCoverageUnavailable int      `json:"pdf_page_coverage_unavailable" minimum:"0"`
+	PDFPageCoveragePartial     bool     `json:"pdf_page_coverage_partial"`
 }
 
 // SearchReport is one bounded search result page.
@@ -947,6 +960,7 @@ type SearchReport struct {
 	TagID          string        `json:"tag_id,omitzero"`
 	MIMEType       string        `json:"mime_type,omitzero"`
 	UnderNodeID    int64         `json:"under_node_id,omitzero"`
+	UnderPath      string        `json:"under_path,omitzero"`
 	ModifiedSince  string        `json:"modified_since,omitzero"`
 	ModifiedBefore string        `json:"modified_before,omitzero"`
 }
@@ -1260,7 +1274,8 @@ type VerifyReport struct {
 // Job is the observable state of one daemon-owned background task. Names are
 // stable within a daemon run; durable storage operations follow their retention.
 type Job struct {
-	Processing *WatchProcessingStatus `json:"processing,omitzero"`
+	Processing       *WatchProcessingStatus  `json:"processing,omitzero" doc:"Status for the watch's single profile, when configured."`
+	ProcessingRoutes []WatchProcessingStatus `json:"processing_routes,omitzero" doc:"Status for each configured media-family route. A watch uses either processing or processing_routes."`
 
 	Tags              []string         `json:"tags,omitempty" doc:"Existing tag names applied to files imported by this watch."`
 	TagError          string           `json:"tag_error,omitempty" doc:"Why configured watch tags are unavailable."`
@@ -1320,6 +1335,7 @@ type JobList struct {
 }
 
 type WatchProcessingStatus struct {
+	MediaFamily  string `json:"media_family,omitzero"`
 	Profile      string `json:"profile"`
 	ConsentState string `json:"consent_state,omitzero" enum:"active,required,expired,revoked"`
 	Error        string `json:"error,omitzero"`
@@ -1329,7 +1345,8 @@ type WatchProcessingStatus struct {
 // state for one local watched source. Source is intentionally machine-local;
 // Destination is a path in the Docbank virtual tree.
 type WatchedInbox struct {
-	Processing *WatchProcessingStatus `json:"processing,omitzero"`
+	Processing       *WatchProcessingStatus  `json:"processing,omitzero" doc:"Status for the watch's single profile, when configured."`
+	ProcessingRoutes []WatchProcessingStatus `json:"processing_routes,omitzero" doc:"Status for each configured media-family route. A watch uses either processing or processing_routes."`
 
 	Tags            []string `json:"tags" doc:"Existing tag names applied to files imported by this watch."`
 	TagError        string   `json:"tag_error,omitempty" doc:"Why configured watch tags are unavailable."`

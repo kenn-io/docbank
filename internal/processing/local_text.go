@@ -223,6 +223,72 @@ func (setup *LocalTextSetup) listTargets(ctx context.Context, after string, limi
 	return setup.pendingTargets(ctx, after, limit, sweep)
 }
 
+// inheritedConsent checks whether every operation is active or every operation
+// is undecided and the vault has no revocation fence.
+func (setup *LocalTextSetup) inheritedConsent(ctx context.Context) (bool, bool, error) {
+	service := setup.Service
+	profile, ok := service.profiles[setup.Selected]
+	if !ok {
+		return false, false, ErrProfileNotConfigured
+	}
+	required, active := 0, 0
+	for _, request := range service.profileConsentRequests(profile) {
+		_, err := service.catalog.AuthorizeProviderOperation(ctx, request)
+		state, err := processingConsentState(err)
+		if err != nil {
+			return false, false, err
+		}
+		switch state {
+		case "required":
+			required++
+		case "active":
+			active++
+		default:
+			return false, false, nil
+		}
+	}
+	if active != 0 {
+		return required == 0, false, nil
+	}
+	revoked, err := service.catalog.HasConsentRevocation(ctx, service.principal, service.scope)
+	return !revoked && err == nil, required != 0, err
+}
+
+// InitializeInherited installs the shared runtime before granting undecided consent.
+func (setup *LocalTextSetup) InitializeInherited(ctx context.Context) (bool, error) {
+	eligible, _, err := setup.inheritedConsent(ctx)
+	if err != nil || !eligible {
+		return false, err
+	}
+	if err := setup.inheritedStartup(ctx); err != nil {
+		return false, err
+	}
+	active := false
+	err = setup.Service.gate.MutateContext(ctx, func() error {
+		eligible, undecided, err := setup.inheritedConsent(ctx)
+		if err != nil || !eligible {
+			return err
+		}
+		if undecided {
+			active, err = setup.Service.catalog.GrantConsentSetIfUndecided(ctx, setup.Service.profileConsentGrants(setup.Service.profiles[setup.Selected], nil))
+			return err
+		}
+		active = true
+		return nil
+	})
+	return active, err
+}
+
+func (setup *LocalTextSetup) inheritedStartup(ctx context.Context) error {
+	if setup.ActivityBegin != nil {
+		setup.ActivityBegin()
+	}
+	if setup.ActivityEnd != nil {
+		defer setup.ActivityEnd()
+	}
+	return setup.Startup(ctx, true, "local")
+}
+
 // ProfileConsentActive reports whether every operation in a profile has current consent.
 func (s *Service) ProfileConsentActive(ctx context.Context, name string) (bool, error) {
 	profile, ok := s.profiles[name]
