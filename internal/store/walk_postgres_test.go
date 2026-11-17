@@ -2,8 +2,8 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
-	"math/rand/v2"
 	"strings"
 	"testing"
 
@@ -98,13 +98,14 @@ func checkWalkLongPathsAndByteOrderPostgres(t *testing.T) {
 	require.NoError(t, err)
 	want := []string{"/", "/a", "/a.z", "/a/b"}
 	path := "/a/b"
-	random := rand.New(rand.NewPCG(1, 2))
-	for range 28 {
-		var bytes [256]byte
-		for i := range bytes {
-			bytes[i] = byte(random.Uint64())
+	for depth := range 28 {
+		var label strings.Builder
+		label.WriteString("李")
+		for block := range 8 {
+			hash := sha256.Sum256([]byte(fmt.Sprintf("%d/%d", depth, block)))
+			fmt.Fprintf(&label, "%x", hash)
 		}
-		name := fmt.Sprintf("李%x", bytes)
+		name := label.String()
 		parent, err = s.Mkdir(ctx, parent.ID, name)
 		require.NoError(t, err)
 		path += "/" + name
