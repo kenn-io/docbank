@@ -31,6 +31,9 @@ test.describe("TUI packages screenshot", () => {
   }
 
   test.beforeAll(async () => {
+    // The import below can outlast the test timeout on a slow disk. Its
+    // no-progress check bounds this setup instead.
+    test.setTimeout(0);
     workspace = await mkdtemp(path.join(tmpdir(), "docbank-tui-packages-"));
     vault = path.join(workspace, "vault");
     const volume = path.join(workspace, "package", "VOL001");
@@ -95,13 +98,26 @@ test.describe("TUI packages screenshot", () => {
       operationID,
       "--json",
     ]);
-    await expect
-      .poll(
-        async () =>
-          JSON.parse(await docbank(["package", "import", "status", operationID, "--json"])).state,
-        { timeout: 30_000 },
-      )
-      .toBe("complete");
+    // Each record commits several transactions, so the import's duration
+    // follows the host's disk sync speed. Wait while records keep committing
+    // and fail only when the import stops making progress.
+    let status: { state: string; committed: number; total: number };
+    let committed = -1;
+    let progressAt = Date.now();
+    for (;;) {
+      status = JSON.parse(await docbank(["package", "import", "status", operationID, "--json"]));
+      if (status.state !== "queued" && status.state !== "running") break;
+      if (status.committed !== committed) {
+        committed = status.committed;
+        progressAt = Date.now();
+      } else if (Date.now() - progressAt > 30_000) {
+        throw new Error(
+          `package import made no progress for 30s at ${status.committed}/${status.total} (${status.state})`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    expect(status.state).toBe("complete");
   });
 
   test.afterAll(async () => {
