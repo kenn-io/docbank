@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-pdf/fpdf"
 	pdfapi "github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -57,7 +58,7 @@ func (p coverageProvider) Render(ctx context.Context, upload document.Authorized
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	if err = pdfapi.Validate(ctx, bytes.NewReader(source), nil, nil); err != nil {
+	if err = pdfapi.Validate(ctx, bytes.NewReader(source), model.NewStatelessConfiguration(), nil); err != nil {
 		return document.RenditionResult{}, fmt.Errorf("synthetic provider received invalid PDF: %w", err)
 	}
 	if p.mode == "failed" {
@@ -103,7 +104,7 @@ func TestCollectionCoverageConfiguredPDFWorkerToSearch(t *testing.T) {
 			var encoded bytes.Buffer
 			require.NoError(t, pdf.Output(&encoded))
 			source := encoded.Bytes()
-			require.NoError(t, pdfapi.Validate(t.Context(), bytes.NewReader(source), nil, nil))
+			require.NoError(t, pdfapi.Validate(t.Context(), bytes.NewReader(source), model.NewStatelessConfiguration(), nil))
 			require.NotContains(t, string(source), "renditiononlyneedle")
 			receipt, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(source))
 			require.NoError(t, err)

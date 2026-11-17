@@ -66,7 +66,7 @@ func TestPDFMetadataEvidence(t *testing.T) {
 			data := mediatest.PDFSignatureFields(tc.fields, strings.Split(tc.extra, "|")...)
 			if tc.rewrite {
 				var rewritten bytes.Buffer
-				require.NoError(t, api.AddProperties(t.Context(), bytes.NewReader(data), &rewritten, map[string]string{"Amendment": "Edited"}, model.NewDefaultConfiguration()))
+				require.NoError(t, api.AddProperties(t.Context(), bytes.NewReader(data), &rewritten, map[string]string{"Amendment": "Edited"}, model.NewStatelessConfiguration()))
 				require.Less(t, rewritten.Len(), len(data))
 				data = rewritten.Bytes()
 			}

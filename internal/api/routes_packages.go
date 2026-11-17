@@ -21,6 +21,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 	pdfapi "github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/canonical"
@@ -460,7 +461,9 @@ func buildPackagePreflightFromRoot(ctx context.Context, d Deps, g PackageMutatio
 		return PackagePreflight{}, err
 	}
 	files, validated, err := loadfile.Validate(ctx, loadfile.ValidateInput{Records: records, Images: images, Volumes: volumes, Resolver: resolver, PageCount: func(file io.ReadSeeker) (int, error) {
-		return pdfapi.PageCount(ctx, file, nil)
+		// A nil configuration makes pdfcpu create and read config.yml in the
+		// user's config directory, which panics when another process races it.
+		return pdfapi.PageCount(ctx, file, model.NewStatelessConfiguration())
 	}})
 	if err != nil {
 		return PackagePreflight{}, err
