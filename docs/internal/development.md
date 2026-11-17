@@ -868,6 +868,28 @@ direct SQL from rewriting those columns. SQLite's released receipt trigger
 prevents updates but does not prevent deletion. These database-level differences
 do not change the qualified Store operations.
 
+#### Document catalog pages and exact links
+
+The internal Store lists current live files by path, name, modification time,
+size, or media type on both databases. Each page resolves its folder and reads
+its files in one snapshot. Forward and backward cursors use the sort value,
+canonical path and node ID. A cursor still works when its boundary file has
+moved or been trashed. Paths sort by bytes and the existing path, depth and
+file-name limits apply. A page can also exclude documents whose watched
+sources are recorded as missing.
+
+Exact summary resolution takes up to 100 node, version and path identities and
+returns them in request order. A moved, trashed, superseded or missing document
+rejects the whole batch. The query walks only the requested files' ancestors.
+Both operations read the latest original-file processing state and active
+rendition identities. Preview-only uploads do not count as original processing.
+
+The catalog contracts run with the canonical PostgreSQL schema and runtime role.
+They cover both cursor directions, traversal bounds, a folder move between
+queries, stale identities, source presence and rendition summaries. Catalog
+pages still enumerate the requested subtree to calculate both continuation
+flags. These operations use the existing table grants.
+
 #### Tree walking and filesystem workers
 
 The internal PostgreSQL Store supports paged tree walking through `BeginWalk`.
