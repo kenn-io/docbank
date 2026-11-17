@@ -168,7 +168,7 @@ environment. Printing configuration leaves the listener's startup to you.
 Both transports have the fixed read catalog described below.
 `--allow-processing` adds only guarded processing start.
 `--allow-package-writes` permits load-file preflight, import, custodian changes,
-Bates exports and publication of an operator-reserved reviewed PDF. `--allow-photo-edits` permits photo asset mutations.
+Bates exports, reviewed recipient ZIPs and publication of an operator-reserved reviewed PDF. `--allow-photo-edits` permits photo asset mutations.
 `--allow-export-writes` enables native export jobs and local downloads.
 `--allow-report-writes` enables frozen report creation, revision, local delivery,
 and explicit release. `--allow-kata-writes` permits quoting verified passages
@@ -858,9 +858,9 @@ approved text and visible numbers before publishing the destination. A failed
 check never falls back to recorded-byte recovery. It does not prove the origin
 of the PDF or compare unmasked pixels with the original.
 
-Only one full export runs per MCP process. Another returns `redaction_busy`
+Reviewed PDF exports and recipient ZIPs share one full-check slot per MCP process. Another returns `redaction_busy`
 before reading private files or contacting the daemon. Other tools and exports
-without review files remain available. Full work has a ten-minute limit;
+without review files remain available. A reviewed PDF export has a ten-minute limit;
 standalone HTTP MCP retains its shorter two-minute request deadline. The
 daemon-hosted MCP endpoint remains read-only.
 
@@ -878,6 +878,48 @@ deadlines return `redaction_canceled`, `redaction_timeout` and
 The same full check is available through `bates export download`. See
 [Numbered delivery](document-processing.md#deliver-one-reviewed-pdf-with-bates-numbers)
 for retention consent and verification scope.
+
+## Export a reviewed recipient ZIP
+
+With `--allow-package-writes`, `export_recipient_package` saves completed
+numbered reviews as one importable ZIP:
+
+```json
+{
+  "selection_path": "/reviews/selection.json",
+  "destination_path": "/exports/recipient.zip"
+}
+```
+
+Use the CLI's [ordered selection file](document-processing.md#package-completed-numbered-pdfs-for-a-recipient).
+The tool checks every review before downloading a PDF, then rechecks each input
+and fully verifies the retained PDF before assembly. The finished package is
+checked against the pinned PDF and reviewed-text identities. Ordinary stamps
+are refused; a failed full check never falls back. Private review files stay
+outside the ZIP. This creates no reservation, render or new retention consent.
+
+Use stdio for multi-document packages. The operation can take 30 minutes, with
+ten minutes per document; HTTP retains its two-minute request deadline and can
+end without a tool result on cancellation. During the whole operation, other
+reviewed PDF exports and recipient packages return `redaction_busy`. Ordinary
+reads remain available. The same retained PDFium backing and process memory
+ceiling described above apply.
+
+Both paths are absolute MCP-host paths. The destination must be outside the
+Docbank data directory and must not exist. Success reports `state`,
+`destination_path`, `size`, `sha256`, `receipt_sha256`,
+`verification: "masks_text_and_numbers"`, the recipient receipt and
+`cleanup_failed`. `published_durability_unknown` means the file was saved but
+the directory sync failed. A later cleanup error leaves the saved result and
+sets `cleanup_failed`; check the stage named in the local log.
+
+`recipient_package_limit` means a document, page, text or archive bound was
+exceeded. `recipient_package_local_io` means output staging or saving failed.
+Other full-check refusals use the codes described above. Malformed private
+inputs return invalid arguments without their contents or reader diagnostics.
+If the reply is lost, inspect the destination and its hash before retrying;
+existing files are never replaced. The ZIP is not retained in the vault
+unless it is imported separately.
 
 ## Optional package writes
 

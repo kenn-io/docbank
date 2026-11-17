@@ -203,7 +203,7 @@ func toolCatalog(options ServerOptions) []*sdkmcp.Tool {
 		definitions = append(definitions, preflightLoadFilePackageToolDefinition, packageImportToolDefinition,
 			resolvePackageCustodianToolDefinition, assignPackageCustodianToolDefinition,
 			ensureBatesNamespaceToolDefinition, reserveBatesRangeToolDefinition, publishBatesExportToolDefinition, publishNumberedPDFToolDefinition,
-			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition)
+			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition, recipientPackageTool)
 	}
 	if options.AllowPhotoEdits {
 		definitions = append(definitions, photoWriteToolDefinitions...)
@@ -266,6 +266,8 @@ func registerToolCatalog(
 		case ensureBatesNamespaceToolDefinition.name, reserveBatesRangeToolDefinition.name,
 			publishBatesExportToolDefinition.name, publishNumberedPDFToolDefinition.name, exportBatesFileToolDefinition.name:
 			handler = batesWriteToolHandler(lease, tool.Name, output, logger)
+		case recipientPackageTool.name:
+			handler = recipientPackageHandler(lease, output, logger)
 		case exportLoadFilePackageToolDefinition.name:
 			handler = packageExportToolHandler(lease, output, logger)
 		default:
@@ -618,15 +620,19 @@ func domainErrorMessage(code string) string {
 	case "redaction_verifier_version":
 		return "The preparation, review or recorded delivery requires a different verifier version."
 	case "redaction_integrity":
-		return "The retained PDF failed its recorded identity or reviewed masks, text and numbers check."
+		return "The retained PDF or recipient package failed its identity or reviewed content checks."
 	case "redaction_memory":
 		return "The MCP process exceeds the PDF verifier memory ceiling; retry when other work has finished."
 	case "redaction_canceled":
 		return "The full PDF check was canceled."
 	case "redaction_timeout":
-		return "The full PDF check exceeded the request deadline."
+		return "The full PDF check exceeded the request deadline; use stdio for longer checks."
 	case "redaction_worker_timeout":
 		return "The PDF verifier exceeded its per-page deadline."
+	case recipientPackageLimitCode:
+		return "The recipient package exceeds its document, page, text or archive limit."
+	case recipientPackageLocalIOCode:
+		return "The recipient ZIP could not be staged or saved; check the destination and available disk space."
 	case "bates_local_io":
 		return "The local PDF could not be staged or saved; check the destination and available disk space."
 	case "download_selection_stale":
@@ -815,7 +821,7 @@ func sanitizedRPCError(_ error) *jsonrpc.Error {
 
 func logOperationError(logger *slog.Logger, operation string, err error) {
 	code, _ := stableDomainError(err)
-	if errors.Is(err, errExportLocalIO) || errors.Is(err, errReportLocalIO) || code == "bates_local_io" {
+	if errors.Is(err, errExportLocalIO) || errors.Is(err, errReportLocalIO) || (code == "bates_local_io" || code == recipientPackageLocalIOCode) {
 		logger.Error("MCP operation failed", "operation", operation,
 			"error_code", code, "error", err)
 		return

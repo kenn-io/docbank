@@ -12,11 +12,6 @@ import (
 	"go.kenn.io/docbank/internal/redactionfiles"
 )
 
-func readRedactionFile(ctx context.Context, path string, limit int64) ([]byte, error) {
-	data, err := redactionfiles.ReadFile(ctx, path, limit)
-	return data, redactionInputCLIError(err)
-}
-
 func readRedactionInputs(ctx context.Context, preparationPath, masksPath string) (processing.RedactionResolveRequest, error) {
 	inputs, err := redactionfiles.ReadInputs(ctx, preparationPath, masksPath)
 	return inputs, redactionInputCLIError(err)

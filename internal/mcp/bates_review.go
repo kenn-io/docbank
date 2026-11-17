@@ -33,7 +33,7 @@ type reviewedBatesError struct {
 }
 
 func (e *reviewedBatesError) Error() string {
-	if e.code == "bates_local_io" {
+	if e.code == "bates_local_io" || e.code == recipientPackageLocalIOCode {
 		return fmt.Sprintf("%s: %v", e.code, e.cause)
 	}
 	return e.code

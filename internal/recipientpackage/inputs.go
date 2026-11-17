@@ -1,10 +1,10 @@
-package main
+// Package recipientpackage assembles reviewed numbered deliveries for CLI and MCP.
+package recipientpackage
 
 import (
 	"context"
 	"crypto/sha256"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -14,35 +14,43 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/redactionfiles"
 )
 
-type recipientSelection struct {
-	Contract  string           `json:"contract"`
-	Documents []recipientInput `json:"documents"`
+type Selection struct {
+	Contract  string  `json:"contract"`
+	Documents []Input `json:"documents"`
 }
-type recipientInput struct {
+type Input struct {
 	AllocationID string `json:"allocation_id"`
 	Preparation  string `json:"preparation"`
 	Masks        string `json:"masks"`
 	Review       string `json:"review"`
 }
-type recipientPreflight struct {
-	Inputs    []recipientInput
+type Plan struct {
+	Inputs    []Input
 	Receipts  []api.BatesExport
 	Documents []processing.RecipientPackageDocument
 }
 
-func readRecipientSelection(ctx context.Context, path string) (recipientSelection, error) {
-	var selection recipientSelection
-	data, err := readRedactionFile(ctx, path, 256<<10)
+func ReadSelection(ctx context.Context, path string) (selection Selection, err error) {
+	defer func() {
+		if err != nil {
+			err = &InputError{err}
+		}
+	}()
+	data, err := redactionfiles.ReadFile(ctx, path, 256<<10)
 	if err != nil {
 		return selection, err
 	}
 	if err = json.Unmarshal(data, &selection, json.RejectUnknownMembers(true)); err != nil {
-		return selection, usageError(err)
+		return selection, fmt.Errorf("%w: %w", processing.ErrRecipientPackageInvalid, err)
 	}
-	if selection.Contract != "native-pdf-recipient-selection/v1" || len(selection.Documents) < 1 || len(selection.Documents) > processing.MaxRecipientPackageDocuments {
-		return selection, usageError(errors.New("selection requires native-pdf-recipient-selection/v1 and 1–16 documents"))
+	if selection.Contract != "native-pdf-recipient-selection/v1" || len(selection.Documents) < 1 {
+		return selection, invalid("selection requires native-pdf-recipient-selection/v1 and 1–16 documents")
+	}
+	if len(selection.Documents) > processing.MaxRecipientPackageDocuments {
+		return selection, processing.ErrRecipientPackageLimit
 	}
 	base, err := filepath.Abs(filepath.Dir(path))
 	if err != nil {
@@ -52,12 +60,12 @@ func readRecipientSelection(ctx context.Context, path string) (recipientSelectio
 	for i := range selection.Documents {
 		d := &selection.Documents[i]
 		if !daemonconn.IsCanonicalUUIDv4(d.AllocationID) || seen[d.AllocationID] {
-			return selection, usageError(errors.New("allocations must be distinct canonical lowercase UUIDv4 values"))
+			return selection, invalid("allocations must be distinct canonical lowercase UUIDv4 values")
 		}
 		seen[d.AllocationID] = true
 		for _, p := range []*string{&d.Preparation, &d.Masks, &d.Review} {
 			if *p == "" || len(*p) > 4096 || !utf8.ValidString(*p) || strings.ContainsRune(*p, 0) {
-				return selection, usageError(errors.New("each preparation, masks and review path must contain 1–4096 UTF-8 bytes without NUL"))
+				return selection, invalid("each preparation, masks and review path must contain 1–4096 UTF-8 bytes without NUL")
 			}
 			if !filepath.IsAbs(*p) {
 				*p = filepath.Join(base, *p)
@@ -67,8 +75,8 @@ func readRecipientSelection(ctx context.Context, path string) (recipientSelectio
 	return selection, nil
 }
 
-func preflightRecipientPackage(ctx context.Context, c *daemonconn.Connection, selection recipientSelection) (recipientPreflight, error) {
-	checked := recipientPreflight{Inputs: selection.Documents}
+func Preflight(ctx context.Context, c *daemonconn.Connection, selection Selection) (Plan, error) {
+	checked := Plan{Inputs: selection.Documents}
 	var numbered []*processing.NumberedReservation
 	for i, input := range selection.Documents {
 		receipt, err := c.BatesExport(ctx, input.AllocationID)
@@ -80,7 +88,7 @@ func preflightRecipientPackage(ctx context.Context, c *daemonconn.Connection, se
 			return checked, err
 		}
 		if n == nil {
-			return checked, usageError(fmt.Errorf("allocation %s is a stamped export; select completed numbered redactions", input.AllocationID))
+			return checked, fmt.Errorf("%w: allocation %s is a stamped export; select completed numbered redactions", processing.ErrRecipientPackageInvalid, input.AllocationID)
 		}
 		labels := make([]string, len(receipt.Pages))
 		for j, p := range receipt.Pages {
@@ -98,7 +106,7 @@ func preflightRecipientPackage(ctx context.Context, c *daemonconn.Connection, se
 		numbered = append(numbered, n)
 	}
 	if err := processing.ValidateRecipientDocuments(checked.Documents); err != nil {
-		return checked, recipientCLIError(err)
+		return checked, err
 	}
 	// Do all cheap local admission before any content request. Only digests survive.
 	for i, input := range selection.Documents {
@@ -110,7 +118,7 @@ func preflightRecipientPackage(ctx context.Context, c *daemonconn.Connection, se
 			return checked, fmt.Errorf("allocation %s: %w", input.AllocationID, err)
 		}
 		if err = numbered[i].Recipe.MatchReview(review); err != nil {
-			return checked, redactionCLIError(err)
+			return checked, err
 		}
 		checked.Documents[i].ReviewSHA256 = review.SHA256
 		text, err := redaction.Text(review.Resolved)
@@ -125,12 +133,17 @@ func preflightRecipientPackage(ctx context.Context, c *daemonconn.Connection, se
 	return checked, nil
 }
 
-func readRecipientReview(ctx context.Context, input recipientInput) (processing.RedactionReview, error) {
-	request, err := readRedactionInputs(ctx, input.Preparation, input.Masks)
+func readRecipientReview(ctx context.Context, input Input) (review processing.RedactionReview, err error) {
+	defer func() {
+		if err != nil {
+			err = &InputError{err}
+		}
+	}()
+	request, err := redactionfiles.ReadInputs(ctx, input.Preparation, input.Masks)
 	if err != nil {
 		return processing.RedactionReview{}, err
 	}
-	review, err := readRedactionReview(ctx, input.Review, request)
+	review, err = redactionfiles.ReadReview(ctx, input.Review, request)
 	if err != nil {
 		return review, err
 	}
@@ -138,18 +151,18 @@ func readRecipientReview(ctx context.Context, input recipientInput) (processing.
 	for _, run := range review.Resolved.Runs {
 		size += int64(len(run.Text))
 		if size > processing.MaxRecipientPackageTextBytes {
-			return review, usageError(errors.New("reviewed text exceeds 16 MiB"))
+			return review, fmt.Errorf("%w: reviewed text exceeds 16 MiB", processing.ErrRecipientPackageLimit)
 		}
 	}
 	return review, nil
 }
 
-func recipientCLIError(err error) error {
-	if errors.Is(err, processing.ErrRecipientPackageInvalid) || errors.Is(err, processing.ErrRecipientPackageLimit) {
-		return usageError(err)
-	}
-	if errors.Is(err, processing.ErrRecipientPackageIntegrity) {
-		return integrityError(err)
-	}
-	return redactionCLIError(err)
+// InputError retains private-reader causes for CLI diagnostics. MCP must drop them.
+type InputError struct{ cause error }
+
+func (e *InputError) Error() string { return e.cause.Error() }
+func (e *InputError) Unwrap() error { return e.cause }
+
+func invalid(message string) error {
+	return fmt.Errorf("%w: %s", processing.ErrRecipientPackageInvalid, message)
 }

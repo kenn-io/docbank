@@ -682,14 +682,22 @@ The saved-PDF qualification uses an upstream PDFium reader only in tests.
 
 ### Recipient packages of completed deliveries
 
-The local `redaction package` command reads completed numbered artifacts through
-the existing daemon API and fully verifies each against a supplied review. It
-never captures source content or starts a render. All recorded metadata and local
+The CLI `redaction package` command and opted-in MCP `export_recipient_package`
+share selection, preflight and assembly in `internal/recipientpackage`. They read
+completed numbered artifacts through the existing daemon API and fully verify
+each against its supplied review. Neither path captures source content or starts
+a render. All recorded metadata and local
 reviews are admitted before the first content request, including the size and
 SHA-256 of each review's sanitized text. Assembly re-reads each review and compares
 its pinned digest before calling the checked downloader. Both the writer and the
 final package check require the text to match its preflight identity.
-Only one staged PDF exists at a time, and the checked handle supplies the ZIP.
+Only one staged PDF exists at a time, and the checked handle supplies the ZIP. MCP uses
+an independently acquired daemon connection and shares the reviewed-PDF process
+gate through final stage cleanup. A package can hold that gate for 30 minutes;
+other full checks fail busy while ordinary reads remain available. Private-input
+errors retain CLI diagnostics but are sanitized at the MCP boundary. Both callers
+use `filepublish` for private staging and atomic publication; the MCP adapter
+reports cleanup failure after publication without turning it into a failed save.
 
 The `native-pdf-recipient-package/v1` receipt binds public delivery identities,
 labels, review digests and file hashes. The ZIP uses stored entries with fixed DOS

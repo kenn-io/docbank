@@ -534,6 +534,13 @@ JSON reports `state`, `destination`, `size`, `sha256`, `receipt_sha256`,
 separately. Verification does not prove unmasked pixels match the original or
 authenticate the producer.
 
+Agents can save the same package through
+[`export_recipient_package`](mcp.md#export-a-reviewed-recipient-zip), with
+`--allow-package-writes` and absolute selection and destination paths. It uses
+the same preflight, full checks and package format. Prefer stdio: a package can
+hold MCP's shared full-PDF check slot for 30 minutes, while HTTP has a two-minute
+request deadline.
+
 Limits are 16 documents, 16 pages per document, 64 pages total and 512 MiB for the
 complete ZIP. The selection and each metadata entry are limited to 256 KiB;
 each text file is limited to 16 MiB. The command has a 30-minute deadline, with
