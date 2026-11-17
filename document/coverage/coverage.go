@@ -222,7 +222,7 @@ func descriptorSupports(
 		if descriptor.ReturnsMarkdown {
 			return true
 		}
-		return descriptor.ReturnsStructured && qualified
+		return descriptor.ReturnsStructured && (qualified || descriptor.ID == document.ImageUnderstandingProviderID)
 	case document.CapabilityPages:
 		role = document.EvidenceArtifactImage
 	case document.CapabilityTranscript:

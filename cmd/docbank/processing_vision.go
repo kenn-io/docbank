@@ -18,7 +18,7 @@ func newProcessingVisionFingerprintsCommand() *cobra.Command {
 		Args:    cobra.NoArgs,
 	}
 	var model, trust, endpoint, deployment, task string
-	cmd.Flags().StringVar(&task, "task", vision.ProviderID, vision.ProviderID+" or "+document.FaceDetectionProviderID)
+	cmd.Flags().StringVar(&task, "task", vision.ProviderID, vision.ProviderID+", "+document.FaceDetectionProviderID+", or "+vision.UnderstandingProviderID)
 	cmd.Flags().StringVar(&model, "model", "", "provider model (required)")
 	cmd.Flags().StringVar(&trust, "trust-boundary", "", "operator_network or hosted_provider (required)")
 	cmd.Flags().StringVar(&endpoint, "endpoint", "", "provider root origin (required)")
