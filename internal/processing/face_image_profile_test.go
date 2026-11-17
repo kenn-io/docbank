@@ -15,11 +15,16 @@ import (
 
 func TestFaceProfileKeepsSourceEligibility(t *testing.T) {
 	t.Parallel()
+	checkFaceProfileKeepsSourceEligibility(t, newFaceEmbeddingFixture)
+}
+
+func checkFaceProfileKeepsSourceEligibility(t *testing.T, open faceEmbeddingFixtureFactory) {
+	t.Helper()
 	for _, source := range []string{"hidden", "raw"} {
 		t.Run(source, func(t *testing.T) {
 			t.Parallel()
 			ctx := t.Context()
-			faces := newFaceEmbeddingFixture(t, false)
+			faces := open(t, false)
 			f := faces.f
 			faces.enable(t)
 			if source == "hidden" {

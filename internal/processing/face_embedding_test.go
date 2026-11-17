@@ -42,10 +42,16 @@ type faceEmbeddingFixture struct {
 	onRequest    func()
 }
 
+type faceEmbeddingFixtureFactory func(*testing.T, bool) *faceEmbeddingFixture
+
 func newFaceEmbeddingFixture(t *testing.T, unmatched bool) *faceEmbeddingFixture {
 	t.Helper()
+	return faceEmbeddingFixtureWithPhoto(t, unmatched, newPhotoDescriptionFixture(t))
+}
+
+func faceEmbeddingFixtureWithPhoto(t *testing.T, unmatched bool, f *photoDescriptionFixture) *faceEmbeddingFixture {
+	t.Helper()
 	ctx := t.Context()
-	f := newPhotoDescriptionFixture(t)
 	detector := f.newVisionServiceWith(t, map[string]string{"faces": "detector"}, document.FaceDetectionProviderID)
 	f.reply = detectedFaceReply
 	f.enqueueFaceDetection(t, detector)
@@ -103,10 +109,15 @@ func (x *faceEmbeddingFixture) enable(t *testing.T) {
 
 func TestFaceEmbeddingBoxesAndNilResults(t *testing.T) {
 	t.Parallel()
+	checkFaceEmbeddingBoxesAndNilResults(t, newFaceEmbeddingFixture)
+}
+
+func checkFaceEmbeddingBoxesAndNilResults(t *testing.T, open faceEmbeddingFixtureFactory) {
+	t.Helper()
 	for _, unmatched := range []bool{false, true} {
 		t.Run(map[bool]string{false: "mixed", true: "all nil"}[unmatched], func(t *testing.T) {
 			t.Parallel()
-			x := newFaceEmbeddingFixture(t, unmatched)
+			x := open(t, unmatched)
 			ctx := t.Context()
 			x.enable(t)
 			x.worker.reconcileAt = time.Time{}
@@ -146,7 +157,12 @@ func TestFaceEmbeddingBoxesAndNilResults(t *testing.T) {
 
 func TestFaceMissingPreviewDoesNotBlockOtherPhotos(t *testing.T) {
 	t.Parallel()
-	x := newFaceEmbeddingFixture(t, false)
+	checkFaceMissingPreviewDoesNotBlockOtherPhotos(t, newFaceEmbeddingFixture)
+}
+
+func checkFaceMissingPreviewDoesNotBlockOtherPhotos(t *testing.T, open faceEmbeddingFixtureFactory) {
+	t.Helper()
+	x := open(t, false)
 	ctx := t.Context()
 	version := x.f.addPhoto(t, "healthy.jpg", 720)
 	_, _, err := x.f.catalog.CreatePhotoFace(ctx, version, uuid.New().String(), document.FaceBox{Width: .2, Height: .2}, "")
@@ -218,7 +234,12 @@ func TestFaceRankingUnmatchedFallbackAndUnavailableContinuation(t *testing.T) {
 
 func TestFacePeopleRankingPrecedesPagingAndKeepsNamesakes(t *testing.T) {
 	t.Parallel()
-	x := newFaceEmbeddingFixture(t, false)
+	checkFacePeopleRankingPrecedesPagingAndKeepsNamesakes(t, newFaceEmbeddingFixture)
+}
+
+func checkFacePeopleRankingPrecedesPagingAndKeepsNamesakes(t *testing.T, open faceEmbeddingFixtureFactory) {
+	t.Helper()
+	x := open(t, false)
 	x.matchAll = true
 	ctx := t.Context()
 	var queryFace store.PhotoFace
@@ -263,7 +284,12 @@ func TestFacePeopleRankingPrecedesPagingAndKeepsNamesakes(t *testing.T) {
 
 func TestFacePeopleRankingObeysHiddenScope(t *testing.T) {
 	t.Parallel()
-	x := newFaceEmbeddingFixture(t, false)
+	checkFacePeopleRankingObeysHiddenScope(t, newFaceEmbeddingFixture)
+}
+
+func checkFacePeopleRankingObeysHiddenScope(t *testing.T, open faceEmbeddingFixtureFactory) {
+	t.Helper()
+	x := open(t, false)
 	x.matchAll = true
 	ctx := t.Context()
 	ada, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
@@ -331,10 +357,10 @@ func (r *facePayloadReads) OpenStreamContext(ctx context.Context, hash string) (
 	return r.RenditionBlobReader.OpenStreamContext(ctx, hash)
 }
 
-func newNamedFacePickerFixture(t *testing.T) (*faceEmbeddingFixture, string) {
+func newNamedFacePickerFixture(t *testing.T, open faceEmbeddingFixtureFactory) (*faceEmbeddingFixture, string) {
 	t.Helper()
 	ctx := t.Context()
-	x := newFaceEmbeddingFixture(t, false)
+	x := open(t, false)
 	x.matchAll = true
 	person, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
 	require.NoError(t, err)
@@ -354,10 +380,15 @@ func newNamedFacePickerFixture(t *testing.T) (*faceEmbeddingFixture, string) {
 
 func TestFacePickerPayloadScopeAndIndexFreshness(t *testing.T) {
 	t.Parallel()
+	checkFacePickerPayloadScopeAndIndexFreshness(t, newFaceEmbeddingFixture)
+}
+
+func checkFacePickerPayloadScopeAndIndexFreshness(t *testing.T, open faceEmbeddingFixtureFactory) {
+	t.Helper()
 	for _, scenario := range []string{"payload scope", "indexed exactness", "late named freshness", "named source in query photo"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
-			x, personID := newNamedFacePickerFixture(t)
+			x, personID := newNamedFacePickerFixture(t, open)
 			ctx := t.Context()
 			if scenario == "named source in query photo" {
 				_, err := x.f.catalog.DecidePhotoFace(ctx, x.inputs[1].ContentVersionID, store.PhotoFaceDecisionRequest{Action: "name", FaceID: x.inputs[1].FaceID, Revision: 1, PersonID: personID})
@@ -450,10 +481,15 @@ func TestFacePickerPayloadScopeAndIndexFreshness(t *testing.T) {
 
 func TestVisibleFaceSuggestionUsesVisibleNamedEvidence(t *testing.T) {
 	t.Parallel()
+	checkVisibleFaceSuggestionUsesVisibleNamedEvidence(t, newFaceEmbeddingFixture)
+}
+
+func checkVisibleFaceSuggestionUsesVisibleNamedEvidence(t *testing.T, open faceEmbeddingFixtureFactory) {
+	t.Helper()
 	for _, change := range []string{"already_hidden", "target_becomes_visible", "references_become_hidden"} {
 		t.Run(change, func(t *testing.T) {
 			t.Parallel()
-			x := newFaceEmbeddingFixture(t, false)
+			x := open(t, false)
 			x.matchAll = true
 			x.vectorForBox = func(box embedclient.FaceBox) []float32 {
 				values := make([]float32, 512)
@@ -607,7 +643,12 @@ func TestVisibleFaceSuggestionUsesVisibleNamedEvidence(t *testing.T) {
 
 func TestVisibleUnnamedGroupSurvivesHiddenMatch(t *testing.T) {
 	t.Parallel()
-	x := newFaceEmbeddingFixture(t, false)
+	checkVisibleUnnamedGroupSurvivesHiddenMatch(t, newFaceEmbeddingFixture)
+}
+
+func checkVisibleUnnamedGroupSurvivesHiddenMatch(t *testing.T, open faceEmbeddingFixtureFactory) {
+	t.Helper()
+	x := open(t, false)
 	x.matchAll = true
 	ctx := t.Context()
 	hiddenVersion := x.f.addPhoto(t, "private-match.jpg", 730)
@@ -635,7 +676,12 @@ func TestVisibleUnnamedGroupSurvivesHiddenMatch(t *testing.T) {
 
 func TestFaceSetupDisclosesScopeAndRequiresCurrentConsent(t *testing.T) {
 	t.Parallel()
-	x := newFaceEmbeddingFixture(t, false)
+	checkFaceSetupDisclosesScopeAndRequiresCurrentConsent(t, newFaceEmbeddingFixture)
+}
+
+func checkFaceSetupDisclosesScopeAndRequiresCurrentConsent(t *testing.T, open faceEmbeddingFixtureFactory) {
+	t.Helper()
+	x := open(t, false)
 	starts := 0
 	setup := FaceSetup{Service: x.service, Startup: func(context.Context) error {
 		starts++
@@ -667,14 +713,43 @@ func TestFaceSetupDisclosesScopeAndRequiresCurrentConsent(t *testing.T) {
 	require.Equal(t, 1, x.calls)
 }
 
+func TestFaceMatchingInputsRejectTrashedPhoto(t *testing.T) {
+	t.Parallel()
+	checkFaceMatchingInputsRejectTrashedPhoto(t, newFaceEmbeddingFixture)
+}
+
+func checkFaceMatchingInputsRejectTrashedPhoto(t *testing.T, open faceEmbeddingFixtureFactory) {
+	t.Helper()
+	x := open(t, false)
+	ctx := t.Context()
+	x.enable(t)
+	_, err := x.worker.ScanOnce(ctx)
+	require.NoError(t, err)
+	before, err := x.f.catalog.FaceMatchingInputs(ctx)
+	require.NoError(t, err)
+	require.Len(t, before.Sets, 1)
+	set := before.Sets[0].Set
+	head := store.EmbeddingHeadRecord{
+		FencingToken: 2, Key: store.EmbeddingHeadKey{ContentVersionID: set.ContentVersionID, BindingID: set.BindingID, InputKind: set.InputKind},
+		SetID: set.ID, VectorSpaceID: set.VectorSpace.ID, ProcessingProfileFingerprint: set.ProcessingProfileFingerprint, PublishedAt: set.CreatedAt,
+	}
+	require.NoError(t, x.f.catalog.PublishEmbeddingHead(ctx, head))
+	_, _, err = x.f.catalog.Trash(ctx, x.f.node.ID, store.UnconditionalRev)
+	require.NoError(t, err)
+	after, err := x.f.catalog.FaceMatchingInputs(ctx)
+	require.NoError(t, err)
+	require.Empty(t, after.Sets, "trashed faces must stop contributing to suggestions")
+	require.ErrorIs(t, x.f.catalog.ReplaceFaceSuggestions(ctx, before, nil), store.ErrStaleRevision)
+	require.ErrorIs(t, x.f.catalog.PublishEmbeddingHead(ctx, head), store.ErrEmbeddingAuthorityStale)
+}
+
 // Exercise the consumer read after reopening independently of writer triggers.
-// The processing fixture publishes real face generations and payloads for all three readers.
+// The fixture publishes real face generations and payloads for all three readers.
 func TestFaceMatchingInputsPreserveStoredAuthority(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, damage string
 	}{
-		{"trashed photo", ""},
 		{"missing preview", `DELETE FROM visual_preview_heads; DELETE FROM visual_preview_generations`},
 		{"replaced preview", ""},
 	} {
@@ -698,9 +773,6 @@ func TestFaceMatchingInputsPreserveStoredAuthority(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, db.Close()) })
 			switch tc.name {
-			case "trashed photo":
-				_, _, err = x.f.catalog.Trash(ctx, x.f.node.ID, store.UnconditionalRev)
-				require.NoError(t, err)
 			case "replaced preview":
 				// Regenerate the purged preview while retaining the earlier face vectors.
 				_, err = db.ExecContext(ctx, `DELETE FROM visual_preview_heads; DELETE FROM visual_preview_generations`)
@@ -794,7 +866,12 @@ func TestFaceMatchingReadersRejectFutureContracts(t *testing.T) {
 
 func TestFaceRankingContinuationRejectsChangedCentroids(t *testing.T) {
 	t.Parallel()
-	x := newFaceEmbeddingFixture(t, false)
+	checkFaceRankingContinuationRejectsChangedCentroids(t, newFaceEmbeddingFixture)
+}
+
+func checkFaceRankingContinuationRejectsChangedCentroids(t *testing.T, open faceEmbeddingFixtureFactory) {
+	t.Helper()
+	x := open(t, false)
 	x.matchAll = true
 	ctx := t.Context()
 	ada, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
@@ -853,7 +930,12 @@ func TestFaceRankingContinuationRejectsChangedCentroids(t *testing.T) {
 }
 func TestFaceSuggestionSurvivesOtherPersonRejectionWithHiddenLocked(t *testing.T) {
 	t.Parallel()
-	x := newFaceEmbeddingFixture(t, false)
+	checkFaceSuggestionSurvivesOtherPersonRejectionWithHiddenLocked(t, newFaceEmbeddingFixture)
+}
+
+func checkFaceSuggestionSurvivesOtherPersonRejectionWithHiddenLocked(t *testing.T, open faceEmbeddingFixtureFactory) {
+	t.Helper()
+	x := open(t, false)
 	x.matchAll = true
 	ctx := t.Context()
 	ada, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
