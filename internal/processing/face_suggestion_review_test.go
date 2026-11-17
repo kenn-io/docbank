@@ -88,7 +88,12 @@ func TestFaceSuggestionsRecoverAfterQueueSpaceReturns(t *testing.T) {
 
 func TestHealthyFacesSurviveUnavailableVectorPayload(t *testing.T) {
 	t.Parallel()
-	x := newFaceEmbeddingFixture(t, false)
+	checkHealthyFacesSurviveUnavailableVectorPayload(t, newFaceEmbeddingFixture)
+}
+
+func checkHealthyFacesSurviveUnavailableVectorPayload(t *testing.T, open faceEmbeddingFixtureFactory) {
+	t.Helper()
+	x := open(t, false)
 	x.matchAll = true
 	x.vectorForBox = func(box embedclient.FaceBox) []float32 {
 		values := make([]float32, 512)
@@ -170,19 +175,25 @@ func TestFaceSuggestionsResumeAfterRestart(t *testing.T) {
 
 func newFaceSuggestionBatchFixture(t *testing.T) (*faceEmbeddingFixture, store.PhotoFace) {
 	t.Helper()
-	x := newFaceEmbeddingFixture(t, false)
+	return faceSuggestionBatchFixtureWith(t, newFaceEmbeddingFixture)
+}
+
+func faceSuggestionBatchFixtureWith(t *testing.T, open faceEmbeddingFixtureFactory) (*faceEmbeddingFixture, store.PhotoFace) {
+	t.Helper()
+	x := open(t, false)
 	x.matchAll = true
 	x.worker.maxRows = 1000
 	x.worker.maxVectorBlobBytes = 8 << 20
 	x.vectorForBox = func(box embedclient.FaceBox) []float32 {
 		values := make([]float32, 512)
-		values[int(math.Round(box.X*1000))/2] = 1
+		values[int(math.Round(box.X*600))/2] = 1
 		return values
 	}
 	ctx := t.Context()
 	var omitted store.PhotoFace
-	for i := range 998 {
-		face, _, err := x.f.catalog.CreatePhotoFace(ctx, x.f.node.CurrentVersionID, fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1), document.FaceBox{X: float64(i) / 1000, Width: .001, Height: .1}, "")
+	// 256 pairs need 65,536 comparisons, just over one grouping batch.
+	for i := range 512 {
+		face, _, err := x.f.catalog.CreatePhotoFace(ctx, x.f.node.CurrentVersionID, fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1), document.FaceBox{X: float64(i) / 600, Width: .001, Height: .1}, "")
 		require.NoError(t, err)
 		if i == 0 {
 			omitted = face
@@ -192,15 +203,24 @@ func newFaceSuggestionBatchFixture(t *testing.T) (*faceEmbeddingFixture, store.P
 	n, err := x.worker.ScanOnce(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
+	snapshot, err := x.f.catalog.FaceMatchingInputs(ctx)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Sets, 1, "the batch scenario requires published face vectors")
+	require.Equal(t, 514, snapshot.Sets[0].Set.VectorSet.RowCount)
 	return x, omitted
 }
 
 func TestFaceSuggestionBatchesPublishThenCatchUp(t *testing.T) {
 	t.Parallel()
+	checkFaceSuggestionBatchesPublishThenCatchUp(t, newFaceEmbeddingFixture)
+}
+
+func checkFaceSuggestionBatchesPublishThenCatchUp(t *testing.T, open faceEmbeddingFixtureFactory) {
+	t.Helper()
 	for _, action := range []string{"dismiss", "name"} {
 		t.Run(action, func(t *testing.T) {
 			t.Parallel()
-			x, omitted := newFaceSuggestionBatchFixture(t)
+			x, omitted := faceSuggestionBatchFixtureWith(t, open)
 			ctx := t.Context()
 			service, err := NewService(ctx, ServiceConfig{Catalog: x.f.catalog, Blobs: x.f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx})
 			require.NoError(t, err)
@@ -211,11 +231,11 @@ func TestFaceSuggestionBatchesPublishThenCatchUp(t *testing.T) {
 			require.Empty(t, page, "partial groups must stay unpublished")
 			require.Zero(t, total)
 			personID := ""
-			expectedTotal := int64(498)
+			expectedTotal := int64(255)
 			if action == "name" {
 				person, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
 				require.NoError(t, err)
-				personID, expectedTotal = person.PersonID, 499
+				personID, expectedTotal = person.PersonID, 256
 			}
 			_, err = x.f.catalog.DecidePhotoFace(ctx, omitted.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: omitted.FaceID, Revision: omitted.Revision, Action: action, PersonID: personID})
 			require.NoError(t, err)
@@ -328,7 +348,12 @@ func TestFaceSuggestionLaneCatchesUpAfterMidPassWrite(t *testing.T) {
 
 func TestFaceSuggestionsPublishDuringImports(t *testing.T) {
 	t.Parallel()
-	x, _ := newFaceSuggestionBatchFixture(t)
+	checkFaceSuggestionsPublishDuringImports(t, newFaceEmbeddingFixture)
+}
+
+func checkFaceSuggestionsPublishDuringImports(t *testing.T, open faceEmbeddingFixtureFactory) {
+	t.Helper()
+	x, _ := faceSuggestionBatchFixtureWith(t, open)
 	ctx := t.Context()
 	require.Nil(t, x.service.faceSuggestionsPending)
 	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
@@ -370,7 +395,12 @@ func TestFaceSuggestionsPublishDuringImports(t *testing.T) {
 
 func TestExactGroupRejectionAllowsLargerNamedGroup(t *testing.T) {
 	t.Parallel()
-	x := newFaceEmbeddingFixture(t, false)
+	checkExactGroupRejectionAllowsLargerNamedGroup(t, newFaceEmbeddingFixture)
+}
+
+func checkExactGroupRejectionAllowsLargerNamedGroup(t *testing.T, open faceEmbeddingFixtureFactory) {
+	t.Helper()
+	x := open(t, false)
 	x.matchAll = true
 	ctx := t.Context()
 	ada, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")

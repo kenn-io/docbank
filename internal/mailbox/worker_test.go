@@ -153,6 +153,13 @@ func TestMailboxWorkerSurvivesCatalogContention(t *testing.T) {
 				}
 				// Several claim polls (250ms) or job watcher ticks (100ms) meet the lock.
 				time.Sleep(time.Second)
+				// A watcher tick (or claim poll) fires at the instant this sleep ends.
+				// Let its query finish while the lock is still held. Otherwise its
+				// unpooled connection can open or close as the lock is released, and
+				// SQLite briefly locks the database file to do that. The resumed job's
+				// writer then meets a lock this test did not create, and fails at
+				// once because the fixture disables busy waiting.
+				synctest.Wait()
 				select {
 				case <-done:
 					t.Fatalf("worker exited under temporary contention: %v", workerErr)

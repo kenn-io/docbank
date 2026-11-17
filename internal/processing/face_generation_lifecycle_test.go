@@ -14,6 +14,11 @@ import (
 
 func TestFaceWorkerAbandonsDisappearedSource(t *testing.T) {
 	t.Parallel()
+	checkFaceWorkerAbandonsDisappearedSource(t, newFaceEmbeddingFixture)
+}
+
+func checkFaceWorkerAbandonsDisappearedSource(t *testing.T, open faceEmbeddingFixtureFactory) {
+	t.Helper()
 	for _, scenario := range []struct {
 		change      string
 		preparation bool
@@ -25,7 +30,7 @@ func TestFaceWorkerAbandonsDisappearedSource(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			ctx := t.Context()
-			x := newFaceEmbeddingFixture(t, false)
+			x := open(t, false)
 			x.enable(t)
 			x.worker.catalog = &countedReconcileCatalog{Store: x.f.catalog, pauseClaims: true}
 			_, err := x.worker.ScanOnce(ctx)

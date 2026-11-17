@@ -972,9 +972,11 @@ func checkAcquireSemanticSearchAuthorityUsesStoredDescriptor(t *testing.T, open 
 		authority.Lease.FencingToken, now))
 }
 
-func TestSearchExplainedLexicalCandidatesCitesActiveRenditionSegment(t *testing.T) {
+func checkSearchExplainedLexicalCandidatesCitesActiveRenditionSegment(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)
 	build := lexicalSearchBuild(s, profile, catalogBuildID,
 		strings.Repeat("x", 2048)+" mercury bounded evidence excerpt")
@@ -997,8 +999,19 @@ func TestSearchExplainedLexicalCandidatesCitesActiveRenditionSegment(t *testing.
 	assert.Contains(t, candidates[0].Excerpt, "mercury")
 	assert.LessOrEqual(t, len([]rune(candidates[0].Excerpt)), maxExplainedSearchExcerptRunes)
 	assert.Equal(t, versions[0], candidates[0].Node.CurrentVersionID)
+	requested := []SearchCandidateIdentity{{NodeID: candidates[0].Node.ID, ContentVersionID: versions[0],
+		Evidence: []SearchEvidenceIdentity{{NodeID: candidates[0].Node.ID, ContentVersionID: versions[0],
+			Kind: "rendition_segment", BuildID: build.ID, SegmentID: build.LexicalSegments[0].ID}}}}
+	revalidated, err := s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{}, "", "")
+	require.NoError(t, err)
+	require.Len(t, revalidated.Candidates, 1)
+	requested[0].Evidence[0].SegmentID += "-missing"
+	revalidated, err = s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{}, "", "")
+	require.NoError(t, err)
+	require.Empty(t, revalidated.Candidates)
 	t.Run("image interpretation", func(t *testing.T) {
-		s, _ := newRenditionCatalogFixture(t)
+		s := open(t)
+		seedRenditionCatalogVersions(t, s)
 		node, err := s.CreateFile(t.Context(), s.RootID(), "synthetic-image.jpg", catalogSourceHash, 20, "image/jpeg")
 		require.NoError(t, err)
 		profile := catalogProcessingProfileWith(t, false, func(p *document.ProcessingProfileV1) {
@@ -1025,9 +1038,10 @@ func TestSearchExplainedLexicalCandidatesCitesActiveRenditionSegment(t *testing.
 	})
 }
 
-func TestSearchExplainedLexicalCandidatesIncludesNamePath(t *testing.T) {
+func checkSearchExplainedLexicalCandidatesIncludesNamePath(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	docs, err := s.Mkdir(t.Context(), s.RootID(), "docs")
 	require.NoError(t, err)
 	_, err = s.Mkdir(t.Context(), s.RootID(), "alpha-folder")
@@ -1043,9 +1057,10 @@ func TestSearchExplainedLexicalCandidatesIncludesNamePath(t *testing.T) {
 	assert.Equal(t, "/docs/alpha.pdf", candidates[0].Path)
 }
 
-func TestSearchExplainedContentPathsFollowRankAndMoves(t *testing.T) {
+func checkSearchExplainedContentPathsFollowRankAndMoves(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	folder, err := s.MkdirAll(ctx, "/資料/reports")
 	require.NoError(t, err)
@@ -1089,9 +1104,10 @@ func TestSearchExplainedContentPathsFollowRankAndMoves(t *testing.T) {
 	require.Equal(t, "/zulu.txt", hits[2].Path)
 }
 
-func TestSearchPathsPreserveResultOrder(t *testing.T) {
+func checkSearchPathsPreserveResultOrder(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	directory, err := s.MkdirAll(ctx, "/資料/reports")
 	require.NoError(t, err)
@@ -1128,9 +1144,10 @@ func TestSearchPathsPreserveResultOrder(t *testing.T) {
 	require.NoError(t, s.addSearchPaths(ctx, nil))
 }
 
-func TestSearchExplainedLexicalCandidatesBoundsLongNameExcerpt(t *testing.T) {
+func checkSearchExplainedLexicalCandidatesBoundsLongNameExcerpt(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	name := "alpha-" + strings.Repeat("é", 9000) + ".pdf"
 	_, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash("long-name"), 1, "application/pdf")
 	require.NoError(t, err)
@@ -1143,9 +1160,10 @@ func TestSearchExplainedLexicalCandidatesBoundsLongNameExcerpt(t *testing.T) {
 	assert.Equal(t, string([]rune(name)[:maxExplainedSearchExcerptRunes]), candidates[0].Excerpt)
 }
 
-func TestSearchExplainedLexicalCandidatesRanksFilteredNamesBeforeLimit(t *testing.T) {
+func checkSearchExplainedLexicalCandidatesRanksFilteredNamesBeforeLimit(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	docs, err := s.Mkdir(ctx, s.RootID(), "docs")
 	require.NoError(t, err)
@@ -1182,9 +1200,10 @@ func TestSearchExplainedLexicalCandidatesRanksFilteredNamesBeforeLimit(t *testin
 	assert.Equal(t, "/docs/tax b.pdf", candidates[1].Path)
 }
 
-func TestSearchFindsLiveNodesOnly(t *testing.T) {
+func checkSearchFindsLiveNodesOnly(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 
 	docs, err := s.Mkdir(ctx, s.RootID(), "docs")
@@ -1204,9 +1223,10 @@ func TestSearchFindsLiveNodesOnly(t *testing.T) {
 	assert.Equal(t, SearchMatchName, hits[0].Match)
 }
 
-func TestSearchPrefixAndRename(t *testing.T) {
+func checkSearchPrefixAndRename(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 
 	f, err := s.CreateFile(ctx, s.RootID(), "insurance-policy.pdf", fakeHash("a1"), 1, "application/pdf")
@@ -1227,9 +1247,10 @@ func TestSearchPrefixAndRename(t *testing.T) {
 	assert.Len(t, hits, 1)
 }
 
-func TestSearchPreparedWordsAndPhrases(t *testing.T) {
+func checkSearchPreparedWordsAndPhrases(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	words, err := s.Mkdir(t.Context(), s.RootID(), "words")
 	require.NoError(t, err)
 	stops, err := s.Mkdir(t.Context(), s.RootID(), "stops")
@@ -1238,7 +1259,7 @@ func TestSearchPreparedWordsAndPhrases(t *testing.T) {
 		parent int64
 		names  []string
 	}{
-		{words.ID, []string{"invoice.pdf", "tax 2026.pdf", "tax draft 2026.pdf", "2026 tax.pdf", "case.pdf", "cased.pdf", "casing.pdf", "cases.pdf", "casework.pdf", "cash.pdf"}},
+		{words.ID, []string{"invoice.pdf", "tax 2026.pdf", "tax draft 2026.pdf", "2026 tax.pdf", "case.pdf", "cased.pdf", "casing.pdf", "cases.pdf", "casework.pdf", "cash.pdf", "李·明.pdf", "café-receipt.pdf"}},
 		{stops.ID, []string{"the report.pdf", "the and.pdf", "tax.pdf", "of to and.pdf", "of to.pdf", "tax value.pdf", "the of.pdf"}},
 	} {
 		for _, name := range group.names {
@@ -1256,6 +1277,9 @@ func TestSearchPreparedWordsAndPhrases(t *testing.T) {
 		terms  []string
 	}{
 		{"the invoices", 0, []string{"invoice.pdf"}, []string{"invoices"}},
+		{"invoice.pdf", 0, []string{"invoice.pdf"}, []string{"invoice.pdf"}},
+		{"明", 0, []string{"李·明.pdf"}, []string{"明"}},
+		{"cafe", 0, []string{"café-receipt.pdf"}, []string{"cafe"}},
 		{"the invoice absent", 0, nil, []string{"invoice", "absent"}},
 		{`"tax 2026"`, 0, []string{"tax 2026.pdf"}, []string{`"tax 2026"`}},
 		{`"tax 2026" absent`, 0, nil, []string{"absent", `"tax 2026"`}},
@@ -1279,7 +1303,11 @@ func TestSearchPreparedWordsAndPhrases(t *testing.T) {
 		for _, hit := range hits {
 			names = append(names, hit.Node.Name)
 		}
-		require.Equal(t, tc.want, names, tc.query)
+		if s.postgresSchema != "" {
+			require.ElementsMatch(t, tc.want, names, tc.query) // Native relevance scores differ; membership does not.
+		} else {
+			require.Equal(t, tc.want, names, tc.query)
+		}
 		require.Equal(t, tc.terms, SearchRequiredTerms(tc.query), tc.query)
 	}
 	hits, _, err := s.SearchPage(t.Context(), "cases", 20)
@@ -1300,9 +1328,10 @@ func TestSearchPreparedWordsAndPhrases(t *testing.T) {
 	}
 }
 
-func TestSearchSurvivesOperatorInput(t *testing.T) {
+func checkSearchSurvivesOperatorInput(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	_, err := s.CreateFile(ctx, s.RootID(), "a.txt", fakeHash("a1"), 1, "text/plain")
 	require.NoError(t, err)
@@ -1335,9 +1364,10 @@ func TestSearchRanksMoreRelevantFirst(t *testing.T) {
 	assert.Equal(t, "tax report.pdf", hits[1].Node.Name)
 }
 
-func TestSearchTieBreaksByName(t *testing.T) {
+func checkSearchTieBreaksByName(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 
 	// Same token count and term frequency → equal BM25 rank. Insert in
@@ -1358,9 +1388,10 @@ func TestSearchTieBreaksByName(t *testing.T) {
 	assert.Equal(t, "tax c.pdf", hits[2].Node.Name)
 }
 
-func TestSearchPageReportsTruncation(t *testing.T) {
+func checkSearchPageReportsTruncation(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	for i, name := range []string{"report-a.pdf", "report-b.pdf", "report-c.pdf"} {
 		_, err := s.CreateFile(ctx, s.RootID(), name, fakeHash(string(rune('a'+i))), 1, "application/pdf")
@@ -1378,9 +1409,10 @@ func TestSearchPageReportsTruncation(t *testing.T) {
 	assert.False(t, truncated)
 }
 
-func TestSearchPageFiltersNameAndContentMatchesByTag(t *testing.T) {
+func checkSearchPageFiltersNameAndContentMatchesByTag(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	tag, err := s.CreateTag(ctx, "taxes")
 	require.NoError(t, err)
@@ -1446,9 +1478,10 @@ func TestSearchPageFiltersNameAndContentMatchesByTag(t *testing.T) {
 	}
 }
 
-func TestSearchPageFiltersCurrentMediaTypeWithParameters(t *testing.T) {
+func checkSearchPageFiltersCurrentMediaTypeWithParameters(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	tag, err := s.CreateTag(ctx, "reviewed")
 	require.NoError(t, err)
@@ -1512,9 +1545,10 @@ func TestSearchPageFiltersCurrentMediaTypeWithParameters(t *testing.T) {
 	require.ErrorContains(t, err, "must not contain wildcards")
 }
 
-func TestSearchPageFiltersDescendantsByStableDirectory(t *testing.T) {
+func checkSearchPageFiltersDescendantsByStableDirectory(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	scope, err := s.Mkdir(ctx, s.RootID(), "quarterly")
 	require.NoError(t, err)
@@ -1572,9 +1606,10 @@ func TestSearchPageFiltersDescendantsByStableDirectory(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestSearchContentScopeFollowsMovedDirectories(t *testing.T) {
+func checkSearchContentScopeFollowsMovedDirectories(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	scope, err := s.Mkdir(ctx, s.RootID(), "scope")
 	require.NoError(t, err)
@@ -1630,9 +1665,10 @@ func TestSearchContentScopeFollowsMovedDirectories(t *testing.T) {
 	}
 }
 
-func TestSearchPageFiltersByModificationTime(t *testing.T) {
+func checkSearchPageFiltersByModificationTime(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	old, err := s.CreateFile(
 		ctx, s.RootID(), "quarterly-old.txt", fakeHash("eb"), 4, "text/plain",
@@ -1660,7 +1696,7 @@ func TestSearchPageFiltersByModificationTime(t *testing.T) {
 		contentMatch.ID: "2026-01-02T12:00:00.000000000Z",
 		boundary.ID:     "2026-01-03T00:00:00.000000000Z",
 	} {
-		_, err = s.db.ExecContext(ctx, `UPDATE nodes SET modified_at=? WHERE id=?`, stamp, id)
+		_, err = s.db.ExecContext(ctx, `UPDATE nodes SET modified_at=$1 WHERE id=$2`, stamp, id)
 		require.NoError(t, err)
 	}
 
@@ -1690,9 +1726,10 @@ func TestSearchPageFiltersByModificationTime(t *testing.T) {
 	require.ErrorContains(t, err, "must be earlier")
 }
 
-func TestSearchPageAllowsOnlyBoundedQuerylessFilters(t *testing.T) {
+func checkSearchPageAllowsOnlyBoundedQuerylessFilters(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	tag, err := s.CreateTag(ctx, "briefing")
 	require.NoError(t, err)
@@ -1708,7 +1745,7 @@ func TestSearchPageAllowsOnlyBoundedQuerylessFilters(t *testing.T) {
 		old.ID:   "2026-01-01T00:00:00.000000000Z",
 		newer.ID: "2026-01-03T00:00:00.000000000Z",
 	} {
-		_, err = s.db.ExecContext(ctx, `UPDATE nodes SET modified_at=? WHERE id=?`, stamp, id)
+		_, err = s.db.ExecContext(ctx, `UPDATE nodes SET modified_at=$1 WHERE id=$2`, stamp, id)
 		require.NoError(t, err)
 	}
 	hits, truncated, err := s.SearchPageWithOptions(ctx, "", 10, SearchOptions{TagID: tag.ID})
@@ -1793,9 +1830,10 @@ func TestSearchFilterPagePathsAndTies(t *testing.T) {
 	assert.Equal(t, "/docs/nested/same.txt", hits[0].Path)
 }
 
-func TestSearchContentFollowsStableNameMatches(t *testing.T) {
+func checkSearchContentFollowsStableNameMatches(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 
 	nameMatch, err := s.CreateFile(
@@ -2208,12 +2246,14 @@ func TestLexicalGenerationReaderLeasePinsAndEnumeratesExactRoots(t *testing.T) {
 	assert.Empty(t, s.LeasedLexicalGenerationRoots())
 }
 
-func TestLexicalGenerationReadSnapshotCannotMixPublicationEpochs(t *testing.T) {
+func checkLexicalGenerationReadSnapshotCannotMixPublicationEpochs(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	// Mutation caught: selecting a generation before starting the query's read
 	// snapshot lets a concurrent head flip combine old FTS rows with new
 	// rendition heads, returning the empty hybrid instead of either epoch.
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
 	firstBuild := lexicalSearchBuild(s, profile, catalogBuildID, "prior epoch phrase")
@@ -2255,6 +2295,26 @@ func TestLexicalGenerationReadSnapshotCannotMixPublicationEpochs(t *testing.T) {
 			GenerationID: firstGeneration.ID, ReaderCount: 1,
 		}}, s.LeasedLexicalGenerationRoots(), "the selected old generation remains externally rooted")
 
+		if s.postgresSchema != "" {
+			statement, err := postgresContentSearch("epoch", generation.ID, SearchOptions{})
+			if err != nil {
+				return err
+			}
+			rows, err := queryer.QueryContext(ctx, statement.SQL, statement.Args...)
+			if err != nil {
+				return err
+			}
+			defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+			for rows.Next() {
+				var candidate ExplainedLexicalCandidate
+				var rowID int64
+				if _, err := scanExplainedLexicalRow(rows, &candidate, &rowID); err != nil {
+					return err
+				}
+				visibleBuildIDs = append(visibleBuildIDs, candidate.BuildID)
+			}
+			return rows.Err()
+		}
 		rows, queryErr := queryer.QueryContext(ctx, `
 			SELECT f.build_id
 			FROM rendition_lexical_fts f
@@ -2922,9 +2982,10 @@ func TestFTSPrefixPreparationPreservesBytes(t *testing.T) {
 	}
 }
 
-func TestSearchContentFirstDefaultParity(t *testing.T) {
+func checkSearchContentFirstDefaultParity(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	nodes := make(map[string]Node)
 	for index, name := range []string{"mércury-a.txt", "mercury-b.txt", "notes.txt"} {
 		node, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash(fmt.Sprintf("%02x", index+1)), 1, "text/plain")
@@ -2948,7 +3009,8 @@ func TestSearchContentFirstDefaultParity(t *testing.T) {
 	}
 }
 
-func TestSearchContentFirstPageBoundary(t *testing.T) {
+func checkSearchContentFirstPageBoundary(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, test := range []struct {
 		name      string
@@ -2962,7 +3024,7 @@ func TestSearchContentFirstPageBoundary(t *testing.T) {
 		{"content_overflow", []string{"first.txt", "second.txt"}, []string{"mercury", "mercury"}, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			s := newTestStore(t)
+			s := open(t)
 			for index, name := range test.names {
 				node, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash(fmt.Sprintf("%02x", index+1)), 1, "text/plain")
 				require.NoError(t, err)
@@ -2977,9 +3039,10 @@ func TestSearchContentFirstPageBoundary(t *testing.T) {
 	}
 }
 
-func TestSearchContentFirstFence(t *testing.T) {
+func checkSearchContentFirstFence(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	var ids []string
 	for index, name := range []string{"excluded.txt", "notes.txt", "mercury-tail.txt"} {
 		node, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash(fmt.Sprintf("%02x", index+1)), 1, "text/plain")
@@ -3000,11 +3063,12 @@ func TestSearchContentFirstFence(t *testing.T) {
 	require.Equal(t, "node_name", hits[1].EvidenceKind)
 }
 
-func TestSearchContentFirstNodeStates(t *testing.T) {
+func checkSearchContentFirstNodeStates(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, state := range []string{"live_file", "directory_only_match", "trash_root", "trash_descendant", "cascade_deleted"} {
 		t.Run(state, func(t *testing.T) {
-			s := newTestStore(t)
+			s := open(t)
 			parent, err := s.Mkdir(t.Context(), s.RootID(), "mercury-parent")
 			require.NoError(t, err)
 			node, err := s.CreateFile(t.Context(), parent.ID, "mercury.txt", fakeHash("01"), 1, "text/plain")
@@ -3041,11 +3105,12 @@ func TestSearchContentFirstNodeStates(t *testing.T) {
 	}
 }
 
-func TestSearchContentFirstContentVersions(t *testing.T) {
+func checkSearchContentFirstContentVersions(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, state := range []string{"current", "historical", "pruned", "replace", "revert"} {
 		t.Run(state, func(t *testing.T) {
-			s := newTestStore(t)
+			s := open(t)
 			node, err := s.CreateFile(t.Context(), s.RootID(), "mercury.txt", fakeHash("01"), 1, "text/plain")
 			require.NoError(t, err)
 			require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{BlobHash: node.BlobHash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "mercury original"}))
@@ -3079,9 +3144,11 @@ func TestSearchContentFirstContentVersions(t *testing.T) {
 	}
 }
 
-func TestSearchContentFirstPriority(t *testing.T) {
+func checkSearchContentFirstPriority(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)
 	build := lexicalSearchBuild(s, profile, catalogBuildID, "mercury exact ranked evidence")
 	second := build.LexicalSegments[0]

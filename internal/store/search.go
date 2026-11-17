@@ -54,6 +54,8 @@ type ExplainedLexicalCandidate struct {
 	BlobHash     string
 	Excerpt      string
 	Locator      document.EvidenceLocatorV1
+
+	excerptPrefix string
 }
 
 // SearchMediaEvidence retains the exact immutable artifacts needed to map one
@@ -90,6 +92,12 @@ const currentRenditionChunkAuthoritySQL = `EXISTS (
 // Content selection and evidence resolution share one lexical-generation read.
 func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query string, limit int,
 	opts SearchOptions, contentFirst bool,
+) ([]ExplainedLexicalCandidate, bool, error) {
+	return s.searchExplainedLexicalCandidates(ctx, query, limit, opts, contentFirst, false)
+}
+
+func (s *Store) searchExplainedLexicalCandidates(ctx context.Context, query string, limit int,
+	opts SearchOptions, contentFirst, includeDirectories bool,
 ) ([]ExplainedLexicalCandidate, bool, error) {
 	if limit <= 0 {
 		limit = 50
@@ -143,14 +151,19 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 	var nameHits []SearchHit
 	if len(opts.SelectedBuilds) == 0 {
 		names, err := nameSearchCandidates(fq)
+		if s.postgresSchema != "" {
+			names, err = postgresNameSearch(query, opts, limit, !includeDirectories)
+		}
 		if err != nil {
 			return nil, false, err
 		}
-		nameArgs := names.Args
-		nameArgs = append(nameArgs, filterArgs...)
-		nameArgs = append(nameArgs, limit+1)
-		rows, err := s.db.QueryContext(ctx, nameSearchPageSQL(names.SQL,
-			"AND n.kind='file' AND cv.version_id IS NOT NULL "+nameFilterSQL), nameArgs...)
+		nameQuery := sqlquery.Query{SQL: nameSearchPageSQL(names.SQL,
+			"AND n.kind='file' AND cv.version_id IS NOT NULL "+nameFilterSQL),
+			Args: append(append(names.Args, filterArgs...), limit+1)}
+		if s.postgresSchema != "" {
+			nameQuery = names
+		}
+		rows, err := s.db.QueryContext(ctx, nameQuery.SQL, nameQuery.Args...)
 		if err != nil {
 			return nil, false, err
 		}
@@ -179,6 +192,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 	}
 	var content []ExplainedLexicalCandidate
 	queryContent := func(queryer metadataQuerier, generationID string) (retErr error) {
+		var indexRowIDs []int64
 		if len(opts.SelectedBuilds) != 0 && generationID == "" {
 			return errors.New("selected media builds have no lexical generation")
 		}
@@ -215,6 +229,13 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 			args = slices.Concat(selectedArgs, []any{fq, generationID})
 		}
 		args = append(args, filterArgs...)
+		if s.postgresSchema != "" {
+			native, err := postgresContentSearch(query, generationID, opts)
+			if err != nil {
+				return err
+			}
+			contentQuery, args = native.SQL, native.Args
+		}
 		rows, err := queryer.QueryContext(ctx, contentQuery, args...)
 		if err != nil {
 			return err
@@ -227,7 +248,12 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		seenContent := make(map[candidateKey]struct{}, remaining+1)
 		for rows.Next() {
 			var candidate ExplainedLexicalCandidate
-			node, err := scanExplainedLexicalRow(rows, &candidate)
+			var indexRowID int64
+			var extra []any
+			if s.postgresSchema != "" {
+				extra = []any{&indexRowID}
+			}
+			node, err := scanExplainedLexicalRow(rows, &candidate, extra...)
 			if err != nil {
 				return err
 			}
@@ -250,12 +276,25 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 				candidate.EvidenceKind = "rendition_segment"
 			}
 			content = append(content, candidate)
+			if s.postgresSchema != "" {
+				indexRowIDs = append(indexRowIDs, indexRowID)
+			}
 			if len(content) == remaining+1 {
 				break
 			}
 		}
 		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 			return err
+		}
+		if s.postgresSchema != "" {
+			// The extra candidate detects truncation; it is never returned.
+			excerpts, err := postgresContentExcerpts(ctx, queryer, query, generationID, indexRowIDs[:min(len(indexRowIDs), remaining)])
+			if err != nil {
+				return err
+			}
+			for i, excerpt := range excerpts {
+				content[i].setExcerpt(excerpt)
+			}
 		}
 		if len(content) == 1 {
 			content[0].Path, err = pathOf(ctx, queryer, content[0].Node.ID)
@@ -319,13 +358,13 @@ func explainedNameCandidates(hits []SearchHit) []ExplainedLexicalCandidate {
 	return result
 }
 
-func scanExplainedLexicalRow(row interface{ Scan(dest ...any) error }, candidate *ExplainedLexicalCandidate) (Node, error) {
+func scanExplainedLexicalRow(row interface{ Scan(dest ...any) error }, candidate *ExplainedLexicalCandidate, extra ...any) (Node, error) {
 	var node Node
 	var locatorJSON, headingsJSON, providerID string
-	if err := row.Scan(&node.ID, &node.ParentID, &node.Name, &node.Kind,
+	if err := row.Scan(append([]any{&node.ID, &node.ParentID, &node.Name, &node.Kind,
 		&node.CurrentVersionID, &node.BlobHash, &node.MD5, &node.Size, &node.MimeType,
 		&node.Revision, &node.CreatedAt, &node.ModifiedAt, &node.TrashedAt,
-		&candidate.BuildID, &candidate.SegmentID, &candidate.Excerpt, &locatorJSON, &headingsJSON, &providerID); err != nil {
+		&candidate.BuildID, &candidate.SegmentID, &candidate.Excerpt, &locatorJSON, &headingsJSON, &providerID}, extra...)...); err != nil {
 		return Node{}, err
 	}
 	if locatorJSON != "" {
@@ -338,12 +377,16 @@ func scanExplainedLexicalRow(row interface{ Scan(dest ...any) error }, candidate
 		if err := json.Unmarshal([]byte(headingsJSON), &headings); err != nil {
 			return Node{}, fmt.Errorf("decoding lexical evidence headings: %w", err)
 		}
-		prefix := document.FormatRenditionHeadingContext(headings, "")
-		candidate.Excerpt = prefix + boundedExplainedSearchExcerpt(candidate.Excerpt, max(0, maxExplainedSearchExcerptRunes-utf8.RuneCountInString(prefix)))
-	} else {
-		candidate.Excerpt = boundedExplainedSearchExcerpt(candidate.Excerpt, maxExplainedSearchExcerptRunes)
+		candidate.excerptPrefix = document.FormatRenditionHeadingContext(headings, "")
 	}
+	candidate.setExcerpt(candidate.Excerpt)
 	return node, nil
+}
+
+// setExcerpt bounds an excerpt, keeping room for the candidate's heading prefix.
+func (c *ExplainedLexicalCandidate) setExcerpt(excerpt string) {
+	limit := max(0, maxExplainedSearchExcerptRunes-utf8.RuneCountInString(c.excerptPrefix))
+	c.Excerpt = c.excerptPrefix + boundedExplainedSearchExcerpt(excerpt, limit)
 }
 
 func boundedExplainedSearchExcerpt(value string, limit int) string {
@@ -481,6 +524,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 			for j := range payload[i].Evidence {
 				evidence := &payload[i].Evidence[j]
 				evidence.InputID = hex.EncodeToString([]byte(evidence.InputID))
+				evidence.SegmentID = hex.EncodeToString([]byte(evidence.SegmentID))
 			}
 		}
 		for _, evidence := range candidate.Evidence {
@@ -549,6 +593,10 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 				}
 			}
 			if lexicalProjection {
+				segment := searchEvidenceTextSQL(s.postgresSchema != "", "segment_id")
+				if s.postgresSchema != "" {
+					segment = "decode(" + segment + ",'hex')"
+				}
 				renditionEvidenceSQL = `WHEN 'rendition_segment' THEN NOT EXISTS (
 					SELECT 1 FROM rendition_lexical_heads lh
 					JOIN rendition_lexical_generation_builds gb ON gb.generation_id=lh.generation_id
@@ -558,7 +606,7 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 					 AND rh.profile_fingerprint=ra.profile_fingerprint AND rh.attachment_id=ra.attachment_id
 					WHERE lh.singleton=1 AND ra.content_version_id=source.version_id
 					 AND ls.build_id=` + searchEvidenceTextSQL(s.postgresSchema != "", "build_id") + `
-                     AND ls.segment_id=` + searchEvidenceTextSQL(s.postgresSchema != "", "segment_id") + `)`
+                     AND ls.segment_id=` + segment + `)`
 			}
 		}
 		if semanticSource != "" {
@@ -1693,11 +1741,15 @@ func indexLexicalSegmentsTx(
 		}
 		// The store writer lock serializes allocation. These rebuildable row IDs
 		// follow SQLite's INTEGER PRIMARY KEY behavior on both backends.
+		column, value := "", ""
+		args := []any{segment.buildID, storedString(postgres, segment.segmentID), storedString(postgres, segment.text)}
+		if postgres {
+			column, value = ",search_text", ",$4"
+			args = append(args, lexicalSearchText(segment.text))
+		}
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO rendition_lexical_index(row_id,build_id,segment_id,text)
-			SELECT COALESCE(MAX(row_id),0)+1,$1,$2,$3 FROM rendition_lexical_index`,
-			segment.buildID, storedString(postgres, segment.segmentID), storedString(postgres, segment.text),
-		); err != nil {
+            INSERT INTO rendition_lexical_index(row_id,build_id,segment_id,text`+column+`)
+            SELECT COALESCE(MAX(row_id),0)+1,$1,$2,$3`+value+` FROM rendition_lexical_index`, args...); err != nil {
 			return fmt.Errorf("indexing lexical segment %s of build %s: %w",
 				segment.segmentID, segment.buildID, err)
 		}
@@ -2046,7 +2098,11 @@ func (s *Store) withLexicalGenerationRead(
 		}
 		retErr = errors.Join(retErr, conn.Close())
 	}()
-	if _, err := conn.ExecContext(ctx, "BEGIN DEFERRED"); err != nil {
+	begin := "BEGIN DEFERRED"
+	if s.postgresSchema != "" {
+		begin = "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"
+	}
+	if _, err := conn.ExecContext(ctx, begin); err != nil {
 		return fmt.Errorf("starting lexical generation read: %w", err)
 	}
 	active = true
@@ -2514,16 +2570,15 @@ func SearchRequiredTerms(query string) []string {
 	return terms
 }
 
-func prepareSearch(query string) (string, []string, bool) {
+func analyzeSearch(query string) (lexical.Natural, string, error) {
 	quotes := strings.NewReplacer("“", `"`, "”", `"`, "„", `"`).Replace(query)
-	fallback := func() (string, []string, bool) { return ftsQuery(query), strings.Fields(query), false }
 	if strings.Count(quotes, `"`)%2 != 0 {
-		return fallback()
+		return lexical.Natural{}, quotes, errors.New("query requires literal analysis")
 	}
 	analyzer := lexical.Literal()
 	natural, err := analyzer.PrepareNatural(query)
 	if err != nil {
-		return fallback()
+		return lexical.Natural{}, quotes, fmt.Errorf("analyze search query: %w", err)
 	}
 	wordless := func(r rune) bool { return unicode.IsPunct(r) || unicode.IsSymbol(r) || unicode.IsSpace(r) }
 	// A phrase of stop words alone does not make unquoted stop words optional.
@@ -2548,6 +2603,16 @@ func prepareSearch(query string) (string, []string, bool) {
 			natural.Words = prepared.Words
 		}
 	}
+	return natural, quotes, nil
+}
+
+func prepareSearch(query string) (string, []string, bool) {
+	natural, quotes, err := analyzeSearch(query)
+	if err != nil {
+		return ftsQuery(query), strings.Fields(query), false
+	}
+	analyzer := lexical.Literal()
+	wordless := func(r rune) bool { return unicode.IsPunct(r) || unicode.IsSymbol(r) || unicode.IsSpace(r) }
 	var groups, terms []string
 	typed := strings.Fields(strings.ReplaceAll(strings.ToLower(quotes), `"`, " "))
 	for _, word := range natural.Words {
@@ -2625,6 +2690,17 @@ func (s *Store) SearchPageWithOptions(
 	}
 	if fq == "" {
 		return s.searchFilterPage(ctx, limit, opts)
+	}
+	if s.postgresSchema != "" {
+		candidates, truncated, err := s.searchExplainedLexicalCandidates(ctx, query, limit, opts, false, true)
+		if err != nil {
+			return nil, false, err
+		}
+		hits := make([]SearchHit, len(candidates))
+		for i, candidate := range candidates {
+			hits[i] = SearchHit{Node: candidate.Node, Path: candidate.Path, Match: candidate.Match}
+		}
+		return hits, truncated, nil
 	}
 	nameFilterSQL, filterSQL, filterArgs := searchCandidateFiltersSQL(opts)
 	names, err := nameSearchCandidates(fq)
@@ -2881,8 +2957,12 @@ func (s *Store) normalizeSearchOptionsWithQuerier(
 func (s *Store) searchFilterPage(
 	ctx context.Context, limit int, opts SearchOptions,
 ) ([]SearchHit, bool, error) {
-	filterSQL, args := searchFilterSQL(opts, false, 0)
+	filterSQL, args := searchFilterSQL(opts, s.postgresSchema != "", 0)
 	args = append(args, limit+1)
+	limitParameter := "?"
+	if s.postgresSchema != "" {
+		limitParameter = "$" + strconv.Itoa(len(args))
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		WITH RECURSIVE page AS (
 			SELECT n.id, n.parent_id, n.name, n.modified_at
@@ -2890,7 +2970,7 @@ func (s *Store) searchFilterPage(
 			WHERE n.trashed_at IS NULL AND n.parent_id IS NOT NULL
 			  `+filterSQL+`
 			ORDER BY n.modified_at DESC, n.name, n.id
-			LIMIT ?
+			LIMIT `+limitParameter+`
 		), ancestry(node_id, id, parent_id, path) AS (
 			SELECT id, id, parent_id, name FROM page
 			UNION ALL
