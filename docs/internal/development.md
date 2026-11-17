@@ -393,7 +393,9 @@ index-backed people ranking and suggestion rebuilding use shared worker and
 Store operations. Remote-media acquisition, photo query compilation and
 PostgreSQL-target backup recovery remain unqualified.
 Native multi-store catalog operations are qualified below; deployment adapters
-and filesystem workers remain separate from public PostgreSQL vault opening.
+remain separate from public PostgreSQL vault opening. Paged tree walks, native
+file and folder imports, and stored-original ZIP workers have the filesystem
+contracts below.
 
 The internal `store.OpenPostgres(ctx, connection, cfg)` opens an installed schema
 with runtime credentials. It copies the pgx connection configuration, pins the
@@ -866,6 +868,38 @@ direct SQL from rewriting those columns. SQLite's released receipt trigger
 prevents updates but does not prevent deletion. These database-level differences
 do not change the qualified Store operations.
 
+#### Tree walking and filesystem workers
+
+The internal PostgreSQL Store supports paged tree walking through `BeginWalk`.
+Each walk owns a separate connection and one read-only repeatable-read
+transaction. A rename or insertion committed between pages cannot change its
+results. The connection keeps a temporary ordered frontier created before the
+transaction; closing the walk rolls back the snapshot and closes the connection,
+which also removes the temporary table. It does not close the Store's pool.
+
+The runtime role needs `TEMPORARY` on the database in addition to the catalog
+grants above. PostgreSQL databases grant this to `PUBLIC` by default. Where that
+grant is revoked, grant `TEMPORARY` on the vault database to `docbank_runtime`.
+This does not require `CREATE` on the vault schema. Paths use byte order on both
+engines. SQLite keeps its forced sibling indexes; PostgreSQL uses its native
+planner. Shared checks cover live and trashed duplicate paths, subtree boundaries,
+bounded per-page work and rollback after interrupted pages. PostgreSQL checks
+also cover changes between pages and indexed continuation queries without sorts.
+
+`internal/ingest` runs the same file and folder importer against both backends,
+including trailing-slash behavior, reruns, replacement, naming collisions,
+preflight exclusions, stale destination refusal and managed loose/packed
+receipts. These scenarios write synthetic source files and retain real blob
+bytes. Watcher scheduling and grouped-photo filesystem workers remain separate.
+
+`internal/exporter` runs the stored-original ZIP worker with native PostgreSQL
+metadata and real retained bytes. It claims and completes a job, verifies the
+archive through the download lease, and releases the archive and catalog entry.
+The release checks also cover concurrent downloads and filesystem removal errors.
+The existing claim fencing and archive format are shared with SQLite. Rendering,
+query-selected populations, received-package filesystem workers and public vault
+opening are outside these worker contracts.
+
 #### Document export plans and jobs
 
 The native Store supports explicit members, current node IDs, chunked uploads
@@ -873,7 +907,7 @@ and completed mailbox collections as export sources on both backends. It seals e
 originals and available retained text, page images, email PDFs and attachment
 outputs, and provides frozen previews and output-problem pages. Explicit photo
 members can capture authored metadata and publish an already-prepared render.
-Query-driven source discovery, rendering and filesystem workers,
+Query-driven source discovery and rendering,
 portable recovery and public PostgreSQL opening remain separate boundaries.
 
 Source admission reserves the owner and operation before invoking a resolver.
@@ -2508,9 +2542,11 @@ at that concurrency; the schema lifecycle suite has a separate three-minute limi
 Without that variable, ordinary `make test` skips PostgreSQL tests.
 A supplied but invalid connection fails rather than skipping.
 
-Name PostgreSQL tests in `internal/store` with the `Postgres` suffix. The target
+Name PostgreSQL tests in `internal/store`, `internal/ingest` and
+`internal/exporter` with the `Postgres` suffix. The target
 selects them with `-run 'Postgres$'`, so adding a test needs no Makefile edit.
-It runs the entire `internal/store/pgschema` package separately.
+It runs the entire `internal/store/pgschema` package separately. Filesystem
+imports and stored-archive workers use separate three-minute package limits.
 
 CI supplies the server through its service-container configuration, uses the
 existing Linux cache group, and runs only the PostgreSQL tests in this lane.

@@ -22,6 +22,26 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
+	{name: "tree-walk", postgres: "native operations", scope: "Pinned tree pages, ordered frontier and cancellation; SQLite retains its driver-matrix tests.", scenarios: []backendScenario{
+		{"WalkOrdersDuplicatePaths", nil, func(t *testing.T) {
+			t.Helper()
+			checkWalkOrdersDuplicatePathsByNodeIDAndOptionallyIncludesTrash(t, newPostgresQueryStore)
+		}},
+		{"WalkNonRootScopeNeverSeedsRequestedRootsSibling", nil, func(t *testing.T) {
+			t.Helper()
+			checkWalkNonRootScopeNeverSeedsRequestedRootsSibling(t, newPostgresQueryStore)
+		}},
+		{"WalkSetupAndPageWorkStayBoundedAcrossSubtreeSizes", nil, func(t *testing.T) {
+			t.Helper()
+			checkWalkSetupAndPageWorkStayBoundedAcrossSubtreeSizes(t, newPostgresQueryStore)
+		}},
+		{"WalkMidPageCancellationRollsBackFrontierAndStats", nil, func(t *testing.T) {
+			t.Helper()
+			checkWalkMidPageCancellationRollsBackFrontierAndStats(t, newPostgresQueryStore)
+		}},
+		{"WalkSnapshot", nil, checkWalkSnapshotPostgres},
+		{"WalkSeeks", nil, checkWalkSeeksPostgres},
+	}},
 	{name: "lexical-search", postgres: "native operations", scope: "Document filename/current-text lexical retrieval, filtering, phrase/prefix queries, excerpts and result limits; native scoring differs from FTS5; excludes photo query compilation.", scenarios: []backendScenario{
 		{"LexicalGenerationReadSnapshotCannotMixPublicationEpochs", func(t *testing.T) {
 			t.Helper()
@@ -737,7 +757,7 @@ var backendSuites = []backendSuite{
 			checkPackageLabelCandidatesPageAmbiguousSenderLabels(t, newPostgresQueryStore)
 		}},
 	}},
-	{name: "exports", postgres: "native operations", scope: "Explicit/node/chunk and completed-mailbox sources, pinned output plans, previews, export-job lifecycle and retained-output inspection; excludes query source selection, filesystem execution and recovery.", scenarios: []backendScenario{
+	{name: "exports", postgres: "native operations", scope: "Explicit/node/chunk and completed-mailbox sources, pinned output plans, previews, export-job lifecycle and retained-output inspection; excludes query source selection and recovery; stored-original ZIP workers run in the exporter package.", scenarios: []backendScenario{
 		{"ExportWorkerFailureAndCapacity", func(t *testing.T) { t.Helper(); checkExportWorkerFailureAndCapacity(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkExportWorkerFailureAndCapacity(t, newPostgresQueryStore) }},
 		{"ExportDiscoverySnapshots", nil, checkExportDiscoverySnapshotsPostgres},
 

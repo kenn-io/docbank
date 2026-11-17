@@ -41,7 +41,7 @@ func OpenPostgres(ctx context.Context, connection *pgx.ConnConfig, cfg pgschema.
 	if _, err := pgschema.Validate(ctx, db, cfg); err != nil {
 		return nil, fmt.Errorf("validating postgres metadata: %w", err)
 	}
-	s := &Store{db: db, writeDB: db, postgresSchema: cfg.Schema, providerEgressMu: waitlock.New(), photoHiddenSessions: make(map[string]time.Time), photoExportSlot: make(chan struct{}, 1)}
+	s := &Store{db: db, writeDB: db, postgresSchema: cfg.Schema, postgresConfig: config.Copy(), providerEgressMu: waitlock.New(), photoHiddenSessions: make(map[string]time.Time), photoExportSlot: make(chan struct{}, 1)}
 	if err := db.QueryRowContext(ctx, `SELECT id,(SELECT vault_uid FROM vault_metadata),(SELECT store_id FROM blob_stores WHERE role='primary') FROM nodes WHERE parent_id IS NULL`).Scan(&s.rootID, &s.vaultID, &s.primaryStoreID); err != nil {
 		return nil, fmt.Errorf("reading postgres vault roots: %w", err)
 	}

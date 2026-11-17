@@ -66,7 +66,12 @@ func TestWalkerConcurrentNextAndClose(t *testing.T) {
 
 func TestWalkOrdersDuplicatePathsByNodeIDAndOptionallyIncludesTrash(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
+	checkWalkOrdersDuplicatePathsByNodeIDAndOptionallyIncludesTrash(t, newTestStore)
+}
+
+func checkWalkOrdersDuplicatePathsByNodeIDAndOptionallyIncludesTrash(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	first, err := s.CreateFile(
 		t.Context(), s.RootID(), "same.txt", fakeHash("81"), 5, "text/plain",
 	)
@@ -102,60 +107,74 @@ func TestWalkNonRootScopeNeverSeedsRequestedRootsSibling(t *testing.T) {
 	t.Parallel()
 	for _, driver := range walkTestDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
-			s := newTestStoreWithDriver(t, driver.driver)
-			scope, err := s.Mkdir(t.Context(), s.RootID(), "scope")
-			require.NoError(t, err)
-			child, err := s.Mkdir(t.Context(), scope.ID, "child")
-			require.NoError(t, err)
-			scope, err = s.NodeByID(t.Context(), scope.ID)
-			require.NoError(t, err)
-			_, err = s.Mkdir(t.Context(), s.RootID(), "zulu")
-			require.NoError(t, err)
-
-			walker, err := s.BeginWalk(t.Context(), "/scope", 1, false)
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, walker.Close()) })
-			assert.Equal(t, []WalkEntry{
-				{Path: "/scope", Node: scope},
-				{Path: "/scope/child", Node: child},
-			}, collectStoreWalk(t, walker))
+			checkWalkNonRootScopeNeverSeedsRequestedRootsSibling(t, func(t *testing.T) *Store {
+				t.Helper()
+				return newTestStoreWithDriver(t, driver.driver)
+			})
 		})
 	}
 }
 
+func checkWalkNonRootScopeNeverSeedsRequestedRootsSibling(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	scope, err := s.Mkdir(t.Context(), s.RootID(), "scope")
+	require.NoError(t, err)
+	child, err := s.Mkdir(t.Context(), scope.ID, "child")
+	require.NoError(t, err)
+	scope, err = s.NodeByID(t.Context(), scope.ID)
+	require.NoError(t, err)
+	_, err = s.Mkdir(t.Context(), s.RootID(), "zulu")
+	require.NoError(t, err)
+
+	walker, err := s.BeginWalk(t.Context(), "/scope", 1, false)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, walker.Close()) })
+	assert.Equal(t, []WalkEntry{
+		{Path: "/scope", Node: scope},
+		{Path: "/scope/child", Node: child},
+	}, collectStoreWalk(t, walker))
+}
 func TestWalkSetupAndPageWorkStayBoundedAcrossSubtreeSizes(t *testing.T) {
 	t.Parallel()
 	for _, driver := range walkTestDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
-			var setupReads int64
-			for _, size := range []int{8, 800} {
-				s := newTestStoreWithDriver(t, driver.driver)
-				for i := range size {
-					_, err := s.Mkdir(t.Context(), s.RootID(), fmt.Sprintf("node-%04d", i))
-					require.NoError(t, err)
-				}
-
-				walker, err := s.BeginWalk(t.Context(), "/", 7, false)
-				require.NoError(t, err)
-				t.Cleanup(func() { require.NoError(t, walker.Close()) })
-				before := walker.Stats()
-				if setupReads == 0 {
-					setupReads = before.SetupNodeReads
-				}
-				assert.Equal(t, setupReads, before.SetupNodeReads)
-				assert.LessOrEqual(t, before.SetupNodeReads, int64(2))
-
-				page, err := walker.Next(t.Context())
-				require.NoError(t, err)
-				require.Len(t, page, 7)
-				after := walker.Stats()
-				assert.Equal(t, int64(len(page)), after.LastPageRowsExamined)
-				assert.LessOrEqual(t, after.LastPageIndexedSeeks, int64(2*len(page)))
-			}
+			checkWalkSetupAndPageWorkStayBoundedAcrossSubtreeSizes(t, func(t *testing.T) *Store {
+				t.Helper()
+				return newTestStoreWithDriver(t, driver.driver)
+			})
 		})
 	}
 }
 
+func checkWalkSetupAndPageWorkStayBoundedAcrossSubtreeSizes(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	var setupReads int64
+	for _, size := range []int{8, 800} {
+		s := open(t)
+		for i := range size {
+			_, err := s.Mkdir(t.Context(), s.RootID(), fmt.Sprintf("node-%04d", i))
+			require.NoError(t, err)
+		}
+
+		walker, err := s.BeginWalk(t.Context(), "/", 7, false)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, walker.Close()) })
+		before := walker.Stats()
+		if setupReads == 0 {
+			setupReads = before.SetupNodeReads
+		}
+		assert.Equal(t, setupReads, before.SetupNodeReads)
+		assert.LessOrEqual(t, before.SetupNodeReads, int64(2))
+
+		page, err := walker.Next(t.Context())
+		require.NoError(t, err)
+		require.Len(t, page, 7)
+		after := walker.Stats()
+		assert.Equal(t, int64(len(page)), after.LastPageRowsExamined)
+		assert.LessOrEqual(t, after.LastPageIndexedSeeks, int64(2*len(page)))
+	}
+}
 func TestWalkLiveOnlySeekUsesPartialIndexAcrossTrashedCardinality(t *testing.T) {
 	t.Parallel()
 	for _, driver := range walkTestDrivers() {
@@ -167,7 +186,7 @@ func TestWalkLiveOnlySeekUsesPartialIndexAcrossTrashedCardinality(t *testing.T) 
 				}
 				t.Run(name+" plan", func(t *testing.T) {
 					s := newTestStoreWithDriver(t, driver.driver)
-					query, args := walkSeekQuery(s.RootID(), false, "middle", 1, first)
+					query, args := walkSeekQuery(s.RootID(), false, "middle", 1, first, false)
 					plan := explainQueryPlan(t, s, query, args...)
 					assert.Contains(t, plan, "USING INDEX live_sibling_names")
 				})
@@ -209,10 +228,10 @@ func TestWalkIncludeTrashUsesBoundedDuplicateRangeSeeksAcrossCardinality(t *test
 	for _, driver := range walkTestDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			s := newTestStoreWithDriver(t, driver.driver)
-			query, args := walkSeekQuery(s.RootID(), true, "duplicate", 1, false)
+			query, args := walkSeekQuery(s.RootID(), true, "duplicate", 1, false, false)
 			plan := explainQueryPlan(t, s, query, args...)
 			assert.Contains(t, plan, "parent_id=? AND name=? AND id>?")
-			query, args = walkNextNameSeekQuery(s.RootID(), "duplicate")
+			query, args = walkNextNameSeekQuery(s.RootID(), "duplicate", false)
 			plan = explainQueryPlan(t, s, query, args...)
 			assert.Contains(t, plan, "parent_id=? AND name>?")
 
@@ -419,47 +438,54 @@ func TestWalkMidPageCancellationRollsBackFrontierAndStats(t *testing.T) {
 	t.Parallel()
 	for _, driver := range walkTestDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
-			s := newTestStoreWithDriver(t, driver.driver)
-			children := make([]Node, 0, 40)
-			for i := range 40 {
-				name := fmt.Sprintf("child-%02d", i)
-				child, err := s.Mkdir(t.Context(), s.RootID(), name)
-				require.NoError(t, err)
-				children = append(children, child)
-			}
-			root, err := s.NodeByID(t.Context(), s.RootID())
-			require.NoError(t, err)
-			walker, err := s.BeginWalk(t.Context(), "/", 20, false)
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, walker.Close()) })
-			before := walker.Stats()
-
-			cancelCtx, cancel := context.WithCancel(t.Context())
-			walker.pageContextErr = func(ctx context.Context, rowsExamined int64) error {
-				if rowsExamined == 1 {
-					cancel()
-				}
-				return ctx.Err()
-			}
-			page, err := walker.Next(cancelCtx)
-			assert.Nil(t, page)
-			require.ErrorIs(t, err, context.Canceled)
-			assert.Equal(t, before, walker.Stats(),
-				"a rolled-back page must not publish partial work counters")
-
-			page, err = walker.Next(t.Context())
-			require.NoError(t, err)
-			require.Len(t, page, 20)
-			assert.Equal(t, WalkEntry{Path: "/", Node: root}, page[0])
-			for i := 1; i < 20; i++ {
-				assert.Equal(t, WalkEntry{
-					Path: fmt.Sprintf("/child-%02d", i-1), Node: children[i-1],
-				}, page[i])
-			}
+			checkWalkMidPageCancellationRollsBackFrontierAndStats(t, func(t *testing.T) *Store {
+				t.Helper()
+				return newTestStoreWithDriver(t, driver.driver)
+			})
 		})
 	}
 }
 
+func checkWalkMidPageCancellationRollsBackFrontierAndStats(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	children := make([]Node, 0, 40)
+	for i := range 40 {
+		name := fmt.Sprintf("child-%02d", i)
+		child, err := s.Mkdir(t.Context(), s.RootID(), name)
+		require.NoError(t, err)
+		children = append(children, child)
+	}
+	root, err := s.NodeByID(t.Context(), s.RootID())
+	require.NoError(t, err)
+	walker, err := s.BeginWalk(t.Context(), "/", 20, false)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, walker.Close()) })
+	before := walker.Stats()
+
+	cancelCtx, cancel := context.WithCancel(t.Context())
+	walker.pageContextErr = func(ctx context.Context, rowsExamined int64) error {
+		if rowsExamined == 1 {
+			cancel()
+		}
+		return ctx.Err()
+	}
+	page, err := walker.Next(cancelCtx)
+	assert.Nil(t, page)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, before, walker.Stats(),
+		"a rolled-back page must not publish partial work counters")
+
+	page, err = walker.Next(t.Context())
+	require.NoError(t, err)
+	require.Len(t, page, 20)
+	assert.Equal(t, WalkEntry{Path: "/", Node: root}, page[0])
+	for i := 1; i < 20; i++ {
+		assert.Equal(t, WalkEntry{
+			Path: fmt.Sprintf("/child-%02d", i-1), Node: children[i-1],
+		}, page[i])
+	}
+}
 func newTestStoreWithDriver(t *testing.T, driver docsqlite.Driver) *Store {
 	t.Helper()
 	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "docbank.db"), driver)

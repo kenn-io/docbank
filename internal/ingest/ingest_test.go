@@ -37,19 +37,31 @@ func newTestIngester(t *testing.T) *Ingester {
 func newTestIngesterWithOptions(t *testing.T, options blob.Options) *Ingester {
 	t.Helper()
 	home := t.TempDir()
-	blobsDir := filepath.Join(home, "blobs")
-	require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
 	s, err := store.Open(t.Context(), filepath.Join(home, "docbank.db"))
 	require.NoError(t, err)
+	return ingesterFixtureWithStore(t, s, home, options)
+}
+
+func ingesterFixtureWithStore(t *testing.T, s *store.Store, home string, options blob.Options) *Ingester {
+	t.Helper()
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	blobsDir := filepath.Join(home, "blobs")
+	require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
 	blobs, err := blob.NewWithOptions(store.NewPackCatalog(s), blobsDir, options)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = blobs.Close() })
 	return &Ingester{Store: s, Blobs: blobs}
 }
 
+type ingesterFixtureFactory func(*testing.T, blob.Options) *Ingester
+
 func TestAddRecordsCompressedLooseAuthority(t *testing.T) {
-	ing := newTestIngesterWithOptions(t, blob.ManagedOptions())
+	checkAddRecordsCompressedLooseAuthority(t, newTestIngesterWithOptions)
+}
+
+func checkAddRecordsCompressedLooseAuthority(t *testing.T, open ingesterFixtureFactory) {
+	t.Helper()
+	ing := open(t, blob.ManagedOptions())
 	content := strings.Repeat("compressible local document\n", 512)
 	src := writeTree(t, map[string]string{"document.txt": content})
 
@@ -81,7 +93,12 @@ func writeTree(t *testing.T, files map[string]string) string {
 }
 
 func TestAddSingleFile(t *testing.T) {
-	ing := newTestIngester(t)
+	checkAddSingleFile(t, newTestIngesterWithOptions)
+}
+
+func checkAddSingleFile(t *testing.T, open ingesterFixtureFactory) {
+	t.Helper()
+	ing := open(t, blob.Options{})
 	ctx := t.Context()
 	src := writeTree(t, map[string]string{"notes.txt": "hello"})
 
@@ -573,7 +590,12 @@ func fakeIngestHash(seed string) string {
 }
 
 func TestAddReplaceVersionsDestinationWithoutSuffix(t *testing.T) {
-	ing := newTestIngester(t)
+	checkAddReplaceVersionsDestinationWithoutSuffix(t, newTestIngesterWithOptions)
+}
+
+func checkAddReplaceVersionsDestinationWithoutSuffix(t *testing.T, open ingesterFixtureFactory) {
+	t.Helper()
+	ing := open(t, blob.Options{})
 	ctx := t.Context()
 	src := writeTree(t, map[string]string{"notes.txt": "first draft"})
 	path := filepath.Join(src, "notes.txt")
@@ -606,7 +628,12 @@ func TestAddReplaceVersionsDestinationWithoutSuffix(t *testing.T) {
 }
 
 func TestAddWithoutReplaceStillSuffixesChangedContent(t *testing.T) {
-	ing := newTestIngester(t)
+	checkAddWithoutReplaceStillSuffixesChangedContent(t, newTestIngesterWithOptions)
+}
+
+func checkAddWithoutReplaceStillSuffixesChangedContent(t *testing.T, open ingesterFixtureFactory) {
+	t.Helper()
+	ing := open(t, blob.Options{})
 	ctx := t.Context()
 	src := writeTree(t, map[string]string{"notes.txt": "first draft"})
 	path := filepath.Join(src, "notes.txt")
@@ -622,7 +649,12 @@ func TestAddWithoutReplaceStillSuffixesChangedContent(t *testing.T) {
 }
 
 func TestAddReplaceSkipsUnchangedBytesAndStoredMIME(t *testing.T) {
-	ing := newTestIngester(t)
+	checkAddReplaceSkipsUnchangedBytesAndStoredMIME(t, newTestIngesterWithOptions)
+}
+
+func checkAddReplaceSkipsUnchangedBytesAndStoredMIME(t *testing.T, open ingesterFixtureFactory) {
+	t.Helper()
+	ing := open(t, blob.Options{})
 	ctx := t.Context()
 	content := []byte("same bytes")
 	src := filepath.Join(t.TempDir(), "notes.txt")
@@ -1085,7 +1117,12 @@ func TestAddCancellationStopsExcludedDirectoryWalk(t *testing.T) {
 }
 
 func TestAddDirectoryPreservesStructure(t *testing.T) {
-	ing := newTestIngester(t)
+	checkAddDirectoryPreservesStructure(t, newTestIngesterWithOptions)
+}
+
+func checkAddDirectoryPreservesStructure(t *testing.T, open ingesterFixtureFactory) {
+	t.Helper()
+	ing := open(t, blob.Options{})
 	ctx := t.Context()
 	src := writeTree(t, map[string]string{
 		"taxes/2024/return.txt": "2024 return",
@@ -1108,7 +1145,12 @@ func TestAddDirectoryPreservesStructure(t *testing.T) {
 }
 
 func TestAddRerunConverges(t *testing.T) {
-	ing := newTestIngester(t)
+	checkAddRerunConverges(t, newTestIngesterWithOptions)
+}
+
+func checkAddRerunConverges(t *testing.T, open ingesterFixtureFactory) {
+	t.Helper()
+	ing := open(t, blob.Options{})
 	ctx := t.Context()
 	src := writeTree(t, map[string]string{
 		"a.txt": "alpha",
@@ -1132,7 +1174,12 @@ func TestAddRerunConverges(t *testing.T) {
 }
 
 func TestPackedDuplicateIngestRemovesLooseCopy(t *testing.T) {
-	ing := newTestIngesterWithOptions(t, blob.ManagedOptions())
+	checkPackedDuplicateIngestRemovesLooseCopy(t, newTestIngesterWithOptions)
+}
+
+func checkPackedDuplicateIngestRemovesLooseCopy(t *testing.T, open ingesterFixtureFactory) {
+	t.Helper()
+	ing := open(t, blob.ManagedOptions())
 	content := strings.Repeat("packed duplicate content\n", 512)
 	src := writeTree(t, map[string]string{"document.txt": content})
 	path := filepath.Join(src, "document.txt")
@@ -1310,7 +1357,12 @@ func TestAddContinuesPastFailures(t *testing.T) {
 // a WalkDir callback error must not abort the whole AddPaths batch. Only
 // the colliding subtree should be skipped; sibling sources still import.
 func TestAddContinuesPastDirCollision(t *testing.T) {
-	ing := newTestIngester(t)
+	checkAddContinuesPastDirCollision(t, newTestIngesterWithOptions)
+}
+
+func checkAddContinuesPastDirCollision(t *testing.T, open ingesterFixtureFactory) {
+	t.Helper()
+	ing := open(t, blob.Options{})
 	ctx := t.Context()
 
 	srcB := writeTree(t, map[string]string{"sub/b.txt": "beta"})
@@ -1345,7 +1397,12 @@ func TestAddContinuesPastDirCollision(t *testing.T) {
 // WalkDir hands the root back as given while children are Join-cleaned, so
 // without normalization the dirIDs lookup misses and the import aborts.
 func TestAddDirectoryTrailingSlash(t *testing.T) {
-	ing := newTestIngester(t)
+	checkAddDirectoryTrailingSlash(t, newTestIngesterWithOptions)
+}
+
+func checkAddDirectoryTrailingSlash(t *testing.T, open ingesterFixtureFactory) {
+	t.Helper()
+	ing := open(t, blob.Options{})
 	ctx := t.Context()
 	src := writeTree(t, map[string]string{"docs/notes.txt": "hello"})
 
@@ -1398,7 +1455,12 @@ func TestAddDotSourceUsesRealBasename(t *testing.T) {
 }
 
 func TestAddTreeStaleDestinationIsNotResurrected(t *testing.T) {
-	ing := newTestIngester(t)
+	checkAddTreeStaleDestinationIsNotResurrected(t, newTestIngesterWithOptions)
+}
+
+func checkAddTreeStaleDestinationIsNotResurrected(t *testing.T, open ingesterFixtureFactory) {
+	t.Helper()
+	ing := open(t, blob.Options{})
 	ctx := t.Context()
 	src := writeTree(t, map[string]string{"sub/a.txt": "x"})
 
@@ -1425,7 +1487,12 @@ func TestAddTreeStaleDestinationIsNotResurrected(t *testing.T) {
 }
 
 func TestAddTreeStaleDestinationDefaultSelectionDoesNotResurrect(t *testing.T) {
-	ing := newTestIngester(t)
+	checkAddTreeStaleDestinationDefaultSelectionDoesNotResurrect(t, newTestIngesterWithOptions)
+}
+
+func checkAddTreeStaleDestinationDefaultSelectionDoesNotResurrect(t *testing.T, open ingesterFixtureFactory) {
+	t.Helper()
+	ing := open(t, blob.Options{})
 	ctx := t.Context()
 	src := writeTree(t, map[string]string{"sub/a.txt": "x"})
 
@@ -1553,7 +1620,12 @@ func TestPreflightCountsCloudPlaceholders(t *testing.T) {
 }
 
 func TestAddPathsHonorsPreflightExclusions(t *testing.T) {
-	ing := newTestIngester(t)
+	checkAddPathsHonorsPreflightExclusions(t, newTestIngesterWithOptions)
+}
+
+func checkAddPathsHonorsPreflightExclusions(t *testing.T, open ingesterFixtureFactory) {
+	t.Helper()
+	ing := open(t, blob.Options{})
 	src := writeTree(t, map[string]string{
 		"keep.txt":               "keep",
 		".git/config":            "exclude",
@@ -1655,7 +1727,12 @@ func TestPreflightPreservesPathFormExclusions(t *testing.T) {
 }
 
 func TestAddMissingSourceIsReportedNotFatal(t *testing.T) {
-	ing := newTestIngester(t)
+	checkAddMissingSourceIsReportedNotFatal(t, newTestIngesterWithOptions)
+}
+
+func checkAddMissingSourceIsReportedNotFatal(t *testing.T, open ingesterFixtureFactory) {
+	t.Helper()
+	ing := open(t, blob.Options{})
 	ctx := t.Context()
 	src := writeTree(t, map[string]string{"good.txt": "hello"})
 
