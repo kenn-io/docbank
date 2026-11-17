@@ -883,8 +883,22 @@ grant is revoked, grant `TEMPORARY` on the vault database to `docbank_runtime`.
 This does not require `CREATE` on the vault schema. Paths use byte order on both
 engines. SQLite keeps its forced sibling indexes; PostgreSQL uses its native
 planner. Shared checks cover live and trashed duplicate paths, subtree boundaries,
-bounded per-page work and rollback after interrupted pages. PostgreSQL checks
-also cover changes between pages and indexed continuation queries without sorts.
+bounded per-page work and rollback after cancellation between statements.
+PostgreSQL checks also cover changes between pages, paths longer than 14 KiB,
+byte ordering across directory boundaries, and indexed sibling continuation
+queries without sorts. Its frontier indexes a 256-character path prefix, keeping
+index keys below PostgreSQL's btree size limit even for four-byte UTF-8 characters.
+It compares full paths to resolve prefix ties before loading the next node, so
+paths retain their full 16 KiB allowance and exact byte order.
+
+PostgreSQL walks send a server cancellation request when a page is cancelled
+during SQL, drain the command, and roll back the page's frontier changes. The same
+snapshot can then serve a retry. A five-second connection deadline bounds waiting
+for an unresponsive server to drain; if the connection is lost, the walk returns
+an error and cannot resume. This does not extend ordinary query deadlines or
+restart a walk against newer data. The active-query test blocks SQL after the
+page has changed its frontier, cancels it, and checks that retry keeps both the
+original page and snapshot.
 
 `internal/ingest` runs the same file and folder importer against both backends,
 including trailing-slash behavior, reruns, replacement, naming collisions,

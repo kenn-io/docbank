@@ -8,7 +8,10 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgconn/ctxwatch"
 	"github.com/jackc/pgx/v5/stdlib"
 
 	docsqlite "go.kenn.io/docbank/sqlite"
@@ -80,7 +83,13 @@ func (s *Store) BeginWalk(
 	var err error
 	postgres := s.postgresSchema != ""
 	if postgres {
-		db = stdlib.OpenDB(*s.postgresConfig.Copy())
+		config := s.postgresConfig.Copy()
+		config.BuildContextWatcherHandler = func(conn *pgconn.PgConn) ctxwatch.Handler {
+			// Cancel and drain the command so page rollback can keep its snapshot.
+			// Bound an unresponsive server's cancellation cleanup to five seconds.
+			return &pgconn.CancelRequestContextWatcherHandler{Conn: conn, DeadlineDelay: 5 * time.Second}
+		}
+		db = stdlib.OpenDB(*config)
 	} else {
 		db, err = s.driver.Open(s.path, docsqlite.OpenOptions{
 			Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred,
@@ -105,8 +114,9 @@ func (s *Store) BeginWalk(
 			path TEXT COLLATE "C" NOT NULL,
 			node_id BIGINT NOT NULL,
 			depth INTEGER NOT NULL,
-			PRIMARY KEY(path,node_id)
-		)`); err != nil {
+			PRIMARY KEY(node_id)
+		);
+		CREATE INDEX walk_frontier_path_prefix ON walk_frontier (left(path,256))`); err != nil {
 			return nil, fmt.Errorf("beginning tree walk: creating frontier: %w", err)
 		}
 		isolation = sql.LevelRepeatableRead
@@ -242,14 +252,21 @@ func (w *Walker) popFrontier(ctx context.Context) (WalkEntry, int, error) {
 		entry WalkEntry
 		depth int
 	)
+	frontier := "walk_frontier AS f"
+	order := " ORDER BY f.path, f.node_id LIMIT 1"
+	if w.postgres {
+		// A 256-character prefix fits btree keys even at four bytes per character.
+		// Full paths break prefix ties before joining the selected node.
+		frontier = `(SELECT path,node_id,depth FROM walk_frontier
+			ORDER BY left(path,256),path,node_id LIMIT 1) AS f`
+		order = ""
+	}
 	err := w.tx.QueryRowContext(ctx, `
 		SELECT f.path, f.depth, `+nodeCols+`
-		FROM walk_frontier AS f
+		FROM `+frontier+`
 		JOIN nodes AS n ON n.id = f.node_id
 		LEFT JOIN content_versions AS cv
-			ON cv.node_id = n.id AND cv.version_id = n.current_version_id
-		ORDER BY f.path, f.node_id
-		LIMIT 1`,
+			ON cv.node_id = n.id AND cv.version_id = n.current_version_id`+order,
 	).Scan(&entry.Path, &depth,
 		&entry.Node.ID, &entry.Node.ParentID, &entry.Node.Name, &entry.Node.Kind,
 		&entry.Node.CurrentVersionID, &entry.Node.BlobHash, &entry.Node.MD5, &entry.Node.Size,
@@ -363,7 +380,7 @@ func (w *Walker) rollbackPage(ctx context.Context, cause error) error {
 	cleanupCtx := context.WithoutCancel(ctx)
 	_, rollbackErr := w.tx.ExecContext(cleanupCtx, `ROLLBACK TO walk_page`)
 	_, releaseErr := w.tx.ExecContext(cleanupCtx, `RELEASE walk_page`)
-	return errors.Join(cause, rollbackErr, releaseErr)
+	return errors.Join(ctx.Err(), cause, rollbackErr, releaseErr)
 }
 
 // Stats returns a race-safe snapshot of deterministic walker work counters.

@@ -1,7 +1,9 @@
 package store
 
 import (
+	"context"
 	"fmt"
+	"math/rand/v2"
 	"strings"
 	"testing"
 
@@ -82,4 +84,102 @@ func checkWalkSeeksPostgres(t *testing.T) {
 		require.Contains(t, strings.Join(plan, "\n"), "name ")
 		require.NotContains(t, strings.Join(plan, "\n"), "Sort")
 	}
+}
+
+func checkWalkLongPathsAndByteOrderPostgres(t *testing.T) {
+	t.Helper()
+	s := newPostgresQueryStore(t)
+	ctx := t.Context()
+	a, err := s.Mkdir(ctx, s.RootID(), "a")
+	require.NoError(t, err)
+	_, err = s.Mkdir(ctx, s.RootID(), "a.z")
+	require.NoError(t, err)
+	parent, err := s.Mkdir(ctx, a.ID, "b")
+	require.NoError(t, err)
+	want := []string{"/", "/a", "/a.z", "/a/b"}
+	path := "/a/b"
+	random := rand.New(rand.NewPCG(1, 2))
+	for range 28 {
+		var bytes [256]byte
+		for i := range bytes {
+			bytes[i] = byte(random.Uint64())
+		}
+		name := fmt.Sprintf("李%x", bytes)
+		parent, err = s.Mkdir(ctx, parent.ID, name)
+		require.NoError(t, err)
+		path += "/" + name
+		want = append(want, path)
+	}
+	require.Greater(t, len(path), 14<<10)
+	require.Less(t, len(path)+2, MaxWalkPathBytes)
+	for _, name := range []string{"b", "a"} {
+		_, err := s.Mkdir(ctx, parent.ID, name)
+		require.NoError(t, err)
+	}
+	want = append(want, path+"/a", path+"/b")
+	walk, err := s.BeginWalk(ctx, "/", 5, false)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, walk.Close()) })
+	var got []string
+	for _, entry := range collectStoreWalk(t, walk) {
+		got = append(got, entry.Path)
+	}
+	require.Equal(t, want, got)
+}
+
+func checkWalkActiveQueryCancellationPostgres(t *testing.T) {
+	t.Helper()
+	s := newPostgresQueryStore(t)
+	ctx := t.Context()
+	for _, name := range []string{"a", "b"} {
+		_, err := s.Mkdir(ctx, s.RootID(), name)
+		require.NoError(t, err)
+	}
+	walk, err := s.BeginWalk(ctx, "/", 3, false)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, walk.Close()) })
+	var pid int
+	require.NoError(t, walk.tx.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&pid))
+	holder, err := s.db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer func() { _ = holder.Rollback() }()
+	const key = int64(912081)
+	_, err = holder.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, key)
+	require.NoError(t, err)
+	// Block a real SQL command after the page has already changed its frontier.
+	walk.pageContextErr = func(ctx context.Context, examined int64) error {
+		if examined == 1 {
+			_, err := walk.tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, key)
+			return err
+		}
+		return ctx.Err()
+	}
+	pageCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan error, 1)
+	before := walk.Stats()
+	go func() { _, err := walk.Next(pageCtx); done <- err }()
+	// Observe the blocked command through the server, without timed cancellation.
+	for waiting := false; !waiting; {
+		select {
+		case err := <-done:
+			t.Fatalf("page returned before cancellation: %v", err)
+		default:
+		}
+		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT EXISTS (
+   SELECT 1 FROM pg_catalog.pg_locks WHERE pid=$1 AND locktype='advisory' AND NOT granted
+  )`, pid).Scan(&waiting))
+	}
+	cancel()
+	require.ErrorIs(t, <-done, context.Canceled)
+	require.Equal(t, before, walk.Stats())
+	require.NoError(t, holder.Rollback())
+	walk.pageContextErr = func(ctx context.Context, _ int64) error { return ctx.Err() }
+	_, err = s.Mkdir(ctx, s.RootID(), "after-cancel")
+	require.NoError(t, err)
+	var got []string
+	for _, entry := range collectStoreWalk(t, walk) {
+		got = append(got, entry.Path)
+	}
+	require.Equal(t, []string{"/", "/a", "/b"}, got)
 }

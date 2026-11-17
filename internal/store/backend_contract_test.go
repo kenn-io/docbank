@@ -40,6 +40,8 @@ var backendSuites = []backendSuite{
 			checkWalkMidPageCancellationRollsBackFrontierAndStats(t, newPostgresQueryStore)
 		}},
 		{"WalkSnapshot", nil, checkWalkSnapshotPostgres},
+		{"WalkLongPathsAndByteOrder", nil, checkWalkLongPathsAndByteOrderPostgres},
+		{"WalkActiveQueryCancellation", nil, checkWalkActiveQueryCancellationPostgres},
 		{"WalkSeeks", nil, checkWalkSeeksPostgres},
 	}},
 	{name: "lexical-search", postgres: "native operations", scope: "Document filename/current-text lexical retrieval, filtering, phrase/prefix queries, excerpts and result limits; native scoring differs from FTS5; excludes photo query compilation.", scenarios: []backendScenario{
