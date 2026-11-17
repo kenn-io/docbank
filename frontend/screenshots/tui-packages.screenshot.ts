@@ -31,6 +31,9 @@ test.describe("TUI packages screenshot", () => {
   }
 
   test.beforeAll(async () => {
+    // The import below can outlast the test timeout on a slow disk. Its
+    // no-progress check bounds this setup instead.
+    test.setTimeout(0);
     workspace = await mkdtemp(path.join(tmpdir(), "docbank-tui-packages-"));
     vault = path.join(workspace, "vault");
     const volume = path.join(workspace, "package", "VOL001");
