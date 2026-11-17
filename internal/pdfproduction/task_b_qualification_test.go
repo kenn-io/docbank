@@ -195,7 +195,7 @@ func taskBRotatedCroppedSource(t *testing.T) []byte {
 	pdf.RawWriteStr("EMC")
 	var unrotated bytes.Buffer
 	require.NoError(t, pdf.Output(&unrotated))
-	configuration := model.NewDefaultConfiguration()
+	configuration := model.NewStatelessConfiguration()
 	configuration.Offline = true
 	var rotated bytes.Buffer
 	require.NoError(t, api.Rotate(t.Context(), bytes.NewReader(unrotated.Bytes()), &rotated, 90, nil, configuration))
