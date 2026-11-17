@@ -88,7 +88,12 @@ func TestFaceSuggestionsRecoverAfterQueueSpaceReturns(t *testing.T) {
 
 func TestHealthyFacesSurviveUnavailableVectorPayload(t *testing.T) {
 	t.Parallel()
-	x := newFaceEmbeddingFixture(t, false)
+	checkHealthyFacesSurviveUnavailableVectorPayload(t, newFaceEmbeddingFixture)
+}
+
+func checkHealthyFacesSurviveUnavailableVectorPayload(t *testing.T, open faceEmbeddingFixtureFactory) {
+	t.Helper()
+	x := open(t, false)
 	x.matchAll = true
 	x.vectorForBox = func(box embedclient.FaceBox) []float32 {
 		values := make([]float32, 512)
@@ -170,7 +175,12 @@ func TestFaceSuggestionsResumeAfterRestart(t *testing.T) {
 
 func newFaceSuggestionBatchFixture(t *testing.T) (*faceEmbeddingFixture, store.PhotoFace) {
 	t.Helper()
-	x := newFaceEmbeddingFixture(t, false)
+	return faceSuggestionBatchFixtureWith(t, newFaceEmbeddingFixture)
+}
+
+func faceSuggestionBatchFixtureWith(t *testing.T, open faceEmbeddingFixtureFactory) (*faceEmbeddingFixture, store.PhotoFace) {
+	t.Helper()
+	x := open(t, false)
 	x.matchAll = true
 	x.worker.maxRows = 1000
 	x.worker.maxVectorBlobBytes = 8 << 20
@@ -197,10 +207,15 @@ func newFaceSuggestionBatchFixture(t *testing.T) (*faceEmbeddingFixture, store.P
 
 func TestFaceSuggestionBatchesPublishThenCatchUp(t *testing.T) {
 	t.Parallel()
+	checkFaceSuggestionBatchesPublishThenCatchUp(t, newFaceEmbeddingFixture)
+}
+
+func checkFaceSuggestionBatchesPublishThenCatchUp(t *testing.T, open faceEmbeddingFixtureFactory) {
+	t.Helper()
 	for _, action := range []string{"dismiss", "name"} {
 		t.Run(action, func(t *testing.T) {
 			t.Parallel()
-			x, omitted := newFaceSuggestionBatchFixture(t)
+			x, omitted := faceSuggestionBatchFixtureWith(t, open)
 			ctx := t.Context()
 			service, err := NewService(ctx, ServiceConfig{Catalog: x.f.catalog, Blobs: x.f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx})
 			require.NoError(t, err)
@@ -328,7 +343,12 @@ func TestFaceSuggestionLaneCatchesUpAfterMidPassWrite(t *testing.T) {
 
 func TestFaceSuggestionsPublishDuringImports(t *testing.T) {
 	t.Parallel()
-	x, _ := newFaceSuggestionBatchFixture(t)
+	checkFaceSuggestionsPublishDuringImports(t, newFaceEmbeddingFixture)
+}
+
+func checkFaceSuggestionsPublishDuringImports(t *testing.T, open faceEmbeddingFixtureFactory) {
+	t.Helper()
+	x, _ := faceSuggestionBatchFixtureWith(t, open)
 	ctx := t.Context()
 	require.Nil(t, x.service.faceSuggestionsPending)
 	require.NoError(t, x.service.rebuildFaceSuggestions(ctx))
@@ -370,7 +390,12 @@ func TestFaceSuggestionsPublishDuringImports(t *testing.T) {
 
 func TestExactGroupRejectionAllowsLargerNamedGroup(t *testing.T) {
 	t.Parallel()
-	x := newFaceEmbeddingFixture(t, false)
+	checkExactGroupRejectionAllowsLargerNamedGroup(t, newFaceEmbeddingFixture)
+}
+
+func checkExactGroupRejectionAllowsLargerNamedGroup(t *testing.T, open faceEmbeddingFixtureFactory) {
+	t.Helper()
+	x := open(t, false)
 	x.matchAll = true
 	ctx := t.Context()
 	ada, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")

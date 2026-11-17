@@ -190,3 +190,38 @@ func TestHybridSearcherPostgres(t *testing.T) {
 	t.Parallel()
 	checkHybridSearcherUsesRealStoreBindingAuthority(t, postgresPublicationFixture)
 }
+
+func postgresFaceEmbeddingFixture(t *testing.T, unmatched bool) *faceEmbeddingFixture {
+	t.Helper()
+	return faceEmbeddingFixtureWithPhoto(t, unmatched, postgresPhotoDescriptionFixture(t))
+}
+
+func TestFaceWorkersPostgres(t *testing.T) {
+	t.Parallel()
+	for _, scenario := range []struct {
+		name  string
+		check func(*testing.T, faceEmbeddingFixtureFactory)
+	}{
+		{"FaceEmbeddingBoxesAndNilResults", checkFaceEmbeddingBoxesAndNilResults},
+		{"FaceProfileKeepsSourceEligibility", checkFaceProfileKeepsSourceEligibility},
+		{"FaceSuggestionBatchesPublishThenCatchUp", checkFaceSuggestionBatchesPublishThenCatchUp},
+		{"FaceSuggestionsPublishDuringImports", checkFaceSuggestionsPublishDuringImports},
+		{"FaceMissingPreviewDoesNotBlockOtherPhotos", checkFaceMissingPreviewDoesNotBlockOtherPhotos},
+		{"FacePeopleRankingPrecedesPagingAndKeepsNamesakes", checkFacePeopleRankingPrecedesPagingAndKeepsNamesakes},
+		{"FacePeopleRankingObeysHiddenScope", checkFacePeopleRankingObeysHiddenScope},
+		{"FacePickerPayloadScopeAndIndexFreshness", checkFacePickerPayloadScopeAndIndexFreshness},
+		{"VisibleFaceSuggestionUsesVisibleNamedEvidence", checkVisibleFaceSuggestionUsesVisibleNamedEvidence},
+		{"VisibleUnnamedGroupSurvivesHiddenMatch", checkVisibleUnnamedGroupSurvivesHiddenMatch},
+		{"FaceSetupDisclosesScopeAndRequiresCurrentConsent", checkFaceSetupDisclosesScopeAndRequiresCurrentConsent},
+		{"FaceRankingContinuationRejectsChangedCentroids", checkFaceRankingContinuationRejectsChangedCentroids},
+		{"FaceSuggestionSurvivesOtherPersonRejectionWithHiddenLocked", checkFaceSuggestionSurvivesOtherPersonRejectionWithHiddenLocked},
+		{"FaceWorkerAbandonsDisappearedSource", checkFaceWorkerAbandonsDisappearedSource},
+		{"HealthyFacesSurviveUnavailableVectorPayload", checkHealthyFacesSurviveUnavailableVectorPayload},
+		{"ExactGroupRejectionAllowsLargerNamedGroup", checkExactGroupRejectionAllowsLargerNamedGroup},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			t.Parallel()
+			scenario.check(t, postgresFaceEmbeddingFixture)
+		})
+	}
+}

@@ -388,8 +388,10 @@ sessions and photo settings have native Store contracts as well.
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Direct embedding-worker publication/recovery, photo
 descriptions and face detection have qualification below. Foreground direct-file
-and image embedding can publish a vector index before returning. Face embedding/matching workers,
-remote-media acquisition, photo query compilation and PostgreSQL-target backup recovery remain unqualified.
+and image embedding can publish a vector index before returning. Face embedding,
+index-backed people ranking and suggestion rebuilding use shared worker and
+Store operations. Remote-media acquisition, photo query compilation and
+PostgreSQL-target backup recovery remain unqualified.
 Native multi-store catalog operations are qualified below; deployment adapters
 and filesystem workers remain separate from public PostgreSQL vault opening.
 
@@ -1041,9 +1043,35 @@ metadata; a fresh Store starts with an empty cache.
 SQLite keeps its released membership triggers and receives no additional
 maintenance queries. The shared reader scenarios cover native original/chunk
 and image membership changes, leases, cleanup, warm-cache reuse and snapshots.
-Face-member capture and photo query compilation remain unqualified on PostgreSQL.
+Face members are covered by the processing suite through native face publication,
+index reconstruction and ranked people selection. Photo query compilation
+remains unqualified on PostgreSQL.
 Public PostgreSQL vault opening and PostgreSQL-target physical restore remain
 separate.
+
+#### Face embeddings and matching
+
+Native PostgreSQL face workers use the same preview preparation, provider
+consent and source checks as SQLite. Face input generations keep exact face
+boxes and preview evidence. Source exclusion, trashing or replacement before
+preparation or during a provider call prevents stale publication. Missing
+preview bytes leave healthy photos eligible, and unmatched inference rows do
+not keep the job pending.
+
+Face vector-index capture and people ranking use these published generations.
+The index preserves ranking and continuation values; a newly named photo can
+contribute through its retained vector payload before the next index rebuild.
+People are ranked before paging, including namesakes. Hidden-photo scope
+constrains ranking and suggested groups. Rejecting one person does not suppress
+unrelated matches. An unavailable payload does not prevent healthy groups from
+being published.
+
+`TestFaceWorkersPostgres` shares the existing SQLite scenarios against the
+canonical runtime-role fixture and synthetic local provider. It exercises
+worker scans, index reconstruction, ranked reads and suggestion rebuilds,
+including changes during a bounded grouping pass and concurrent imports.
+Timed backfill scheduling and SQLite-file reopen checks remain in their
+existing tests. Public PostgreSQL vault opening is separate.
 
 #### Semantic results and similar documents
 
