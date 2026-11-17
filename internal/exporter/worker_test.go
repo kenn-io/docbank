@@ -52,6 +52,12 @@ func workerFixture(t *testing.T, gate exporter.Gate) (*exporter.Worker, *store.S
 	path := filepath.Join(root, "vault.db")
 	catalog, err := store.Open(t.Context(), path, driver)
 	require.NoError(t, err)
+	worker, job := workerFixtureWithStore(t, gate, catalog, root)
+	return worker, catalog, job, driver, path
+}
+
+func workerFixtureWithStore(t *testing.T, gate exporter.Gate, catalog *store.Store, root string) (*exporter.Worker, bundle.Job) {
+	t.Helper()
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
 	require.NoError(t, err)
@@ -68,7 +74,7 @@ func workerFixture(t *testing.T, gate exporter.Gate) (*exporter.Worker, *store.S
 	require.NoError(t, err)
 	worker, err := exporter.New(catalog, blobs, root, gate)
 	require.NoError(t, err)
-	return worker, catalog, job, driver, path
+	return worker, job
 }
 
 func TestWorkerStartupRemovesOnlyAbandonedPhotoStages(t *testing.T) {

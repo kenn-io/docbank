@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
+	"github.com/jackc/pgx/v5"
 
 	"go.kenn.io/docbank/internal/store/schemaformat"
 	"go.kenn.io/docbank/internal/waitlock"
@@ -27,7 +28,8 @@ type Store struct {
 	db                     *sql.DB
 	writeDB                *sql.DB
 	writeRevision          atomic.Uint64
-	postgresSchema         string // Empty for SQLite; PostgreSQL pools use this schema as their search path.
+	postgresConfig         *pgx.ConnConfig // Pinned runtime configuration for independently owned read pools.
+	postgresSchema         string          // Empty for SQLite; PostgreSQL pools use this schema as their search path.
 	path                   string
 	rootID                 int64
 	vaultID                string

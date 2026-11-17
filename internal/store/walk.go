@@ -8,6 +8,11 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgconn/ctxwatch"
+	"github.com/jackc/pgx/v5/stdlib"
 
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
@@ -46,6 +51,7 @@ type Walker struct {
 	tx             *sql.Tx
 	pageSize       int
 	includeTrashed bool
+	postgres       bool
 	rootID         int64
 	done           bool
 	stats          WalkStats
@@ -73,9 +79,22 @@ func (s *Store) BeginWalk(
 	if len(rootPath) > MaxWalkPathBytes {
 		return nil, fmt.Errorf("walk path exceeds %d bytes", MaxWalkPathBytes)
 	}
-	db, err := s.driver.Open(s.path, docsqlite.OpenOptions{
-		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred,
-	})
+	var db *sql.DB
+	var err error
+	postgres := s.postgresSchema != ""
+	if postgres {
+		config := s.postgresConfig.Copy()
+		config.BuildContextWatcherHandler = func(conn *pgconn.PgConn) ctxwatch.Handler {
+			// Cancel and drain the command so page rollback can keep its snapshot.
+			// Bound an unresponsive server's cancellation cleanup to five seconds.
+			return &pgconn.CancelRequestContextWatcherHandler{Conn: conn, DeadlineDelay: 5 * time.Second}
+		}
+		db = stdlib.OpenDB(*config)
+	} else {
+		db, err = s.driver.Open(s.path, docsqlite.OpenOptions{
+			Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred,
+		})
+	}
 	if err != nil {
 		return nil, fmt.Errorf("beginning tree walk: %w", err)
 	}
@@ -87,8 +106,23 @@ func (s *Store) BeginWalk(
 		}
 	}()
 
+	isolation := sql.LevelDefault
+	if postgres {
+		// Temporary state stays on this walk's connection and outlives each page.
+		// Create it before the read-only transaction, which permits TEMP writes.
+		if _, err := db.ExecContext(ctx, `CREATE TEMP TABLE walk_frontier (
+			path TEXT COLLATE "C" NOT NULL,
+			node_id BIGINT NOT NULL,
+			depth INTEGER NOT NULL,
+			PRIMARY KEY(node_id)
+		);
+		CREATE INDEX walk_frontier_path_prefix ON walk_frontier (left(path,256))`); err != nil {
+			return nil, fmt.Errorf("beginning tree walk: creating frontier: %w", err)
+		}
+		isolation = sql.LevelRepeatableRead
+	}
 	transactionContext := context.WithoutCancel(ctx)
-	tx, err := db.BeginTx(transactionContext, &sql.TxOptions{ReadOnly: true})
+	tx, err := db.BeginTx(transactionContext, &sql.TxOptions{ReadOnly: true, Isolation: isolation})
 	if err != nil {
 		return nil, fmt.Errorf("beginning tree walk: %w", err)
 	}
@@ -115,22 +149,24 @@ func (s *Store) BeginWalk(
 		return nil, fmt.Errorf("beginning tree walk at %q: walk path exceeds %d bytes",
 			rootPath, MaxWalkPathBytes)
 	}
-	if _, err := tx.ExecContext(ctx, `
+	if !postgres {
+		if _, err := tx.ExecContext(ctx, `
 		CREATE TEMP TABLE walk_frontier (
 			path TEXT COLLATE BINARY NOT NULL,
 			node_id INTEGER NOT NULL,
 			depth INTEGER NOT NULL,
 			PRIMARY KEY (path, node_id)
 		) WITHOUT ROWID`); err != nil {
-		return nil, fmt.Errorf("beginning tree walk at %q: creating frontier: %w", rootPath, err)
+			return nil, fmt.Errorf("beginning tree walk at %q: creating frontier: %w", rootPath, err)
+		}
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO walk_frontier(path, node_id, depth) VALUES (?, ?, ?)`,
+		`INSERT INTO walk_frontier(path, node_id, depth) VALUES ($1, $2, $3)`,
 		canonicalRoot, root.ID, rootDepth); err != nil {
 		return nil, fmt.Errorf("beginning tree walk at %q: seeding frontier: %w", rootPath, err)
 	}
 	return &Walker{
-		db: db, tx: tx, pageSize: pageSize, includeTrashed: includeTrashed,
+		db: db, tx: tx, pageSize: pageSize, includeTrashed: includeTrashed, postgres: postgres,
 		rootID: root.ID,
 		stats:  WalkStats{SetupNodeReads: int64(2 * (rootDepth + 1))},
 		pageContextErr: func(ctx context.Context, _ int64) error {
@@ -216,14 +252,21 @@ func (w *Walker) popFrontier(ctx context.Context) (WalkEntry, int, error) {
 		entry WalkEntry
 		depth int
 	)
+	frontier := "walk_frontier AS f"
+	order := " ORDER BY f.path, f.node_id LIMIT 1"
+	if w.postgres {
+		// A 256-character prefix fits btree keys even at four bytes per character.
+		// Full paths break prefix ties before joining the selected node.
+		frontier = `(SELECT path,node_id,depth FROM walk_frontier
+			ORDER BY left(path,256),path,node_id LIMIT 1) AS f`
+		order = ""
+	}
 	err := w.tx.QueryRowContext(ctx, `
 		SELECT f.path, f.depth, `+nodeCols+`
-		FROM walk_frontier AS f
+		FROM `+frontier+`
 		JOIN nodes AS n ON n.id = f.node_id
 		LEFT JOIN content_versions AS cv
-			ON cv.node_id = n.id AND cv.version_id = n.current_version_id
-		ORDER BY f.path, f.node_id
-		LIMIT 1`,
+			ON cv.node_id = n.id AND cv.version_id = n.current_version_id`+order,
 	).Scan(&entry.Path, &depth,
 		&entry.Node.ID, &entry.Node.ParentID, &entry.Node.Name, &entry.Node.Kind,
 		&entry.Node.CurrentVersionID, &entry.Node.BlobHash, &entry.Node.MD5, &entry.Node.Size,
@@ -234,7 +277,7 @@ func (w *Walker) popFrontier(ctx context.Context) (WalkEntry, int, error) {
 		return WalkEntry{}, 0, err
 	}
 	if _, err := w.tx.ExecContext(ctx,
-		`DELETE FROM walk_frontier WHERE path = ? AND node_id = ?`,
+		`DELETE FROM walk_frontier WHERE path = $1 AND node_id = $2`,
 		entry.Path, entry.Node.ID); err != nil {
 		return WalkEntry{}, 0, fmt.Errorf("walking tree snapshot: advancing frontier: %w", err)
 	}
@@ -247,11 +290,11 @@ func (w *Walker) seedNext(
 ) (int64, error) {
 	var id int64
 	var name string
-	query, args := walkSeekQuery(parentID, w.includeTrashed, afterName, afterID, first)
+	query, args := walkSeekQuery(parentID, w.includeTrashed, afterName, afterID, first, w.postgres)
 	err := w.tx.QueryRowContext(ctx, query, args...).Scan(&id, &name)
 	seeks := int64(1)
 	if errors.Is(err, sql.ErrNoRows) && w.includeTrashed && !first {
-		query, args = walkNextNameSeekQuery(parentID, afterName)
+		query, args = walkNextNameSeekQuery(parentID, afterName, w.postgres)
 		err = w.tx.QueryRowContext(ctx, query, args...).Scan(&id, &name)
 		seeks++
 	}
@@ -272,7 +315,7 @@ func (w *Walker) seedNext(
 		return seeks, fmt.Errorf("walking tree snapshot: walk path exceeds %d bytes", MaxWalkPathBytes)
 	}
 	if _, err := w.tx.ExecContext(ctx,
-		`INSERT INTO walk_frontier(path, node_id, depth) VALUES (?, ?, ?)`,
+		`INSERT INTO walk_frontier(path, node_id, depth) VALUES ($1, $2, $3)`,
 		path, id, depth); err != nil {
 		return seeks, fmt.Errorf("walking tree snapshot: extending frontier: %w", err)
 	}
@@ -280,18 +323,25 @@ func (w *Walker) seedNext(
 }
 
 func walkSeekQuery(
-	parentID int64, includeTrashed bool, afterName string, afterID int64, first bool,
+	parentID int64, includeTrashed bool, afterName string, afterID int64, first, postgres bool,
 ) (string, []any) {
+	index := " INDEXED BY nodes_parent_name_id"
+	if postgres {
+		index = ""
+	}
 	if !includeTrashed {
+		if !postgres {
+			index = " INDEXED BY live_sibling_names"
+		}
 		query := `
 			SELECT n.id, n.name
-			FROM nodes AS n INDEXED BY live_sibling_names
-			WHERE n.parent_id = ? AND n.trashed_at IS NULL`
+			FROM nodes AS n` + index + `
+			WHERE n.parent_id = $1 AND n.trashed_at IS NULL`
 		args := []any{parentID}
 		if !first {
 			// Live sibling names are unique, so name alone is the complete
 			// continuation key for this partial-index scan.
-			query += ` AND n.name > ?`
+			query += ` AND n.name > $2`
 			args = append(args, afterName)
 		}
 		query += ` ORDER BY n.name LIMIT 1`
@@ -300,11 +350,11 @@ func walkSeekQuery(
 
 	query := `
 		SELECT n.id, n.name
-		FROM nodes AS n INDEXED BY nodes_parent_name_id
-		WHERE n.parent_id = ?`
+		FROM nodes AS n` + index + `
+		WHERE n.parent_id = $1`
 	args := []any{parentID}
 	if !first {
-		query += ` AND n.name = ? AND n.id > ?`
+		query += ` AND n.name = $2 AND n.id > $3`
 		args = append(args, afterName, afterID)
 		query += ` ORDER BY n.id LIMIT 1`
 		return query, args
@@ -313,11 +363,15 @@ func walkSeekQuery(
 	return query, args
 }
 
-func walkNextNameSeekQuery(parentID int64, afterName string) (string, []any) {
+func walkNextNameSeekQuery(parentID int64, afterName string, postgres bool) (string, []any) {
+	index := " INDEXED BY nodes_parent_name_id"
+	if postgres {
+		index = ""
+	}
 	return `
 		SELECT n.id, n.name
-		FROM nodes AS n INDEXED BY nodes_parent_name_id
-		WHERE n.parent_id = ? AND n.name > ?
+		FROM nodes AS n` + index + `
+		WHERE n.parent_id = $1 AND n.name > $2
 		ORDER BY n.name, n.id
 		LIMIT 1`, []any{parentID, afterName}
 }
@@ -326,7 +380,7 @@ func (w *Walker) rollbackPage(ctx context.Context, cause error) error {
 	cleanupCtx := context.WithoutCancel(ctx)
 	_, rollbackErr := w.tx.ExecContext(cleanupCtx, `ROLLBACK TO walk_page`)
 	_, releaseErr := w.tx.ExecContext(cleanupCtx, `RELEASE walk_page`)
-	return errors.Join(cause, rollbackErr, releaseErr)
+	return errors.Join(ctx.Err(), cause, rollbackErr, releaseErr)
 }
 
 // Stats returns a race-safe snapshot of deterministic walker work counters.

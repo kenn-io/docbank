@@ -324,6 +324,9 @@ release, from a breaking change to `feat` to `fix`.
   the existing `database/sql` store boundary, explicit schema and schema-owner
   settings, setup-only DDL and validation-only runtime opening. Reuse existing
   query, search and fixture facilities before adding another abstraction.
+  Long-lived tree readers own their connection-local temporary tables;
+  permanent DDL stays setup-only. Keep their connections separate from the
+  Store pool so paging does not block mutations or return temporary state to it.
   Logical PostgreSQL import uses the schema owner and a pristine target. Never
   grant runtime credentials identity writes for restore; verify physical bytes
   before publishing a restored vault.

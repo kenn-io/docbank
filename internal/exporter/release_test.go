@@ -11,11 +11,17 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/exporter"
 	"go.kenn.io/docbank/internal/store"
 )
 
 func TestReleaseRacesArchiveLease(t *testing.T) {
-	w, s, job, _, _ := workerFixture(t, api.NewOperationGate())
+	checkReleaseRacesArchiveLease(t, sqliteArchiveWorkerFixture)
+}
+
+func checkReleaseRacesArchiveLease(t *testing.T, open archiveWorkerFixtureFactory) {
+	t.Helper()
+	w, s, job, _ := open(t, api.NewOperationGate())
 	_, err := w.RunOne(t.Context())
 	require.NoError(t, err)
 	start := make(chan struct{})
@@ -141,13 +147,26 @@ func TestReleaseTerminalAndExpiredJobs(t *testing.T) {
 }
 
 func TestReleasePreservesJobWhenArchiveRemovalFails(t *testing.T) {
-	w, s, job, _, dbPath := workerFixture(t, api.NewOperationGate())
+	checkReleasePreservesJobWhenArchiveRemovalFails(t, sqliteArchiveWorkerFixture)
+}
+
+func checkReleasePreservesJobWhenArchiveRemovalFails(t *testing.T, open archiveWorkerFixtureFactory) {
+	t.Helper()
+	w, s, job, root := open(t, api.NewOperationGate())
 	require.NoError(t, s.CancelExportJob(t.Context(), "master", job.ID))
-	archive := filepath.Join(filepath.Dir(dbPath), "export-archives", job.ID+".zip")
+	archive := filepath.Join(root, "export-archives", job.ID+".zip")
 	require.NoError(t, os.MkdirAll(archive, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(archive, "synthetic-obstruction"), []byte("keep"), 0o600))
 	require.Error(t, w.Release(t.Context(), "master", job.ID))
 	retained, err := s.ExportJob(t.Context(), "master", job.ID)
 	require.NoError(t, err)
 	require.Equal(t, "canceled", retained.State)
+}
+
+type archiveWorkerFixtureFactory func(*testing.T, exporter.Gate) (*exporter.Worker, *store.Store, bundle.Job, string)
+
+func sqliteArchiveWorkerFixture(t *testing.T, gate exporter.Gate) (*exporter.Worker, *store.Store, bundle.Job, string) {
+	t.Helper()
+	w, s, job, _, path := workerFixture(t, gate)
+	return w, s, job, filepath.Dir(path)
 }
