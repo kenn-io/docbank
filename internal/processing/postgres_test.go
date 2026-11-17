@@ -203,6 +203,7 @@ func TestFaceWorkersPostgres(t *testing.T) {
 		check func(*testing.T, faceEmbeddingFixtureFactory)
 	}{
 		{"FaceEmbeddingBoxesAndNilResults", checkFaceEmbeddingBoxesAndNilResults},
+		{"FaceMatchingInputsRejectTrashedPhoto", checkFaceMatchingInputsRejectTrashedPhoto},
 		{"FaceProfileKeepsSourceEligibility", checkFaceProfileKeepsSourceEligibility},
 		{"FaceSuggestionBatchesPublishThenCatchUp", checkFaceSuggestionBatchesPublishThenCatchUp},
 		{"FaceSuggestionsPublishDuringImports", checkFaceSuggestionsPublishDuringImports},

@@ -186,13 +186,14 @@ func faceSuggestionBatchFixtureWith(t *testing.T, open faceEmbeddingFixtureFacto
 	x.worker.maxVectorBlobBytes = 8 << 20
 	x.vectorForBox = func(box embedclient.FaceBox) []float32 {
 		values := make([]float32, 512)
-		values[int(math.Round(box.X*1000))/2] = 1
+		values[int(math.Round(box.X*600))/2] = 1
 		return values
 	}
 	ctx := t.Context()
 	var omitted store.PhotoFace
-	for i := range 998 {
-		face, _, err := x.f.catalog.CreatePhotoFace(ctx, x.f.node.CurrentVersionID, fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1), document.FaceBox{X: float64(i) / 1000, Width: .001, Height: .1}, "")
+	// 256 pairs need 65,536 comparisons, just over one grouping batch.
+	for i := range 512 {
+		face, _, err := x.f.catalog.CreatePhotoFace(ctx, x.f.node.CurrentVersionID, fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1), document.FaceBox{X: float64(i) / 600, Width: .001, Height: .1}, "")
 		require.NoError(t, err)
 		if i == 0 {
 			omitted = face
@@ -202,6 +203,10 @@ func faceSuggestionBatchFixtureWith(t *testing.T, open faceEmbeddingFixtureFacto
 	n, err := x.worker.ScanOnce(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
+	snapshot, err := x.f.catalog.FaceMatchingInputs(ctx)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Sets, 1, "the batch scenario requires published face vectors")
+	require.Equal(t, 514, snapshot.Sets[0].Set.VectorSet.RowCount)
 	return x, omitted
 }
 
@@ -226,11 +231,11 @@ func checkFaceSuggestionBatchesPublishThenCatchUp(t *testing.T, open faceEmbeddi
 			require.Empty(t, page, "partial groups must stay unpublished")
 			require.Zero(t, total)
 			personID := ""
-			expectedTotal := int64(498)
+			expectedTotal := int64(255)
 			if action == "name" {
 				person, err := x.f.catalog.CreatePerson(ctx, "Ada", "operator")
 				require.NoError(t, err)
-				personID, expectedTotal = person.PersonID, 499
+				personID, expectedTotal = person.PersonID, 256
 			}
 			_, err = x.f.catalog.DecidePhotoFace(ctx, omitted.ContentVersionID, store.PhotoFaceDecisionRequest{FaceID: omitted.FaceID, Revision: omitted.Revision, Action: action, PersonID: personID})
 			require.NoError(t, err)

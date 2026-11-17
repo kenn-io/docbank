@@ -713,14 +713,43 @@ func checkFaceSetupDisclosesScopeAndRequiresCurrentConsent(t *testing.T, open fa
 	require.Equal(t, 1, x.calls)
 }
 
+func TestFaceMatchingInputsRejectTrashedPhoto(t *testing.T) {
+	t.Parallel()
+	checkFaceMatchingInputsRejectTrashedPhoto(t, newFaceEmbeddingFixture)
+}
+
+func checkFaceMatchingInputsRejectTrashedPhoto(t *testing.T, open faceEmbeddingFixtureFactory) {
+	t.Helper()
+	x := open(t, false)
+	ctx := t.Context()
+	x.enable(t)
+	_, err := x.worker.ScanOnce(ctx)
+	require.NoError(t, err)
+	before, err := x.f.catalog.FaceMatchingInputs(ctx)
+	require.NoError(t, err)
+	require.Len(t, before.Sets, 1)
+	set := before.Sets[0].Set
+	head := store.EmbeddingHeadRecord{
+		FencingToken: 2, Key: store.EmbeddingHeadKey{ContentVersionID: set.ContentVersionID, BindingID: set.BindingID, InputKind: set.InputKind},
+		SetID: set.ID, VectorSpaceID: set.VectorSpace.ID, ProcessingProfileFingerprint: set.ProcessingProfileFingerprint, PublishedAt: set.CreatedAt,
+	}
+	require.NoError(t, x.f.catalog.PublishEmbeddingHead(ctx, head))
+	_, _, err = x.f.catalog.Trash(ctx, x.f.node.ID, store.UnconditionalRev)
+	require.NoError(t, err)
+	after, err := x.f.catalog.FaceMatchingInputs(ctx)
+	require.NoError(t, err)
+	require.Empty(t, after.Sets, "trashed faces must stop contributing to suggestions")
+	require.ErrorIs(t, x.f.catalog.ReplaceFaceSuggestions(ctx, before, nil), store.ErrStaleRevision)
+	require.ErrorIs(t, x.f.catalog.PublishEmbeddingHead(ctx, head), store.ErrEmbeddingAuthorityStale)
+}
+
 // Exercise the consumer read after reopening independently of writer triggers.
-// The processing fixture publishes real face generations and payloads for all three readers.
+// The fixture publishes real face generations and payloads for all three readers.
 func TestFaceMatchingInputsPreserveStoredAuthority(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, damage string
 	}{
-		{"trashed photo", ""},
 		{"missing preview", `DELETE FROM visual_preview_heads; DELETE FROM visual_preview_generations`},
 		{"replaced preview", ""},
 	} {
@@ -744,9 +773,6 @@ func TestFaceMatchingInputsPreserveStoredAuthority(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, db.Close()) })
 			switch tc.name {
-			case "trashed photo":
-				_, _, err = x.f.catalog.Trash(ctx, x.f.node.ID, store.UnconditionalRev)
-				require.NoError(t, err)
 			case "replaced preview":
 				// Regenerate the purged preview while retaining the earlier face vectors.
 				_, err = db.ExecContext(ctx, `DELETE FROM visual_preview_heads; DELETE FROM visual_preview_generations`)

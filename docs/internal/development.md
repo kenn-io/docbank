@@ -989,8 +989,9 @@ bytes. They cover description consent and admission, preview publication,
 explicit/automatic coalescing, hidden-source refusal and retry, upload limits,
 face detection, detector changes, and audit refusal before provider execution.
 Publication failures leave the shared worker available for other jobs. Image
-embedding runtime preparation also validates the selected preview. This does not qualify face embedding/matching workers,
-photo similarity search or a live provider deployment.
+embedding runtime preparation also validates the selected preview. Face embedding
+and matching have their own native scenarios below. Photo similarity search and
+a live provider deployment remain outside this qualification.
 
 The existing SQLite test entry points call the same scenarios and retain their
 parallelism. Unit tests with fake catalogs remain independent of PostgreSQL.
@@ -1103,9 +1104,10 @@ The processing lane exercises semantic search and similar-document search
 through the real service, index worker and retrieval code. Retained chunk
 vectors remain searchable after provider consent is revoked; moving the
 provider endpoint does not re-embed documents. This qualifies document semantic
-search with the listed filters. PDF fact filters, photo query compilation,
-face-member capture and photo query compilation remain separate. No public
-PostgreSQL vault opener is exposed by this internal qualification.
+search with the listed filters. PDF fact filters and photo query compilation
+remain separate; face-index capture and ranked people selection are covered by
+the face scenarios above. No public PostgreSQL vault opener is exposed by this
+internal qualification.
 
 #### Document lexical and hybrid search
 
