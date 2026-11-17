@@ -342,6 +342,12 @@ func checkPhotoDescriptionPlanDuringPreviewPublication(t *testing.T, makeFixture
 	require.NoError(t, err)
 	require.Empty(t, reason)
 	output := preview.Generation.Preview.Output
+	physical, err := f.catalog.PhysicalContent(ctx, output.BlobSHA256)
+	require.NoError(t, err)
+	outputReceipt := store.BlobPhysical{
+		Encoding: physical.Encoding, StoredBytes: physical.StoredBytes,
+		PackEligible: physical.PackEligible,
+	}
 
 	for i := range 64 {
 		node, err := f.catalog.CreateFile(ctx, f.catalog.RootID(), fmt.Sprintf("photo-%d.jpg", i), f.written.Hash, f.written.Size, "image/jpeg", processingBlobPhysical(t, f.written))
@@ -349,7 +355,10 @@ func checkPhotoDescriptionPlanDuringPreviewPublication(t *testing.T, makeFixture
 		selector := Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "vision"}
 		done := make(chan error, 1)
 		go func() {
-			_, err := EnsureVisualPreview(ctx, f.catalog, f.blobs, node.CurrentVersionID, f.recipe)
+			// Every node has the same original bytes. Reuse the fixture's durable
+			// preview so the race covers catalog publication without repeatedly
+			// resizing and encoding the same image under the shared deadline.
+			_, err := f.catalog.PublishVisualPreviewGeneration(ctx, node.CurrentVersionID, preview.Generation.CanonicalResult, &outputReceipt)
 			done <- err
 		}()
 		var plan Plan
