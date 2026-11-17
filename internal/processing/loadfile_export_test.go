@@ -14,6 +14,7 @@ import (
 	"github.com/go-pdf/fpdf"
 	"github.com/google/uuid"
 	pdfapi "github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/canonical"
@@ -21,7 +22,8 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestLoadFileExportUsesFrozenPDFAndSelectedPages(t *testing.T) { //nolint:paralleltest // pdfcpu default configuration initializes process-wide state
+func TestLoadFileExportUsesFrozenPDFAndSelectedPages(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name          string
 		pages         []int
@@ -99,7 +101,7 @@ func TestLoadFileExportUsesFrozenPDFAndSelectedPages(t *testing.T) { //nolint:pa
 				content, err := io.ReadAll(reader)
 				contents = append(contents, string(content))
 				return err
-			}, nil)
+			}, model.NewStatelessConfiguration())
 			require.NoError(t, err)
 			require.Len(t, contents, len(test.pages))
 			for index, page := range test.pages {

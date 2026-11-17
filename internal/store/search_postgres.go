@@ -130,7 +130,8 @@ func postgresContentSearch(query, generation string, opts SearchOptions) (sqlque
 		outputCondition = "$" + strconv.Itoa(len(hits.Args)+1) + "=gb.generation_id"
 		hits.Args = append(hits.Args, generation)
 		outputJoin += ` JOIN rendition_lexical_segments ls ON ls.build_id=text_index.build_id AND ls.segment_id=text_index.segment_id
- JOIN rendition_units ru ON ru.build_id=ls.build_id AND ru.unit_id=ls.unit_id`
+ JOIN rendition_units ru ON ru.build_id=ls.build_id AND ru.unit_id=ls.unit_id
+ JOIN rendition_builds rb ON rb.build_id=ls.build_id`
 	}
 	filter, args := searchFilterSQL(opts, true, len(hits.Args))
 	if len(opts.SelectedBuilds) > 0 {
@@ -146,10 +147,11 @@ func postgresContentSearch(query, generation string, opts SearchOptions) (sqlque
 		args = append(args, string(encoded))
 	}
 	hits.Args = append(hits.Args, args...)
-	evidence := `'' AS build_id,'' AS segment_id,'' AS excerpt,'' AS locator_json`
+	evidence := `'' AS build_id,'' AS segment_id,'' AS excerpt,'' AS locator_json,'' AS headings_json,'' AS provider_id`
 	order := ",text_index.id"
 	if generation != "" {
-		evidence = `text_index.build_id,text_index.segment_id,'' AS excerpt,ru.locator_json`
+		evidence = `text_index.build_id,text_index.segment_id,'' AS excerpt,ru.locator_json,ru.heading_path_json,
+ coalesce(rb.provider_receipt_json::json->>'provider_id','')`
 		order = ",text_index.build_id,text_index.segment_id"
 	}
 	statement := `SELECT ` + nodeCols + `,` + evidence + `,text_index.` + key + ` FROM (` + hits.SQL + `) matches
@@ -189,7 +191,7 @@ func postgresContentExcerpts(ctx context.Context, q metadataQuerier, query, gene
 		if err := rows.Scan(&excerpt); err != nil {
 			return nil, fmt.Errorf("scanning PostgreSQL content excerpt: %w", err)
 		}
-		excerpts = append(excerpts, boundedExplainedSearchExcerpt(excerpt))
+		excerpts = append(excerpts, excerpt)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("reading PostgreSQL content excerpts: %w", err)

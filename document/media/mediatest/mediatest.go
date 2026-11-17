@@ -386,10 +386,14 @@ func EncryptedPDF(ctx context.Context, userPW, ownerPW string, keyBits int) ([]b
 
 // EncryptPDF encrypts the supplied synthetic PDF.
 func EncryptPDF(ctx context.Context, data []byte, userPW, ownerPW string, keyBits int, permissions ...model.PermissionFlags) ([]byte, error) {
-	configuration := model.NewAESConfiguration(userPW, ownerPW, keyBits)
-	if keyBits == 40 {
-		configuration = model.NewRC4Configuration(userPW, ownerPW, keyBits)
-	}
+	// pdfcpu's AES and RC4 helpers write the user's pdfcpu config directory, and
+	// parallel test processes race on that write on Windows. Start from the
+	// built-in defaults and keep the "no permissions" flags config.yml supplies.
+	configuration := model.NewStatelessConfiguration()
+	configuration.UserPW, configuration.OwnerPW = userPW, ownerPW
+	configuration.EncryptUsingAES = keyBits != 40
+	configuration.EncryptKeyLength = keyBits
+	configuration.Permissions = model.PermissionsNone
 	if len(permissions) > 0 {
 		configuration.Permissions = permissions[0]
 	}

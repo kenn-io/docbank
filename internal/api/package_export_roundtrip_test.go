@@ -14,6 +14,7 @@ import (
 	"github.com/go-pdf/fpdf"
 	"github.com/google/uuid"
 	pdfapi "github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/canonical"
@@ -90,7 +91,8 @@ func TestPackageExportProfilesThroughPublicPreflightAndImport(t *testing.T) {
 	}
 }
 
-func TestPackageExportSelectedPDFThroughPublicImport(t *testing.T) { //nolint:paralleltest // pdfcpu default configuration initializes process-wide state
+func TestPackageExportSelectedPDFThroughPublicImport(t *testing.T) {
+	t.Parallel()
 	source, catalog := newPackageTestServer(t)
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "VOL001"), 0o700))
@@ -169,7 +171,7 @@ func TestPackageExportSelectedPDFThroughPublicImport(t *testing.T) { //nolint:pa
 				data, err := io.ReadAll(r)
 				contents = append(contents, string(data))
 				return err
-			}, nil))
+			}, model.NewStatelessConfiguration()))
 			require.Len(t, contents, len(test.pages))
 			if !test.stamped {
 				for index, page := range test.pages {

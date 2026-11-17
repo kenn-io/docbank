@@ -202,7 +202,7 @@ func TestConfiguredCeilingChangeKeepsQueuedExecutionIdentity(t *testing.T) {
 		return service
 	}
 	queuedUnder := newCeilingService(0)
-	queued, err := queuedUnder.prepareRendition(t.Context(), node, version, queuedUnder.profiles[name], false)
+	queued, err := queuedUnder.prepareRendition(t.Context(), node, version, queuedUnder.profiles[name])
 	require.NoError(t, err)
 	_, fingerprint, err := document.CanonicalRenditionExecutionIdentityV1(queued.identity)
 	require.NoError(t, err)

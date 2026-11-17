@@ -25,6 +25,8 @@ func BuildRenditionV1(evidence NormalizedEvidenceV1, policy RenditionPolicy) (Re
 		ContractVersion:  RenditionContractV1,
 		EvidenceChecksum: evidenceChecksum,
 		Units:            make([]NormalizedUnitV1, 0, len(evidence.Units)),
+
+		imageUnderstanding: policy.imageUnderstanding,
 	}
 	if evidence.Completeness == EvidenceDegradedProvenance {
 		result.Warnings = []RenditionWarningV1{{Code: "degraded_provenance"}}
@@ -34,24 +36,30 @@ func BuildRenditionV1(evidence NormalizedEvidenceV1, policy RenditionPolicy) (Re
 	remaining := policy.maxDocumentChars
 	truncated := false
 	for _, evidenceUnit := range evidence.Units {
-		separatorBudget := 0
-		if len(markdownUnits) > 0 {
-			separatorBudget = utf8.RuneCountInString("\n\n---\n\n")
-		}
-		unitBudget := min(policy.maxUnitRunes, max(remaining-separatorBudget, 0))
-		text, sourceTruncated, renditionTruncated, err := sanitizeRenditionMarkdown(
-			evidenceUnit.Text, policy.maxLinkChars, policy.maxSourceUnitBytes, unitBudget,
+		presentation := renditionPresentation(evidenceUnit, policy.imageUnderstanding, len(markdownUnits) == 0)
+		overhead := utf8.RuneCountInString(presentation + strings.Repeat("\n\n---\n\n", min(len(markdownUnits), 1)))
+		unitBudget := min(policy.maxUnitRunes, max(remaining-overhead, 0))
+		text, sourceTruncated, renditionTruncated, err := sanitizeRenditionUnit(
+			evidenceUnit, policy.imageUnderstanding, policy.maxLinkChars, policy.maxSourceUnitBytes, unitBudget,
 		)
 		if err != nil {
 			return RenditionV1{}, fmt.Errorf("render evidence unit %d: %w", evidenceUnit.Order, err)
+		}
+		if policy.imageUnderstanding && isImageUnderstandingUnit(evidenceUnit.HeadingPath) {
+			prefix := imageRenditionPrefix(text, max(remaining-overhead-1, 0))
+			renditionTruncated = renditionTruncated || len(prefix) != len(text)
+			text = prefix
 		}
 		truncated = truncated || sourceTruncated || renditionTruncated
 		unit := normalizedRenditionUnit(evidenceUnit, text)
 		result.Units = append(result.Units, unit)
 		if text != "" {
-			remaining = max(0, remaining-separatorBudget)
-			remaining = max(0, remaining-utf8.RuneCountInString(text))
-			markdownUnits = append(markdownUnits, text)
+			projected := text
+			if policy.imageUnderstanding && isImageUnderstandingUnit(evidenceUnit.HeadingPath) {
+				projected, _ = imageRenditionBlock(text)
+			}
+			remaining = max(0, remaining-overhead-utf8.RuneCountInString(projected))
+			markdownUnits = append(markdownUnits, presentation+projected)
 			result.LexicalSegments = append(result.LexicalSegments,
 				lexicalSegments(unit, len(result.LexicalSegments), policy.maxSegmentRunes)...)
 		}
