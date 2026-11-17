@@ -22,6 +22,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/vision"
+	"go.kenn.io/docbank/document/workerprotocol"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
@@ -862,6 +863,14 @@ func (worker *RenditionWorker) classifyProviderError(
 	}
 	if isRenditionWorkerFatal(err) {
 		return err
+	}
+	if work.ExecutionIdentity.Authorization.ProviderID == workerprotocol.ProviderID && errors.Is(err, workerprotocol.ErrRetainedTaskFailed) {
+		return worker.markFailed(ctx, claim, store.RenditionFailureProviderTaskFailed, worker.clock().UTC())
+	}
+	// Expiry can precede the first issued-handle checkpoint. Only this exact
+	// durable protocol may reprepare current authority and reconcile its key.
+	if errors.Is(err, document.ErrRenditionAuthorizationExpired) && work.ExecutionIdentity.Authorization.ProviderID == workerprotocol.ProviderID {
+		return worker.markSafeTransient(ctx, claim)
 	}
 	if document.IsRenditionAuthorizationPolicyMismatch(err) {
 		return worker.endProvider(ctx, claim, work, err, true)

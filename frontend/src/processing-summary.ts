@@ -40,6 +40,7 @@ export function processingPurpose(plan: ProcessingPlan, mediaType?: string): Pro
 }
 
 const providerNames: Record<string, string> = {
+  docbank: "the worker",
   docling: "Docling",
   mistral: "Mistral",
   "openai-compatible": "an OpenAI-compatible service",

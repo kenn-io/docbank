@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/workerprotocol"
 )
 
 // RenditionJobState is the bounded durable execution state exposed to
@@ -56,6 +57,7 @@ const (
 	RenditionFailureConsent             RenditionFailureCode = "consent"
 	RenditionFailureStaleAuthority      RenditionFailureCode = "stale_authority"
 	RenditionFailurePDFPasswordRequired RenditionFailureCode = "pdf_password_required"
+	RenditionFailureProviderTaskFailed  RenditionFailureCode = "provider_task_failed"
 )
 
 var (
@@ -375,6 +377,14 @@ func (s *Store) EnqueueRenditionJob(
 			  AND failure_code IN ('consent','stale_authority')`, now, now, jobID); err != nil {
 			return fmt.Errorf("requeueing sealed rendition resume after authority failure: %w", err)
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET
+			state='queued',phase='queued',claim_owner=NULL,lease_expires_at=NULL,available_at=$1,
+			provider_started=0,provider_resume_handle=NULL,execution_snapshot_json=NULL,selected_waiter_id=NULL,
+			authorization_grant_id=NULL,authorization_incarnation_id=NULL,authorization_revocation_fence=NULL,
+			failure_code=NULL,updated_at=$2
+			WHERE job_id=$3 AND state='failed' AND phase='provider' AND failure_code='provider_task_failed'`, now, now, jobID); err != nil {
+			return fmt.Errorf("requeueing retained worker task: %w", err)
+		}
 		var state RenditionJobState
 		if err := tx.QueryRowContext(ctx,
 			`SELECT state FROM rendition_jobs WHERE job_id=$1`, jobID).Scan(&state); err != nil {
@@ -578,8 +588,8 @@ func (s *Store) RenditionJobWaiterByID(ctx context.Context, id string) (Renditio
 }
 
 // ClaimRenditionJob claims or reclaims one exact job. An expired provider
-// phase without a durable provider handle is atomically quarantined for
-// operator resolution instead of being resubmitted.
+// phase without a durable provider handle is quarantined unless its immutable
+// binding qualifies for replay-safe preparation.
 func (s *Store) ClaimRenditionJob(
 	ctx context.Context, jobID, owner string, at time.Time, lease time.Duration,
 ) (RenditionJobClaim, error) {
@@ -631,9 +641,9 @@ func (s *Store) ClaimRenditionJob(
 				return ErrRenditionJobLeaseHeld
 			}
 			if renditionJobProviderBoundaryAmbiguous(phase, providerStarted, resume.Valid) {
-				// Photo descriptions and local PDFium text extraction can safely run again.
+				// Photo descriptions, local text, and durable worker jobs can safely run again.
 				var repeatable bool
-				if err := tx.QueryRowContext(ctx, `SELECT `+metadataJSONDialect{s.postgresSchema != ""}.text("execution_identity_json", "upload.input_kind")+`='derived_upload' OR `+metadataJSONDialect{s.postgresSchema != ""}.text("execution_identity_json", "authorization.provider_id")+`='`+document.PDFTextProviderID+`' FROM rendition_jobs WHERE job_id=$1`, jobID).Scan(&repeatable); err != nil {
+				if err := tx.QueryRowContext(ctx, `SELECT `+metadataJSONDialect{s.postgresSchema != ""}.text("execution_identity_json", "upload.input_kind")+`='derived_upload' OR `+metadataJSONDialect{s.postgresSchema != ""}.text("execution_identity_json", "authorization.provider_id")+` IN ('`+document.PDFTextProviderID+`','`+workerprotocol.ProviderID+`') FROM rendition_jobs WHERE job_id=$1`, jobID).Scan(&repeatable); err != nil {
 					return fmt.Errorf("reading rendition job input kind: %w", err)
 				}
 				if repeatable {
@@ -643,7 +653,7 @@ func (s *Store) ClaimRenditionJob(
 						selected_waiter_id=NULL,authorization_grant_id=NULL,authorization_incarnation_id=NULL,
 						authorization_revocation_fence=NULL,failure_code=NULL,updated_at=$1 WHERE job_id=$2`,
 						at.Format(timestampLayout), jobID); err != nil {
-						return fmt.Errorf("requeueing expired photo description: %w", err)
+						return fmt.Errorf("requeueing replay-safe rendition: %w", err)
 					}
 					state, phase, providerStarted = RenditionJobQueued, RenditionPhaseQueued, false
 				}
@@ -1254,7 +1264,7 @@ func (s *Store) MarkRenditionJobFailed(
 	ctx context.Context, claim RenditionJobClaim, code RenditionFailureCode, at time.Time,
 ) error {
 	if code != RenditionFailureTerminal && code != RenditionFailureConsent &&
-		code != RenditionFailureStaleAuthority && code != RenditionFailurePDFPasswordRequired {
+		code != RenditionFailureStaleAuthority && code != RenditionFailurePDFPasswordRequired && code != RenditionFailureProviderTaskFailed {
 		return errors.New("rendition job failure class is not terminal")
 	}
 	return s.finishRenditionJobClaim(ctx, claim, at, RenditionJobFailed, code)
@@ -2088,7 +2098,7 @@ func validRenditionJobPhase(value RenditionJobPhase) bool {
 func validRenditionFailureCode(value RenditionFailureCode) bool {
 	switch value {
 	case RenditionFailureTransient, RenditionFailureTerminal, RenditionFailureAmbiguous,
-		RenditionFailureConsent, RenditionFailureStaleAuthority, RenditionFailurePDFPasswordRequired:
+		RenditionFailureConsent, RenditionFailureStaleAuthority, RenditionFailurePDFPasswordRequired, RenditionFailureProviderTaskFailed:
 		return true
 	default:
 		return false

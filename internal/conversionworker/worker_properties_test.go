@@ -83,8 +83,8 @@ func TestWorkerSpoolCreationSyncsEveryNewParent(t *testing.T) {
 	require.NoError(t, w.Close(t.Context()))
 }
 
-func TestWorkerRejectsAmbiguousBackendOrigins(t *testing.T) {
-	for _, origin := range []string{"http://127.0.0.1:0", "http://127.0.0.1:65536", "http://127.0.0.1:5001?", "http://127.0.0.1:5001#"} {
+func TestWorkerRejectsUnsafeBackendOrigins(t *testing.T) {
+	for _, origin := range []string{"http://127.0.0.1:0", "http://127.0.0.1:65536", "http://127.0.0.1:5001?", "http://127.0.0.1:5001#", "http://203.0.113.1:5001"} {
 		o := workerOptions(t)
 		o.BackendURL = origin
 		w, err := Open(t.Context(), o)
@@ -92,6 +92,9 @@ func TestWorkerRejectsAmbiguousBackendOrigins(t *testing.T) {
 			require.NoError(t, w.Close(t.Context()))
 		}
 		require.Error(t, err, origin)
+		if origin == "http://203.0.113.1:5001" {
+			require.ErrorContains(t, err, "worker backend must be loopback")
+		}
 	}
 }
 func TestWorkerDoesNotServeCorruptedRetainedResult(t *testing.T) {

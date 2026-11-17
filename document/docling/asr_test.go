@@ -95,6 +95,13 @@ func TestDoclingASRRejectsMissingTranscriptRetentionBeforeReading(t *testing.T) 
 	assert.Zero(t, requests)
 }
 
+func TestNativeASRPolicyPreservesExistingProfile(t *testing.T) {
+	const existing = "4ba382a79b92197618690ece585479aba1b499cacfc4028a65c4a7b2c830f7d6"
+	fingerprint, err := ASRPolicyFingerprint(100_000)
+	require.NoError(t, err)
+	require.Equal(t, existing, fingerprint)
+}
+
 func TestDoclingASRRejectsChangedTranscriptPolicy(t *testing.T) {
 	fixture := newASRFixture(t, "audio/wav", "asr-spoken.wav", asrSpokenWAV)
 	_, err := NewASR(ASRProfile{
@@ -403,7 +410,7 @@ func (fixture asrFixture) upload() document.AuthorizedUpload {
 	return &asrTestUpload{AuthorizedUpload: fixture.fixture.upload(), capability: fixture.capability}
 }
 
-func newASRFixture(t *testing.T, mediaType, filename string, source []byte) asrFixture {
+func newASRFixture(t *testing.T, mediaType, filename string, source []byte, overrides ...document.RenditionDescriptor) asrFixture {
 	t.Helper()
 	policyFingerprint, err := ASRPolicyFingerprint(100_000)
 	require.NoError(t, err)
@@ -419,6 +426,9 @@ func newASRFixture(t *testing.T, mediaType, filename string, source []byte) asrF
 		ArtifactRoles:     []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript},
 	})
 	require.NoError(t, err)
+	if len(overrides) > 0 {
+		descriptor = overrides[0]
+	}
 	digest := sha256.Sum256(source)
 	metadata := document.AuthorizedUploadMetadata{
 		Filename: filename, MediaFamily: "audio", MediaType: mediaType,
@@ -433,10 +443,10 @@ func newASRFixture(t *testing.T, mediaType, filename string, source []byte) asrF
 		DescriptorFingerprint: descriptor.Fingerprint,
 		ProfileFingerprint:    strings.Repeat("5", 64), DisclosureFingerprint: strings.Repeat("6", 64),
 		InputKind:      document.RenditionInputOriginalFile,
-		MaxSourceBytes: 1 << 20, MaxExpandedBytes: 1, MaxEntryBytes: 1, MaxEntries: 1,
+		MaxSourceBytes: max(1<<20, int64(len(source))), MaxExpandedBytes: 1, MaxEntryBytes: 1, MaxEntries: 1,
 		MaxNestingDepth: 1, MaxTextLines: 1, MaxCharacters: 1, MaxRecords: 1, MaxPages: 1,
 		MaxSlides: 1, MaxSheets: 1, MaxCells: 1, MaxSpineItems: 1, MaxResources: 1,
-		MaxDurationMS: 10_000,
+		MaxDurationMS: (24 * time.Hour).Milliseconds(),
 	})
 	require.NoError(t, err)
 	metadata.CapabilityRecordChecksum = record.Checksum

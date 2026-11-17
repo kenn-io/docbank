@@ -145,7 +145,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 			return true, nil
 		}
 		if status != 200 && status != 202 {
-			item.State, item.Retryable = stateFailure, status == http.StatusUnauthorized
+			item.State = stateFailure
 			return true, w.save(ctx, item)
 		}
 		var task struct {

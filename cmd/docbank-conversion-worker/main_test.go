@@ -38,10 +38,6 @@ func workerCommandEnvironment(name string) string {
 func TestWorkerCommandRejectsUnsafeConfiguration(t *testing.T) {
 	err := run(t.Context(), []string{"--backend", "http://127.0.0.1:5001"}, workerCommandEnvironment, io.Discard)
 	require.EqualError(t, err, "worker directory is required")
-
-	err = run(t.Context(), []string{"--directory", t.TempDir(), "--backend", "http://203.0.113.1:5001"}, workerCommandEnvironment, io.Discard)
-	require.ErrorContains(t, err, "configure conversion worker:")
-	require.ErrorContains(t, err, "worker backend must be loopback")
 }
 
 func TestWorkerCommandRejectsZeroLimits(t *testing.T) {
@@ -50,6 +46,19 @@ func TestWorkerCommandRejectsZeroLimits(t *testing.T) {
 			spool := filepath.Join(t.TempDir(), "spool")
 			err := run(t.Context(), []string{"--directory", spool, "--backend", "http://127.0.0.1:5001", "--" + field + "=0"}, workerCommandEnvironment, io.Discard)
 			require.ErrorContains(t, err, field+" must be between")
+		})
+	}
+	for _, key := range []string{"DOCBANK_WORKER_API_KEY", "DOCBANK_WORKER_BACKEND_KEY"} {
+		t.Run(key, func(t *testing.T) {
+			spool := filepath.Join(t.TempDir(), "spool")
+			environment := func(name string) string {
+				if name == key {
+					return "synthetic-invalid\nkey"
+				}
+				return workerCommandEnvironment(name)
+			}
+			err := run(t.Context(), []string{"--directory", spool, "--backend", "http://127.0.0.1:5001"}, environment, io.Discard)
+			require.ErrorContains(t, err, key)
 		})
 	}
 }

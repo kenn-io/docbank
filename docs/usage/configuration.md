@@ -119,6 +119,11 @@ then recompute the descriptor and disclosure fingerprints. See the
 [Docling](../configuration.md#document-conversion-with-docling) and
 [Mistral](../configuration.md#document-ocr-with-mistral) configuration references.
 
+For durable conversion on a separate operator machine, select the explicit
+`docbank-worker-document/v1` or `docbank-worker-asr/v1` contracts. They require
+the authenticated gateway, bounded pilot inputs, and the operator-network
+boundary. See [worker configuration and recovery](conversion-worker.md#route-a-docbank-profile-to-the-worker).
+
 The embedded Go API follows the same boundary: `ProcessingOptions` receives
 provider values and their secret handling directly, while
 `document.ProcessingProfileV1` remains immutable non-secret policy. A caller

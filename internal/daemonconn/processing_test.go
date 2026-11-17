@@ -241,6 +241,7 @@ func TestProcessingClientRejectsFailedStatesAndPreservesOptionalResults(t *testi
 		{"abandoned", "stale_authority", nil, ""},
 		{"failed", "rendition_failed", store.ErrRenditionJobTerminal, ""},
 		{"failed", "pdf_password_required", store.ErrRenditionJobTerminal, "no configured PDF password opens this PDF; add its password to media.pdf_passwords_file and build again"},
+		{"failed", "provider_task_failed", store.ErrRenditionJobTerminal, "build again to resubmit the retained conversion"},
 		{"operator_required", "rendition_operator_required", store.ErrRenditionJobOperatorRequired, ""},
 		{"failed", "processing_consent_expired", daemonconn.ErrProcessingConsent, ""},
 		{"partial", "authorization", nil, ""},

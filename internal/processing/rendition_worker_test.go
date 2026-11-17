@@ -21,6 +21,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/document/workerprotocol"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -501,6 +502,64 @@ func TestRenditionWorkerPostEgressCatalogRetryCancelsWithoutTombstone(t *testing
 func TestRenditionWorkerPersistsAmbiguousOutcomeWithoutResubmission(t *testing.T) {
 	t.Parallel()
 	checkRenditionWorkerPersistsAmbiguousOutcomeWithoutResubmission(t, newPublicationFixture)
+}
+
+func TestRenditionWorkerClassifiesRetainedTaskFailure(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		worker bool
+		cause  error
+		want   store.RenditionFailureCode
+	}{
+		{"recoverable worker", true, workerprotocol.ErrRetainedTaskFailed, store.RenditionFailureProviderTaskFailed},
+		{"other provider", false, workerprotocol.ErrRetainedTaskFailed, store.RenditionFailureTerminal},
+		{"terminal worker", true, errors.New("terminal"), store.RenditionFailureTerminal},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newPublicationFixture(t)
+			provider := newWorkerProvider(t)
+			if test.worker {
+				descriptor, err := workerprotocol.DocumentDescriptor()
+				require.NoError(t, err)
+				provider.descriptor = descriptor
+			}
+			profile := workerProcessingProfile(t, provider.Descriptor(), func(p *document.ProcessingProfileV1) {
+				if test.worker {
+					p.Rendition.AdapterContract = workerprotocol.DocumentAdapter
+					p.Rendition.TrustBoundary = string(document.RenditionTrustOperatorNetwork)
+					p.RetentionDisclosure.TrustBoundary = string(document.RenditionTrustOperatorNetwork)
+				}
+			})
+			request := workerJobRequest(fixture.versionID, profile, provider.Descriptor())
+			grantWorkerConsent(t, fixture.catalog, request)
+			job, waiter, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
+			require.NoError(t, err)
+			now := time.Now().UTC()
+			claim, err := fixture.catalog.ClaimRenditionJob(t.Context(), job.ID, "worker", now, time.Minute)
+			require.NoError(t, err)
+			worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Runtime: workerRuntime{provider: provider}, Gate: newTestOperationGate(), Owner: "worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond, Clock: func() time.Time { return now }})
+			require.NoError(t, err)
+			work, err := fixture.catalog.RenditionJobWorkByClaim(t.Context(), claim, now)
+			require.NoError(t, err)
+			execution, err := (workerRuntime{provider: provider}).Prepare(t.Context(), work, now)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, execution.Upload.Close()) }()
+			snapshot, err := document.SealRenditionExecutionAt(now, execution.Provider, execution.Upload, execution.Authorization, execution.EvidencePolicy, execution.RenditionPolicy)
+			require.NoError(t, err)
+			_, err = fixture.catalog.BeginRenditionProvider(t.Context(), claim, waiter.ID, now, snapshot)
+			require.NoError(t, err)
+			require.NoError(t, fixture.catalog.CheckpointRenditionProvider(t.Context(), claim, "retained-handle", now))
+			work, err = fixture.catalog.RenditionJobWorkByClaim(t.Context(), claim, now)
+			require.NoError(t, err)
+			providerErr, err := document.NewRenditionProviderError(document.RenditionErrorMalformedEvidence, 0, test.cause)
+			require.NoError(t, err)
+			require.NoError(t, worker.classifyProviderError(t.Context(), claim, work, providerErr, true, 1))
+			current, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
+			require.NoError(t, err)
+			require.Equal(t, test.want, current.FailureCode)
+		})
+	}
 }
 
 func checkRenditionWorkerPersistsAmbiguousOutcomeWithoutResubmission(t *testing.T, newFixture publicationFixtureFactory) {
@@ -1630,7 +1689,7 @@ func (provider *workerProvider) Render(
 }
 
 func workerProcessingProfile(
-	tb testing.TB, descriptor document.RenditionDescriptor,
+	tb testing.TB, descriptor document.RenditionDescriptor, mutations ...func(*document.ProcessingProfileV1),
 ) store.ProcessingProfileRecord {
 	tb.Helper()
 	profile := document.ProcessingProfileV1{
@@ -1667,6 +1726,9 @@ func workerProcessingProfile(
 			ConsentFingerprint:          processingHash("worker-consent"),
 			RetainSanitizedMarkdown:     true, TrustBoundary: "synthetic-vault",
 		},
+	}
+	for _, mutate := range mutations {
+		mutate(&profile)
 	}
 	canonical, fingerprints, err := document.CanonicalProfile(profile)
 	require.NoError(tb, err)

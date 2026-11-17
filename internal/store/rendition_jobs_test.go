@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/workerprotocol"
 )
 
 func checkRenditionJobsDeduplicateSharedBuildAndFenceLeaseTheft(t *testing.T, open func(*testing.T) *Store) {
@@ -625,7 +626,7 @@ func checkRenditionJobsRecoverAmbiguousProviderWork(t *testing.T, open func(*tes
 		checkpoint bool
 		provider   string
 	}{
-		{"missing handle", false, ""}, {"durable handle", true, ""}, {"local PDF", false, document.PDFTextProviderID},
+		{"missing handle", false, ""}, {"durable handle", true, ""}, {"local PDF", false, document.PDFTextProviderID}, {"worker", false, workerprotocol.ProviderID},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			s := open(t)
@@ -661,7 +662,7 @@ func checkRenditionJobsRecoverAmbiguousProviderWork(t *testing.T, open func(*tes
 				assert.Equal(t, int64(2), reclaimed.Epoch)
 				return
 			}
-			if test.provider == document.PDFTextProviderID {
+			if test.provider == document.PDFTextProviderID || test.provider == workerprotocol.ProviderID {
 				require.NoError(t, err)
 				require.Equal(t, RenditionPhaseQueued, reclaimed.Phase)
 				require.Empty(t, reclaimed.ResumeHandle)

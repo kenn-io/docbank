@@ -1,6 +1,11 @@
 // Package workerprotocol names the bounded durable conversion worker contract.
 package workerprotocol
 
+import "errors"
+
+// ErrRetainedTaskFailed identifies a gateway task that a user can resubmit.
+var ErrRetainedTaskFailed = errors.New("retained worker task can be retried")
+
 const (
 	// Contract identifies authenticated, idempotent uploaded-file processing.
 	Contract = "docbank-conversion-worker/v1"
