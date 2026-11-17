@@ -3,38 +3,37 @@
 package main
 
 import (
-	"context"
-	"os/exec"
+	"bytes"
 	"path/filepath"
+	"slices"
 	"syscall"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
 func TestRedactionVerifyRejectsFIFO(t *testing.T) {
 	f := newRedactionVerifyFixture(t)
-	binary := buildDocbank(t)
+	// Opening a FIFO for reading waits for a writer. Without read permission
+	// the open fails at once, so verify reports "permission denied" instead
+	// of "regular file" if it ever opens the input, and the test needs no
+	// deadline. A user who bypasses file permissions, such as root, would
+	// instead wait in that open until the test binary times out.
 	fifo := filepath.Join(t.TempDir(), "input.fifo")
-	require.NoError(t, syscall.Mkfifo(fifo, 0600))
+	require.NoError(t, syscall.Mkfifo(fifo, 0o200))
 	for _, test := range []struct {
 		name  string
 		index int
 	}{{"preparation", 2}, {"archive", 5}} {
 		t.Run(test.name, func(t *testing.T) {
-			args := append([]string(nil), f.args...)
+			args := slices.Clone(f.args)
 			args[test.index] = fifo
-			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-			defer cancel()
-			command := exec.CommandContext(ctx, binary, append(args, "--json")...)
-			output, err := command.Output()
-			require.NoError(t, ctx.Err(), "verify blocked opening a FIFO")
-			var failure *exec.ExitError
-			require.ErrorAs(t, err, &failure)
-			require.Equal(t, exitUsage, failure.ExitCode())
-			require.Contains(t, string(failure.Stderr), "regular file")
-			require.Empty(t, output)
+			resetFlags(rootCmd)
+			var stdout, stderr bytes.Buffer
+			code := runProcess(append(args, "--json"), &stdout, &stderr)
+			require.Equal(t, exitUsage, code, "%s", stderr.String())
+			require.Contains(t, stderr.String(), "regular file")
+			require.Empty(t, stdout.String())
 		})
 	}
 }
