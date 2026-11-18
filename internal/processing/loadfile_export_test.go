@@ -157,6 +157,7 @@ func TestLoadFileExportRoundTripsThroughIndependentFreshVault(t *testing.T) {
 }
 
 func checkLoadFileExportRoundTripsThroughIndependentFreshVault(t *testing.T, openCatalog openPackageImportCatalog) {
+	t.Helper()
 	ctx := t.Context()
 	source := buildPackageImportFixture(t, openCatalog, 2, false, true, true, "", nil)
 	worker, err := NewPackageImportWorker(source.config())

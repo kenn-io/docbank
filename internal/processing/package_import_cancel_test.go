@@ -18,6 +18,7 @@ func TestPackageImportCancellationRemovesOnlyUnreceiptedDocuments(t *testing.T) 
 }
 
 func checkPackageImportCancellationRemovesOnlyUnreceiptedDocuments(t *testing.T, openCatalog openPackageImportCatalog) {
+	t.Helper()
 	for _, afterText := range []bool{false, true} {
 		t.Run(fmt.Sprintf("after_text_publication_%t", afterText), func(t *testing.T) {
 			env := buildPackageImportFixture(t, openCatalog, 2, false, false, true, "", nil)

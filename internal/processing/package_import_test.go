@@ -210,6 +210,7 @@ func TestPackageImportWorkerCommitsOneVerifiedRootRecord(t *testing.T) {
 }
 
 func checkPackageImportWorkerCommitsOneVerifiedRootRecord(t *testing.T, openCatalog openPackageImportCatalog) {
+	t.Helper()
 	env := buildPackageImportFixture(t, openCatalog, 1, false, false, false, "", nil)
 	worker, err := NewPackageImportWorker(env.config())
 	require.NoError(t, err)
@@ -287,6 +288,7 @@ func TestPackageImportWorkerResumesAfterCommittedRecord(t *testing.T) {
 }
 
 func checkPackageImportWorkerResumesAfterCommittedRecord(t *testing.T, openCatalog openPackageImportCatalog) {
+	t.Helper()
 	env := buildPackageImportFixture(t, openCatalog, 2, false, false, false, "", nil)
 	injected := errors.New("synthetic interruption before second record")
 	firstKey, err := store.PackageRecordKey("VOL001/DATA.DAT", 1, "DOC-A")
@@ -374,6 +376,7 @@ func TestPackageImportWorkerRecoversStagedNodeWithoutRecordReceipt(t *testing.T)
 }
 
 func checkPackageImportWorkerRecoversStagedNodeWithoutRecordReceipt(t *testing.T, openCatalog openPackageImportCatalog) {
+	t.Helper()
 	env := buildPackageImportFixture(t, openCatalog, 1, false, false, false, "", nil)
 	injected := errors.New("synthetic interruption after staging")
 	key, err := store.PackageRecordKey("VOL001/DATA.DAT", 1, "DOC-A")
@@ -425,6 +428,7 @@ func TestPackageImportWorkerAcceptsMissingPostPreflightFileAsPartial(t *testing.
 }
 
 func checkPackageImportWorkerAcceptsMissingPostPreflightFileAsPartial(t *testing.T, openCatalog openPackageImportCatalog) {
+	t.Helper()
 	env := buildPackageImportFixture(t, openCatalog, 2, true, false, false, "", nil)
 	require.NoError(t, os.Remove(filepath.Join(env.Root, "VOL001", "B.txt")))
 	worker, err := NewPackageImportWorker(env.config())
