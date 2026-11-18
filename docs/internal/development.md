@@ -868,6 +868,18 @@ direct SQL from rewriting those columns. SQLite's released receipt trigger
 prevents updates but does not prevent deletion. These database-level differences
 do not change the qualified Store operations.
 
+The received-package worker also runs against both backends. The worker reads
+verified local files, resumes after a committed record or an interrupted staging
+write, and records missing files when the import accepts gaps. Cancellation
+removes unreceipted documents and supplied text while preserving committed
+representations and bytes shared with other documents.
+
+The load-file round trip exports a sealed selection, uploads its ZIP and
+imports it into a separate vault. It verifies native bytes, family links,
+assigned labels, supplied text generations and custodian labels.
+`make test-pg` runs these scenarios as `TestPackageImportWorkerPostgres` with
+the same runtime role as the other processing suites.
+
 #### Document catalog pages and exact links
 
 The internal Store lists current live files by path, name, modification time,
@@ -933,8 +945,8 @@ metadata and real retained bytes. It claims and completes a job, verifies the
 archive through the download lease, and releases the archive and catalog entry.
 The release checks also cover concurrent downloads and filesystem removal errors.
 The existing claim fencing and archive format are shared with SQLite. Rendering,
-query-selected populations, received-package filesystem workers and public vault
-opening are outside these worker contracts.
+query-selected populations and public vault opening are outside these worker
+contracts.
 
 #### Document export plans and jobs
 
