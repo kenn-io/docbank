@@ -4116,9 +4116,7 @@
         </div>
       {/if}
       <div class="nav-group vault-nav">
-        <AppTooltip
-          text="Disk use, backups, protected folders, and search by meaning"
-          side="right"
+        <AppTooltip text="Disk use, backups, protected folders, and search by meaning" side="right"
           ><button type="button" class="nav-item" onclick={() => openPanel({ kind: "storage" })}>
             <ArchiveIcon size="16" aria-hidden="true" />System
           </button></AppTooltip

@@ -47,13 +47,7 @@ it("lists the sections in order and opens on disk use", async () => {
     within(drawer)
       .getAllByRole("tab")
       .map((tab) => tab.textContent?.trim()),
-  ).toEqual([
-    "Disk use",
-    "Running now",
-    "Backups",
-    "Protected folders",
-    "Search by meaning",
-  ]);
+  ).toEqual(["Disk use", "Running now", "Backups", "Protected folders", "Search by meaning"]);
   expect(within(drawer).getByRole("tab", { name: "Disk use", selected: true })).toBeTruthy();
   expect(await within(drawer).findByText("Total on disk")).toBeTruthy();
 });
