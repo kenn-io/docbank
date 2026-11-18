@@ -21,7 +21,7 @@ func TestPostgresPoolBindingPostgres(t *testing.T) {
 	_, err := pgschema.Setup(t.Context(), setup, pgschema.Config{Schema: "other", SchemaOwner: owner})
 	require.NoError(t, err)
 	connection.RuntimeParams["search_path"] = "other,pg_catalog"
-	s, err := OpenPostgres(t.Context(), connection, cfg)
+	s, err := OpenPostgres(t.Context(), connection, cfg, t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	first, err := s.db.Conn(t.Context())
@@ -66,7 +66,28 @@ func TestPostgresOpenerRefusesOwnerPostgres(t *testing.T) {
 		return nil
 	}))
 	require.NoError(t, conn.Close())
-	s, err := OpenPostgres(t.Context(), connection, cfg)
+	s, err := OpenPostgres(t.Context(), connection, cfg, t.TempDir())
 	require.Error(t, err)
 	require.Nil(t, s)
+}
+
+func TestPostgresLaneControlsAreVaultLocalPostgres(t *testing.T) {
+	// Isolate the working directory in case the store uses it for lane controls.
+	t.Chdir(t.TempDir())
+	first := newPostgresQueryStore(t)
+	second := newPostgresQueryStore(t)
+	ctx := t.Context()
+	lane := StorageOperationKindPhotoImport
+
+	_, err := first.SetLaneControl(ctx, LaneControl{Lane: lane, Paused: true, Concurrency: 1}, 1)
+	require.NoError(t, err)
+	firstControl, err := first.LaneControl(ctx, lane)
+	require.NoError(t, err)
+	require.True(t, firstControl.Paused)
+	require.EqualValues(t, 2, firstControl.Revision)
+
+	secondControl, err := second.LaneControl(ctx, lane)
+	require.NoError(t, err)
+	require.False(t, secondControl.Paused, "pausing one vault must not pause another vault")
+	require.EqualValues(t, 1, secondControl.Revision)
 }

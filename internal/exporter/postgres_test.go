@@ -22,9 +22,9 @@ func postgresArchiveWorkerFixture(t *testing.T, gate exporter.Gate) (*exporter.W
 	setup, owner := pgtest.NewDatabase(t)
 	cfg := pgschema.Config{Schema: "documents", SchemaOwner: owner}
 	connection := pgstoretest.RuntimeConfig(t, setup, cfg)
-	s, err := store.OpenPostgres(t.Context(), connection, cfg)
-	require.NoError(t, err)
 	root := t.TempDir()
+	s, err := store.OpenPostgres(t.Context(), connection, cfg, root)
+	require.NoError(t, err)
 	w, job := workerFixtureWithStore(t, gate, s, root)
 	return w, s, job, root
 }

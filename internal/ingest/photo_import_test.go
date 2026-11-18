@@ -17,6 +17,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -81,11 +83,16 @@ func TestPhotoImportGrouping(t *testing.T) {
 }
 
 func TestPhotoImportAmbiguity(t *testing.T) {
+	checkPhotoImportAmbiguity(t, newTestIngesterWithOptions)
+}
+
+func checkPhotoImportAmbiguity(t *testing.T, open ingesterFixtureFactory) {
+	t.Helper()
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG_0001.ARW"), []byte("raw-one"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG_0001.DNG"), []byte("raw-two"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG_0001.JPG"), []byte("jpeg"), 0o600))
-	ing := newTestIngester(t)
+	ing := open(t, blob.ManagedOptions())
 	first, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), first.Receipt.Ambiguous)
@@ -106,9 +113,14 @@ func TestPhotoImportAmbiguity(t *testing.T) {
 }
 
 func TestPhotoImportLateJPEGJoinsEarlierRAW(t *testing.T) {
+	checkPhotoImportLateJPEGJoinsEarlierRAW(t, newTestIngesterWithOptions)
+}
+
+func checkPhotoImportLateJPEGJoinsEarlierRAW(t *testing.T, open ingesterFixtureFactory) {
+	t.Helper()
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG_0001.ARW"), []byte("raw"), 0o600))
-	ing := newTestIngester(t)
+	ing := open(t, blob.ManagedOptions())
 	first, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), first.Receipt.Added)
@@ -123,6 +135,14 @@ func TestPhotoImportLateJPEGJoinsEarlierRAW(t *testing.T) {
 	raw, err := ing.Store.PhotoAssetForNode(t.Context(), nodeByName(t, ing, "/photos/IMG_0001.ARW").ID)
 	require.NoError(t, err)
 	assert.Equal(t, raw.ID, asset.ID)
+	for name, want := range map[string]string{"IMG_0001.ARW": "raw", "IMG_0001.JPG": "jpeg", "IMG_0001.XMP": "xmp"} {
+		node := nodeByName(t, ing, "/photos/"+name)
+		reader, err := ing.Blobs.OpenContext(t.Context(), node.BlobHash)
+		require.NoError(t, err)
+		data, readErr := io.ReadAll(reader)
+		require.NoError(t, errors.Join(readErr, reader.Close()))
+		assert.Equal(t, want, string(data), name)
+	}
 
 	third, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
 	require.NoError(t, err)
@@ -218,11 +238,16 @@ func TestPhotoImportSourceStability(t *testing.T) {
 }
 
 func TestPhotoImportSkipsGroupChangedAfterScan(t *testing.T) {
+	checkPhotoImportSkipsGroupChangedAfterScan(t, newTestIngesterWithOptions)
+}
+
+func checkPhotoImportSkipsGroupChangedAfterScan(t *testing.T, open ingesterFixtureFactory) {
+	t.Helper()
 	root := t.TempDir()
 	changed := filepath.Join(root, "IMG_0.JPG")
 	require.NoError(t, os.WriteFile(changed, []byte("jpeg-0"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG_1.JPG"), []byte("jpeg-1"), 0o600))
-	ing := newTestIngester(t)
+	ing := open(t, blob.ManagedOptions())
 	calls := 0
 	report, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{
 		Mutate: func(_ context.Context, fn func() error) error {
@@ -246,7 +271,12 @@ func TestPhotoImportSkipsGroupChangedAfterScan(t *testing.T) {
 }
 
 func TestPhotoImportAuditedVaultDoesNotCreateDestination(t *testing.T) {
-	ing := newTestIngester(t)
+	checkPhotoImportAuditedVaultDoesNotCreateDestination(t, newTestIngesterWithOptions)
+}
+
+func checkPhotoImportAuditedVaultDoesNotCreateDestination(t *testing.T, open ingesterFixtureFactory) {
+	t.Helper()
+	ing := open(t, blob.ManagedOptions())
 	ctx := t.Context()
 	audited, err := ing.Store.Mkdir(ctx, ing.Store.RootID(), "audited")
 	require.NoError(t, err)
@@ -320,7 +350,12 @@ func testPhotoImportSettlesOnceOutsideTheGate(t *testing.T) {
 	assert.Equal(t, interval, elapsed, "the import settles once, not once per group")
 }
 func TestPhotoImportRunnerHonorsCancelAfterLastGroup(t *testing.T) {
-	ing := newTestIngester(t)
+	checkPhotoImportRunnerHonorsCancelAfterLastGroup(t, newTestIngesterWithOptions)
+}
+
+func checkPhotoImportRunnerHonorsCancelAfterLastGroup(t *testing.T, open ingesterFixtureFactory) {
+	t.Helper()
+	ing := open(t, blob.ManagedOptions())
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG_0.JPG"), []byte("jpeg"), 0o600))
 	operation, err := ing.Store.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport,
@@ -347,7 +382,12 @@ func TestPhotoImportRunnerHonorsCancelAfterLastGroup(t *testing.T) {
 }
 
 func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
-	ing := newTestIngester(t)
+	checkPhotoImportRunnerCancelsAndResumes(t, newTestIngesterWithOptions)
+}
+
+func checkPhotoImportRunnerCancelsAndResumes(t *testing.T, open ingesterFixtureFactory) {
+	t.Helper()
+	ing := open(t, blob.ManagedOptions())
 	root := t.TempDir()
 	for i := range 3 {
 		require.NoError(t, os.WriteFile(filepath.Join(root, fmt.Sprintf("IMG_%d.JPG", i)), []byte(fmt.Sprint("jpeg-", i)), 0o600))
@@ -357,9 +397,18 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 
 	stopped, stop := context.WithCancel(t.Context())
 	shutdown := runner
-	shutdown.Options.Mutate = func(ctx context.Context, _ func() error) error {
-		stop()
-		return ctx.Err()
+	defer stop()
+	calls := 0
+	shutdown.Options.Mutate = func(_ context.Context, fn func() error) error {
+		if err := fn(); err != nil {
+			return err
+		}
+		calls++
+		if calls == 2 {
+			// Stop after the first group commits but before progress is recorded.
+			stop()
+		}
+		return nil
 	}
 	interrupted, err := ing.Store.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, request)
 	require.NoError(t, err)
@@ -368,13 +417,24 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, resumable, 1)
 	assert.Equal(t, store.StorageOperationRunning, resumable[0].State)
-	require.NoError(t, runner.Run(t.Context(), interrupted.ID))
+	assert.Zero(t, resumable[0].CompletedObjects)
+	first := nodeByName(t, ing, "/photos/IMG_0.JPG")
+	_, err = ing.Store.NodeByPath(t.Context(), "/photos/IMG_1.JPG")
+	require.ErrorIs(t, err, store.ErrNotFound)
+
+	supervisor := jobs.New(t.Context(), nil)
+	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.WithoutCancel(t.Context()))) })
+	require.NoError(t, runner.Resume(t.Context(), supervisor))
+	require.NoError(t, supervisor.Settle(t.Context()))
 	completed, err := ing.Store.StorageOperation(t.Context(), interrupted.ID)
 	require.NoError(t, err)
 	assert.Equal(t, store.StorageOperationCompleted, completed.State)
 	assert.Equal(t, int64(3), completed.TotalObjects)
 	assert.Equal(t, int64(3), completed.CompletedObjects)
-	assert.JSONEq(t, `{"added":3,"skipped":0,"changed":0,"failed":0,"ambiguous":0,"unsupported":0}`, completed.ReceiptJSON)
+	assert.JSONEq(t, `{"added":2,"skipped":1,"changed":0,"failed":0,"ambiguous":0,"unsupported":0}`, completed.ReceiptJSON)
+	assert.Equal(t, first.CurrentVersionID, nodeByName(t, ing, "/photos/IMG_0.JPG").CurrentVersionID)
+	nodeByName(t, ing, "/photos/IMG_1.JPG")
+	nodeByName(t, ing, "/photos/IMG_2.JPG")
 
 	cancelled, err := ing.Store.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, request)
 	require.NoError(t, err)

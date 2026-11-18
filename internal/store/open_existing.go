@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
@@ -49,7 +50,7 @@ func OpenExisting(ctx context.Context, path string, driver docsqlite.Driver, scr
 	if !schema.current {
 		return nil, fmt.Errorf("database requires initialization or upgrade: %w", ErrNeedsOwner)
 	}
-	s := &Store{db: db, path: path, driver: driver}
+	s := &Store{db: db, path: path, vaultDir: filepath.Dir(path), driver: driver}
 	if err := db.QueryRowContext(ctx, `SELECT vault_uid FROM vault_metadata WHERE singleton = 1`).Scan(&s.vaultID); err != nil {
 		return nil, fmt.Errorf("reading vault identity: %w", err)
 	}

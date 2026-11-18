@@ -19,7 +19,7 @@ func mailboxPostgresFixture(t *testing.T) *Service {
 	setup, owner := pgtest.NewDatabase(t)
 	cfg := pgschema.Config{Schema: "documents", SchemaOwner: owner}
 	runtime := pgstoretest.RuntimeConfig(t, setup, cfg)
-	s, err := store.OpenPostgres(t.Context(), runtime, cfg)
+	s, err := store.OpenPostgres(t.Context(), runtime, cfg, dir)
 	require.NoError(t, err)
 	return mailboxFixtureWithStore(t, s, dir)
 }

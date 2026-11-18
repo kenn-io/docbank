@@ -16,7 +16,7 @@ func postgresProcessingStore(tb testing.TB) *store.Store {
 	setup, owner := pgtest.NewDatabase(tb)
 	cfg := pgschema.Config{Schema: "documents", SchemaOwner: owner}
 	connection := pgstoretest.RuntimeConfig(tb, setup, cfg)
-	catalog, err := store.OpenPostgres(tb.Context(), connection, cfg)
+	catalog, err := store.OpenPostgres(tb.Context(), connection, cfg, tb.TempDir())
 	require.NoError(tb, err)
 	return catalog
 }

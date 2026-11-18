@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,6 +32,7 @@ type Store struct {
 	postgresConfig         *pgx.ConnConfig // Pinned runtime configuration for independently owned read pools.
 	postgresSchema         string          // Empty for SQLite; PostgreSQL pools use this schema as their search path.
 	path                   string
+	vaultDir               string
 	rootID                 int64
 	vaultID                string
 	primaryStoreID         string
@@ -140,7 +142,7 @@ func openCurrentStore(
 	// Queue writers in database/sql instead of racing SQLite's busy timeout.
 	// Read snapshots use the separate deferred pool and do not reserve the writer.
 	writeDB.SetMaxOpenConns(1)
-	s := &Store{db: db, writeDB: writeDB, path: path, driver: driver, providerEgressMu: waitlock.New(), photoHiddenSessions: make(map[string]time.Time), photoExportSlot: make(chan struct{}, 1)}
+	s := &Store{db: db, writeDB: writeDB, path: path, vaultDir: filepath.Dir(path), driver: driver, providerEgressMu: waitlock.New(), photoHiddenSessions: make(map[string]time.Time), photoExportSlot: make(chan struct{}, 1)}
 	if err := s.bootstrap(ctx, incarnation); err != nil {
 		_ = s.Close()
 		return nil, err

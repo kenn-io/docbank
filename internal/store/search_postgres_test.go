@@ -75,7 +75,7 @@ func BenchmarkPostgresContentSearch(b *testing.B) {
 	setup, owner := pgtest.NewDatabase(b)
 	cfg := pgschema.Config{Schema: "documents", SchemaOwner: owner}
 	connection := pgstoretest.RuntimeConfig(b, setup, cfg)
-	s, err := OpenPostgres(b.Context(), connection, cfg)
+	s, err := OpenPostgres(b.Context(), connection, cfg, b.TempDir())
 	require.NoError(b, err)
 	b.Cleanup(func() { require.NoError(b, s.Close()) })
 	text := strings.Repeat("ordinary background prose ", 2048) + "needle retained evidence"

@@ -19,9 +19,10 @@ func postgresArchiveFixture(t *testing.T) *archiveFixture {
 	setup, owner := pgtest.NewDatabase(t)
 	cfg := pgschema.Config{Schema: "documents", SchemaOwner: owner}
 	connection := pgstoretest.RuntimeConfig(t, setup, cfg)
-	metadata, err := store.OpenPostgres(t.Context(), connection, cfg)
+	dir := t.TempDir()
+	metadata, err := store.OpenPostgres(t.Context(), connection, cfg, dir)
 	require.NoError(t, err)
-	fixture := archiveFixtureWithStore(t, t.TempDir(), metadata)
+	fixture := archiveFixtureWithStore(t, dir, metadata)
 	discard := fixture.discard
 	fixture.discard = func() {
 		discard()
