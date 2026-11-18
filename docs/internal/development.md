@@ -2165,11 +2165,18 @@ seek entries by checkout and file ID; a query-plan test covers this without
 statistics. Retiring a checkout releases its retained versions without deleting
 copies.
 
-The `photo-checkout` contracts exercise native operations, late publication and
-commit failures, batched observation rollback, snapshots and retained-version
-holds. Existing albums are inputs to selection; this does not qualify album
-editing. Filesystem workers, physical backup and restore, general photo
-query selection and public PostgreSQL vault opening remain separate.
+The `photo-checkout` Store contracts exercise native operations, late publication
+and commit failures, batched observation rollback, snapshots and retained-version
+holds. The checkout service tests use real working files and run on both
+backends. They cover a replaced destination, byte and file-identity changes,
+sidecar commit-back, retry after an interrupted commit and retirement with
+copies still on disk. A PostgreSQL scenario fails the database write after
+the file is installed, then recovers its publication record without overwriting
+an edit made to the working copy. `make test-pg` runs the checkout package
+with the same runtime role as the Store contracts.
+
+Physical backup and restore, general photo query selection and public PostgreSQL
+vault opening remain outside this checkout coverage.
 
 #### Recoverable deletion
 
