@@ -88,39 +88,42 @@ func checkMailboxCancellationFencesPublicationUntilResume(t *testing.T, f *Servi
 	claim, err := f.Store.ClaimMailboxJob(ctx)
 	require.NoError(t, err)
 
-	// Cancel after the scanner records a pending occurrence and before the
-	// stale worker attempts to commit its decoded message.
+	// Give a new worker the claim after the old worker has decoded the message
+	// but before it tries to publish. The job is running at publication time,
+	// so the state check alone cannot fence the old worker.
+	var resumed store.MailboxJob
 	f.Mutate = func(ctx context.Context, fn func() error) error {
 		current, err := f.Store.MailboxJob(ctx, claim.Owner, claim.ID)
 		if err != nil {
 			return err
 		}
-		if current.Pending == 1 {
-			if err := f.Store.CancelMailboxJob(ctx, claim.Owner, claim.ID); err != nil {
-				return err
-			}
+		if current.Pending == 1 && resumed.Claim == "" {
+			require.NoError(t, f.Store.CancelMailboxJob(ctx, claim.Owner, claim.ID))
+			_, err = f.Store.ResumeMailboxJob(ctx, claim.Owner, request, false)
+			require.NoError(t, err)
+			resumed, err = f.Store.ClaimMailboxJob(ctx)
+			require.NoError(t, err)
+			require.Equal(t, claim.ID, resumed.ID)
+			require.Equal(t, "running", resumed.State)
+			require.NotEmpty(t, resumed.Claim)
+			require.NotEqual(t, claim.Claim, resumed.Claim)
 		}
 		return fn()
 	}
 	require.ErrorIs(t, f.RunJob(ctx, claim), store.ErrMailboxConflict)
-	canceled, err := f.Store.MailboxJob(ctx, claim.Owner, claim.ID)
+	running, err := f.Store.MailboxJob(ctx, claim.Owner, claim.ID)
 	require.NoError(t, err)
-	require.Equal(t, "canceled", canceled.State)
-	require.Zero(t, canceled.Checkpoint)
+	require.Equal(t, resumed, running, "the old worker must leave the fresh claim intact")
+	require.Zero(t, running.Checkpoint)
 	occurrences, err := f.Store.MailboxOccurrences(ctx, claim.Owner, claim.ID, 0, 10)
 	require.NoError(t, err)
 	require.Len(t, occurrences, 1)
-	require.Equal(t, "canceled", occurrences[0].Outcome)
+	require.Equal(t, "pending", occurrences[0].Outcome)
 	require.Nil(t, occurrences[0].Target)
 	_, err = f.Store.MailboxTransfer(ctx, claim.Owner, "mailbox:"+claim.CollectionID, "0:1")
 	require.ErrorIs(t, err, store.ErrNotFound)
 
 	f.Mutate = nil
-	_, err = f.Store.ResumeMailboxJob(ctx, claim.Owner, request, false)
-	require.NoError(t, err)
-	resumed, err := f.Store.ClaimMailboxJob(ctx)
-	require.NoError(t, err)
-	require.NotEqual(t, claim.Claim, resumed.Claim)
 	require.NoError(t, f.RunJob(ctx, resumed))
 	complete, err := f.Store.MailboxJob(ctx, claim.Owner, claim.ID)
 	require.NoError(t, err)

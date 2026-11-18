@@ -1319,11 +1319,12 @@ before sealing, and imports MBOX and ZIP messages into the native Store. The
 worker can continue from retained message and entry offsets. Identical messages
 keep separate occurrence receipts, even when their bytes match.
 
-Cancelling a pending occurrence clears its claim before publication. A stale
-worker cannot commit a message under that claim, and a resumed job can publish
-the occurrence once under a fresh claim. The shared tests also cover corrupt ZIP
-contents, a partial import after a malformed entry, and the worker moving to
-the next job after recording a failure.
+Cancelling a pending occurrence clears its claim before publication. The shared
+test resumes the job under a fresh claim before the old worker attempts to
+publish. The old worker leaves the running job and its pending occurrence
+intact, and the new worker publishes the occurrence once. The shared tests also
+cover corrupt ZIP contents, a partial import after a malformed entry, and the
+worker moving to the next job after recording a failure.
 
 Completed mailbox collections feed the existing stored-original ZIP worker.
 The shared lifecycle test creates the collection by uploading and importing a
