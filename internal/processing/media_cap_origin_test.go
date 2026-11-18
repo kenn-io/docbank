@@ -17,7 +17,12 @@ import (
 
 func TestRegisteredCapOriginSubmission(t *testing.T) {
 	t.Parallel()
-	fixture := newPublicationFixture(t)
+	checkRegisteredCapOriginSubmission(t, newPublicationFixture)
+}
+
+func checkRegisteredCapOriginSubmission(t *testing.T, open publicationFixtureFactory) {
+	t.Helper()
+	fixture := open(t)
 	generic := newRemoteRecordingTestService(t, fixture, "operator:generic", 0, nil)
 	legacyRequest := capRecordingRequest(uuid.New().String(), "https://cap.example.test/s/vid-1?token=synthetic", "before")
 	legacyRequest.CanonicalURL = "https://cap.example.test/s/vid-1?token=synthetic"

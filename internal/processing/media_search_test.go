@@ -19,7 +19,15 @@ import (
 
 func TestMediaSearchSelectsCoveringBuildBeforeLimits(t *testing.T) {
 	t.Parallel()
-	f := newMediaStateFixture(t)
+	checkMediaSearchSelectsCoveringBuildBeforeLimits(t, newPublicationFixture)
+}
+
+func checkMediaSearchSelectsCoveringBuildBeforeLimits(t *testing.T, open publicationFixtureFactory) {
+	t.Helper()
+	f := mediaStateFixtureWithPublication(t, open(t))
+	// Make the generated hits outrank the long transcript on both engines.
+	// PostgreSQL's rank uses term frequency without a document-length penalty.
+	f.provider.text = "Synthetic worker output. Synthetic worker output."
 	name, supplied, err := NewSuppliedMediaProfile(f.catalog, f.blobs, f.service.principal)
 	require.NoError(t, err)
 	service, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs,
@@ -174,7 +182,7 @@ func TestMediaSearchSelectsCoveringBuildBeforeLimits(t *testing.T) {
 		require.NoError(t, err)
 		return queued
 	}
-	selectedA := queueTranscript(suppliedCandidate, "Synthetic")
+	selectedA := queueTranscript(suppliedCandidate, "Synthetic synthetic synthetic synthetic")
 	runLoomRenditionJob(t, service, selectedA.JobID)
 	otherOccurrence := suppliedCandidate
 	otherOccurrence.OccurrenceID = "second-source-occurrence"
@@ -261,6 +269,11 @@ func (backend mediaSearchChangingBackend) SearchExplainedLexicalCandidates(ctx c
 
 func TestMediaSearchKeepsHealthyMatchesDuringSourceChanges(t *testing.T) {
 	t.Parallel()
+	checkMediaSearchKeepsHealthyMatchesDuringSourceChanges(t, newPublicationFixture)
+}
+
+func checkMediaSearchKeepsHealthyMatchesDuringSourceChanges(t *testing.T, open publicationFixtureFactory) {
+	t.Helper()
 	for _, change := range []string{"unknown", "hidden", "deleted", "pending_to_ready", "changed_head", "shared_build_revoke"} {
 		queries := []string{"Synthetic worker output"}
 		if change == "changed_head" {
@@ -268,7 +281,7 @@ func TestMediaSearchKeepsHealthyMatchesDuringSourceChanges(t *testing.T) {
 		}
 		for _, query := range queries {
 			t.Run(change+"/"+query, func(t *testing.T) {
-				f := newMediaStateFixture(t)
+				f := mediaStateFixtureWithPublication(t, open(t))
 				healthy, err := f.service.SubmitSuppliedMedia(t.Context(), f.suppliedRequest(uuid.New().String(), &MediaProcessingRequest{Profile: "speech"}))
 				require.NoError(t, err)
 				require.NoError(t, f.run(t, healthy.JobID))
