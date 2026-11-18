@@ -184,12 +184,18 @@ func (tr abortInstalledRestoreCommit) TraceQueryStart(ctx context.Context, _ *pg
 func (abortInstalledRestoreCommit) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
 
 func TestPhysicalRestoreAbortedCommitPostgres(t *testing.T) {
+	t.Run("same snapshot", func(t *testing.T) { checkPhysicalRestoreAbortedCommit(t, false) })
+	t.Run("different snapshot", func(t *testing.T) { checkPhysicalRestoreAbortedCommit(t, true) })
+}
+
+func checkPhysicalRestoreAbortedCommit(t *testing.T, changeSnapshot bool) {
+	t.Helper()
 	setup, owner := pgtest.NewDatabase(t)
 	ctx := t.Context()
 	source := newArchiveFixture(t)
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
 	require.NoError(t, err)
-	_, err = backupapp.Create(ctx, repo, "test-version", source.metadata, source.blobs, backup.CreateOptions{})
+	snapshot, err := backupapp.Create(ctx, repo, "test-version", source.metadata, source.blobs, backup.CreateOptions{})
 	require.NoError(t, err)
 	cfg := pgschema.Config{Schema: "documents", SchemaOwner: owner}
 	runtime := pgstoretest.RuntimeConfig(t, setup, cfg)
@@ -211,7 +217,7 @@ func TestPhysicalRestoreAbortedCommitPostgres(t *testing.T) {
 	writer := stdlib.OpenDB(*ownerConfig)
 	defer func() { require.NoError(t, writer.Close()) }()
 	result, err := backupapp.RestorePostgres(ctx, repo, "test-version", store.DefaultSQLiteDriver(),
-		backupapp.PostgresRestoreTarget{Owner: writer, Runtime: runtime, Schema: cfg}, backup.RestoreOptions{TargetDir: target})
+		backupapp.PostgresRestoreTarget{Owner: writer, Runtime: runtime, Schema: cfg}, backup.RestoreOptions{TargetDir: target, SnapshotID: snapshot.SnapshotID})
 	require.ErrorContains(t, err, "restore directory was installed")
 	require.ErrorIs(t, err, context.Canceled)
 	require.NotNil(t, result)
@@ -225,6 +231,47 @@ func TestPhysicalRestoreAbortedCommitPostgres(t *testing.T) {
 	physical, err := blob.NewExistingReader(store.NewPackCatalog(restored), filepath.Join(target, "blobs"), nil)
 	require.ErrorIs(t, err, packstore.ErrStoreFenced)
 	require.Nil(t, physical)
+
+	want := "alpha backup"
+	if changeSnapshot {
+		want = "changed after the first snapshot"
+		node, err := source.metadata.NodeByPath(ctx, "/alpha.txt")
+		require.NoError(t, err)
+		hash, size, err := source.blobs.WriteContext(ctx, strings.NewReader(want))
+		require.NoError(t, err)
+		_, _, err = source.metadata.ReplaceContent(ctx, node.ID, node.Revision, hash, size, node.MimeType)
+		require.NoError(t, err)
+		retrySnapshot, err := backupapp.Create(ctx, repo, "test-version", source.metadata, source.blobs, backup.CreateOptions{})
+		require.NoError(t, err)
+		require.NotEqual(t, snapshot.SnapshotID, retrySnapshot.SnapshotID)
+		snapshot = retrySnapshot
+	}
+
+	retry := filepath.Join(filepath.Dir(target), "retry")
+	committed, err := backupapp.RestorePostgres(ctx, repo, "test-version", store.DefaultSQLiteDriver(),
+		backupapp.PostgresRestoreTarget{Owner: setup, Runtime: runtime, Schema: cfg},
+		backup.RestoreOptions{TargetDir: retry, SnapshotID: snapshot.SnapshotID})
+	require.NoError(t, err)
+	require.Equal(t, result.VaultID, committed.VaultID)
+	require.Equal(t, snapshot.SnapshotID, committed.SnapshotID)
+	live, err := store.OpenPostgres(ctx, runtime, cfg, retry)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, live.Close()) }()
+	catalog := store.NewPackCatalog(live)
+	physical, err = blob.NewExistingReader(catalog, filepath.Join(target, "blobs"), nil)
+	require.ErrorIs(t, err, packstore.ErrStoreFenced, "a committed retry must not authorize the interrupted directory")
+	require.Nil(t, physical)
+	physical, err = blob.NewExistingReader(catalog, filepath.Join(retry, "blobs"), nil)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, physical.Close()) }()
+	node, err := live.NodeByPath(ctx, "/alpha.txt")
+	require.NoError(t, err)
+	reader, err := physical.OpenContext(ctx, node.BlobHash)
+	require.NoError(t, err)
+	content, err := io.ReadAll(reader)
+	require.NoError(t, reader.Close())
+	require.NoError(t, err)
+	require.Equal(t, want, string(content))
 }
 
 func TestPhysicalRestoreRetriesDerivedIndexesPostgres(t *testing.T) {

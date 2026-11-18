@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
+	"go.kenn.io/kit/safefileio"
 )
 
 // PostgresRestoreResult identifies the snapshot and the new local vault root.
@@ -68,6 +69,9 @@ func RestorePostgres(
 		return nil, fmt.Errorf("creating private restore directory: %w", err)
 	}
 	defer func() { retErr = errors.Join(retErr, os.RemoveAll(scratch)) }()
+	if err := safefileio.EnsurePrivateDir(scratch); err != nil {
+		return nil, fmt.Errorf("securing private restore directory: %w", err)
+	}
 	logical, err := os.CreateTemp(scratch, "metadata-")
 	if err != nil {
 		return nil, err
@@ -130,7 +134,7 @@ func RestorePostgres(
 	})
 	if err != nil {
 		if installed {
-			return result, fmt.Errorf("restore directory was installed at %q; verify primary ownership against the target schema before using it: %w", target, err)
+			return result, fmt.Errorf("restore directory was installed at %q; compare its primary ownership marker with the committed schema and retry in a new directory only if the schema is still pristine: %w", target, err)
 		}
 		return nil, fmt.Errorf("restoring PostgreSQL catalog: %w", err)
 	}
