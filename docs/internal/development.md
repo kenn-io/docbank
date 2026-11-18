@@ -926,7 +926,20 @@ original page and snapshot.
 including trailing-slash behavior, reruns, replacement, naming collisions,
 preflight exclusions, stale destination refusal and managed loose/packed
 receipts. These scenarios write synthetic source files and retain real blob
-bytes. Watcher scheduling and grouped-photo filesystem workers remain separate.
+bytes.
+
+The grouped photo importer also runs on both backends through
+`TestPhotoFilesystemImportPostgres`. The scenarios import real RAW, JPEG and
+sidecar files, retain ambiguous groups as separate assets, and skip a group
+whose source changed after discovery. They also cover audited-destination
+refusal, cancellation after the last group, and resuming after a group commits
+before its progress is saved. Resume preserves the committed version and
+imports the remaining groups.
+
+The internal PostgreSQL opener takes the local vault directory explicitly.
+Worker lane settings live in that directory, so pausing a job in one vault
+does not pause another vault in the same process. Watcher scheduling
+remains separate from these importer contracts.
 
 `internal/exporter` runs the stored-original ZIP worker with native PostgreSQL
 metadata and real retained bytes. It claims and completes a job, verifies the

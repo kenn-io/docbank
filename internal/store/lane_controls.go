@@ -95,7 +95,7 @@ func FinishRestoreLaneControls(vaultDir string, replaced bool) error {
 }
 
 func (s *Store) laneControlsPath() string {
-	return filepath.Join(filepath.Dir(s.path), laneControlsFile)
+	return filepath.Join(s.vaultDir, laneControlsFile)
 }
 
 func (s *Store) readLaneControls(ctx context.Context) (map[string]laneControlSetting, error) {

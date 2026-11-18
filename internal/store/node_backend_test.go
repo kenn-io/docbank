@@ -26,7 +26,7 @@ func newPostgresQueryStore(t *testing.T) *Store {
 func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *Store {
 	t.Helper()
 	config := pgstoretest.RuntimeConfig(t, setup, cfg)
-	s, err := OpenPostgres(t.Context(), config, cfg)
+	s, err := OpenPostgres(t.Context(), config, cfg, t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	return s

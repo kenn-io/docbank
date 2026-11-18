@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -14,14 +15,21 @@ import (
 )
 
 // OpenPostgres opens an installed schema through runtime credentials. It owns
-// the pool; Close releases it. Setup and logical import use separate owner
-// credentials. This internal entry point does not open a public Vault.
-func OpenPostgres(ctx context.Context, connection *pgx.ConnConfig, cfg pgschema.Config) (result *Store, err error) {
+// the pool; Close releases it. vaultDir locates local worker controls. Setup and
+// logical import use separate owner credentials.
+func OpenPostgres(ctx context.Context, connection *pgx.ConnConfig, cfg pgschema.Config, vaultDir string) (result *Store, err error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	if connection == nil {
 		return nil, errors.New("postgres metadata requires a connection configuration")
+	}
+	if vaultDir == "" {
+		return nil, errors.New("postgres metadata requires a local vault directory")
+	}
+	vaultDir, err = filepath.Abs(vaultDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolving postgres vault directory: %w", err)
 	}
 	config := connection.Copy()
 	config.RuntimeParams["search_path"] = pgx.Identifier{cfg.Schema}.Sanitize() + ",pg_catalog"
@@ -41,7 +49,7 @@ func OpenPostgres(ctx context.Context, connection *pgx.ConnConfig, cfg pgschema.
 	if _, err := pgschema.Validate(ctx, db, cfg); err != nil {
 		return nil, fmt.Errorf("validating postgres metadata: %w", err)
 	}
-	s := &Store{db: db, writeDB: db, postgresSchema: cfg.Schema, postgresConfig: config.Copy(), providerEgressMu: waitlock.New(), photoHiddenSessions: make(map[string]time.Time), photoExportSlot: make(chan struct{}, 1)}
+	s := &Store{db: db, writeDB: db, postgresSchema: cfg.Schema, postgresConfig: config.Copy(), vaultDir: vaultDir, providerEgressMu: waitlock.New(), photoHiddenSessions: make(map[string]time.Time), photoExportSlot: make(chan struct{}, 1)}
 	if err := db.QueryRowContext(ctx, `SELECT id,(SELECT vault_uid FROM vault_metadata),(SELECT store_id FROM blob_stores WHERE role='primary') FROM nodes WHERE parent_id IS NULL`).Scan(&s.rootID, &s.vaultID, &s.primaryStoreID); err != nil {
 		return nil, fmt.Errorf("reading postgres vault roots: %w", err)
 	}
