@@ -1167,7 +1167,7 @@ func (s *Store) verifyRenditionBlobAuthority(ctx context.Context, allowMissingVe
 		return fmt.Errorf("starting processing blob verification: %w", err)
 	}
 	defer func() { retErr = errors.Join(retErr, tx.Rollback()) }()
-	if err := validateProcessingMetadataState(ctx, tx, false); err != nil {
+	if err := validateProcessingMetadataState(ctx, tx, s.postgresSchema != ""); err != nil {
 		return fmt.Errorf("validating processing blob authority: %w", err)
 	}
 	if err := validateEmbeddingMetadataState(ctx, tx); err != nil {
@@ -1179,8 +1179,8 @@ func (s *Store) verifyRenditionBlobAuthority(ctx context.Context, allowMissingVe
 	return nil
 }
 
-func verifyRenditionBlobCatalogAuthority(ctx context.Context, tx *sql.Tx, allowMissingVectorPayloads bool) (retErr error) {
-	query := `
+func verifyRenditionBlobCatalogAuthority(ctx context.Context, tx *sql.Tx, allowMissingVectorPayloads bool) error {
+	query := `WITH refs(hash) AS (
 		SELECT source_sha256 FROM rendition_builds
 		UNION
 		SELECT blob_hash FROM email_part_artifacts
@@ -1200,25 +1200,21 @@ func verifyRenditionBlobCatalogAuthority(ctx context.Context, tx *sql.Tx, allowM
 	if !allowMissingVectorPayloads {
 		query += ` UNION SELECT payload_blob_hash FROM embedding_vector_sets`
 	}
-	query += ` ORDER BY source_sha256`
-	rows, err := tx.QueryContext(ctx, query)
-	if err != nil {
+	query += `) SELECT refs.hash, b.hash IS NOT NULL
+		FROM refs LEFT JOIN blobs b ON b.hash=refs.hash
+		WHERE b.hash IS NULL OR NOT ` + physicalAuthorityExists + `
+		ORDER BY refs.hash LIMIT 1`
+	var hash string
+	var known bool
+	if err := tx.QueryRowContext(ctx, query).Scan(&hash, &known); errors.Is(err, sql.ErrNoRows) {
+		return nil
+	} else if err != nil {
 		return fmt.Errorf("reading processing blob catalog authority: %w", err)
 	}
-	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
-	for rows.Next() {
-		var hash string
-		if err := rows.Scan(&hash); err != nil {
-			return fmt.Errorf("scanning processing blob catalog authority: %w", err)
-		}
-		if _, err := requirePhysicalAuthorityTx(ctx, tx, hash); err != nil {
-			return fmt.Errorf("processing blob %s: %w", hash, err)
-		}
+	if !known {
+		return fmt.Errorf("processing blob %s: %w", hash, ErrNotFound)
 	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterating processing blob catalog authority: %w", err)
-	}
-	return nil
+	return fmt.Errorf("processing blob %s: %w", hash, ErrPhysicalAuthorityMissing)
 }
 
 // RebuildRenditionLexicalProjection reconstructs the excluded FTS projection

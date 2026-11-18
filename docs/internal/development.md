@@ -1142,8 +1142,7 @@ and image membership changes, leases, cleanup, warm-cache reuse and snapshots.
 Face members are covered by the processing suite through native face publication,
 index reconstruction and ranked people selection. Photo query compilation
 remains unqualified on PostgreSQL.
-Public PostgreSQL vault opening and PostgreSQL-target physical restore remain
-separate.
+Public PostgreSQL vault opening remains separate.
 
 #### Face embeddings and matching
 
@@ -1261,7 +1260,7 @@ embedding publication and vector index. Photo query compilation, PDF fact
 filters and selected recording/vision retrieval are outside this qualification.
 Public PostgreSQL vault opening remains separate.
 
-#### Backup capture and SQLite recovery
+#### Backup capture and physical recovery
 
 The internal backup pipeline captures PostgreSQL metadata and managed blob
 bytes into the existing backup repository. It retains the existing repository ownership and caller-owned
@@ -1276,7 +1275,14 @@ content before publishing the destination and reconstructs fresh primary pack
 ownership. Vault, node, version and audit identities survive recovery; source
 installation authority does not. Source PostgreSQL metadata and blob files are
 not needed once capture finishes. Missing source content fails capture without
-publishing a snapshot. PostgreSQL-target physical restore remains unqualified.
+publishing a snapshot.
+
+The internal PostgreSQL target accepts the same portable snapshots from either
+backend. It installs verified packed and loose files in a fresh directory,
+commits their physical authority with the imported metadata, and rebuilds
+derived indexes through the runtime role. The
+[backup architecture](../architecture/backup.md#restoring-into-postgresql)
+describes the directory and schema publication boundary and retry rules.
 
 `make test-pg` runs the backup application scenarios after the Store lane on both
 PostgreSQL versions. The shared scenarios verify loose and packed byte readback,
@@ -2585,7 +2591,7 @@ schema can enroll its root without a copied fixture.
 Copying supporting catalogs qualifies their validation, not their producers.
 The [operation inventory](#backend-support-and-drift-checks) identifies native
 writes and their catalog-maintenance coverage. Public PostgreSQL opening,
-PostgreSQL-target physical restore and photo query compilation remain unqualified. Logical metadata transfer
+Photo query compilation remains unqualified. Logical metadata transfer
 uses the internal import/export entry points described above.
 
 For PostgreSQL tests, start a disposable server, never an operator database:

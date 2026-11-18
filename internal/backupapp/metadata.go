@@ -385,7 +385,10 @@ func (w *byteCounter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-type metadataRestorer struct{ driver docsqlite.Driver }
+type metadataRestorer struct {
+	driver docsqlite.Driver
+	copyTo io.Writer
+}
 
 var _ backup.MetadataRestorer = metadataRestorer{}
 
@@ -405,6 +408,9 @@ func (r metadataRestorer) RestoreMetadata(
 			resultErr = errors.Join(resultErr, target.Close())
 		}
 	}()
+	if r.copyTo != nil {
+		metadata = io.TeeReader(metadata, r.copyTo)
+	}
 	if err := target.ImportMetadata(ctx, metadata); err != nil {
 		return fmt.Errorf("backupapp: importing metadata JSONL: %w", err)
 	}

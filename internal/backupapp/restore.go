@@ -117,6 +117,18 @@ func RestoreWithPlacement(
 	opts backup.RestoreOptions,
 	placement RestorePlacementOptions,
 ) (*backup.RestoreResult, error) {
+	return restoreWithPlacement(ctx, repo, version, driver, opts, placement, nil)
+}
+
+func restoreWithPlacement(
+	ctx context.Context,
+	repo *backup.Repo,
+	version string,
+	driver docsqlite.Driver,
+	opts backup.RestoreOptions,
+	placement RestorePlacementOptions,
+	metadataCopy io.Writer,
+) (*backup.RestoreResult, error) {
 	if opts.PackedContent != nil {
 		return nil, errors.New("backupapp: restore options must not supply packed content policy")
 	}
@@ -143,7 +155,7 @@ func RestoreWithPlacement(
 		opts.TargetCoordinator = retainedCoordinator
 	}
 	opts.SQLiteOpener = SQLiteOpener(driver)
-	opts.MetadataRestorer = metadataRestorer{driver: driver}
+	opts.MetadataRestorer = metadataRestorer{driver: driver, copyTo: metadataCopy}
 	opts.LooseCompression = packstore.LooseCompressionOptions{
 		Enabled: true, MinBytes: blob.ManagedLooseCompressionMinBytes,
 		MinSavingsPercent: blob.ManagedLooseCompressionMinSavingsPercent,
@@ -220,8 +232,9 @@ func RestoreWithPlacement(
 		); err != nil {
 			return err
 		}
+		// The portable copy rebuilds indexes on its final PostgreSQL catalog.
 		if err := verifyRestoredRenditionHeads(
-			hookCtx, staged.TargetDir, staged.DBPath, driver,
+			hookCtx, staged.TargetDir, staged.DBPath, driver, metadataCopy == nil,
 		); err != nil {
 			return err
 		}
@@ -284,7 +297,7 @@ func recordRestoredLooseContent(
 }
 
 func verifyRestoredRenditionHeads(
-	ctx context.Context, target, databasePath string, driver docsqlite.Driver,
+	ctx context.Context, target, databasePath string, driver docsqlite.Driver, rebuildIndexes bool,
 ) (retErr error) {
 	metadata, err := store.OpenForRestore(ctx, databasePath, driver)
 	if err != nil {
@@ -308,6 +321,13 @@ func verifyRestoredRenditionHeads(
 	if err := metadata.VerifyRestoredRenditionBlobBytes(ctx, physical); err != nil {
 		return fmt.Errorf("backupapp: verifying restored rendition bytes: %w", err)
 	}
+	if !rebuildIndexes {
+		return nil
+	}
+	return rebuildRestoredProjections(ctx, metadata, physical)
+}
+
+func rebuildRestoredProjections(ctx context.Context, metadata *store.Store, physical store.RenditionBlobReader) error {
 	if err := processing.RebuildDocumentEvents(ctx, metadata); err != nil {
 		return fmt.Errorf("backupapp: rebuilding restored timeline index: %w", err)
 	}

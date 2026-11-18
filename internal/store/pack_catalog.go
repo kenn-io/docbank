@@ -114,26 +114,34 @@ func (c *PackRestoreCatalog) ReplaceRestoredPacks(
 	if _, err := tx.ExecContext(ctx, `DELETE FROM blob_packs`); err != nil {
 		return fmt.Errorf("clearing restored blob pack records: %w", err)
 	}
+	if err := insertRestoredPacksTx(ctx, tx, primary.ID, records, adoptions); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing restored pack catalog replacement: %w", err)
+	}
+	return nil
+}
+
+// insertRestoredPacksTx installs physical authority already verified by the restore reader.
+func insertRestoredPacksTx(ctx context.Context, tx *sql.Tx, storeID string, records []packstore.PackRecord, adoptions []packstore.Adoption) error {
 	for _, record := range records {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO blob_packs (store_id, pack_id, entry_count, stored_bytes, created_at)
-			VALUES (?, ?, ?, ?, ?)`, primary.ID, record.PackID, record.EntryCount, record.StoredBytes,
+			VALUES ($1, $2, $3, $4, $5)`, storeID, record.PackID, record.EntryCount, record.StoredBytes,
 			record.CreatedAt.UTC().Format(timestampLayout)); err != nil {
 			return fmt.Errorf("recording restored blob pack %s: %w", record.PackID, err)
 		}
 	}
 	for _, adoption := range adoptions {
-		if err := writeAdoption(ctx, tx, primary.ID, adoption.Entry, false); err != nil {
+		if err := writeAdoption(ctx, tx, storeID, adoption.Entry, false); err != nil {
 			return err
 		}
 	}
 	for _, record := range records {
-		if err := finalizePackScanHash(ctx, tx, primary.ID, record.PackID); err != nil {
+		if err := finalizePackScanHash(ctx, tx, storeID, record.PackID); err != nil {
 			return err
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing restored pack catalog replacement: %w", err)
 	}
 	return nil
 }
