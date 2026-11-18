@@ -37,6 +37,26 @@ type packageImportTestEnv struct {
 	Contents    [][]byte
 }
 
+type openPackageImportCatalog func(t *testing.T, root string) *store.Store
+
+func sqlitePackageImportCatalog(t *testing.T, root string) *store.Store {
+	t.Helper()
+	catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
+	require.NoError(t, err)
+	return catalog
+}
+
+func packageImportStorage(t *testing.T, openCatalog openPackageImportCatalog) (*store.Store, *blob.Store) {
+	t.Helper()
+	root := t.TempDir()
+	catalog := openCatalog(t, root)
+	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+	return catalog, blobs
+}
+
 func newPackageImportTestEnv(t *testing.T, count int, acceptPartial bool, withPages ...bool) *packageImportTestEnv {
 	t.Helper()
 	pages := len(withPages) > 0 && withPages[0]
@@ -45,20 +65,14 @@ func newPackageImportTestEnv(t *testing.T, count int, acceptPartial bool, withPa
 
 func newPackageImportTestEnvOptions(t *testing.T, count int, acceptPartial, withPages, indexText bool, families ...loadfile.Family) *packageImportTestEnv {
 	t.Helper()
-	return newPackageImportTestEnvWithNativeFile(t, count, acceptPartial, withPages, indexText, "", nil, families...)
+	return buildPackageImportFixture(t, sqlitePackageImportCatalog, count, acceptPartial, withPages, indexText, "", nil, families...)
 }
 
-func newPackageImportTestEnvWithNativeFile(t *testing.T, count int, acceptPartial, withPages, indexText bool,
+func buildPackageImportFixture(t *testing.T, openCatalog openPackageImportCatalog, count int, acceptPartial, withPages, indexText bool,
 	nativeName string, nativeContent []byte, families ...loadfile.Family) *packageImportTestEnv {
 	t.Helper()
 	ctx := t.Context()
-	vault := t.TempDir()
-	catalog, err := store.Open(t.Context(), filepath.Join(vault, "docbank.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
-	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(vault, "blobs"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+	catalog, blobs := packageImportStorage(t, openCatalog)
 
 	root := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(root, "VOL001"), 0o700))
@@ -192,7 +206,12 @@ func (e *packageImportTestEnv) config() PackageImportConfig {
 
 func TestPackageImportWorkerCommitsOneVerifiedRootRecord(t *testing.T) {
 	t.Parallel()
-	env := newPackageImportTestEnv(t, 1, false)
+	checkPackageImportWorkerCommitsOneVerifiedRootRecord(t, sqlitePackageImportCatalog)
+}
+
+func checkPackageImportWorkerCommitsOneVerifiedRootRecord(t *testing.T, openCatalog openPackageImportCatalog) {
+	t.Helper()
+	env := buildPackageImportFixture(t, openCatalog, 1, false, false, false, "", nil)
 	worker, err := NewPackageImportWorker(env.config())
 	require.NoError(t, err)
 	more, err := worker.ProcessOnce(t.Context())
@@ -225,7 +244,7 @@ func TestPackageImportDetectsMIMEFromVerifiedBytes(t *testing.T) {
 	require.NoError(t, mime.AddExtensionType(extension, "application/jpg"))
 	require.Equal(t, "application/jpg", mime.TypeByExtension(extension))
 	jpeg := []byte{0xff, 0xd8, 0xff}
-	env := newPackageImportTestEnvWithNativeFile(t, 1, false, false, false, "A"+extension, jpeg)
+	env := buildPackageImportFixture(t, sqlitePackageImportCatalog, 1, false, false, false, "A"+extension, jpeg)
 	worker, err := NewPackageImportWorker(env.config())
 	require.NoError(t, err)
 	_, err = worker.ProcessOnce(t.Context())
@@ -265,7 +284,12 @@ func TestPackageRecordLabelsKeepReceivedAndAssignedProvenanceSeparate(t *testing
 
 func TestPackageImportWorkerResumesAfterCommittedRecord(t *testing.T) {
 	t.Parallel()
-	env := newPackageImportTestEnv(t, 2, false)
+	checkPackageImportWorkerResumesAfterCommittedRecord(t, sqlitePackageImportCatalog)
+}
+
+func checkPackageImportWorkerResumesAfterCommittedRecord(t *testing.T, openCatalog openPackageImportCatalog) {
+	t.Helper()
+	env := buildPackageImportFixture(t, openCatalog, 2, false, false, false, "", nil)
 	injected := errors.New("synthetic interruption before second record")
 	firstKey, err := store.PackageRecordKey("VOL001/DATA.DAT", 1, "DOC-A")
 	require.NoError(t, err)
@@ -348,7 +372,12 @@ func mustPackage(t *testing.T, env *packageImportTestEnv) store.Package {
 
 func TestPackageImportWorkerRecoversStagedNodeWithoutRecordReceipt(t *testing.T) {
 	t.Parallel()
-	env := newPackageImportTestEnv(t, 1, false)
+	checkPackageImportWorkerRecoversStagedNodeWithoutRecordReceipt(t, sqlitePackageImportCatalog)
+}
+
+func checkPackageImportWorkerRecoversStagedNodeWithoutRecordReceipt(t *testing.T, openCatalog openPackageImportCatalog) {
+	t.Helper()
+	env := buildPackageImportFixture(t, openCatalog, 1, false, false, false, "", nil)
 	injected := errors.New("synthetic interruption after staging")
 	key, err := store.PackageRecordKey("VOL001/DATA.DAT", 1, "DOC-A")
 	require.NoError(t, err)
@@ -395,7 +424,12 @@ func TestPackageImportWorkerRecoversStagedNodeWithoutRecordReceipt(t *testing.T)
 
 func TestPackageImportWorkerAcceptsMissingPostPreflightFileAsPartial(t *testing.T) {
 	t.Parallel()
-	env := newPackageImportTestEnv(t, 2, true)
+	checkPackageImportWorkerAcceptsMissingPostPreflightFileAsPartial(t, sqlitePackageImportCatalog)
+}
+
+func checkPackageImportWorkerAcceptsMissingPostPreflightFileAsPartial(t *testing.T, openCatalog openPackageImportCatalog) {
+	t.Helper()
+	env := buildPackageImportFixture(t, openCatalog, 2, true, false, false, "", nil)
 	require.NoError(t, os.Remove(filepath.Join(env.Root, "VOL001", "B.txt")))
 	worker, err := NewPackageImportWorker(env.config())
 	require.NoError(t, err)

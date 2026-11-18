@@ -14,9 +14,14 @@ import (
 
 func TestPackageImportCancellationRemovesOnlyUnreceiptedDocuments(t *testing.T) {
 	t.Parallel()
+	checkPackageImportCancellationRemovesOnlyUnreceiptedDocuments(t, sqlitePackageImportCatalog)
+}
+
+func checkPackageImportCancellationRemovesOnlyUnreceiptedDocuments(t *testing.T, openCatalog openPackageImportCatalog) {
+	t.Helper()
 	for _, afterText := range []bool{false, true} {
 		t.Run(fmt.Sprintf("after_text_publication_%t", afterText), func(t *testing.T) {
-			env := newPackageImportTestEnvOptions(t, 2, false, false, true)
+			env := buildPackageImportFixture(t, openCatalog, 2, false, false, true, "", nil)
 			ctx := t.Context()
 			key, err := store.PackageRecordKey("VOL001/DATA.DAT", 2, "DOC-B")
 			require.NoError(t, err)

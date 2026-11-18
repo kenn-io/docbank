@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/loadfile"
+	"go.kenn.io/docbank/internal/mailbox"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -152,8 +153,13 @@ func TestLoadFileExportNativeRequiresWholeDocument(t *testing.T) {
 
 func TestLoadFileExportRoundTripsThroughIndependentFreshVault(t *testing.T) {
 	t.Parallel()
+	checkLoadFileExportRoundTripsThroughIndependentFreshVault(t, sqlitePackageImportCatalog)
+}
+
+func checkLoadFileExportRoundTripsThroughIndependentFreshVault(t *testing.T, openCatalog openPackageImportCatalog) {
+	t.Helper()
 	ctx := t.Context()
-	source := newPackageImportTestEnvOptions(t, 2, false, true, true)
+	source := buildPackageImportFixture(t, openCatalog, 2, false, true, true, "", nil)
 	worker, err := NewPackageImportWorker(source.config())
 	require.NoError(t, err)
 	_, err = worker.ProcessOnce(ctx)
@@ -217,13 +223,7 @@ func TestLoadFileExportRoundTripsThroughIndependentFreshVault(t *testing.T) {
 	root, err := loadfile.ExtractZIP(ctx, bytes.NewReader(archive.Bytes()), int64(archive.Len()))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, loadfile.RemoveExtractedZIP(root)) })
-	freshRoot := t.TempDir()
-	freshCatalog, err := store.Open(t.Context(), filepath.Join(freshRoot, "docbank.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, freshCatalog.Close()) })
-	freshBlobs, err := blob.New(store.NewPackCatalog(freshCatalog), filepath.Join(freshRoot, "blobs"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, freshBlobs.Close()) })
+	freshCatalog, freshBlobs := packageImportStorage(t, openCatalog)
 
 	resolver, err := loadfile.NewResolver(ctx, root, nil)
 	require.NoError(t, err)
@@ -241,9 +241,19 @@ func TestLoadFileExportRoundTripsThroughIndependentFreshVault(t *testing.T) {
 	mappingJSON, err := canonical.Marshal(verified.Receipt.Mapping)
 	require.NoError(t, err)
 	owner, preflightID := "fresh-vault", uuid.NewString()
+	container := store.MailboxContainerRequest{
+		ID: uuid.NewString(), Owner: owner, Format: "zip",
+		SHA256: built.Receipt.ArchiveSHA256, Size: int64(archive.Len()),
+	}
+	uploads := mailbox.Service{Store: freshCatalog, Blobs: freshBlobs}
+	_, err = freshCatalog.BeginMailboxContainer(ctx, container)
+	require.NoError(t, err)
+	require.NoError(t, uploads.UploadChunk(ctx, owner, container.ID, 0, container.SHA256, container.Size, bytes.NewReader(archive.Bytes())))
+	_, err = uploads.Seal(ctx, owner, container.ID)
+	require.NoError(t, err)
 	_, err = freshCatalog.PutPackagePreflight(ctx, store.PackagePreflightRecord{
-		PreflightID: preflightID, Owner: owner, SourceKind: "root", SourceRef: rootDigest,
-		SourceLocator: root, ProfileJSON: string(profileJSON), MappingJSON: string(mappingJSON),
+		PreflightID: preflightID, Owner: owner, SourceKind: "container", SourceRef: rootDigest,
+		SourceLocator: container.ID, ProfileJSON: string(profileJSON), MappingJSON: string(mappingJSON),
 		ProfileSHA256: verified.Receipt.ProfileSHA256, MappingSHA256: verified.Receipt.MappingSHA256,
 		ManifestSHA256: written.Hash, ManifestBlobSHA256: written.Hash,
 		CanonicalJSON: []byte(`{}`), DiagnosticsJSON: []byte(`[]`),
@@ -260,7 +270,7 @@ func TestLoadFileExportRoundTripsThroughIndependentFreshVault(t *testing.T) {
 			DeclaredRoot: volume.DeclaredRoot, MappedRoot: volume.DeclaredRoot, ResolvedRootSHA256: binding}
 	}
 	jobJSON, err := canonical.Marshal(packageImportWork{IndexSuppliedText: true,
-		Into: "/", SourceKind: "root", SourceLocator: root, Total: 2})
+		Into: "/", SourceKind: "container", SourceLocator: container.ID, Total: 2})
 	require.NoError(t, err)
 	_, err = freshCatalog.AdmitPackageImport(ctx, run, store.PackageRequest{
 		PackageID: freshPackageID, Direction: "received", PackageName: "fresh-round-trip",
@@ -276,7 +286,19 @@ func TestLoadFileExportRoundTripsThroughIndependentFreshVault(t *testing.T) {
 	require.NoError(t, err)
 	freshWorker, err := NewPackageImportWorker(PackageImportConfig{Catalog: freshCatalog, Blobs: freshBlobs,
 		Owner: "fresh-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
-		Mutate: func(_ context.Context, fn func() error) error { return fn() }})
+		Mutate: func(_ context.Context, fn func() error) error { return fn() },
+		OpenContainer: func(ctx context.Context, owner, id string) (io.ReaderAt, int64, error) {
+			sealed, err := freshCatalog.MailboxContainer(ctx, owner, id)
+			if err != nil {
+				return nil, 0, err
+			}
+			if sealed.Format != "zip" || sealed.State != "sealed" {
+				return nil, 0, store.ErrMailboxConflict
+			}
+			reader, err := uploads.ReaderAt(ctx, sealed)
+			return reader, sealed.Size, err
+		},
+	})
 	require.NoError(t, err)
 	_, err = freshWorker.ProcessOnce(ctx)
 	require.NoError(t, err)
@@ -286,8 +308,15 @@ func TestLoadFileExportRoundTripsThroughIndependentFreshVault(t *testing.T) {
 	freshMembers, err := freshCatalog.SnapshotMembers(ctx, freshPackage.SnapshotID, 0, 10)
 	require.NoError(t, err)
 	require.Len(t, freshMembers, 2)
-	require.Equal(t, sourceMembers[0].BlobSHA256, freshMembers[0].BlobSHA256)
-	require.Equal(t, sourceMembers[1].BlobSHA256, freshMembers[1].BlobSHA256)
+	for index, member := range freshMembers {
+		require.Equal(t, sourceMembers[index].BlobSHA256, member.BlobSHA256)
+		reader, _, err := freshBlobs.OpenStreamContext(ctx, member.BlobSHA256)
+		require.NoError(t, err)
+		data, err := io.ReadAll(reader)
+		require.NoError(t, reader.Close())
+		require.NoError(t, err)
+		require.Equal(t, source.Contents[index], data)
+	}
 	require.Equal(t, freshMembers[0].OccurrenceID, freshMembers[1].ParentOccurrenceID)
 	require.Equal(t, freshMembers[0].FamilyID, freshMembers[1].FamilyID)
 	labels, err := freshCatalog.PackageLabels(ctx, freshPackageID, freshMembers[0].OccurrenceID)
