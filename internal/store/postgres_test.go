@@ -71,7 +71,7 @@ func TestPostgresOpenerRefusesOwnerPostgres(t *testing.T) {
 	require.Nil(t, s)
 }
 
-func TestPostgresLaneControlsAreVaultLocalPostgres(t *testing.T) { //nolint:paralleltest // changes the working directory
+func TestPostgresLaneControlsAreVaultLocalPostgres(t *testing.T) {
 	// Isolate the working directory in case the store uses it for lane controls.
 	t.Chdir(t.TempDir())
 	first := newPostgresQueryStore(t)
