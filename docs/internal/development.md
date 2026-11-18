@@ -391,8 +391,7 @@ and image embedding can publish a vector index before returning. Face embedding,
 index-backed people ranking and suggestion rebuilding use shared worker and
 Store operations. Remote recording references, manual file import, acquisition
 consent, exact transcript reads and selected-recording search have shared
-scenarios below. Photo query compilation and PostgreSQL-target backup recovery
-remain unqualified.
+scenarios below. Photo query compilation remains unqualified.
 Native multi-store catalog operations are qualified below; deployment adapters
 remain separate from public PostgreSQL vault opening. Paged tree walks, native
 file and folder imports, and stored-original ZIP workers have the filesystem
@@ -1076,10 +1075,10 @@ synthetic origins and locally supplied recordings.
 
 Transcript reads use the selected source version and its covering rendition.
 Two source versions can reference the same file and still have different
-supplied inputs. A source can only return text that belongs to its own visible
-input binding. Search resolves the eligible version/build pairs before applying
-the lexical candidate limit, then rechecks source authority before returning
-matches. Shared scenarios cover generated and supplied transcripts, pending
+supplied inputs. Reading a supplied transcript requires a visible input binding
+for that source version. Search resolves the eligible version/build pairs before
+applying the lexical candidate limit, then rechecks source authority before
+returning matches. Shared scenarios cover generated and supplied transcripts, pending
 retries, and changes to current files, rendition heads or occurrence visibility
 during search. The search engines use their native scores.
 

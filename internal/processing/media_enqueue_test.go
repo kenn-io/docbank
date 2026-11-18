@@ -380,6 +380,7 @@ func TestMediaContinuationCancellationBeforeEmbeddingResumesAfterReopen(t *testi
 
 type mediaWorkerProvider struct {
 	*workerProvider
+
 	text string
 }
 
