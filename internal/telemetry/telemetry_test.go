@@ -184,7 +184,7 @@ func TestNewFallsBackWhenInstallUnusable(t *testing.T) {
 	assert.False(t, reporter.EventAllowed(EventAppOpened))
 }
 
-func TestReporterUsesDaemonLogger(t *testing.T) {
+func TestReporterKeepsSDKLogsOutOfDaemonLog(t *testing.T) {
 	enableTelemetryEnv(t)
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logs, nil)).With("daemon", "synthetic")
@@ -196,9 +196,8 @@ func TestReporterUsesDaemonLogger(t *testing.T) {
 	require.True(t, reporter.Enabled())
 	require.NoError(t, reporter.Capture(EventDaemonActive, nil))
 	require.NoError(t, reporter.Close())
-	assert.Contains(t, logs.String(), "synthetic ingest rejection")
-	assert.Contains(t, logs.String(), `"daemon":"synthetic"`)
-	assert.Contains(t, logs.String(), `"component":"posthog"`)
+	assert.NotContains(t, logs.String(), "synthetic ingest rejection")
+	assert.NotContains(t, logs.String(), `"component":"posthog"`)
 }
 
 func TestNewFollowsKennConsent(t *testing.T) {
