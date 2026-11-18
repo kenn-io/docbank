@@ -53,9 +53,6 @@ The directory layout is created on first use:
 ├── logs/                # JSON logs from background daemons
 ├── web-launch/          # owner-private browser authentication handoff
 ├── web-downloads/       # private, temporary verified browser downloads
-├── telemetry-install.json # anonymous telemetry install ID (with its .lock); created unless telemetry is turned off, kept if it is later turned off
-├── telemetry-screen-views.json # daily screen claims; created only while telemetry is on
-├── telemetry-tui-state.json # daily TUI receipt and accepted screens; with its .lock
 ├── config.toml          # optional; see below
 ├── lane-controls.json   # local job pause and concurrency settings
 ├── vault.lock           # advisory lock, held by a daemon or target restore
@@ -74,9 +71,6 @@ Back up `config.toml` separately if you customize it. It can contain an
 running processes. You can omit them and `lane-controls.json` from backups. Delete them only when no
 daemon or restore is running. `docbank daemon stop` removes its own runtime
 record on graceful shutdown.
-
-Deleting `telemetry-install.json` while the daemon is stopped gives the vault a new
-anonymous install ID.
 
 Use `docbank backup create` to capture every retained blob from a verified
 location, including content held only in a secondary store. The resulting
@@ -1523,9 +1517,6 @@ forwarding headers do not change that peer check.
 | `DOCBANK_HOME` | Vault location; see [Vault location](#vault-location) above. |
 | `DOCBANK_LOCK_DIR` | Absolute lock-registry directory for an isolated environment whose account home is unwritable. Defaults to the operating-system account home's `.local/state/docbank/target-locks`, independent of `HOME` and XDG settings. All processes sharing or restoring overlapping vault trees must use the same directory; stop them before changing this setting. Keep it outside vaults and restore targets. Never delete it while any participating process runs. |
 | `DOCBANK_LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) for `docbank daemon run` and `docbank mcp`, foreground or background. Invalid values are ignored and fall back to `info`. |
-| `DOCBANK_TELEMETRY_ENABLED` | `0`, `false`, `no` or `off` turns off anonymous usage telemetry. Read when the daemon starts; restart the daemon after changing it. |
-| `TELEMETRY_ENABLED` | The same values have the same effect; shared with other Kenn tools. |
-| `DO_NOT_TRACK` | `1` turns off anonymous usage telemetry. |
 
 Nonempty startup overrides take precedence over TOML; empty variables keep
 its values. `DOCBANK_API_KEY` and `DOCBANK_API_KEY_FILE` cannot both be
@@ -1537,112 +1528,6 @@ read access is sufficient.
 Missing, unreadable, empty, or oversized files fail startup instead of falling
 back. One trailing LF or CRLF is stripped. File keys are bounded before parsing.
 Secrets are resolved once per process; restart to rotate them.
-
-## Anonymous usage telemetry
-
-The daemon reports anonymous usage events so the Docbank team can count
-active vaults, web app opens, screens used, and document actions.
-Counts are per vault, not per person: one person with three vaults counts three
-times. The daemon sends events in HTTPS batches to PostHog's US ingest endpoint (PostHog
-project 434713). The browser never contacts PostHog: the web app posts its
-event to its own daemon, which sends it.
-
-Docbank sends these events:
-
-- `daemon_active` at startup and on the first hourly check of each later UTC
-  day. Days when the machine sleeps are not backfilled.
-- `app_opened` when the web app loads, and again on the first window focus of
-  a later UTC day. Claims use `docbank.web.telemetry.v1` in browser storage,
-  retain the latest 35 claimed dates, and apply per browser origin. The default
-  loopback origin changes at each daemon start, so a new daemon run checks
-  again. A fixed `[web] public_origin` keeps claims across restarts.
-- `session_ended` once when a browser tab closes or stays hidden for 30 minutes,
-  or the terminal browser exits, including when its terminal closes. Browser
-  visible time adds up across tab switches. Hidden time is excluded. The
-  terminal browser counts the time from opening to exit, including idle time.
-  A terminal browser left idle past the daemon's idle timeout reports nothing
-  on exit because it sends the report only to a running daemon.
-  TUI exit waits at most 50 ms for daemon discovery and reporting.
-  A report that hasn't finished within that wait may be lost.
-  Web Lock and sign-out send the final duration bucket in one revoke request,
-  which removes the token first. The request that removes a live token then
-  attempts to queue the event without waiting for delivery.
-  The daemon can't accept the final duration after the browser session has
-  expired or been revoked.
-- `screen_viewed` with a fixed `screen` name and `surface` of `web` or `tui`.
-  Each screen counts once per vault per UTC day for each interface, including
-  across daemon restarts. `surface` records which interface was used. The
-  daemon rejects other screen or surface names with HTTP 400.
-
-Core actions send one event when a person's action completes:
-
-- `document_added` after a CLI `add`, web upload, or photo import adds at least one document. Uploads that end with an error still count if they added documents.
-- `search_run` after a submitted search returns accepted results, including empty results. Complete queries, exact-version searches, and similar-document searches also report. Automatic refreshes, filter changes, and mode changes stay silent. Empty scopes run a normal search on the web and in the terminal browser. It carries `search_type` of `text`, `semantic`, or `hybrid`, using the executed mode after fallback. Photos reports only search form submissions.
-- `document_opened` after an explicit web open with Enter, double-click, or a row click, a related or duplicate document link, a successful download, or a Photos open from the grid or Map. Grid and Map opens report once the viewer shows the photo. A failed detail load counts as a failed `open`; closing or stepping to another photo first stays silent. Moving through listed documents with j/k, snapshot Previous/Next, Photos arrows or filmstrip, Compare, Cull, and inspector back or return sends nothing. Terminal UI Enter-open and CLI `cat` or `get` also report.
-- `search_empty` after a submitted search has no results, with the same `surface` and `search_type`. It accompanies `search_run`, including when the search scope is empty.
-- `error_shown` when a search, add, or open the person ran fails. It requires `surface` and `kind`. `kind` is `search`, `add`, or `open`. The daemon sends any other `kind` string as `other`.
-  - A failed submitted search counts once on the web, in the terminal browser, and in the CLI, including Processing searches, similar-document searches, and Photos search. A failed upload or photo import run counts once however many items failed. Rejected input counts as a failed search or add like any other failure. A failed download, related-document open, Photos detail load, `get`, or `cat` counts as `open`.
-  - Sign-in prompts, cancels, passive loads and refreshes, paging, sorting, other drawers and dialogs, notices, warnings, and CLI usage errors before connecting stay silent. The terminal browser sends `document_opened` on Enter and sends no `error_shown` with `kind` of `open` for a failed detail load. Other previews or detail loads after opening a document are secondary loads and stay silent. Failed Add re-plans, closed CLI output pipes for `add`, `cat`, and `search`, and an existing destination for `get` also stay silent. A missing download destination directory, or one that is not a directory, also stays silent.
-
-Each core action requires `surface` of `web`, `tui`, or `cli`; a missing or unsupported value returns HTTP 400. Searches also require an allowed `search_type`. The daemon forwards every core action without counting state. PostHog queries count installs per day. CLI reports require a terminal on stdin, stdout, or stderr and omit `--agent` runs. CLI and TUI actions stay silent when `CLAUDECODE` or `CODEX_THREAD_ID` is set. Asynchronous imports from the CLI or the web mailbox and load-file drawers, and `push`, send no core actions.
-
-The daemon remembers which screen events it has queued today in memory and in
-`telemetry-screen-views.json` beside the install ID. If it cannot queue an
-event, that screen remains eligible for another attempt. Remote delivery is
-best effort.
-
-Browser reports share a daily gate. Disabled receipts stop reports and duration
-listeners until a later day's load or focus, or a load from a new origin. Failures back off and stop after
-six attempts. Hidden tabs report their latest screen when visible. Screen visibility
-listeners stop while disabled or unavailable; focus can check on a later day.
-Session reports use the shared gate's in-memory queue while it checks permission.
-
-TUI reports use a running daemon and lock `telemetry-tui-state.json` while checking.
-The private v1 JSON file stores the UTC day, disabled receipt, and accepted
-screen names. Restarts reuse today's state, including opaque screen names.
-Missing or unsupported versions are refused without rewriting. Unknown fields
-in v1 are ignored and dropped only on a later rewrite. Malformed v1 state and
-other dates, including future dates after clock correction, are empty until a
-new receipt replaces them.
-Failures retry on input after 30 seconds, including after screen changes. Six
-failed attempts pause this process's reports until UTC rollover, covering file,
-lock, discovery, POST, and receipt errors. Data operations can start daemons.
-
-Allowed `screen` values are `browse`, `search`, `tags`, `snapshot`, `history`, `versions`, `provenance`, `jobs`, `audit_evidence`, `storage`, `backups`, `bates`, `export`, `saved_queries`, `collections`, `trash`, `tag_catalog`, `telemetry`, `term_reports`, `processing`, `rendition`, `upload`, `mailbox`, `load_file`, `snapshot_actions`, `help`, `document`, `packages`, `operations`.
-
-Each event carries these fields:
-
-- the event name, a random event UUID, and a timestamp
-- `distinct_id`: a random install ID generated on this machine
-- `application=docbank`, `source=daemon`, the Docbank `version` and `commit`,
-  `goos`, `goarch`, and `install_age_hours` (whole hours since the install ID
-  was created)
-- `distribution`: who shipped the build, such as `kenn` for official downloads
-  or `homebrew`; empty for other builds
-- `$process_person_profile=false` and `$geoip_disable=true`
-- fields the PostHog Go library adds: `$lib` and `$lib_version`
-- `session_ended` also carries `surface` as `web` or `tui` and `duration_bucket`
-  as `under_1m`, `1_to_5m`, `5_to_30m`, or `over_30m`
-
-Usage telemetry never carries document content, filenames, paths, hashes,
-tags, queries, the vault ID, account names, the hostname, or configuration
-values. PostHog does see the request's source IP address. Docbank asks it not
-to geolocate. Separately configured document providers are unrelated to usage
-telemetry and unchanged by it.
-
-The install ID lives in `telemetry-install.json` at the vault root (see the
-[layout](#vault-location) above). The daemon creates it the first time it runs
-unless telemetry is turned off. Each vault has its own ID.
-
-Only release builds send telemetry. A build needs the PostHog project key,
-which `make build`, `make install`, and release builds set at link time, and a
-plain release version such as `v1.2.3`. Plain `go build` and `go test` binaries
-have no key and send nothing. Telemetry also stays off in CI. To opt out, set
-`DOCBANK_TELEMETRY_ENABLED=0`, `TELEMETRY_ENABLED=0`, or `DO_NOT_TRACK=1` in the
-environment that starts the daemon, then run `docbank daemon restart`. A CLI
-command that starts the daemon automatically passes its own environment, so
-set the variable in your shell profile. Go applications that embed a vault
-in-process send nothing.
 
 ## Photo map tiles
 

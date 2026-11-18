@@ -1,7 +1,6 @@
 <script lang="ts">
   import { webURL, webPath } from "./web-path.js";
   import VaultDrawer, { type SearchByMeaningSetup } from "./VaultDrawer.svelte";
-  import TelemetryNotice from "./TelemetryNotice.svelte";
   import ToolPage from "./ToolPage.svelte";
   import ExportMenu from "./ExportMenu.svelte";
   import { reportAction, reportFailure, reportSearch } from "./action-events.js";
@@ -245,7 +244,6 @@
           | "savedQueries"
           | "trash"
           | "tagCatalog"
-          | "telemetry"
           | "searchByMeaning"
           | "photoImport";
       }
@@ -273,7 +271,6 @@
     savedQueries: "saved_queries",
     trash: "trash",
     tagCatalog: "tag_catalog",
-    telemetry: "telemetry",
     termReports: "term_reports",
     processing: "processing",
     rendition: "rendition",
@@ -3956,11 +3953,6 @@
   </main>
 {:else}
   <div class="app-shell">
-    <TelemetryNotice
-      {vaultID}
-      reporting={telemetryReporting}
-      onmanage={() => openPanel({ kind: "telemetry" })}
-    />
     <Toasts />
     <nav class="app-nav" class:open={navOpen} aria-label="Docbank navigation">
       <div class="brand">
@@ -4125,7 +4117,7 @@
       {/if}
       <div class="nav-group vault-nav">
         <AppTooltip
-          text="Disk use, backups, protected folders, usage reporting, and search by meaning"
+          text="Disk use, backups, protected folders, and search by meaning"
           side="right"
           ><button type="button" class="nav-item" onclick={() => openPanel({ kind: "storage" })}>
             <ArchiveIcon size="16" aria-hidden="true" />System
@@ -5444,7 +5436,7 @@
           onauthfailure={handleFailure}
         />
       {/if}
-      {#if ["jobs", "auditEvidence", "backups", "storage", "telemetry", "searchByMeaning"].includes(panel.kind)}
+      {#if ["jobs", "auditEvidence", "backups", "storage", "searchByMeaning"].includes(panel.kind)}
         <VaultDrawer
           session={webSession}
           initialTab={panel.kind}

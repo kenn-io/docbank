@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/telemetry"
 )
 
 func TestListJobsReturnsStableObservableState(t *testing.T) {
@@ -41,11 +42,16 @@ func TestListJobsReturnsStableObservableState(t *testing.T) {
 		require.NoError(t, supervisor.Start("maintenance.failed", func(context.Context) error {
 			return errors.New("disk unavailable")
 		}))
+		require.NoError(t, supervisor.Start(telemetry.HeartbeatJobName, func(ctx context.Context) error {
+			<-ctx.Done()
+			return ctx.Err()
+		}))
 		synctest.Wait()
 		items := supervisor.Snapshot()
-		require.Len(t, items, 2)
+		require.Len(t, items, 3)
 		require.Equal(t, jobs.StatusFailed, items[0].Status)
 		require.Equal(t, jobs.StatusRunning, items[1].Status)
+		require.Equal(t, jobs.StatusRunning, items[2].Status)
 
 		ts, _ := newTestServer(t, func(d *api.Deps) {
 			d.Jobs = supervisor

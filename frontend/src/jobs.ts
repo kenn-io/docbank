@@ -37,7 +37,6 @@ export function laneTitle(lane: string): string {
     "maintenance:auxiliary-checksums": "Checking file hashes",
     "maintenance:retention": "Cleaning up old jobs",
     "daemon.idle-timeout": "Idle shutdown timer",
-    "telemetry:heartbeat": "Usage reporting",
   };
   if (lane.startsWith("import:mailbox:")) return `Importing mailbox ${lane.split(":").at(-1)}`;
   if (lane.startsWith("watch:")) return `Watching ${lane.slice(6)}`;
