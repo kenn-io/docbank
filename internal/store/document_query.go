@@ -392,7 +392,8 @@ func (s *Store) queryDocumentCatalogPage(
 	ctx context.Context, tx *sql.Tx, query DocumentCatalogQuery,
 	boundary *DocumentCatalogPosition, traversal DocumentCatalogTraversal, args []any,
 ) (DocumentCatalogPage, error) {
-	where, boundaryArgs := documentCatalogBoundary(query, boundary, traversal, len(args))
+	postgres := s.postgresSchema != ""
+	where, boundaryArgs := documentCatalogBoundary(query, boundary, traversal, len(args), postgres)
 	order := documentCatalogOrder(query, traversal)
 	keys := "path,node_id"
 	if query.Sort != DocumentCatalogSortPath {
@@ -408,7 +409,6 @@ func (s *Store) queryDocumentCatalogPage(
 	args = append(args, query.PageSize)
 	// Page and continuation checks share the same recursive traversal. Compare
 	// against the returned edges so deleted or moved cursor rows remain valid.
-	postgres := s.postgresSchema != ""
 	limit := fmt.Sprintf("$%d", len(args))
 	rows, err := tx.QueryContext(ctx, documentCatalogCTE(postgres)+`, page AS (
   SELECT * FROM documents `+where+` ORDER BY `+order+` LIMIT `+limit+`
@@ -469,7 +469,7 @@ func (s *Store) queryDocumentCatalogPage(
 
 func documentCatalogBoundary(
 	query DocumentCatalogQuery, boundary *DocumentCatalogPosition,
-	traversal DocumentCatalogTraversal, offset int,
+	traversal DocumentCatalogTraversal, offset int, postgres bool,
 ) (string, []any) {
 	if boundary == nil {
 		return "", nil
@@ -488,8 +488,11 @@ func documentCatalogBoundary(
 	}
 	expression := documentCatalogPrimaryExpression(query.Sort)
 	primary := any(boundary.Value)
-	if query.Sort == DocumentCatalogSortSize {
+	switch query.Sort {
+	case DocumentCatalogSortSize:
 		primary = boundary.Size
+	case DocumentCatalogSortMediaType:
+		primary = storedString(postgres, boundary.Value)
 	}
 	return fmt.Sprintf(`WHERE (%s %s $%d OR (%s=$%d AND (path %s $%d OR (path=$%d AND node_id %s $%d))))`,
 			expression, op, offset+1, expression, offset+1, op, offset+2, offset+2, op, offset+3),

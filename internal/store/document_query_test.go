@@ -467,18 +467,18 @@ func checkDocumentCatalogReturnsOnlySummaryProcessingAndActiveRenditionIdentity(
 		BuildID:            build.ID,
 	}, item.ActiveRenditions[0])
 	resolved, err := s.ResolveDocumentSummaries(t.Context(), []DocumentCatalogIdentity{
-		{NodeID: item.NodeID, ContentVersionID: versions[0], Path: item.Path},
 		{NodeID: page.Items[1].NodeID, ContentVersionID: versions[1], Path: page.Items[1].Path},
+		{NodeID: item.NodeID, ContentVersionID: versions[0], Path: item.Path},
 	})
 	require.NoError(t, err)
-	require.Len(t, resolved, 2)
-	assert.Equal(t, "queued", resolved[0].LatestProcessingState)
+	require.Equal(t, []string{"/synthetic-source-b.pdf", "/synthetic-source-a.pdf"}, documentCatalogPaths(resolved))
+	assert.Equal(t, "queued", resolved[1].LatestProcessingState)
 	assert.Equal(t, []DocumentRenditionIdentity{{
 		ProfileFingerprint: profile.Fingerprint,
 		AttachmentID:       attachment.ID,
 		BuildID:            build.ID,
-	}}, resolved[0].ActiveRenditions)
-	assert.Empty(t, resolved[1].ActiveRenditions)
+	}}, resolved[1].ActiveRenditions)
+	assert.Empty(t, resolved[0].ActiveRenditions)
 }
 
 func TestDocumentCatalogLatestProcessingStateUsesJobTransitionRecency(t *testing.T) {
@@ -574,7 +574,7 @@ func seedTiedDocumentCatalog(t *testing.T, s *Store) map[string]Node {
 		dir, err := s.Mkdir(t.Context(), s.RootID(), directoryName)
 		require.NoError(t, err)
 		node, err := s.CreateFile(t.Context(), dir.ID, "shared.txt",
-			fakeHash(fmt.Sprintf("matrix-%d", index)), 7, "text/plain")
+			fakeHash(fmt.Sprintf("matrix-%d", index)), 7, `text/plain; charset="a\\b"`)
 		require.NoError(t, err)
 		_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=$1 WHERE id=$2`,
 			"2026-08-28T10:00:00.000000000Z", node.ID)
