@@ -23,7 +23,11 @@ type contentionDriver struct {
 }
 
 func TestMailboxWorkerLogsJobFailureAndProcessesNextJob(t *testing.T) {
-	f := mailboxFixture(t)
+	checkMailboxWorkerLogsJobFailureAndProcessesNextJob(t, mailboxFixture(t))
+}
+
+func checkMailboxWorkerLogsJobFailureAndProcessesNextJob(t *testing.T, f *Service) {
+	t.Helper()
 	r := queuedArchive(t, f, []byte("not a mailbox"), "mbox")
 	r.ID = "second-job"
 	_, err := f.Store.BeginMailboxJob(t.Context(), "one", r)

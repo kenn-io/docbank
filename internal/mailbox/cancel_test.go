@@ -3,13 +3,15 @@ package mailbox
 import (
 	"bytes"
 	"context"
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/store"
 	"os"
 	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestMailboxWorkerCancellationFencesPendingAndClosesSpools(t *testing.T) {
@@ -72,4 +74,61 @@ func TestMailboxWorkerCancellationFencesPendingAndClosesSpools(t *testing.T) {
 		require.Equal(t, int64(1), j.Canceled)
 		require.NoError(t, f.Store.ValidateMetadata(ctx))
 	})
+}
+
+func TestMailboxCancellationFencesPublicationUntilResume(t *testing.T) {
+	checkMailboxCancellationFencesPublicationUntilResume(t, mailboxFixture(t))
+}
+
+func checkMailboxCancellationFencesPublicationUntilResume(t *testing.T, f *Service) {
+	t.Helper()
+	ctx := t.Context()
+	raw := []byte(separator + "Subject: Cancel before publication\n\nSynthetic body.\n")
+	request := queuedArchive(t, f, raw, "mbox")
+	claim, err := f.Store.ClaimMailboxJob(ctx)
+	require.NoError(t, err)
+
+	// Cancel after the scanner records a pending occurrence and before the
+	// stale worker attempts to commit its decoded message.
+	f.Mutate = func(ctx context.Context, fn func() error) error {
+		current, err := f.Store.MailboxJob(ctx, claim.Owner, claim.ID)
+		if err != nil {
+			return err
+		}
+		if current.Pending == 1 {
+			if err := f.Store.CancelMailboxJob(ctx, claim.Owner, claim.ID); err != nil {
+				return err
+			}
+		}
+		return fn()
+	}
+	require.ErrorIs(t, f.RunJob(ctx, claim), store.ErrMailboxConflict)
+	canceled, err := f.Store.MailboxJob(ctx, claim.Owner, claim.ID)
+	require.NoError(t, err)
+	require.Equal(t, "canceled", canceled.State)
+	require.Zero(t, canceled.Checkpoint)
+	occurrences, err := f.Store.MailboxOccurrences(ctx, claim.Owner, claim.ID, 0, 10)
+	require.NoError(t, err)
+	require.Len(t, occurrences, 1)
+	require.Equal(t, "canceled", occurrences[0].Outcome)
+	require.Nil(t, occurrences[0].Target)
+	_, err = f.Store.MailboxTransfer(ctx, claim.Owner, "mailbox:"+claim.CollectionID, "0:1")
+	require.ErrorIs(t, err, store.ErrNotFound)
+
+	f.Mutate = nil
+	_, err = f.Store.ResumeMailboxJob(ctx, claim.Owner, request, false)
+	require.NoError(t, err)
+	resumed, err := f.Store.ClaimMailboxJob(ctx)
+	require.NoError(t, err)
+	require.NotEqual(t, claim.Claim, resumed.Claim)
+	require.NoError(t, f.RunJob(ctx, resumed))
+	complete, err := f.Store.MailboxJob(ctx, claim.Owner, claim.ID)
+	require.NoError(t, err)
+	require.Equal(t, "complete", complete.State)
+	require.Equal(t, int64(1), complete.Imported)
+	occurrences, err = f.Store.MailboxOccurrences(ctx, claim.Owner, claim.ID, 0, 10)
+	require.NoError(t, err)
+	require.Len(t, occurrences, 1)
+	require.Equal(t, "imported", occurrences[0].Outcome)
+	require.NotNil(t, occurrences[0].Target)
 }

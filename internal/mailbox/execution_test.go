@@ -32,7 +32,11 @@ func queuedArchive(t *testing.T, f *Service, raw []byte, format string) store.Ma
 }
 
 func TestMailboxEmptyZIPEntriesDoNotHideMessages(t *testing.T) {
-	f := mailboxFixture(t)
+	checkMailboxEmptyZIPEntriesDoNotHideMessages(t, mailboxFixture(t))
+}
+
+func checkMailboxEmptyZIPEntriesDoNotHideMessages(t *testing.T, f *Service) {
+	t.Helper()
 	var raw bytes.Buffer
 	z := zip.NewWriter(&raw)
 	for i, content := range []string{"", separator + "Subject: Synthetic\n\nBody\n", ""} {
@@ -56,7 +60,11 @@ func TestMailboxEmptyZIPEntriesDoNotHideMessages(t *testing.T) {
 }
 
 func TestMailboxEmptyZIPArchiveCompletes(t *testing.T) {
-	f := mailboxFixture(t)
+	checkMailboxEmptyZIPArchiveCompletes(t, mailboxFixture(t))
+}
+
+func checkMailboxEmptyZIPArchiveCompletes(t *testing.T, f *Service) {
+	t.Helper()
 	r := queuedArchive(t, f, syntheticZIP(t, "empty.mbox", 0600, ""), "zip")
 	preview, err := f.Preview(t.Context(), "one", r.ContainerID, "mboxrd")
 	require.NoError(t, err)
@@ -73,7 +81,11 @@ func TestMailboxEmptyZIPArchiveCompletes(t *testing.T) {
 }
 
 func TestMailboxPreviewSamplesBeforeWorkerVerifiesWholeZIP(t *testing.T) {
-	f := mailboxFixture(t)
+	checkMailboxPreviewSamplesBeforeWorkerVerifiesWholeZIP(t, mailboxFixture(t))
+}
+
+func checkMailboxPreviewSamplesBeforeWorkerVerifiesWholeZIP(t *testing.T, f *Service) {
+	t.Helper()
 	var raw bytes.Buffer
 	z := zip.NewWriter(&raw)
 	w, err := z.Create("messages.mbox")
@@ -113,7 +125,11 @@ func TestMailboxPreviewBoundsBytesBeforeNextSeparator(t *testing.T) {
 }
 
 func TestMailboxMalformedHeadersRetainDecoderEvidenceAndLabels(t *testing.T) {
-	f := mailboxFixture(t)
+	checkMailboxMalformedHeadersRetainDecoderEvidenceAndLabels(t, mailboxFixture(t))
+}
+
+func checkMailboxMalformedHeadersRetainDecoderEvidenceAndLabels(t *testing.T, f *Service) {
+	t.Helper()
 	queuedArchive(t, f, []byte(separator+"Subject: Synthetic\nMalformed header\nX-Gmail-Labels: Inbox,\n Project\nContent-Type: text/plain\n\nBody\n"), "mbox")
 	j, err := f.Store.ClaimMailboxJob(t.Context())
 	require.NoError(t, err)
@@ -143,9 +159,17 @@ func TestMailboxMalformedHeadersRetainDecoderEvidenceAndLabels(t *testing.T) {
 }
 
 func TestMailboxContinuationAtEntryEndDoesNotRespoolCommittedMessages(t *testing.T) {
+	checkMailboxContinuationAtEntryEndDoesNotRespoolCommittedMessages(t, func(t *testing.T) *Service {
+		t.Helper()
+		return mailboxFixture(t)
+	})
+}
+
+func checkMailboxContinuationAtEntryEndDoesNotRespoolCommittedMessages(t *testing.T, open func(*testing.T) *Service) {
+	t.Helper()
 	for _, format := range []string{"mbox", "zip"} {
 		t.Run(format, func(t *testing.T) {
-			f := mailboxFixture(t)
+			f := open(t)
 			raw := []byte(separator + "Subject: Committed\n\nBody\n")
 			if format == "zip" {
 				raw = syntheticZIP(t, "messages.mbox", 0600, string(raw))

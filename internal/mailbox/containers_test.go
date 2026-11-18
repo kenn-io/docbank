@@ -23,6 +23,11 @@ func mailboxFixture(t *testing.T, drivers ...docsqlite.Driver) *Service {
 	require.NoError(t, err)
 	s, err := store.Open(t.Context(), filepath.Join(dir, "docbank.db"), drivers...)
 	require.NoError(t, err)
+	return mailboxFixtureWithStore(t, s, dir)
+}
+
+func mailboxFixtureWithStore(t *testing.T, s *store.Store, dir string) *Service {
+	t.Helper()
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	b, err := blob.New(store.NewPackCatalog(s), filepath.Join(dir, "blobs"))
 	require.NoError(t, err)
@@ -30,7 +35,11 @@ func mailboxFixture(t *testing.T, drivers ...docsqlite.Driver) *Service {
 	return &Service{Store: s, Blobs: b, Spool: dir}
 }
 func TestContainerVerifiesPayloadBeforeSealAndRandomAccess(t *testing.T) {
-	f := mailboxFixture(t)
+	checkContainerVerifiesPayloadBeforeSealAndRandomAccess(t, mailboxFixture(t))
+}
+
+func checkContainerVerifiesPayloadBeforeSealAndRandomAccess(t *testing.T, f *Service) {
+	t.Helper()
 	ctx := t.Context()
 	raw := []byte("synthetic mailbox source")
 	req := store.MailboxContainerRequest{ID: "container", Owner: "one", SHA256: hashBytes(raw), Size: int64(len(raw)), Format: "mbox"}
@@ -149,7 +158,11 @@ func TestAbortedMailboxUploadPreservesSharedBlob(t *testing.T) {
 }
 
 func TestFailedMailboxTransferIsCollected(t *testing.T) {
-	f := mailboxFixture(t)
+	checkFailedMailboxTransferIsCollected(t, mailboxFixture(t))
+}
+
+func checkFailedMailboxTransferIsCollected(t *testing.T, f *Service) {
+	t.Helper()
 	ctx := t.Context()
 	raw := []byte("Subject: Synthetic failure\r\n\r\nSynthetic body.\r\n")
 	_, err := f.Transfer(ctx, "one", store.MailboxTransferRequest{
