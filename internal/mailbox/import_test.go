@@ -6,15 +6,24 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/store"
 	"io"
 	"strings"
 	"testing"
+	"uuid"
+
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/docbank/document/bundle"
+	"go.kenn.io/docbank/internal/exporter"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestMailboxImportCompleteDistinctOccurrencesAndContinuation(t *testing.T) {
-	f := mailboxFixture(t)
+	checkMailboxImportCompleteDistinctOccurrencesAndContinuation(t, mailboxFixture(t))
+}
+
+func checkMailboxImportCompleteDistinctOccurrencesAndContinuation(t *testing.T, f *Service) {
+	t.Helper()
 	ctx := t.Context()
 	message := separator + "Subject: Synthetic archive\nMessage-ID: <repeated@example.test>\nX-Gmail-Labels: Inbox,Project\nContent-Type: text/plain\n\nSynthetic body.\n"
 	raw := []byte(message + message + message)
@@ -69,6 +78,68 @@ func TestMailboxImportCompleteDistinctOccurrencesAndContinuation(t *testing.T) {
 	require.Len(t, tags, 1)
 	require.Equal(t, tag.ID, tags[0].ID)
 	require.NoError(t, f.Store.ValidateMetadata(ctx))
+	checkMailboxCollectionArchive(t, f, complete, occurrences)
+}
+
+type mailboxArchiveGate struct{}
+
+func (mailboxArchiveGate) MutateContext(ctx context.Context, fn func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return fn()
+}
+
+func checkMailboxCollectionArchive(t *testing.T, f *Service, job store.MailboxJob, occurrences []store.MailboxOccurrence) {
+	t.Helper()
+	ctx := t.Context()
+	source, err := f.Store.CreateExportSource(ctx, job.Owner, bundle.SourceRequest{
+		OperationID:  uuid.New().String(),
+		Kind:         "mailbox_collection",
+		CollectionID: job.CollectionID,
+	}, nil)
+	require.NoError(t, err)
+	require.Equal(t, 3, source.Total)
+	plan, err := f.Store.CreateExportPlan(ctx, job.Owner, bundle.PlanRequest{
+		OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash,
+		Roles: []bundle.RolePolicy{{Role: "original"}},
+	})
+	require.NoError(t, err)
+	exportJob, err := f.Store.QueueExportJob(ctx, job.Owner, bundle.JobRequest{
+		OperationID: uuid.New().String(), PlanID: plan.ID, Fingerprint: plan.Fingerprint,
+	})
+	require.NoError(t, err)
+	w, err := exporter.New(f.Store, f.Blobs, f.Spool, mailboxArchiveGate{})
+	require.NoError(t, err)
+	processed, err := w.RunOne(ctx)
+	require.NoError(t, err)
+	require.True(t, processed)
+
+	file, receipt, release, err := w.Lease(ctx, job.Owner, exportJob.ID)
+	require.NoError(t, err)
+	defer release()
+	archive, err := zip.NewReader(file, receipt.Size)
+	require.NoError(t, err)
+	want := make(map[string]string, len(occurrences))
+	for _, o := range occurrences {
+		require.NotNil(t, o.Target)
+		path := fmt.Sprintf("documents/%d/%s/original", o.Target.NodeID, o.Target.VersionID)
+		want[path] = o.Target.SHA256
+	}
+	got := make(map[string]string)
+	for _, entry := range archive.File {
+		if !strings.HasSuffix(entry.Name, "/original") {
+			continue
+		}
+		body, err := entry.Open()
+		require.NoError(t, err)
+		data, readErr := io.ReadAll(body)
+		require.NoError(t, errors.Join(readErr, body.Close()))
+		require.Contains(t, string(data), "Synthetic body.")
+		require.NotContains(t, got, entry.Name)
+		got[entry.Name] = hashBytes(data)
+	}
+	require.Equal(t, want, got, "each occurrence retains its own exported original")
 }
 
 func TestMailboxPreviewBoundsEntryResults(t *testing.T) {
@@ -98,7 +169,11 @@ func TestMailboxPreviewBoundsEntryResults(t *testing.T) {
 }
 
 func TestMailboxMalformedEntryReportsPartialCommittedWork(t *testing.T) {
-	f := mailboxFixture(t)
+	checkMailboxMalformedEntryReportsPartialCommittedWork(t, mailboxFixture(t))
+}
+
+func checkMailboxMalformedEntryReportsPartialCommittedWork(t *testing.T, f *Service) {
+	t.Helper()
 	ctx := t.Context()
 	var raw bytes.Buffer
 	z := zip.NewWriter(&raw)

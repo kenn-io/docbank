@@ -1333,6 +1333,27 @@ indexes. Batched media-version requests hex-encode opaque keys only in the
 PostgreSQL query parameter, and SQL compares decoded bytes against indexed
 columns. No stored or exported identity acquires an escaping format.
 
+#### Mailbox import and collection export
+
+The internal mailbox service uses the same worker and archive parser with either
+metadata backend. The PostgreSQL lane stores actual upload chunks, verifies them
+before sealing, and imports MBOX and ZIP messages into the native Store. The
+worker can continue from retained message and entry offsets. Identical messages
+keep separate occurrence receipts, even when their bytes match.
+
+Cancelling a pending occurrence clears its claim before publication. The shared
+test resumes the job under a fresh claim before the old worker attempts to
+publish. The old worker leaves the running job and its pending occurrence
+intact, and the new worker publishes the occurrence once. The shared tests also
+cover corrupt ZIP contents, a partial import after a malformed entry, and the
+worker moving to the next job after recording a failure.
+
+Completed mailbox collections feed the existing stored-original ZIP worker.
+The shared lifecycle test creates the collection by uploading and importing a
+real synthetic MBOX, then compares each downloaded original to its retained
+receipt. SQLite continues to cover clock-driven watcher behavior and database
+file contention in its existing tests.
+
 Mailbox native operations use these runtime grants in addition to the shared
 read grants:
 
@@ -2578,11 +2599,12 @@ at that concurrency; the schema lifecycle suite has a separate three-minute limi
 Without that variable, ordinary `make test` skips PostgreSQL tests.
 A supplied but invalid connection fails rather than skipping.
 
-Name PostgreSQL tests in `internal/store`, `internal/ingest` and
-`internal/exporter` with the `Postgres` suffix. The target
-selects them with `-run 'Postgres$'`, so adding a test needs no Makefile edit.
-It runs the entire `internal/store/pgschema` package separately. Filesystem
-imports and stored-archive workers use separate three-minute package limits.
+Name PostgreSQL tests in `internal/store`, `internal/ingest`,
+`internal/exporter` and `internal/mailbox` with the `Postgres` suffix.
+The target selects them with `-run 'Postgres$'`, so adding a test to
+these packages needs no Makefile edit. It runs the entire
+`internal/store/pgschema` package separately. Filesystem imports, stored ZIP
+exports and mailbox workers use separate three-minute package limits.
 
 CI supplies the server through its service-container configuration, uses the
 existing Linux cache group, and runs only the PostgreSQL tests in this lane.

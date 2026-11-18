@@ -98,6 +98,7 @@ test-pg:
 	$(call gotestsum,$(PG_SUITE)-backup,./internal/backupapp) -race -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
 	$(call gotestsum,$(PG_SUITE)-ingest,./internal/ingest) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
 	$(call gotestsum,$(PG_SUITE)-exporter,./internal/exporter) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
+	$(call gotestsum,$(PG_SUITE)-mailbox,./internal/mailbox) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
 	# Processing reached 176 seconds in CI under the old three-minute guard.
 	# Keep room for shared worker scenarios and slower runners.
 	$(call gotestsum,$(PG_SUITE)-processing,./internal/processing) -race -parallel 4 -count=1 -timeout 5m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
