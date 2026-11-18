@@ -488,10 +488,9 @@ func documentCatalogBoundary(
 	}
 	expression := documentCatalogPrimaryExpression(query.Sort)
 	primary := any(boundary.Value)
-	switch query.Sort {
-	case DocumentCatalogSortSize:
+	if query.Sort == DocumentCatalogSortSize {
 		primary = boundary.Size
-	case DocumentCatalogSortMediaType:
+	} else if query.Sort == DocumentCatalogSortMediaType {
 		primary = storedString(postgres, boundary.Value)
 	}
 	return fmt.Sprintf(`WHERE (%s %s $%d OR (%s=$%d AND (path %s $%d OR (path=$%d AND node_id %s $%d))))`,
