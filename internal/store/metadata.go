@@ -993,10 +993,10 @@ func stringPtr(v sql.NullString) *string {
 // bytes: a restore must call VerifyRenditionBlobBytes after every loose or
 // packed blob is available and before publishing the target.
 func (s *Store) ImportMetadata(ctx context.Context, r io.Reader) error {
-	return s.importMetadata(ctx, r)
+	return s.importMetadata(ctx, r, nil)
 }
 
-func (s *Store) importMetadata(ctx context.Context, r io.Reader) error {
+func (s *Store) importMetadata(ctx context.Context, r io.Reader, beforeCommit func(*sql.Tx, string) error) error {
 	rootID := int64(0)
 	vaultID := ""
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
@@ -1072,6 +1072,9 @@ func (s *Store) importMetadata(ctx context.Context, r io.Reader) error {
 			return fmt.Errorf("finding imported root: %w", err)
 		}
 		vaultID = header.VaultID
+		if beforeCommit != nil {
+			return beforeCommit(tx, vaultID)
+		}
 		return nil
 	})
 	if err != nil {

@@ -613,6 +613,18 @@ func TestJSONLRestorePreservesAuthorityWhenAggregateTimelineOutputExceedsBound(t
 }
 
 func TestJSONLSnapshotRestoresRenditionBytesBeforeVerifyingHeads(t *testing.T) {
+	checkBackupRestoresRenditionBytesAndSearch(t, func(t *testing.T, repo *backup.Repo, target string) *store.Store {
+		t.Helper()
+		_, err := backupapp.Restore(t.Context(), repo, "test-version", backup.RestoreOptions{TargetDir: target})
+		require.NoError(t, err)
+		restored, err := store.Open(t.Context(), filepath.Join(target, "docbank.db"))
+		require.NoError(t, err)
+		return restored
+	})
+}
+
+func checkBackupRestoresRenditionBytesAndSearch(t *testing.T, restore func(*testing.T, *backup.Repo, string) *store.Store) {
+	t.Helper()
 	fixture := newArchiveFixture(t)
 	source, err := fixture.metadata.NodeByPath(t.Context(), "/alpha.txt")
 	require.NoError(t, err)
@@ -694,6 +706,15 @@ func TestJSONLSnapshotRestoresRenditionBytesBeforeVerifyingHeads(t *testing.T) {
 		MarkdownChecksum: artifactHashes[1], Completeness: document.EvidenceComplete,
 		Warnings: []string{}, CompletedAt: "2026-08-25T12:00:00.000000000Z",
 		DeclaredArtifactCount: 2,
+		Units: []store.RenditionUnitRecord{{
+			ID: "unit", EvidenceUnitID: "retained-unit", Order: 0, Checksum: backupHash("restore unit"),
+			Locator: document.EvidenceLocatorV1{Kind: document.EvidenceLocatorPage,
+				IndexOrigin: document.EvidenceIndexOriginOne, Start: 1, End: 1},
+		}},
+		LexicalSegments: []store.RenditionLexicalSegmentRecord{{
+			ID: "segment", UnitID: "unit", Order: 0, CharStart: 0, CharEnd: len("retained searchable phrase"),
+			Checksum: backupHash("restore segment"), Text: "retained searchable phrase",
+		}},
 		Artifacts: []store.RenditionArtifactRecord{
 			{ID: "evidence", Role: "normalized_evidence", BlobHash: artifactHashes[0],
 				Size: int64(len(artifactContents[0].content)), Checksum: artifactHashes[0], State: store.RenditionArtifactVerified},
@@ -722,11 +743,7 @@ func TestJSONLSnapshotRestoresRenditionBytesBeforeVerifyingHeads(t *testing.T) {
 	)
 	require.NoError(t, err)
 	target := filepath.Join(t.TempDir(), "restored")
-	_, err = backupapp.Restore(t.Context(), repo, "test-version", backup.RestoreOptions{TargetDir: target})
-	require.NoError(t, err)
-
-	restoredMetadata, err := store.Open(t.Context(), filepath.Join(target, "docbank.db"))
-	require.NoError(t, err)
+	restoredMetadata := restore(t, repo, target)
 	t.Cleanup(func() { require.NoError(t, restoredMetadata.Close()) })
 	restoredBlobs, err := blob.New(store.NewPackCatalog(restoredMetadata), filepath.Join(target, "blobs"))
 	require.NoError(t, err)
@@ -744,6 +761,10 @@ func TestJSONLSnapshotRestoresRenditionBytesBeforeVerifyingHeads(t *testing.T) {
 		require.NoError(t, reader.Close())
 		assert.Equal(t, artifactContents[index].content, string(contents))
 	}
+	hits, _, err := restoredMetadata.SearchPage(t.Context(), "searchable phrase", 10)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	require.Equal(t, source.CurrentVersionID, hits[0].Node.CurrentVersionID)
 }
 
 func TestOverwriteRestorePublishesMatchingPrimaryOwnership(t *testing.T) {

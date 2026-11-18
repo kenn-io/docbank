@@ -129,7 +129,7 @@ func TestRestoredRenditionVerificationPreservesPreparedHandoff(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, handoff.Prepare(t.Context()))
 	require.NoError(t, verifyRestoredRenditionHeads(
-		t.Context(), target, databasePath, store.DefaultSQLiteDriver(),
+		t.Context(), target, databasePath, store.DefaultSQLiteDriver(), true,
 	))
 	metadata, err = store.Open(t.Context(), databasePath)
 	require.NoError(t, err)

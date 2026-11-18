@@ -170,6 +170,18 @@ func authorizedPhysicalContentTx(ctx context.Context, tx *sql.Tx, hash string) (
 	return physical, err
 }
 
+const physicalAuthorityExists = `EXISTS(
+	SELECT 1
+	FROM blob_locations l
+	LEFT JOIN blob_pack_entries e
+	  ON e.blob_hash=l.blob_hash AND e.store_id=l.store_id
+	WHERE l.blob_hash=b.hash
+	  AND (
+	    (l.kind='loose' AND l.encoding IN ('raw','zstd'))
+	    OR (l.kind='packed' AND e.blob_hash IS NOT NULL)
+	  )
+)`
+
 // requirePhysicalAuthorityTx returns the logical size only when the catalog
 // authorizes either loose or packed bytes for hash. Logical membership alone
 // is insufficient for reads or for creating another current reference.
@@ -178,19 +190,7 @@ func requirePhysicalAuthorityTx(ctx context.Context, tx *sql.Tx, hash string) (i
 		size     int64
 		location bool
 	)
-	err := tx.QueryRowContext(ctx, `
-		SELECT b.size, EXISTS(
-			SELECT 1
-			FROM blob_locations l
-			LEFT JOIN blob_pack_entries e
-			  ON e.blob_hash=l.blob_hash AND e.store_id=l.store_id
-			WHERE l.blob_hash=b.hash
-			  AND (
-			    (l.kind='loose' AND l.encoding IN ('raw','zstd'))
-			    OR (l.kind='packed' AND e.blob_hash IS NOT NULL)
-			  )
-		)
-		FROM blobs b WHERE b.hash=$1`,
+	err := tx.QueryRowContext(ctx, `SELECT b.size, `+physicalAuthorityExists+` FROM blobs b WHERE b.hash=$1`,
 		hash,
 	).Scan(&size, &location)
 	if errors.Is(err, sql.ErrNoRows) {

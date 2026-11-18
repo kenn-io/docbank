@@ -338,3 +338,34 @@ selection belong to the caller. The authenticated daemon exposes operator-only f
 Backup and live packed storage share Kit's physical formats and verification
 primitives, but Docbank remains responsible for which catalog rows belong in a
 snapshot. Kit does not infer application liveness or reach into Docbank SQL.
+
+## Restoring into PostgreSQL
+
+An internal PostgreSQL restore takes a pristine target schema and a new vault
+directory. The schema owner runs the restore. The existing backup reader first
+verifies the snapshot, its metadata, and the packed and loose files in a private
+directory. The staged SQLite catalog supplies the verified physical records.
+The native import reads the original portable metadata stream.
+
+The owner imports the logical records and the verified primary storage catalog
+in one PostgreSQL transaction under writer admission. Before committing, the
+restore assigns a fresh ownership epoch to the primary store and writes that
+epoch, the vault ID, and the primary store ID into the directory's ownership
+marker. It installs the directory without replacing an existing path. The
+PostgreSQL commit makes that attempt's marker match the catalog. The backup
+repository and source vault stay recoverable throughout.
+
+An interruption before directory installation leaves the schema pristine and
+the target path available for retry. If a directory was installed and the
+commit outcome is uncertain, keep the directory and compare its full ownership
+marker with the committed schema. A match identifies the committed attempt.
+If the schema is still pristine, retry with a fresh directory. Every retry
+gets a new epoch, so files left by an aborted attempt remain fenced even
+after a retry commits from the same snapshot. The restore only removes its
+private scratch space.
+
+After commit, the runtime role opens the restored catalog against the matching
+blob marker and rebuilds document events, person attribution, lexical search,
+and vector indexes from retained evidence. A failed rebuild returns the committed
+restore location with an error. Retry the rebuild with exclusive ownership of the
+same vault root. The rebuild uses local evidence and needs no provider credentials.
