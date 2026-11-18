@@ -39,6 +39,14 @@ func completedCheckout(t *testing.T, s Service, selection store.PhotoCheckoutSel
 	return c, entries
 }
 
+// Record the edit through the scanner, then age its observation to model a settled file.
+func settleCheckoutEdit(t *testing.T, s Service, checkoutID string) {
+	t.Helper()
+	_, err := s.scanCheckout(t.Context(), checkoutID)
+	require.NoError(t, err)
+	ageCheckoutObservations(t, s, checkoutID)
+}
+
 func ageCheckoutObservations(t *testing.T, s Service, checkoutID string) time.Time {
 	t.Helper()
 	c, err := s.Store.PhotoCheckout(t.Context(), checkoutID)
@@ -281,94 +289,112 @@ func TestCheckoutPartialRebind(t *testing.T) {
 }
 
 func TestCheckoutCommitResumeAfterPublication(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		s := checkoutService(t)
-		s.settleTime = time.Millisecond
-		asset := checkoutPhoto(t, s, "photo.jpg", "original")
-		c, entries := completedCheckout(t, s, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}})
-		require.NoError(t, os.WriteFile(filepath.Join(c.Destination, filepath.FromSlash(entries[0].Path)), []byte("edited"), 0o600))
-		c, _, err := s.PrepareOperation(t.Context(), c.ID, store.StorageOperationKindPhotoCheckoutCommit, "")
-		require.NoError(t, err)
-		ctx, cancel := context.WithCancel(t.Context())
-		// Cancel after the atomic version/receipt write, before the worker finalizes.
-		originalMutate := s.Mutate
-		s.Mutate = func(ctx context.Context, fn func() error) error {
-			err := fn()
-			current, readErr := s.Store.PhotoCheckoutEntries(context.WithoutCancel(ctx), c.ID)
-			require.NoError(t, readErr)
-			if current[0].VersionID != entries[0].VersionID {
-				cancel()
-			}
-			return err
+	t.Parallel()
+	checkCheckoutCommitResumeAfterPublication(t, checkoutService)
+}
+
+func checkCheckoutCommitResumeAfterPublication(t *testing.T, open func(*testing.T) Service) {
+	t.Helper()
+	s := open(t)
+	s.settleTime = time.Hour
+	asset := checkoutPhoto(t, s, "photo.jpg", "original")
+	c, entries := completedCheckout(t, s, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}})
+	require.NoError(t, os.WriteFile(filepath.Join(c.Destination, filepath.FromSlash(entries[0].Path)), []byte("edited"), 0o600))
+	settleCheckoutEdit(t, s, c.ID)
+	c, _, err := s.PrepareOperation(t.Context(), c.ID, store.StorageOperationKindPhotoCheckoutCommit, "")
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	// Cancel after the atomic version/receipt write, before the worker finalizes.
+	originalMutate := s.Mutate
+	s.Mutate = func(ctx context.Context, fn func() error) error {
+		err := fn()
+		current, readErr := s.Store.PhotoCheckoutEntries(context.WithoutCancel(ctx), c.ID)
+		require.NoError(t, readErr)
+		if current[0].VersionID != entries[0].VersionID {
+			cancel()
 		}
-		require.ErrorIs(t, s.RunCommit(ctx, c), context.Canceled)
-		s.Mutate = originalMutate
-		require.NoError(t, os.WriteFile(filepath.Join(c.Destination, filepath.FromSlash(entries[0].Path)), []byte("second edit"), 0o600))
-		require.ErrorIs(t, s.RunCommit(t.Context(), c), ingest.ErrSourceChanged)
-		_, total, err := s.Store.ContentVersions(t.Context(), asset.Files[0].NodeID, 100, 0)
-		require.NoError(t, err)
-		require.Equal(t, 2, total)
-		op, err := s.Store.StorageOperation(t.Context(), c.LastOperationID)
-		require.NoError(t, err)
-		require.Equal(t, store.StorageOperationFailed, op.State)
-		require.Equal(t, int64(1), op.CopiedObjects)
-		after, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
-		require.NoError(t, err)
-		require.Equal(t, "edited", after[0].WorkingState)
-		working, err := os.ReadFile(filepath.Join(c.Destination, filepath.FromSlash(entries[0].Path)))
-		require.NoError(t, err)
-		require.Equal(t, "second edit", string(working))
-		hash, err := packstore.ParseHash("8e42daab3486377c2401dc3e6231edf263e51a59f5328cf025f8ace0eae3ffeb")
-		require.NoError(t, err)
-		_, err = s.Store.PhysicalContent(t.Context(), hash.String())
-		require.ErrorIs(t, err, store.ErrNotFound)
-		layout, err := packstore.NewLayout(filepath.Join(s.VaultRoot, "blobs"), packstore.LayoutOptions{Staging: packstore.StagingSameDirectory})
-		require.NoError(t, err)
-		_, err = os.Stat(layout.LoosePath(hash))
-		require.ErrorIs(t, err, os.ErrNotExist, "resuming must not publish the second edit without version authority")
-	})
+		return err
+	}
+	require.ErrorIs(t, s.RunCommit(ctx, c), context.Canceled)
+	s.Mutate = originalMutate
+	require.NoError(t, os.WriteFile(filepath.Join(c.Destination, filepath.FromSlash(entries[0].Path)), []byte("second edit"), 0o600))
+	settleCheckoutEdit(t, s, c.ID)
+	require.ErrorIs(t, s.RunCommit(t.Context(), c), ingest.ErrSourceChanged)
+	_, total, err := s.Store.ContentVersions(t.Context(), asset.Files[0].NodeID, 100, 0)
+	require.NoError(t, err)
+	require.Equal(t, 2, total)
+	op, err := s.Store.StorageOperation(t.Context(), c.LastOperationID)
+	require.NoError(t, err)
+	require.Equal(t, store.StorageOperationFailed, op.State)
+	require.Equal(t, int64(1), op.CopiedObjects)
+	after, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
+	require.NoError(t, err)
+	require.Equal(t, "edited", after[0].WorkingState)
+	working, err := os.ReadFile(filepath.Join(c.Destination, filepath.FromSlash(entries[0].Path)))
+	require.NoError(t, err)
+	require.Equal(t, "second edit", string(working))
+	hash, err := packstore.ParseHash("8e42daab3486377c2401dc3e6231edf263e51a59f5328cf025f8ace0eae3ffeb")
+	require.NoError(t, err)
+	_, err = s.Store.PhysicalContent(t.Context(), hash.String())
+	require.ErrorIs(t, err, store.ErrNotFound)
+	layout, err := packstore.NewLayout(filepath.Join(s.VaultRoot, "blobs"), packstore.LayoutOptions{Staging: packstore.StagingSameDirectory})
+	require.NoError(t, err)
+	_, err = os.Stat(layout.LoosePath(hash))
+	require.ErrorIs(t, err, os.ErrNotExist, "resuming must not publish the second edit without version authority")
 }
 
 func TestCheckoutSidecarCommitKeepsNodeAndPairing(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		s := checkoutService(t)
-		s.settleTime = time.Millisecond
-		asset := checkoutPhoto(t, s, "photo.jpg", "original")
-		hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("sidecar"))
-		require.NoError(t, err)
-		sidecar, err := s.Store.CreateFile(t.Context(), s.Store.RootID(), "photo.jpg.xmp", hash, size, "application/rdf+xml")
-		require.NoError(t, err)
-		target := asset.Files[0].ID
-		asset, err = s.Store.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, sidecar.ID, store.PhotoRoleSidecar, &target)
-		require.NoError(t, err)
-		c, entries := completedCheckout(t, s, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}})
-		var paired store.PhotoCheckoutEntry
-		for _, entry := range entries {
-			if entry.SidecarOfID != nil {
-				paired = entry
-			}
+	t.Parallel()
+	checkCheckoutSidecarCommitKeepsNodeAndPairing(t, checkoutService)
+}
+
+func checkCheckoutSidecarCommitKeepsNodeAndPairing(t *testing.T, open func(*testing.T) Service) {
+	t.Helper()
+	s := open(t)
+	s.settleTime = time.Hour
+	asset := checkoutPhoto(t, s, "photo.jpg", "original")
+	hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("sidecar"))
+	require.NoError(t, err)
+	sidecar, err := s.Store.CreateFile(t.Context(), s.Store.RootID(), "photo.jpg.xmp", hash, size, "application/rdf+xml")
+	require.NoError(t, err)
+	target := asset.Files[0].ID
+	asset, err = s.Store.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, sidecar.ID, store.PhotoRoleSidecar, &target)
+	require.NoError(t, err)
+	c, entries := completedCheckout(t, s, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}})
+	var paired store.PhotoCheckoutEntry
+	for _, entry := range entries {
+		if entry.SidecarOfID != nil {
+			paired = entry
 		}
-		require.NotEmpty(t, paired.FileID)
-		require.NoError(t, os.WriteFile(filepath.Join(c.Destination, filepath.FromSlash(paired.Path)), []byte("edited sidecar"), 0o600))
-		c, _, err = s.PrepareOperation(t.Context(), c.ID, store.StorageOperationKindPhotoCheckoutCommit, "")
-		require.NoError(t, err)
-		require.NoError(t, s.RunCommit(t.Context(), c))
-		updated, err := s.Store.PhotoAssetForNode(t.Context(), sidecar.ID)
-		require.NoError(t, err)
-		var matches []store.PhotoFile
-		for _, file := range updated.Files {
-			if file.ID == paired.FileID {
-				matches = append(matches, file)
-			}
+	}
+	require.NotEmpty(t, paired.FileID)
+	require.NoError(t, os.WriteFile(filepath.Join(c.Destination, filepath.FromSlash(paired.Path)), []byte("edited sidecar"), 0o600))
+	settleCheckoutEdit(t, s, c.ID)
+	c, _, err = s.PrepareOperation(t.Context(), c.ID, store.StorageOperationKindPhotoCheckoutCommit, "")
+	require.NoError(t, err)
+	require.NoError(t, s.RunCommit(t.Context(), c))
+	updated, err := s.Store.PhotoAssetForNode(t.Context(), sidecar.ID)
+	require.NoError(t, err)
+	var matches []store.PhotoFile
+	for _, file := range updated.Files {
+		if file.ID == paired.FileID {
+			matches = append(matches, file)
 		}
-		require.Len(t, matches, 1)
-		require.Equal(t, sidecar.ID, matches[0].NodeID)
-		require.Equal(t, &target, matches[0].SidecarOfID)
-		versions, total, err := s.Store.ContentVersions(t.Context(), sidecar.ID, 100, 0)
-		require.NoError(t, err)
-		require.Equal(t, 2, total)
-		require.NotEqual(t, paired.VersionID, versions[0].ID)
-	})
+	}
+	require.Len(t, matches, 1)
+	require.Equal(t, sidecar.ID, matches[0].NodeID)
+	require.Equal(t, &target, matches[0].SidecarOfID)
+	versions, total, err := s.Store.ContentVersions(t.Context(), sidecar.ID, 100, 0)
+	require.NoError(t, err)
+	require.Equal(t, 2, total)
+	require.NotEqual(t, paired.VersionID, versions[0].ID)
+	reader, err := s.Blobs.OpenContext(t.Context(), versions[0].BlobHash)
+	require.NoError(t, err)
+	content, err := io.ReadAll(reader)
+	require.NoError(t, reader.Close())
+	require.NoError(t, err)
+	require.Equal(t, "edited sidecar", string(content))
 }
 
 func TestCheckoutAliasSpellingStaysUntracked(t *testing.T) {
@@ -480,9 +506,14 @@ func TestLookupTrackedEntry(t *testing.T) {
 
 func TestCheckoutScanDetectsByteAndIdentityChanges(t *testing.T) {
 	t.Parallel()
+	checkCheckoutScanDetectsByteAndIdentityChanges(t, checkoutService)
+}
+
+func checkCheckoutScanDetectsByteAndIdentityChanges(t *testing.T, open func(*testing.T) Service) {
+	t.Helper()
 	for _, replaced := range []bool{false, true} {
 		t.Run(strconv.FormatBool(replaced), func(t *testing.T) {
-			s := checkoutService(t)
+			s := open(t)
 			s.settleTime = time.Hour
 			asset := checkoutPhoto(t, s, "photo.jpg", "original")
 			c, entries := completedCheckout(t, s, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}})

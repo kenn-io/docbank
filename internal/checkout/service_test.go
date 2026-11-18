@@ -31,6 +31,11 @@ func checkoutService(t *testing.T) Service {
 	vault := t.TempDir()
 	catalog, err := store.Open(t.Context(), filepath.Join(vault, "docbank.db"))
 	require.NoError(t, err)
+	return checkoutServiceWithStore(t, vault, catalog)
+}
+
+func checkoutServiceWithStore(t *testing.T, vault string, catalog *store.Store) Service {
+	t.Helper()
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(vault, "blobs"))
 	require.NoError(t, err)
@@ -273,7 +278,12 @@ func TestCheckoutDestinationSafety(t *testing.T) {
 
 func TestCheckoutRetiredCopiesProtectDestinationUntilCleared(t *testing.T) {
 	t.Parallel()
-	s := checkoutService(t)
+	checkCheckoutRetiredCopiesProtectDestinationUntilCleared(t, checkoutService)
+}
+
+func checkCheckoutRetiredCopiesProtectDestinationUntilCleared(t *testing.T, open func(*testing.T) Service) {
+	t.Helper()
+	s := open(t)
 	a := checkoutPhoto(t, s, "photo.jpg", "bytes")
 	selection := store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}
 	destination := t.TempDir()
@@ -313,7 +323,12 @@ func TestCheckoutRetiredCopiesProtectDestinationUntilCleared(t *testing.T) {
 
 func TestCheckoutRunRejectsReplacedQueuedDestination(t *testing.T) {
 	t.Parallel()
-	s := checkoutService(t)
+	checkCheckoutRunRejectsReplacedQueuedDestination(t, checkoutService)
+}
+
+func checkCheckoutRunRejectsReplacedQueuedDestination(t *testing.T, open func(*testing.T) Service) {
+	t.Helper()
+	s := open(t)
 	a := checkoutPhoto(t, s, "photo.jpg", "bytes")
 	parent := t.TempDir()
 	destination, replacement := filepath.Join(parent, "checkout"), filepath.Join(parent, "replacement")
