@@ -157,6 +157,7 @@ func TestEnabledReporterSendsOnlyAllowlistedFields(t *testing.T) {
 			events = append(events, msg.Event)
 			assert.Equal(t, inst.ID, msg.DistinctID)
 			props := msg.Properties
+			assert.Equal(t, true, props["telemetry_consent"])
 			assert.Equal(t, "docbank", props["application"])
 			assert.Equal(t, "daemon", props["source"])
 			assert.Equal(t, "v1.2.3", props["version"])
@@ -165,7 +166,7 @@ func TestEnabledReporterSendsOnlyAllowlistedFields(t *testing.T) {
 			assert.Equal(t, runtime.GOARCH, props["goarch"])
 			assert.Empty(t, props["distribution"], "a build without the distribution ldflag reports an empty channel")
 			assert.ElementsMatch(t, []string{
-				"application", "source", "version", "commit", "goos", "goarch", "install_age_hours", "distribution",
+				"application", "source", "version", "commit", "goos", "goarch", "install_age_hours", "distribution", "telemetry_consent",
 				"$lib", "$lib_version", "$process_person_profile", "$geoip_disable",
 			}, slices.Collect(maps.Keys(props)))
 		}
@@ -183,7 +184,7 @@ func TestNewFallsBackWhenInstallUnusable(t *testing.T) {
 	assert.False(t, reporter.EventAllowed(EventAppOpened))
 }
 
-func TestReporterUsesDaemonLogger(t *testing.T) {
+func TestReporterKeepsSDKLogsOutOfDaemonLog(t *testing.T) {
 	enableTelemetryEnv(t)
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logs, nil)).With("daemon", "synthetic")
@@ -195,7 +196,58 @@ func TestReporterUsesDaemonLogger(t *testing.T) {
 	require.True(t, reporter.Enabled())
 	require.NoError(t, reporter.Capture(EventDaemonActive, nil))
 	require.NoError(t, reporter.Close())
-	assert.Contains(t, logs.String(), "synthetic ingest rejection")
-	assert.Contains(t, logs.String(), `"daemon":"synthetic"`)
-	assert.Contains(t, logs.String(), `"component":"posthog"`)
+	assert.NotContains(t, logs.String(), "synthetic ingest rejection")
+	assert.NotContains(t, logs.String(), `"component":"posthog"`)
+}
+
+func TestNewFollowsKennConsent(t *testing.T) {
+	if posthog.ProcessDisabled() {
+		t.Skip("built with kit_posthog_disabled")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CI", "")
+	require.NoError(t, os.Unsetenv("CI"))
+	t.Setenv("DO_NOT_TRACK", "0")
+	t.Setenv(EnabledEnv, "")
+	require.NoError(t, os.Unsetenv(EnabledEnv))
+	t.Setenv(posthog.GenericEnabledEnv, "")
+	require.NoError(t, os.Unsetenv(posthog.GenericEnabledEnv))
+	var mu sync.Mutex
+	var bodies [][]byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		assert.NoError(t, err)
+		if strings.HasPrefix(r.URL.Path, "/batch") {
+			mu.Lock()
+			bodies = append(bodies, body)
+			mu.Unlock()
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	dir := t.TempDir()
+	opts := Options{Dir: dir, Version: "v1.2.3", Logger: discardLogger(), apiKey: testAPIKey, endpoint: srv.URL}
+	disabled := New(opts)
+	assert.False(t, disabled.Enabled())
+	assert.JSONEq(t, `{"status":"disabled"}`, postEvent(t, CaptureHandler(disabled, dir), `{"event":"app_opened"}`).Body.String())
+	assert.NoFileExists(t, filepath.Join(dir, posthog.InstallFileName))
+	require.NoError(t, posthog.RecordConsent(true))
+	enabled := New(opts)
+	require.True(t, enabled.Enabled())
+	require.NoError(t, enabled.Capture(EventDaemonActive, nil))
+	require.NoError(t, enabled.Close())
+	mu.Lock()
+	defer mu.Unlock()
+	var events []string
+	for _, body := range bodies {
+		var batch postHogBatch
+		require.NoError(t, json.Unmarshal(body, &batch))
+		for _, event := range batch.Batch {
+			events = append(events, event.Event)
+			assert.Equal(t, true, event.Properties["telemetry_consent"])
+		}
+	}
+	assert.Equal(t, []string{EventDaemonActive}, events)
 }

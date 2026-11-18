@@ -143,31 +143,6 @@ trash, maintenance, and restore.
   also includes content held only in secondary stores. See the
   [backup guide](docs/usage/backup.md) for the full rules.
 
-## Telemetry
-
-Docbank sends anonymous usage events by default:
-
-- `daemon_active` at startup and once per later UTC day while running.
-- `app_opened` when the web app opens, about once per UTC day per browser and
-  daemon run.
-- `screen_viewed` with a fixed screen name, once per vault per UTC day for each interface, browser and terminal, across daemon restarts.
-- `session_ended` once when a tab closes or stays hidden for 30 minutes, or the
-  terminal browser exits, with duration grouped into four buckets. Browser
-  visible time adds up across tab switches. Hidden time is excluded. The
-  terminal browser counts the time from opening to exit, including idle time.
-- `document_added`, `search_run`, and `document_opened` after completed document actions, with `surface` of `web`, `tui`, or `cli`. Searches also carry `search_type` of `text`, `semantic`, or `hybrid`. PostHog counts these events per day. CLI reports require a terminal on stdin, stdout, or stderr and omit `--agent` runs; CLI and TUI actions omit runs under `CLAUDECODE` or `CODEX_THREAD_ID`.
-- `search_empty` when a submitted search has no results, with `surface` and `search_type` as above. It accompanies `search_run`, including when the search scope is empty.
-- `error_shown` when a search, add, or open you ran fails, with `surface` of `web`, `tui`, or `cli` and `kind` of `search`, `add`, or `open`. Rejected input counts as a failed search or add like any other failure. A failed search or open counts once, and an upload or photo import run with failed items counts once. Sign-in prompts, cancels, passive loads, refreshes, other drawers and dialogs, notices, and CLI usage errors before connecting stay silent. A Photos open whose detail load fails counts as a failed `open`. The terminal browser sends `document_opened` on Enter and sends no `error_shown` with `kind` of `open` for a failed detail load. Other previews or detail loads after opening a document are secondary loads and stay silent. Failed Add re-plans, closed CLI output pipes for `add`, `cat`, and `search`, and an existing destination for `get` also stay silent. A missing download destination directory, or one that is not a directory, also stays silent.
-
-Asynchronous imports from the CLI or the web mailbox and load-file drawers, and `push`, send no core actions.
-
-Each event carries a random per-vault install ID, the version and commit, the
-operating system and architecture, and the distribution channel, such as
-`homebrew`. Events never include document content,
-names, paths, or queries. Set `DOCBANK_TELEMETRY_ENABLED=0` or
-`DO_NOT_TRACK=1` to turn telemetry off. See
-[anonymous usage telemetry](docs/configuration.md#anonymous-usage-telemetry).
-
 ## Documentation
 
 - [Documentation homepage](https://docbank.ai) and [visual tour](docs/tour.md)

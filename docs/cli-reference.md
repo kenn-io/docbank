@@ -1887,8 +1887,7 @@ Cancellation remains available while settings are unreadable.
 Every daemon registers `text:pdf` for automatic local PDF text, `extract:plain-text`, `extract:source-metadata`,
 `extract:photo-sidecars`, `derive:photo-quality`, and
 `maintenance:auxiliary-checksums`; `process:renditions` appears only when a
-rendition provider is bound, `telemetry:heartbeat` appears while anonymous
-usage telemetry is on, and configured watched inboxes add `watch:<name>`
+rendition provider is bound, and configured watched inboxes add `watch:<name>`
 tasks. See [Daemon](architecture/daemon.md) for what each job does.
 
 ## docbank media

@@ -104,9 +104,7 @@ can use local tools, a service you host, or a hosted provider.
 
 Supported providers and formats differ between interfaces. See the
 [processing guide](/docs/usage/document-processing/) and
-[provider configuration](/docs/usage/configuration/). Docbank sends anonymous
-usage telemetry by default.
-[See what it sends and how to turn it off](/docs/configuration/#anonymous-usage-telemetry).
+[provider configuration](/docs/usage/configuration/).
 
 ## Versions, trash, and backups
 

@@ -31,8 +31,7 @@ func registerDaemonOpenAPI(api huma.API) {
 		OperationID: "revokeWebSession", Method: http.MethodDelete, Path: webSessionPath,
 		Summary: "Revoke the current browser session",
 		Parameters: []*huma.Param{{Name: "duration_bucket", In: "query",
-			Description: "Final visible session duration to report after revocation. Missing or invalid values emit no event.",
-			Schema:      &huma.Schema{Type: openAPIStringType, Enum: durationBucketEnum()}}},
+			Schema: &huma.Schema{Type: openAPIStringType, Enum: durationBucketEnum()}}},
 		Responses: map[string]*huma.Response{"204": {Description: "Session revoked"}},
 	})
 	api.OpenAPI().AddOperation(&huma.Operation{
@@ -57,18 +56,17 @@ func registerDaemonOpenAPI(api huma.API) {
 	})
 	api.OpenAPI().AddOperation(&huma.Operation{
 		OperationID: "reportTelemetryEvent", Method: http.MethodPost, Path: telemetryEventsPath,
-		Summary: "Report an anonymous interface usage event",
 		RequestBody: &huma.RequestBody{Required: true, Content: map[string]*huma.MediaType{
 			jsonMediaType: {Schema: huma.SchemaFromType(registry, reflect.TypeFor[TelemetryEventRequest]())},
 		}},
 		Responses: map[string]*huma.Response{
-			"202": jsonResponse("Event queued, or dropped because telemetry is off", reflect.TypeFor[TelemetryEventReceipt]()),
-			"400": {Description: "Malformed body, unsupported event, missing or unsupported screen or surface, search_run or search_empty with missing or unsupported search_type, or error_shown with a missing or non-string kind"},
+			"202": jsonResponse("Accepted", reflect.TypeFor[TelemetryEventReceipt]()),
+			"400": {Description: "Invalid request"},
 			"401": {Description: "Missing or invalid API key or browser session"},
 			"403": {Description: "Browser session does not permit this request"},
 			"413": {Description: "Request body exceeds 64 KiB"},
 			"415": {Description: "Content type must be application/json"},
-			"500": {Description: "Telemetry capture failed"},
+			"500": {Description: "Request failed"},
 		},
 	})
 }

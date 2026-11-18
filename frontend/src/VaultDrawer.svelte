@@ -50,7 +50,6 @@
     { value: "jobs", label: "Running now" },
     { value: "backups", label: "Backups" },
     { value: "auditEvidence", label: "Protected folders" },
-    { value: "telemetry", label: "Usage reporting" },
     { value: "searchByMeaning", label: "Search by meaning" },
   ];
   setContext(drawerNavigation, {
@@ -98,7 +97,7 @@
   <AuditEvidenceDrawer {session} {onclose} {onauthfailure} />
 {:else if tab === "jobs"}
   <JobsDrawer {session} {onclose} {onauthfailure} />
-{:else if tab === "searchByMeaning"}
+{:else}
   <DrawerShell title="Search by meaning" {onclose}>
     <section class="meaning" aria-label="Search by meaning">
       {#if meaningRow}
@@ -130,24 +129,9 @@
       {/if}
     </section>
   </DrawerShell>
-{:else}
-  <DrawerShell title="Usage reporting" {onclose}>
-    <section class="usage" aria-label="Usage reporting">
-      <p>
-        Docbank sends a random vault ID, app version, operating system, install age, feature use,
-        searches that find nothing, failed actions, and session length. Document content, filenames,
-        paths, tags, and search queries stay private.
-      </p>
-      <p>
-        To turn reporting off, set <code>DOCBANK_TELEMETRY_ENABLED=0</code> in the environment that
-        starts the daemon, then run <code>docbank daemon restart</code>.
-      </p>
-    </section>
-  </DrawerShell>
 {/if}
 
 <style>
-  .usage,
   .meaning {
     display: grid;
     justify-items: start;

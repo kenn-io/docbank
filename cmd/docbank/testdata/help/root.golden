@@ -99,6 +99,6 @@ Interfaces:
   web  Open the local web application
 
 Flags:
-  -h, --help   help for docbank
+  -h, --help[=true|false]   help for docbank
 
 Use "docbank [command] --help" for more information about a command.

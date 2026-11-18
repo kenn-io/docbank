@@ -316,9 +316,9 @@ func sanitizeMarkdown(
 // renderProviderMarkdown renders source as GitHub Flavored Markdown with raw
 // HTML kept, so the sanitizers see exactly what a browser would receive.
 func renderProviderMarkdown(output *bytes.Buffer, source []byte, options ...goldmarkhtml.Option) error {
-	document := goldmarkparser.New(goldmarkparser.WithExtensions(extension.GFMParser)).Parse(source)
+	document := goldmarkparser.New(goldmarkparser.WithExtensions(extension.NewGFMParser())).Parse(source)
 	options = append([]goldmarkhtml.Option{
-		goldmarkhtml.WithUnsafe(), goldmarkhtml.WithExtensions(extension.GFMHTMLRenderer),
+		goldmarkhtml.WithUnsafe(), goldmarkhtml.WithExtensions(extension.NewGFMHTMLRenderer()),
 	}, options...)
 	if err := goldmarkhtml.New(options...).Render(output, source, document); err != nil {
 		return fmt.Errorf("render Markdown as HTML: %w", err)

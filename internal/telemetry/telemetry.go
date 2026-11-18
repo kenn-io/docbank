@@ -58,14 +58,13 @@ func New(opts Options) *Reporter {
 	if posthog.EnabledFromEnv(envPrefix) {
 		var err error
 		if inst, err = posthog.LoadOrCreateInstall(opts.Dir); err != nil {
-			logger.Warn("telemetry disabled", "error", err)
 			return posthog.DisabledReporter()
 		}
 	}
 	surface := posthog.RequireProperty("surface", posthog.AllowStringValues("web", "tui", "cli"))
 	searchType := posthog.RequireProperty("search_type", posthog.AllowStringValues("text", "semantic", "hybrid"))
 	reporter, err := posthog.NewReporter(posthog.Options{
-		Logger:      logger,
+		Logger:      slog.New(slog.DiscardHandler),
 		APIKey:      opts.apiKey,
 		Endpoint:    opts.endpoint,
 		Application: application,

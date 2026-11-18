@@ -78,6 +78,23 @@ func TestOpenAPIPhotoQualitySignals(t *testing.T) {
 	require.NotNil(t, schemas.SchemaFromRef(signals.AnyOf[0].Ref))
 }
 
+func TestOpenAPIOmitsReportingDescriptions(t *testing.T) {
+	t.Parallel()
+	out, err := api.OpenAPIYAML()
+	require.NoError(t, err)
+	for _, description := range []string{
+		"Report an anonymous interface usage event",
+		"telemetry allowlist",
+		"telemetry is off",
+		"Telemetry capture failed",
+		"Final visible session duration to report",
+	} {
+		if strings.Contains(string(out), description) {
+			t.Errorf("OpenAPI contains reporting description %q", description)
+		}
+	}
+}
+
 func TestOpenAPITelemetryResponses(t *testing.T) {
 	t.Parallel()
 	op := api.NewOfflineServer().API().OpenAPI().Paths["/api/daemon/telemetry/events"].Post

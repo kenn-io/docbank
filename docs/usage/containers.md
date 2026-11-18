@@ -56,7 +56,6 @@ docker run -d --name docbank --network docbank-private \
   --mount type=bind,src="$(pwd)/secrets/api-key",dst=/run/secrets/api-key,readonly \
   -e DOCBANK_API_KEY_FILE=/run/secrets/api-key \
   -e DOCBANK_ALLOWED_HOSTS=docbank:8485 \
-  -e DOCBANK_TELEMETRY_ENABLED=off \
   docbank:local
 ```
 

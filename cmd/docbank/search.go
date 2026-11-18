@@ -60,14 +60,13 @@ var searchCmd = &cobra.Command{
   docbank search merger plan --under /cases/acme --json
   docbank search --tag urgent
   docbank search invocie --fuzzy --modified-since 2026-01-01T00:00:00Z`,
-	Long: `Query words are joined; lexical search matches prefixes on current live
-names, then content.
+	Long: `Query words are joined. Lexical search matches prefixes on live names,
+then content.
 With a query embedding binding, plain search uses hybrid over live files and
-appends matching folders. Filters, --fuzzy, --limit above
-100, and --mode lexical use lexical search. A failed hybrid attempt prints
-"degraded: REASON" to stderr and returns lexical results.
---json prints lexical {hits, limit, truncated} or hybrid processing results
-plus folders.
+adds matching folders. Filters, --fuzzy, --limit above 100, and --mode lexical
+use lexical search. If hybrid fails, search prints "degraded: REASON" to stderr
+and returns lexical results.
+--json prints lexical {hits, limit, truncated} or hybrid results plus folders.
 --agent prints an OK header and one line per hit.
 Explicit processing modes need --profile and --source-version UUIDs.
 See docs/usage/search.md.`,
@@ -624,21 +623,21 @@ func writeFolderSearchHits(cmd *cobra.Command, folders []api.SearchHit, separate
 
 func init() {
 	searchCmd.Flags().StringVar(&searchPDFFilter, "pdf-filter", "", "e.g. pdf_has_javascript:true")
-	searchCmd.Flags().BoolVar(&searchSourcePresent, "source-present", false, "exclude documents whose watched source is known to be gone")
+	searchCmd.Flags().BoolVar(&searchSourcePresent, "source-present", false, "exclude documents whose watched source is known missing")
 	searchCmd.Flags().StringVar(&searchSimilarTo, "similar-to", "", "find similar files using the stored embedding of id:N or /path")
 	searchCmd.Flags().StringVar(&searchVersion, "version", "", "exact current source version for --similar-to")
 	searchCmd.Flags().IntVar(&searchLimit, "limit", defaultSearchLimit,
-		"maximum results to return (1-1000)")
+		"maximum results (1-1000)")
 	searchCmd.Flags().StringVar(&searchTag, "tag", "",
-		"require one tag by name or stable ID")
+		"filter by tag name or stable ID")
 	searchCmd.Flags().StringVar(&searchMIME, "mime-type", "",
-		"require one current parameter-free media type")
+		"filter by current parameter-free media type")
 	searchCmd.Flags().StringVar(&searchUnder, "under", "",
-		"require descendants of one live directory path or id:N")
+		"descendants of a live directory path or id:N")
 	searchCmd.Flags().StringVar(&searchSince, "modified-since", "",
-		"require modification at or after an absolute RFC3339 timestamp")
+		"modified at or after an RFC3339 timestamp")
 	searchCmd.Flags().StringVar(&searchBefore, "modified-before", "",
-		"require modification before an absolute RFC3339 timestamp")
+		"modified before an RFC3339 timestamp")
 	searchCmd.Flags().StringVar(&searchMode, "mode", "",
 		"mode: lexical (ordinary alone), semantic, hybrid, or auto")
 	searchCmd.Flags().StringVar(&searchProfile, "profile", "",

@@ -13,6 +13,7 @@ import (
 
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/telemetry"
 )
 
 func observableJob(snapshot jobs.Snapshot) Job {
@@ -124,6 +125,9 @@ func registerJobRoutes(api huma.API, d Deps) {
 		}
 		if d.Jobs != nil {
 			for _, snapshot := range d.Jobs.Snapshot() {
+				if snapshot.Name == telemetry.HeartbeatJobName {
+					continue
+				}
 				if _, durable := operationNames[snapshot.Name]; durable {
 					continue
 				}

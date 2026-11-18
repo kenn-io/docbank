@@ -47,14 +47,7 @@ it("lists the sections in order and opens on disk use", async () => {
     within(drawer)
       .getAllByRole("tab")
       .map((tab) => tab.textContent?.trim()),
-  ).toEqual([
-    "Disk use",
-    "Running now",
-    "Backups",
-    "Protected folders",
-    "Usage reporting",
-    "Search by meaning",
-  ]);
+  ).toEqual(["Disk use", "Running now", "Backups", "Protected folders", "Search by meaning"]);
   expect(within(drawer).getByRole("tab", { name: "Disk use", selected: true })).toBeTruthy();
   expect(await within(drawer).findByText("Total on disk")).toBeTruthy();
 });
@@ -65,10 +58,10 @@ it("keeps navigation and close inside the active tool's dialog", async () => {
   render(VaultDrawer, { session: "synthetic", ...searchProps(), onclose, onauthfailure: vi.fn() });
   await fireEvent.click(screen.getByRole("tab", { name: "Backups" }));
   const drawer = screen.getByRole("dialog", { name: "System" });
-  await fireEvent.click(within(drawer).getByRole("tab", { name: "Usage reporting" }));
-  const privacy = screen.getByRole("dialog", { name: "System" });
-  expect(within(privacy).getByRole("region", { name: "Usage reporting" })).toBeTruthy();
-  await fireEvent.click(within(privacy).getByRole("tab", { name: "Running now" }));
+  await fireEvent.click(within(drawer).getByRole("tab", { name: "Search by meaning" }));
+  const meaning = screen.getByRole("dialog", { name: "System" });
+  expect(within(meaning).getByRole("region", { name: "Search by meaning" })).toBeTruthy();
+  await fireEvent.click(within(meaning).getByRole("tab", { name: "Running now" }));
   const activityTab = await screen.findByRole("tab", { name: "Running now", selected: true });
   const activity = screen.getByRole("dialog", { name: "System" });
   expect(activity.contains(activityTab)).toBe(true);
@@ -78,7 +71,7 @@ it("keeps navigation and close inside the active tool's dialog", async () => {
       .getAllByRole("heading")
       .map((heading) => heading.textContent),
   ).toEqual(["System"]);
-  await fireEvent.click(within(activity).getByRole("tab", { name: "Usage reporting" }));
+  await fireEvent.click(within(activity).getByRole("tab", { name: "Search by meaning" }));
   expect(screen.getAllByRole("dialog")).toHaveLength(1);
   await fireEvent.click(screen.getByRole("button", { name: "Close System" }));
   expect(onclose).toHaveBeenCalledOnce();
