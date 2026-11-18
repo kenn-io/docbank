@@ -122,7 +122,7 @@ func (s *Store) ListDocuments(
 		}
 	}
 
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return DocumentCatalogPage{}, fmt.Errorf("starting document catalog page: %w", err)
 	}
@@ -178,18 +178,28 @@ func (s *Store) ResolveDocumentSummaries(
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	values := make([]string, len(identities))
+	// PostgreSQL infers the remaining VALUES rows from the first typed row.
+	var values strings.Builder
+	values.WriteString("(CAST($5 AS INTEGER),CAST($6 AS BIGINT),CAST($7 AS TEXT),CAST($8 AS TEXT))")
 	args := []any{s.rootID, MaxWalkDepth, MaxWalkPathBytes, MaxDocumentCatalogNameCharacters}
 	for index, identity := range identities {
-		values[index] = "(?,?,?,?)"
+		if index > 0 {
+			offset := len(args)
+			fmt.Fprintf(&values, ",($%d,$%d,$%d,$%d)", offset+1, offset+2, offset+3, offset+4)
+		}
 		args = append(args, index, identity.NodeID, identity.ContentVersionID, identity.Path)
 	}
+	postgres := s.postgresSchema != ""
+	nameBytes := documentCatalogByteLength(postgres, "n.name")
+	ancestorBytes := documentCatalogByteLength(postgres, "a.path")
 	// Resolve each selected parent once, then check exact filenames. Unrelated
 	// subtrees must not make a bounded identity lookup grow with the whole vault.
 	rows, err := tx.QueryContext(ctx, `WITH RECURSIVE
-	limits(root_id,max_depth,max_path_bytes,max_name_chars) AS (VALUES (?,?,?,?)),
+	limits(root_id,max_depth,max_path_bytes,max_name_chars) AS (
+	 VALUES (CAST($1 AS BIGINT),CAST($2 AS INTEGER),CAST($3 AS INTEGER),CAST($4 AS INTEGER))
+	),
 	requested(ordinal,node_id,content_version_id,path) AS (
-		VALUES `+strings.Join(values, ",")+`
+		VALUES `+values.String()+`
 	), selected_documents AS (
 		SELECT r.ordinal,n.id AS node_id,n.parent_id,cv.version_id AS content_version_id,
 			r.path,n.name,COALESCE(cv.mime_type,'') AS media_type,cv.size,n.modified_at
@@ -203,22 +213,22 @@ func (s *Store) ResolveDocumentSummaries(
 			CASE WHEN n.id=limits.root_id THEN '' ELSE '/'||n.name END,1
 		FROM selected_documents d JOIN nodes n ON n.id=d.parent_id CROSS JOIN limits
 		WHERE n.trashed_at IS NULL AND (n.id=limits.root_id
-			OR length(CAST(n.name AS BLOB))+1<=limits.max_path_bytes)
+			OR `+nameBytes+`+1<=limits.max_path_bytes)
 		UNION ALL
 		SELECT a.origin_id,n.id,n.parent_id,
 			CASE WHEN n.id=limits.root_id THEN a.path ELSE '/'||n.name||a.path END,a.depth+1
 		FROM nodes n JOIN ancestry a ON n.id=a.parent_id CROSS JOIN limits
 		WHERE n.trashed_at IS NULL AND a.depth<limits.max_depth
-			AND length(CAST(a.path AS BLOB)) + CASE WHEN n.id=limits.root_id THEN 0
-				ELSE length(CAST(n.name AS BLOB))+1 END <= limits.max_path_bytes
+			AND `+ancestorBytes+` + CASE WHEN n.id=limits.root_id THEN 0
+				ELSE `+nameBytes+`+1 END <= limits.max_path_bytes
 	), documents AS (
 		SELECT d.* FROM selected_documents d CROSS JOIN limits
 		JOIN ancestry a ON a.origin_id=d.parent_id AND a.id=limits.root_id
-		WHERE CASE WHEN length(CAST(a.path AS BLOB))+length(CAST(d.name AS BLOB))+1
+		WHERE CASE WHEN `+ancestorBytes+`+`+documentCatalogByteLength(postgres, "d.name")+`+1
 			<=limits.max_path_bytes THEN a.path||'/'||d.name END=d.path
 	)
 	SELECT d.ordinal,d.node_id,d.content_version_id,d.path,d.name,d.media_type,d.size,d.modified_at,
-	       `+documentCatalogProcessingState+`,h.profile_fingerprint,h.attachment_id,a.build_id
+	       `+documentCatalogProcessingState(postgres)+`,h.profile_fingerprint,h.attachment_id,a.build_id
 	FROM documents d
 	LEFT JOIN rendition_heads h ON h.content_version_id=d.content_version_id
 	LEFT JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
@@ -325,14 +335,24 @@ func NormalizeDocumentCatalogQuery(query DocumentCatalogQuery) (DocumentCatalogQ
 
 // NULL paths mark the first out-of-bounds node and stop expansion there. They
 // remain visible to the page query so exceeding a bound cannot silently omit files.
-const documentCatalogCTE = `WITH RECURSIVE
-limits(max_depth,max_path_bytes,max_name_chars) AS (VALUES (?,?,?)),
+func documentCatalogCTE(postgres bool) string {
+	prefix := "CAST($4 AS TEXT)"
+	if postgres {
+		// The recursive path starts with a parameter, not a C-collated column.
+		prefix += ` COLLATE "C"`
+	}
+	return `WITH RECURSIVE
+limits(max_depth,max_path_bytes,max_name_chars) AS (
+ VALUES (CAST($1 AS INTEGER),CAST($2 AS INTEGER),CAST($3 AS INTEGER))
+),
 live_nodes(id,path,depth) AS (
- SELECT id,CASE WHEN kind='file' AND length(name)>limits.max_name_chars THEN NULL ELSE ? END,?
- FROM nodes CROSS JOIN limits WHERE id=? AND trashed_at IS NULL
+ SELECT id,CASE WHEN kind='file' AND length(name)>limits.max_name_chars THEN NULL ELSE ` + prefix + ` END,
+        CAST($5 AS INTEGER)
+ FROM nodes CROSS JOIN limits WHERE id=$6 AND trashed_at IS NULL
  UNION ALL
  SELECT n.id,CASE WHEN p.depth>=limits.max_depth
-   OR length(CAST(p.path AS BLOB))+length(CAST(n.name AS BLOB))+(p.path!='/')>limits.max_path_bytes
+   OR ` + documentCatalogByteLength(postgres, "p.path") + `+` +
+		documentCatalogByteLength(postgres, "n.name") + `+CASE WHEN p.path='/' THEN 0 ELSE 1 END>limits.max_path_bytes
    OR (n.kind='file' AND length(n.name)>limits.max_name_chars) THEN NULL
    WHEN p.path='/' THEN '/'||n.name ELSE p.path||'/'||n.name END,p.depth+1
  FROM nodes n JOIN live_nodes p ON n.parent_id=p.id CROSS JOIN limits
@@ -342,20 +362,26 @@ live_nodes(id,path,depth) AS (
         COALESCE(cv.mime_type,'') AS media_type,cv.size,n.modified_at
  FROM live_nodes l JOIN nodes n ON n.id=l.id
  JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=n.current_version_id
- WHERE n.kind='file' AND l.path IS NOT NULL AND (?=0 OR ` + sourcePresentSQL + `)
+ WHERE n.kind='file' AND l.path IS NOT NULL AND (NOT $7 OR ` + sourcePresentSQL + `)
 )
 `
+}
 
-// originalFileWaiterSQL keeps the waiters that upload the original file. A photo
-// description uploads a derived preview and attaches no rendition, so it says
-// nothing about whether the document was processed.
-const originalFileWaiterSQL = `NOT EXISTS(SELECT 1 FROM json_each(w.input_classes_json) WHERE value='derived_upload')`
+// Catalog bounds are measured in bytes even when filenames contain Unicode.
+func documentCatalogByteLength(postgres bool, value string) string {
+	if postgres {
+		return "octet_length(" + value + ")"
+	}
+	return "length(CAST(" + value + " AS BLOB))"
+}
 
 // Enrich only selected documents, not every row in the shared catalog.
-const documentCatalogProcessingState = `COALESCE((SELECT j.state
+func documentCatalogProcessingState(postgres bool) string {
+	return `COALESCE((SELECT j.state
  FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id
- WHERE w.content_version_id=d.content_version_id AND ` + originalFileWaiterSQL + `
+ WHERE w.content_version_id=d.content_version_id AND ` + (metadataJSONDialect{postgres}).originalFileWaiter() + `
  ORDER BY j.updated_at DESC,j.job_id DESC LIMIT 1),'')`
+}
 
 func documentCatalogArgs(rootID int64, prefix string) []any {
 	return []any{MaxWalkDepth, MaxWalkPathBytes, MaxDocumentCatalogNameCharacters,
@@ -366,7 +392,8 @@ func (s *Store) queryDocumentCatalogPage(
 	ctx context.Context, tx *sql.Tx, query DocumentCatalogQuery,
 	boundary *DocumentCatalogPosition, traversal DocumentCatalogTraversal, args []any,
 ) (DocumentCatalogPage, error) {
-	where, boundaryArgs := documentCatalogBoundary(query, boundary, traversal)
+	postgres := s.postgresSchema != ""
+	where, boundaryArgs := documentCatalogBoundary(query, boundary, traversal, len(args), postgres)
 	order := documentCatalogOrder(query, traversal)
 	keys := "path,node_id"
 	if query.Sort != DocumentCatalogSortPath {
@@ -382,19 +409,20 @@ func (s *Store) queryDocumentCatalogPage(
 	args = append(args, query.PageSize)
 	// Page and continuation checks share the same recursive traversal. Compare
 	// against the returned edges so deleted or moved cursor rows remain valid.
-	rows, err := tx.QueryContext(ctx, documentCatalogCTE+`, page AS (
-  SELECT * FROM documents `+where+` ORDER BY `+order+` LIMIT ?
+	limit := fmt.Sprintf("$%d", len(args))
+	rows, err := tx.QueryContext(ctx, documentCatalogCTE(postgres)+`, page AS (
+  SELECT * FROM documents `+where+` ORDER BY `+order+` LIMIT `+limit+`
  )
  SELECT COALESCE(d.node_id,0),COALESCE(d.content_version_id,''),COALESCE(d.path,''),
   COALESCE(d.name,''),COALESCE(d.media_type,''),COALESCE(d.size,0),
-  COALESCE(d.modified_at,''),`+documentCatalogProcessingState+`,
+  COALESCE(d.modified_at,''),`+documentCatalogProcessingState(postgres)+`,
   h.profile_fingerprint,h.attachment_id,a.build_id,
   EXISTS(SELECT 1 FROM live_nodes WHERE path IS NULL),
   EXISTS(SELECT 1 FROM documents WHERE (`+keys+`) `+previousOp+`
     (SELECT `+keys+` FROM page ORDER BY `+firstOrder+` LIMIT 1)),
   EXISTS(SELECT 1 FROM documents WHERE (`+keys+`) `+nextOp+`
     (SELECT `+keys+` FROM page ORDER BY `+lastOrder+` LIMIT 1))
- FROM (SELECT 1) LEFT JOIN page d ON 1
+ FROM (SELECT 1) LEFT JOIN page d ON TRUE
  LEFT JOIN rendition_heads h ON h.content_version_id=d.content_version_id
  LEFT JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
  ORDER BY d.`+strings.ReplaceAll(order, ",", ",d.")+`,h.profile_fingerprint,h.attachment_id`, args...)
@@ -441,7 +469,7 @@ func (s *Store) queryDocumentCatalogPage(
 
 func documentCatalogBoundary(
 	query DocumentCatalogQuery, boundary *DocumentCatalogPosition,
-	traversal DocumentCatalogTraversal,
+	traversal DocumentCatalogTraversal, offset int, postgres bool,
 ) (string, []any) {
 	if boundary == nil {
 		return "", nil
@@ -454,18 +482,22 @@ func documentCatalogBoundary(
 	if !ascending {
 		op = "<"
 	}
-	if query.Sort == DocumentCatalogSortPath {
-		return fmt.Sprintf(`WHERE (path %s ? OR (path=? AND node_id %s ?))`, op, op),
-			[]any{boundary.Path, boundary.Path, boundary.NodeID}
+	primary := any(boundary.Value)
+	switch query.Sort {
+	case DocumentCatalogSortPath:
+		return fmt.Sprintf(`WHERE (path %s $%d OR (path=$%d AND node_id %s $%d))`, op, offset+1, offset+1, op, offset+2),
+			[]any{boundary.Path, boundary.NodeID}
+	case DocumentCatalogSortSize:
+		primary = boundary.Size
+	case DocumentCatalogSortMediaType:
+		primary = storedString(postgres, boundary.Value)
+	case DocumentCatalogSortName, DocumentCatalogSortModifiedAt:
+		// Both sort keys use their stored text directly.
 	}
 	expression := documentCatalogPrimaryExpression(query.Sort)
-	primary := any(boundary.Value)
-	if query.Sort == DocumentCatalogSortSize {
-		primary = boundary.Size
-	}
-	return fmt.Sprintf(`WHERE (%s %s ? OR (%s=? AND (path %s ? OR (path=? AND node_id %s ?))))`,
-			expression, op, expression, op, op),
-		[]any{primary, primary, boundary.Path, boundary.Path, boundary.NodeID}
+	return fmt.Sprintf(`WHERE (%s %s $%d OR (%s=$%d AND (path %s $%d OR (path=$%d AND node_id %s $%d))))`,
+			expression, op, offset+1, expression, offset+1, op, offset+2, offset+2, op, offset+3),
+		[]any{primary, boundary.Path, boundary.NodeID}
 }
 
 func documentCatalogOrder(

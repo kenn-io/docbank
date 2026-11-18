@@ -853,7 +853,11 @@ func checkPhotoDescriptionJobPublishesOneSuggestionAndSettles(t *testing.T, newS
 
 func TestPhotoDescriptionJobIsNeitherDocumentProcessingNorRebuildingCoverage(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
+	checkPhotoDescriptionJobIsNeitherDocumentProcessingNorRebuildingCoverage(t, newTestStore(t))
+}
+
+func checkPhotoDescriptionJobIsNeitherDocumentProcessingNorRebuildingCoverage(t *testing.T, s *Store) {
+	t.Helper()
 	ctx := t.Context()
 	asset := albumAsset(t, s, "described.jpg")
 	node, err := s.NodeByID(ctx, asset.Files[0].NodeID)

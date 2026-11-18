@@ -22,6 +22,63 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
+	{name: "document-catalog", postgres: "native operations", scope: "Live catalog pages and exact current document summaries; SQLite keeps its existing driver-matrix tests.", scenarios: []backendScenario{
+		{"DocumentCatalogSortsCurrentLiveFilesDeterministically", nil, func(t *testing.T) {
+			t.Helper()
+			checkDocumentCatalogSortsCurrentLiveFilesDeterministically(t, newPostgresQueryStore(t))
+		}},
+		{"Snapshot", nil, checkDocumentCatalogSnapshotPostgres},
+		{"PathBounds", nil, func(t *testing.T) {
+			t.Helper()
+			checkDocumentCatalogRejectsUnboundedTraversal(t, newPostgresQueryStore)
+		}},
+		{"SourcePresent", nil, checkDocumentCatalogSourcePresentPostgres},
+		{"DerivedUploadsDoNotCountAsDocumentProcessing", nil, func(t *testing.T) {
+			t.Helper()
+			checkPhotoDescriptionJobIsNeitherDocumentProcessingNorRebuildingCoverage(t, newPostgresQueryStore(t))
+		}},
+		{"DocumentCatalogPaginationMatrix", nil, func(t *testing.T) { t.Helper(); checkDocumentCatalogPaginationMatrix(t, newPostgresQueryStore) }},
+		{"DocumentCatalogNormalizesPathPrefixAndUsesStableTies", nil, func(t *testing.T) {
+			t.Helper()
+			checkDocumentCatalogNormalizesPathPrefixAndUsesStableTies(t, newPostgresQueryStore(t))
+		}},
+		{"ResolveDocumentSummariesPreservesOrderAndRejectsStaleIdentity", nil, func(t *testing.T) {
+			t.Helper()
+			checkResolveDocumentSummariesPreservesOrderAndRejectsStaleIdentity(t, newPostgresQueryStore(t))
+		}},
+		{"ResolveDocumentSummariesTracksLiveAncestors", nil, func(t *testing.T) {
+			t.Helper()
+			checkResolveDocumentSummariesTracksLiveAncestors(t, newPostgresQueryStore(t))
+		}},
+		{"ResolveDocumentSummariesRejectsEntireStaleBatch", nil, func(t *testing.T) {
+			t.Helper()
+			checkResolveDocumentSummariesRejectsEntireStaleBatch(t, newPostgresQueryStore(t))
+		}},
+		{"DocumentCatalogEmptyPagesHaveNoContinuations", nil, func(t *testing.T) {
+			t.Helper()
+			checkDocumentCatalogEmptyPagesHaveNoContinuations(t, newPostgresQueryStore(t))
+		}},
+		{"DocumentCatalogMaximumPathPositionTraversesBothDirections", nil, func(t *testing.T) {
+			t.Helper()
+			checkDocumentCatalogMaximumPathPositionTraversesBothDirections(t, newPostgresQueryStore(t))
+		}},
+		{"DocumentCatalogReturnsOnlySummaryProcessingAndActiveRenditionIdentity", nil, func(t *testing.T) {
+			t.Helper()
+			checkDocumentCatalogReturnsOnlySummaryProcessingAndActiveRenditionIdentity(t, newPostgresQueryStore(t))
+		}},
+		{"DocumentCatalogLatestProcessingStateUsesJobTransitionRecency", nil, func(t *testing.T) {
+			t.Helper()
+			checkDocumentCatalogLatestProcessingStateUsesJobTransitionRecency(t, newPostgresQueryStore(t))
+		}},
+		{"DocumentCatalogReturnsOnlyTheCurrentContentVersion", nil, func(t *testing.T) {
+			t.Helper()
+			checkDocumentCatalogReturnsOnlyTheCurrentContentVersion(t, newPostgresQueryStore(t))
+		}},
+		{"DocumentCatalogPreservesLongDirectoryNames", nil, func(t *testing.T) {
+			t.Helper()
+			checkDocumentCatalogPreservesLongDirectoryNames(t, newPostgresQueryStore(t))
+		}},
+	}},
 	{name: "tree-walk", postgres: "native operations", scope: "Pinned tree pages, ordered frontier and cancellation; SQLite retains its driver-matrix tests.", scenarios: []backendScenario{
 		{"WalkOrdersDuplicatePaths", nil, func(t *testing.T) {
 			t.Helper()

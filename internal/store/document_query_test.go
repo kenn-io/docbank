@@ -20,6 +20,16 @@ func TestDocumentCatalogSortsCurrentLiveFilesDeterministically(t *testing.T) {
 		name   string
 		driver docsqlite.Driver
 	}{{"default", DefaultSQLiteDriver()}, {"pure Go", modernc.Driver{}}}
+	for _, driver := range drivers {
+		t.Run(driver.name, func(t *testing.T) {
+			checkDocumentCatalogSortsCurrentLiveFilesDeterministically(t, newTestStoreWithDriver(t, driver.driver))
+		})
+	}
+}
+
+func checkDocumentCatalogSortsCurrentLiveFilesDeterministically(t *testing.T, s *Store) {
+	t.Helper()
+	seedDocumentCatalog(t, s)
 	wants := map[DocumentCatalogSort][]string{
 		DocumentCatalogSortPath:       {"/alpha/beta.md", "/alpha/zeta.pdf", "/beta/alpha.txt", "/gamma.bin"},
 		DocumentCatalogSortName:       {"/beta/alpha.txt", "/alpha/beta.md", "/gamma.bin", "/alpha/zeta.pdf"},
@@ -27,34 +37,34 @@ func TestDocumentCatalogSortsCurrentLiveFilesDeterministically(t *testing.T) {
 		DocumentCatalogSortSize:       {"/beta/alpha.txt", "/gamma.bin", "/alpha/beta.md", "/alpha/zeta.pdf"},
 		DocumentCatalogSortMediaType:  {"/gamma.bin", "/alpha/zeta.pdf", "/alpha/beta.md", "/beta/alpha.txt"},
 	}
-	for _, driver := range drivers {
-		for sortBy, ascending := range wants {
-			for _, direction := range []DocumentCatalogDirection{
-				DocumentCatalogDirectionAscending, DocumentCatalogDirectionDescending,
-			} {
-				t.Run(driver.name+"/"+string(sortBy)+"/"+string(direction), func(t *testing.T) {
-					s := newTestStoreWithDriver(t, driver.driver)
-					seedDocumentCatalog(t, s)
-					page, err := s.ListDocuments(t.Context(), DocumentCatalogQuery{
-						PathPrefix: "/", Sort: sortBy, Direction: direction, PageSize: 10,
-					}, nil, DocumentCatalogTraversalNext)
-					require.NoError(t, err)
-					want := append([]string(nil), ascending...)
-					if direction == DocumentCatalogDirectionDescending {
-						reverseStrings(want)
-					}
-					assert.Equal(t, want, documentCatalogPaths(page.Items))
-					assert.False(t, page.HasPrevious)
-					assert.False(t, page.HasNext)
-				})
-			}
+	for sortBy, ascending := range wants {
+		for _, direction := range []DocumentCatalogDirection{
+			DocumentCatalogDirectionAscending, DocumentCatalogDirectionDescending,
+		} {
+			t.Run(string(sortBy)+"/"+string(direction), func(t *testing.T) {
+				page, err := s.ListDocuments(t.Context(), DocumentCatalogQuery{
+					PathPrefix: "/", Sort: sortBy, Direction: direction, PageSize: 10,
+				}, nil, DocumentCatalogTraversalNext)
+				require.NoError(t, err)
+				want := append([]string(nil), ascending...)
+				if direction == DocumentCatalogDirectionDescending {
+					reverseStrings(want)
+				}
+				assert.Equal(t, want, documentCatalogPaths(page.Items))
+				assert.False(t, page.HasPrevious)
+				assert.False(t, page.HasNext)
+			})
 		}
 	}
 }
 
 func TestDocumentCatalogNormalizesPathPrefixAndUsesStableTies(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
+	checkDocumentCatalogNormalizesPathPrefixAndUsesStableTies(t, newTestStore(t))
+}
+
+func checkDocumentCatalogNormalizesPathPrefixAndUsesStableTies(t *testing.T, s *Store) {
+	t.Helper()
 	alpha, err := s.Mkdir(t.Context(), s.RootID(), "alpha")
 	require.NoError(t, err)
 	beta, err := s.Mkdir(t.Context(), s.RootID(), "beta")
@@ -62,7 +72,7 @@ func TestDocumentCatalogNormalizesPathPrefixAndUsesStableTies(t *testing.T) {
 	for index, parent := range []int64{alpha.ID, beta.ID} {
 		node, createErr := s.CreateFile(t.Context(), parent, "shared.txt", fakeHash(fmt.Sprintf("d%d", index)), 7, "text/plain")
 		require.NoError(t, createErr)
-		_, updateErr := s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=? WHERE id=?`,
+		_, updateErr := s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=$1 WHERE id=$2`,
 			"2026-08-28T10:00:00.000000000Z", node.ID)
 		require.NoError(t, updateErr)
 	}
@@ -112,7 +122,11 @@ func TestDocumentCatalogDefaultsAndHardPageMaximum(t *testing.T) {
 
 func TestResolveDocumentSummariesPreservesOrderAndRejectsStaleIdentity(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
+	checkResolveDocumentSummariesPreservesOrderAndRejectsStaleIdentity(t, newTestStore(t))
+}
+
+func checkResolveDocumentSummariesPreservesOrderAndRejectsStaleIdentity(t *testing.T, s *Store) {
+	t.Helper()
 	first, err := s.CreateFile(t.Context(), s.RootID(), "first.md", fakeHash("resolve-first"), 1, "text/markdown")
 	require.NoError(t, err)
 	second, err := s.CreateFile(t.Context(), s.RootID(), "second.md", fakeHash("resolve-second"), 2, "text/markdown")
@@ -138,7 +152,11 @@ func TestResolveDocumentSummariesPreservesOrderAndRejectsStaleIdentity(t *testin
 
 func TestResolveDocumentSummariesTracksLiveAncestors(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
+	checkResolveDocumentSummariesTracksLiveAncestors(t, newTestStore(t))
+}
+
+func checkResolveDocumentSummariesTracksLiveAncestors(t *testing.T, s *Store) {
+	t.Helper()
 	dir, err := s.MkdirAll(t.Context(), "/folder/nested")
 	require.NoError(t, err)
 	file, err := s.CreateFile(t.Context(), dir.ID, "report.bin", fakeHash("nested-report"), 7, "")
@@ -173,7 +191,11 @@ func TestResolveDocumentSummariesTracksLiveAncestors(t *testing.T) {
 
 func TestResolveDocumentSummariesRejectsEntireStaleBatch(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
+	checkResolveDocumentSummariesRejectsEntireStaleBatch(t, newTestStore(t))
+}
+
+func checkResolveDocumentSummariesRejectsEntireStaleBatch(t *testing.T, s *Store) {
+	t.Helper()
 	file, err := s.CreateFile(t.Context(), s.RootID(), "report.bin", fakeHash("old-report"), 7, "")
 	require.NoError(t, err)
 	old := DocumentCatalogIdentity{NodeID: file.ID, ContentVersionID: file.CurrentVersionID, Path: "/report.bin"}
@@ -238,85 +260,99 @@ func TestDocumentCatalogPaginationMatrix(t *testing.T) {
 		name   string
 		driver docsqlite.Driver
 	}{{"default", DefaultSQLiteDriver()}, {"pure Go", modernc.Driver{}}}
+	for _, driver := range drivers {
+		t.Run(driver.name, func(t *testing.T) {
+			checkDocumentCatalogPaginationMatrix(t, func(t *testing.T) *Store {
+				t.Helper()
+				return newTestStoreWithDriver(t, driver.driver)
+			})
+		})
+	}
+}
+
+func checkDocumentCatalogPaginationMatrix(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	sorts := []DocumentCatalogSort{
 		DocumentCatalogSortPath, DocumentCatalogSortName, DocumentCatalogSortModifiedAt,
 		DocumentCatalogSortSize, DocumentCatalogSortMediaType,
 	}
-	for _, driver := range drivers {
-		for _, sortBy := range sorts {
-			for _, direction := range []DocumentCatalogDirection{
-				DocumentCatalogDirectionAscending, DocumentCatalogDirectionDescending,
-			} {
-				t.Run(driver.name+"/"+string(sortBy)+"/"+string(direction), func(t *testing.T) {
-					s := newTestStoreWithDriver(t, driver.driver)
-					nodes := seedTiedDocumentCatalog(t, s)
-					want := []string{"/a/shared.txt", "/b/shared.txt", "/c/shared.txt",
-						"/d/shared.txt", "/e/shared.txt", "/f/shared.txt"}
-					if direction == DocumentCatalogDirectionDescending {
-						reverseStrings(want)
-					}
-					query := DocumentCatalogQuery{Sort: sortBy, Direction: direction, PageSize: 2}
-					first, err := s.ListDocuments(t.Context(), query, nil, DocumentCatalogTraversalNext)
-					require.NoError(t, err)
-					second, err := s.ListDocuments(t.Context(), query, &first.LastPosition,
-						DocumentCatalogTraversalNext)
-					require.NoError(t, err)
-					third, err := s.ListDocuments(t.Context(), query, &second.LastPosition,
-						DocumentCatalogTraversalNext)
-					require.NoError(t, err)
-					assert.Equal(t, want[:2], documentCatalogPaths(first.Items))
-					assert.Equal(t, want[2:4], documentCatalogPaths(second.Items))
-					assert.Equal(t, want[4:], documentCatalogPaths(third.Items))
-					assert.False(t, first.HasPrevious)
-					assert.True(t, first.HasNext)
-					assert.True(t, second.HasPrevious)
-					assert.True(t, second.HasNext)
-					assert.True(t, third.HasPrevious)
-					assert.False(t, third.HasNext)
+	for _, sortBy := range sorts {
+		for _, direction := range []DocumentCatalogDirection{
+			DocumentCatalogDirectionAscending, DocumentCatalogDirectionDescending,
+		} {
+			t.Run(string(sortBy)+"/"+string(direction), func(t *testing.T) {
+				s := open(t)
+				nodes := seedTiedDocumentCatalog(t, s)
+				want := []string{"/a/shared.txt", "/b/shared.txt", "/c/shared.txt",
+					"/d/shared.txt", "/e/shared.txt", "/f/shared.txt"}
+				if direction == DocumentCatalogDirectionDescending {
+					reverseStrings(want)
+				}
+				query := DocumentCatalogQuery{Sort: sortBy, Direction: direction, PageSize: 2}
+				first, err := s.ListDocuments(t.Context(), query, nil, DocumentCatalogTraversalNext)
+				require.NoError(t, err)
+				second, err := s.ListDocuments(t.Context(), query, &first.LastPosition,
+					DocumentCatalogTraversalNext)
+				require.NoError(t, err)
+				third, err := s.ListDocuments(t.Context(), query, &second.LastPosition,
+					DocumentCatalogTraversalNext)
+				require.NoError(t, err)
+				assert.Equal(t, want[:2], documentCatalogPaths(first.Items))
+				assert.Equal(t, want[2:4], documentCatalogPaths(second.Items))
+				assert.Equal(t, want[4:], documentCatalogPaths(third.Items))
+				assert.False(t, first.HasPrevious)
+				assert.True(t, first.HasNext)
+				assert.True(t, second.HasPrevious)
+				assert.True(t, second.HasNext)
+				assert.True(t, third.HasPrevious)
+				assert.False(t, third.HasNext)
 
-					backSecond, err := s.ListDocuments(t.Context(), query, &third.FirstPosition,
-						DocumentCatalogTraversalPrevious)
-					require.NoError(t, err)
-					backFirst, err := s.ListDocuments(t.Context(), query, &backSecond.FirstPosition,
-						DocumentCatalogTraversalPrevious)
-					require.NoError(t, err)
-					assert.Equal(t, want[2:4], documentCatalogPaths(backSecond.Items))
-					assert.Equal(t, want[:2], documentCatalogPaths(backFirst.Items))
-					assert.True(t, backSecond.HasPrevious)
-					assert.True(t, backSecond.HasNext)
-					assert.False(t, backFirst.HasPrevious)
-					assert.True(t, backFirst.HasNext)
+				backSecond, err := s.ListDocuments(t.Context(), query, &third.FirstPosition,
+					DocumentCatalogTraversalPrevious)
+				require.NoError(t, err)
+				backFirst, err := s.ListDocuments(t.Context(), query, &backSecond.FirstPosition,
+					DocumentCatalogTraversalPrevious)
+				require.NoError(t, err)
+				assert.Equal(t, want[2:4], documentCatalogPaths(backSecond.Items))
+				assert.Equal(t, want[:2], documentCatalogPaths(backFirst.Items))
+				assert.True(t, backSecond.HasPrevious)
+				assert.True(t, backSecond.HasNext)
+				assert.False(t, backFirst.HasPrevious)
+				assert.True(t, backFirst.HasNext)
 
-					previousBoundary := third.FirstPosition
-					deletedPrevious := nodes[want[4]]
-					_, _, err = s.Trash(t.Context(), deletedPrevious.ID, deletedPrevious.Revision)
-					require.NoError(t, err)
-					afterPreviousDeletion, err := s.ListDocuments(t.Context(), query, &previousBoundary,
-						DocumentCatalogTraversalPrevious)
-					require.NoError(t, err)
-					assert.Equal(t, want[2:4], documentCatalogPaths(afterPreviousDeletion.Items),
-						"deleting a previous boundary must not restart or skip the prior live key")
+				previousBoundary := third.FirstPosition
+				deletedPrevious := nodes[want[4]]
+				_, _, err = s.Trash(t.Context(), deletedPrevious.ID, deletedPrevious.Revision)
+				require.NoError(t, err)
+				afterPreviousDeletion, err := s.ListDocuments(t.Context(), query, &previousBoundary,
+					DocumentCatalogTraversalPrevious)
+				require.NoError(t, err)
+				assert.Equal(t, want[2:4], documentCatalogPaths(afterPreviousDeletion.Items),
+					"deleting a previous boundary must not restart or skip the prior live key")
 
-					boundary := first.LastPosition
-					deleted := nodes[want[1]]
-					_, _, err = s.Trash(t.Context(), deleted.ID, deleted.Revision)
-					require.NoError(t, err)
-					afterDeletion, err := s.ListDocuments(t.Context(), query, &boundary,
-						DocumentCatalogTraversalNext)
-					require.NoError(t, err)
-					assert.Equal(t, want[2:4], documentCatalogPaths(afterDeletion.Items),
-						"deleting the exact boundary must not restart or skip the next live key")
-					assert.True(t, afterDeletion.HasPrevious)
-					assert.True(t, afterDeletion.HasNext)
-				})
-			}
+				boundary := first.LastPosition
+				deleted := nodes[want[1]]
+				_, _, err = s.Trash(t.Context(), deleted.ID, deleted.Revision)
+				require.NoError(t, err)
+				afterDeletion, err := s.ListDocuments(t.Context(), query, &boundary,
+					DocumentCatalogTraversalNext)
+				require.NoError(t, err)
+				assert.Equal(t, want[2:4], documentCatalogPaths(afterDeletion.Items),
+					"deleting the exact boundary must not restart or skip the next live key")
+				assert.True(t, afterDeletion.HasPrevious)
+				assert.True(t, afterDeletion.HasNext)
+			})
 		}
 	}
 }
 
 func TestDocumentCatalogEmptyPagesHaveNoContinuations(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
+	checkDocumentCatalogEmptyPagesHaveNoContinuations(t, newTestStore(t))
+}
+
+func checkDocumentCatalogEmptyPagesHaveNoContinuations(t *testing.T, s *Store) {
+	t.Helper()
 	_, err := s.CreateFile(t.Context(), s.RootID(), "only.bin", fakeHash("only"), 1, "")
 	require.NoError(t, err)
 	for _, sortBy := range []DocumentCatalogSort{DocumentCatalogSortPath, DocumentCatalogSortMediaType} {
@@ -346,7 +382,11 @@ func TestDocumentCatalogEmptyPagesHaveNoContinuations(t *testing.T) {
 
 func TestDocumentCatalogMaximumPathPositionTraversesBothDirections(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
+	checkDocumentCatalogMaximumPathPositionTraversesBothDirections(t, newTestStore(t))
+}
+
+func checkDocumentCatalogMaximumPathPositionTraversesBothDirections(t *testing.T, s *Store) {
+	t.Helper()
 	_, err := s.CreateFile(t.Context(), s.RootID(), "a.txt", fakeHash("path-a"), 1, "text/plain")
 	require.NoError(t, err)
 	parentID := s.RootID()
@@ -392,7 +432,12 @@ func TestDocumentCatalogMaximumPathPositionTraversesBothDirections(t *testing.T)
 
 func TestDocumentCatalogReturnsOnlySummaryProcessingAndActiveRenditionIdentity(t *testing.T) {
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	checkDocumentCatalogReturnsOnlySummaryProcessingAndActiveRenditionIdentity(t, newTestStore(t))
+}
+
+func checkDocumentCatalogReturnsOnlySummaryProcessingAndActiveRenditionIdentity(t *testing.T, s *Store) {
+	t.Helper()
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)
 	request := renditionJobTestRequest(versions[0], profile)
 	grantRenditionJobConsent(t, s, request)
@@ -422,23 +467,28 @@ func TestDocumentCatalogReturnsOnlySummaryProcessingAndActiveRenditionIdentity(t
 		BuildID:            build.ID,
 	}, item.ActiveRenditions[0])
 	resolved, err := s.ResolveDocumentSummaries(t.Context(), []DocumentCatalogIdentity{
-		{NodeID: item.NodeID, ContentVersionID: versions[0], Path: item.Path},
 		{NodeID: page.Items[1].NodeID, ContentVersionID: versions[1], Path: page.Items[1].Path},
+		{NodeID: item.NodeID, ContentVersionID: versions[0], Path: item.Path},
 	})
 	require.NoError(t, err)
-	require.Len(t, resolved, 2)
-	assert.Equal(t, "queued", resolved[0].LatestProcessingState)
+	require.Equal(t, []string{"/synthetic-source-b.pdf", "/synthetic-source-a.pdf"}, documentCatalogPaths(resolved))
+	assert.Equal(t, "queued", resolved[1].LatestProcessingState)
 	assert.Equal(t, []DocumentRenditionIdentity{{
 		ProfileFingerprint: profile.Fingerprint,
 		AttachmentID:       attachment.ID,
 		BuildID:            build.ID,
-	}}, resolved[0].ActiveRenditions)
-	assert.Empty(t, resolved[1].ActiveRenditions)
+	}}, resolved[1].ActiveRenditions)
+	assert.Empty(t, resolved[0].ActiveRenditions)
 }
 
 func TestDocumentCatalogLatestProcessingStateUsesJobTransitionRecency(t *testing.T) {
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	checkDocumentCatalogLatestProcessingStateUsesJobTransitionRecency(t, newTestStore(t))
+}
+
+func checkDocumentCatalogLatestProcessingStateUsesJobTransitionRecency(t *testing.T, s *Store) {
+	t.Helper()
+	versions := seedRenditionCatalogVersions(t, s)
 	firstRequest := renditionJobTestRequest(versions[0], catalogProcessingProfile(t, false))
 	grantRenditionJobConsent(t, s, firstRequest)
 	first, _, err := s.EnqueueRenditionJob(t.Context(), firstRequest)
@@ -466,7 +516,11 @@ func TestDocumentCatalogLatestProcessingStateUsesJobTransitionRecency(t *testing
 
 func TestDocumentCatalogReturnsOnlyTheCurrentContentVersion(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
+	checkDocumentCatalogReturnsOnlyTheCurrentContentVersion(t, newTestStore(t))
+}
+
+func checkDocumentCatalogReturnsOnlyTheCurrentContentVersion(t *testing.T, s *Store) {
+	t.Helper()
 	created, err := s.CreateFile(t.Context(), s.RootID(), "versioned.txt", fakeHash("old"), 3, "text/plain")
 	require.NoError(t, err)
 	current, _, err := s.ReplaceContent(t.Context(), created.ID, created.Revision,
@@ -504,7 +558,7 @@ func seedDocumentCatalog(t *testing.T, s *Store) {
 		node, createErr := s.CreateFile(t.Context(), fixture.parent, fixture.name,
 			fakeHash(fmt.Sprintf("catalog-%d", index)), fixture.size, fixture.media)
 		require.NoError(t, createErr)
-		_, updateErr := s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=? WHERE id=?`, fixture.modified, node.ID)
+		_, updateErr := s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=$1 WHERE id=$2`, fixture.modified, node.ID)
 		require.NoError(t, updateErr)
 	}
 	hidden, err := s.CreateFile(t.Context(), alpha.ID, "hidden.txt", fakeHash("hidden"), 5, "text/plain")
@@ -520,9 +574,9 @@ func seedTiedDocumentCatalog(t *testing.T, s *Store) map[string]Node {
 		dir, err := s.Mkdir(t.Context(), s.RootID(), directoryName)
 		require.NoError(t, err)
 		node, err := s.CreateFile(t.Context(), dir.ID, "shared.txt",
-			fakeHash(fmt.Sprintf("matrix-%d", index)), 7, "text/plain")
+			fakeHash(fmt.Sprintf("matrix-%d", index)), 7, `text/plain; charset="a\\b"`)
 		require.NoError(t, err)
-		_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=? WHERE id=?`,
+		_, err = s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at=$1 WHERE id=$2`,
 			"2026-08-28T10:00:00.000000000Z", node.ID)
 		require.NoError(t, err)
 		nodes["/"+directoryName+"/shared.txt"] = node
@@ -546,6 +600,11 @@ func reverseStrings(items []string) {
 
 func TestDocumentCatalogRejectsUnboundedTraversal(t *testing.T) {
 	t.Parallel()
+	checkDocumentCatalogRejectsUnboundedTraversal(t, newTestStore)
+}
+
+func checkDocumentCatalogRejectsUnboundedTraversal(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	for _, fixture := range []struct {
 		name    string
 		depth   int
@@ -556,7 +615,7 @@ func TestDocumentCatalogRejectsUnboundedTraversal(t *testing.T) {
 		{"name", 1, strings.Repeat("x", 256)},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
-			s := newTestStore(t)
+			s := open(t)
 			parent := s.RootID()
 			for range fixture.depth {
 				dir, err := s.Mkdir(t.Context(), parent, fixture.segment)
@@ -584,7 +643,11 @@ func TestDocumentCatalogRejectsUnboundedTraversal(t *testing.T) {
 
 func TestDocumentCatalogPreservesLongDirectoryNames(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
+	checkDocumentCatalogPreservesLongDirectoryNames(t, newTestStore(t))
+}
+
+func checkDocumentCatalogPreservesLongDirectoryNames(t *testing.T, s *Store) {
+	t.Helper()
 	name := strings.Repeat("x", 256)
 	dir, err := s.Mkdir(t.Context(), s.RootID(), name)
 	require.NoError(t, err)
