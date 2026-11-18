@@ -12,17 +12,17 @@ const telemetryEventsPath = "/api/daemon/telemetry/events"
 
 // TelemetryEventRequest documents what interfaces post; the daemon's capture handler decodes it.
 type TelemetryEventRequest struct {
-	Properties *TelemetryEventProperties `json:"properties,omitempty" doc:"Event properties. screen_viewed requires screen and surface; session_ended optionally takes surface and duration_bucket; core actions require surface, search_run and search_empty require search_type; error_shown requires kind."`
-	Event      string                    `json:"event" minLength:"1" doc:"An event the daemon's telemetry allowlist names. Other events return 400."`
+	Properties *TelemetryEventProperties `json:"properties,omitempty"`
+	Event      string                    `json:"event" minLength:"1"`
 }
 
 // TelemetryEventProperties lists the properties the telemetry allowlist sends.
 type TelemetryEventProperties struct {
-	Kind           string `json:"kind,omitempty" doc:"Required for error_shown. add, search, and open are sent as given; any other string is sent as other."`
-	SearchType     string `json:"search_type,omitempty" enum:"text,semantic,hybrid" doc:"The executed search mode. A search that ends on an empty filter has no executed mode, so it carries the requested mode, with auto sent as text. Required for search_run and search_empty."`
-	Screen         string `json:"screen,omitempty" doc:"The screen shown. Other values return 400 for screen_viewed."`
-	Surface        string `json:"surface,omitempty" enum:"web,tui,cli" doc:"The interface that sent the event."`
-	DurationBucket string `json:"duration_bucket,omitempty" doc:"How long a session_ended session lasted."`
+	Kind           string `json:"kind,omitempty"`
+	SearchType     string `json:"search_type,omitempty" enum:"text,semantic,hybrid"`
+	Screen         string `json:"screen,omitempty"`
+	Surface        string `json:"surface,omitempty" enum:"web,tui,cli"`
+	DurationBucket string `json:"duration_bucket,omitempty"`
 }
 
 // TransformSchema publishes telemetry's allowed screen and duration values.
@@ -46,7 +46,7 @@ func durationBucketEnum() []any {
 
 // TelemetryEventReceipt documents the accepted response.
 type TelemetryEventReceipt struct {
-	Status string `json:"status" enum:"queued,disabled" doc:"queued when the event is queued or its screen was already sent today; disabled when telemetry is off and nothing is sent."`
+	Status string `json:"status" enum:"queued,disabled"`
 }
 
 // registerTelemetryEvents mounts the interface usage-event route; nil leaves it unregistered (offline OpenAPI, tests).

@@ -3852,7 +3852,9 @@ export interface Job {
   operation_id?: string;
   paused: boolean;
   processed_bytes?: number;
+  /** Status for the watch's single profile, when configured. */
   processing?: WatchProcessingStatus;
+  /** Status for each configured media-family route. A watch uses either processing or processing_routes. */
   processing_routes?: WatchProcessingStatus[];
   started_at: string;
   status: JobStatus;
@@ -8907,9 +8909,6 @@ export interface TaggedNodePage {
   total: number;
 }
 
-/**
- * How long a session_ended session lasted.
- */
 export type TelemetryEventPropertiesDurationBucket = typeof TelemetryEventPropertiesDurationBucket[keyof typeof TelemetryEventPropertiesDurationBucket];
 
 
@@ -8920,9 +8919,6 @@ export const TelemetryEventPropertiesDurationBucket = {
   over_30m: 'over_30m',
 } as const;
 
-/**
- * The screen shown. Other values return 400 for screen_viewed.
- */
 export type TelemetryEventPropertiesScreen = typeof TelemetryEventPropertiesScreen[keyof typeof TelemetryEventPropertiesScreen];
 
 
@@ -8958,9 +8954,6 @@ export const TelemetryEventPropertiesScreen = {
   operations: 'operations',
 } as const;
 
-/**
- * The executed search mode. A search that ends on an empty filter has no executed mode, so it carries the requested mode, with auto sent as text. Required for search_run and search_empty.
- */
 export type TelemetryEventPropertiesSearchType = typeof TelemetryEventPropertiesSearchType[keyof typeof TelemetryEventPropertiesSearchType];
 
 
@@ -8970,9 +8963,6 @@ export const TelemetryEventPropertiesSearchType = {
   hybrid: 'hybrid',
 } as const;
 
-/**
- * The interface that sent the event.
- */
 export type TelemetryEventPropertiesSurface = typeof TelemetryEventPropertiesSurface[keyof typeof TelemetryEventPropertiesSurface];
 
 
@@ -8983,15 +8973,10 @@ export const TelemetryEventPropertiesSurface = {
 } as const;
 
 export interface TelemetryEventProperties {
-  /** How long a session_ended session lasted. */
   duration_bucket?: TelemetryEventPropertiesDurationBucket;
-  /** Required for error_shown. add, search, and open are sent as given; any other string is sent as other. */
   kind?: string;
-  /** The screen shown. Other values return 400 for screen_viewed. */
   screen?: TelemetryEventPropertiesScreen;
-  /** The executed search mode. A search that ends on an empty filter has no executed mode, so it carries the requested mode, with auto sent as text. Required for search_run and search_empty. */
   search_type?: TelemetryEventPropertiesSearchType;
-  /** The interface that sent the event. */
   surface?: TelemetryEventPropertiesSurface;
 }
 
@@ -9346,7 +9331,9 @@ export interface WatchedInbox {
   job?: Job;
   minimum_age: string;
   name: string;
+  /** Status for the watch's single profile, when configured. */
   processing?: WatchProcessingStatus;
+  /** Status for each configured media-family route. A watch uses either processing or processing_routes. */
   processing_routes?: WatchProcessingStatus[];
   scan_interval: string;
   settle_time: string;
@@ -9457,18 +9444,11 @@ export type ShutdownDaemonHeaders = {
 };
 
 export type ReportTelemetryEventBody = {
-  /**
-     * An event the daemon's telemetry allowlist names. Other events return 400.
-     * @minLength 1
-     */
+  /** @minLength 1 */
   event: string;
-  /** Event properties. screen_viewed requires screen and surface; session_ended optionally takes surface and duration_bucket; core actions require surface, search_run and search_empty require search_type; error_shown requires kind. */
   properties?: TelemetryEventProperties;
 };
 
-/**
- * queued when the event is queued or its screen was already sent today; disabled when telemetry is off and nothing is sent.
- */
 export type ReportTelemetryEvent202Status = typeof ReportTelemetryEvent202Status[keyof typeof ReportTelemetryEvent202Status];
 
 
@@ -9478,7 +9458,6 @@ export const ReportTelemetryEvent202Status = {
 } as const;
 
 export type ReportTelemetryEvent202 = {
-  /** queued when the event is queued or its screen was already sent today; disabled when telemetry is off and nothing is sent. */
   status: ReportTelemetryEvent202Status;
 };
 
@@ -9527,9 +9506,6 @@ export type PrepareWebDownload200 = {
 };
 
 export type RevokeWebSessionParams = {
-/**
- * Final visible session duration to report after revocation. Missing or invalid values emit no event.
- */
 duration_bucket?: RevokeWebSessionDurationBucket;
 };
 
@@ -10877,9 +10853,6 @@ export const getReportTelemetryEventUrl = () => {
   return `/api/daemon/telemetry/events`
 }
 
-/**
- * @summary Report an anonymous interface usage event
- */
 export const reportTelemetryEvent = async (reportTelemetryEventBody: ReportTelemetryEventBody, options?: Parameters<typeof sessionJSON>[1]): Promise<ReportTelemetryEvent202> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {

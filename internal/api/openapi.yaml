@@ -21469,7 +21469,6 @@ components:
       additionalProperties: false
       properties:
         duration_bucket:
-          description: How long a session_ended session lasted.
           enum:
             - under_1m
             - 1_to_5m
@@ -21477,10 +21476,8 @@ components:
             - over_30m
           type: string
         kind:
-          description: Required for error_shown. add, search, and open are sent as given; any other string is sent as other.
           type: string
         screen:
-          description: The screen shown. Other values return 400 for screen_viewed.
           enum:
             - browse
             - search
@@ -21513,14 +21510,12 @@ components:
             - operations
           type: string
         search_type:
-          description: The executed search mode. A search that ends on an empty filter has no executed mode, so it carries the requested mode, with auto sent as text. Required for search_run and search_empty.
           enum:
             - text
             - semantic
             - hybrid
           type: string
         surface:
-          description: The interface that sent the event.
           enum:
             - web
             - tui
@@ -23196,12 +23191,10 @@ paths:
               additionalProperties: false
               properties:
                 event:
-                  description: An event the daemon's telemetry allowlist names. Other events return 400.
                   minLength: 1
                   type: string
                 properties:
                   $ref: "#/components/schemas/TelemetryEventProperties"
-                  description: Event properties. screen_viewed requires screen and surface; session_ended optionally takes surface and duration_bucket; core actions require surface, search_run and search_empty require search_type; error_shown requires kind.
               required:
                 - event
               type: object
@@ -23214,7 +23207,6 @@ paths:
                 additionalProperties: false
                 properties:
                   status:
-                    description: queued when the event is queued or its screen was already sent today; disabled when telemetry is off and nothing is sent.
                     enum:
                       - queued
                       - disabled
@@ -23222,9 +23214,9 @@ paths:
                 required:
                   - status
                 type: object
-          description: Event queued, or dropped because telemetry is off
+          description: Accepted
         "400":
-          description: Malformed body, unsupported event, missing or unsupported screen or surface, search_run or search_empty with missing or unsupported search_type, or error_shown with a missing or non-string kind
+          description: Invalid request
         "401":
           description: Missing or invalid API key or browser session
         "403":
@@ -23234,8 +23226,7 @@ paths:
         "415":
           description: Content type must be application/json
         "500":
-          description: Telemetry capture failed
-      summary: Report an anonymous interface usage event
+          description: Request failed
   /api/daemon/web-auth:
     get:
       operationId: getWebSignIn
@@ -23402,8 +23393,7 @@ paths:
     delete:
       operationId: revokeWebSession
       parameters:
-        - description: Final visible session duration to report after revocation. Missing or invalid values emit no event.
-          in: query
+        - in: query
           name: duration_bucket
           schema:
             enum:
