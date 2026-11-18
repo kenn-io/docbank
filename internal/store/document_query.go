@@ -482,17 +482,19 @@ func documentCatalogBoundary(
 	if !ascending {
 		op = "<"
 	}
-	if query.Sort == DocumentCatalogSortPath {
+	primary := any(boundary.Value)
+	switch query.Sort {
+	case DocumentCatalogSortPath:
 		return fmt.Sprintf(`WHERE (path %s $%d OR (path=$%d AND node_id %s $%d))`, op, offset+1, offset+1, op, offset+2),
 			[]any{boundary.Path, boundary.NodeID}
+	case DocumentCatalogSortSize:
+		primary = boundary.Size
+	case DocumentCatalogSortMediaType:
+		primary = storedString(postgres, boundary.Value)
+	case DocumentCatalogSortName, DocumentCatalogSortModifiedAt:
+		// Both sort keys use their stored text directly.
 	}
 	expression := documentCatalogPrimaryExpression(query.Sort)
-	primary := any(boundary.Value)
-	if query.Sort == DocumentCatalogSortSize {
-		primary = boundary.Size
-	} else if query.Sort == DocumentCatalogSortMediaType {
-		primary = storedString(postgres, boundary.Value)
-	}
 	return fmt.Sprintf(`WHERE (%s %s $%d OR (%s=$%d AND (path %s $%d OR (path=$%d AND node_id %s $%d))))`,
 			expression, op, offset+1, expression, offset+1, op, offset+2, offset+2, op, offset+3),
 		[]any{primary, boundary.Path, boundary.NodeID}
