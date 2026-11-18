@@ -39,7 +39,7 @@ func newTextSectionParser() parser.Parser {
 			util.Prioritized(parser.NewParagraphParser(), 1000),
 		),
 		parser.WithParagraphTransformers(util.Prioritized(parser.LinkReferenceParagraphTransformer, 100)),
-		parser.WithExtensions(extension.TableParser),
+		parser.WithExtensions(extension.NewTableParser()),
 	)
 }
 

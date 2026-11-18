@@ -79,14 +79,14 @@ func renderSanitizedMarkdown(t *testing.T, markdown string) string {
 func renderGFMUnsafe(t *testing.T, markdown []byte) []byte {
 	t.Helper()
 	root := parseGFM(markdown)
-	renderer := goldmarkhtml.New(goldmarkhtml.WithUnsafe(), goldmarkhtml.WithExtensions(extension.GFMHTMLRenderer))
+	renderer := goldmarkhtml.New(goldmarkhtml.WithUnsafe(), goldmarkhtml.WithExtensions(extension.NewGFMHTMLRenderer()))
 	var rendered bytes.Buffer
 	require.NoError(t, renderer.Render(&rendered, markdown, root))
 	return rendered.Bytes()
 }
 
 func parseGFM(markdown []byte) ast.Node {
-	return parser.New(parser.WithExtensions(extension.GFMParser)).Parse(markdown)
+	return parser.New(parser.WithExtensions(extension.NewGFMParser())).Parse(markdown)
 }
 
 func assertNoRawHTML(t *testing.T, markdown string) {
