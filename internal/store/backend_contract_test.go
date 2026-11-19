@@ -2757,6 +2757,37 @@ var backendSuites = []backendSuite{
 		{"PhotoRejectsMoveWaitsForSidecarSync", func(t *testing.T) { t.Helper(); checkPhotoRejectsMoveWaitsForSidecarSync(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoRejectsMoveWaitsForSidecarSync(t, newPostgresQueryStore) }},
 		{"PhotoRejectsMixedAndUnchanged", func(t *testing.T) { t.Helper(); checkPhotoRejectsMixedAndUnchanged(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoRejectsMixedAndUnchanged(t, newPostgresQueryStore) }},
 	}},
+	{name: "batch-moves", postgres: "native atomic reorganization", scope: "Final topology, input-order receipts, stale-source and change-write rollback, and photo sidecar invalidation.", scenarios: []backendScenario{
+		{"BatchMoveAppliesFinalTopologyAtomically", func(t *testing.T) {
+			t.Helper()
+			checkBatchMoveAppliesFinalTopologyAtomically(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkBatchMoveAppliesFinalTopologyAtomically(t, newPostgresQueryStore)
+		}},
+		{"BatchMoveResolvesDestinationParentsInFinalTree", func(t *testing.T) {
+			t.Helper()
+			checkBatchMoveResolvesDestinationParentsInFinalTree(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkBatchMoveResolvesDestinationParentsInFinalTree(t, newPostgresQueryStore)
+		}},
+		{"BatchMoveFailureRollsBackWholePlan", func(t *testing.T) {
+			t.Helper()
+			checkBatchMoveFailureRollsBackWholePlan(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkBatchMoveFailureRollsBackWholePlan(t, newPostgresQueryStore)
+		}},
+		{"BatchMoveChangeWriteRollback", nil, checkBatchMoveChangeWriteRollbackPostgres},
+		{"PhotoXMPBatchRenameInvalidation", func(t *testing.T) {
+			t.Helper()
+			checkPhotoXMPBatchRenameInvalidation(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoXMPBatchRenameInvalidation(t, newPostgresQueryStore)
+		}},
+	}},
 	{name: "document-snapshots", postgres: "native document workspaces", scope: "Frozen document rows, structured selection and facets including media family, name and body terms, selected rendition mentions, person roles and saved run receipts. PDF fact filters use pdf-fact-search. NEAR uses SQLite.", scenarios: []backendScenario{
 		{"DocumentSnapshotFrozenRowsAndReceipts", func(t *testing.T) { t.Helper(); checkQuerySnapshotMaterializesFrozenRowsAndReceipts(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()

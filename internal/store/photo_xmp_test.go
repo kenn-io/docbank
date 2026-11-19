@@ -1143,20 +1143,40 @@ func TestPhotoXMPQueryFiltersWithStacks(t *testing.T) {
 	require.Equal(t, ids[:2], page.Stacks[0].AssetIDs)
 }
 
-func TestPhotoXMPBatchRenameInvalidation(t *testing.T) {
-	t.Parallel()
-	s, _, raw := xmpSidecarPhoto(t, newTestStore(t))
-	importXMP(t, s, raw.ID, PhotoAuthored{Rating: 3, Confirmed: PhotoConfirmedRating})
-	require.Empty(t, xmpTargets(t, s))
-	work, _, err := s.ClassifyPhotoXMP(t.Context(), raw.ID)
+func checkPhotoXMPBatchRenameInvalidation(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	ctx := t.Context()
+	s, _, raw := xmpSidecarPhoto(t, open(t))
+	rating := PhotoAuthored{Rating: 3, Confirmed: PhotoConfirmedRating}
+	want := []PhotoSidecarTarget{{FileID: raw.ID, NodeID: raw.NodeID, AssetID: raw.AssetID}}
+	staging, err := s.Mkdir(ctx, s.RootID(), "staging")
 	require.NoError(t, err)
-	asset, err := s.PhotoAssetByID(t.Context(), raw.AssetID)
+	_, err = s.CreateFile(ctx, staging.ID, "capture.cr2.xmp", fakeHash("e5"), 4, "application/rdf+xml")
+	require.NoError(t, err)
+	importXMP(t, s, raw.ID, rating)
+	require.Empty(t, xmpTargets(t, s))
+
+	_, err = s.BatchMove(ctx, []BatchMoveRequest{{SourcePath: "/staging/capture.cr2.xmp", DestinationPath: "/capture.cr2.xmp"}})
+	require.NoError(t, err)
+	require.Equal(t, want, xmpTargets(t, s), "moving a loose sidecar in queues its new sibling")
+	importXMP(t, s, raw.ID, rating)
+	require.Empty(t, xmpTargets(t, s))
+
+	_, err = s.BatchMove(ctx, []BatchMoveRequest{{SourcePath: "/capture.cr2.xmp", DestinationPath: "/staging/capture.cr2.xmp"}})
+	require.NoError(t, err)
+	require.Equal(t, want, xmpTargets(t, s), "moving a loose sidecar out queues its former sibling")
+	importXMP(t, s, raw.ID, rating)
+	require.Empty(t, xmpTargets(t, s))
+
+	work, _, err := s.ClassifyPhotoXMP(ctx, raw.ID)
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetByID(ctx, raw.AssetID)
 	require.NoError(t, err)
 	n := requireNodeByID(t, s, fileByRole(asset.Files, PhotoRoleSidecar).NodeID)
-	_, err = s.BatchMove(t.Context(), []BatchMoveRequest{{NodeID: n.ID, IfRevision: n.Revision, DestinationPath: "/capture.cr2.xmp"}})
+	_, err = s.BatchMove(ctx, []BatchMoveRequest{{NodeID: n.ID, IfRevision: n.Revision, DestinationPath: "/capture.cr2.xmp"}})
 	require.NoError(t, err)
-	_, err = s.PublishPhotoXMP(t.Context(), PhotoXMPPlan{Work: work, Refusal: "stale worker result"}, "", 0, BlobPhysical{})
+	_, err = s.PublishPhotoXMP(ctx, PhotoXMPPlan{Work: work, Refusal: "stale worker result"}, "", 0, BlobPhysical{})
 	require.ErrorIs(t, err, ErrStaleRevision)
 	require.Equal(t, PhotoXMPStatePending, xmpState(t, s, raw.ID).State)
-	require.Len(t, xmpTargets(t, s), 1)
+	require.Equal(t, want, xmpTargets(t, s))
 }

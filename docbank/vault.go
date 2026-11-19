@@ -239,6 +239,27 @@ func openVaultWithRootOpener(
 	blobOptions blob.Options,
 	layout home.Layout,
 	openRoot func() (*os.Root, *home.Lock, error),
+) (*Vault, error) {
+	return openVaultWithCatalog(ctx, config, blobOptions, layout, openRoot, func(ctx context.Context) (*store.Store, error) {
+		if err := backupapp.RecoverInterruptedPrimaryHandoff(ctx, layout.Root, config.SQLite); err != nil {
+			return nil, err
+		}
+		if err := layout.Ensure(); err != nil {
+			return nil, err
+		}
+		return store.Open(ctx, layout.DBPath(), config.SQLite)
+	})
+}
+
+// The catalog opener runs while the root lock is held. After it succeeds, the
+// Vault owns the catalog, blob storage, upload directory, and workers.
+func openVaultWithCatalog(
+	ctx context.Context,
+	config Config,
+	blobOptions blob.Options,
+	layout home.Layout,
+	openRoot func() (*os.Root, *home.Lock, error),
+	openCatalog func(context.Context) (*store.Store, error),
 ) (_ *Vault, retErr error) {
 	root, lock, err := openRoot()
 	if err != nil {
@@ -249,15 +270,7 @@ func openVaultWithRootOpener(
 			retErr = errors.Join(retErr, lock.Release(), root.Close())
 		}
 	}()
-	if err := backupapp.RecoverInterruptedPrimaryHandoff(
-		ctx, layout.Root, config.SQLite,
-	); err != nil {
-		return nil, err
-	}
-	if err := layout.Ensure(); err != nil {
-		return nil, err
-	}
-	metadata, err := store.Open(ctx, layout.DBPath(), config.SQLite)
+	metadata, err := openCatalog(ctx)
 	if err != nil {
 		return nil, err
 	}
