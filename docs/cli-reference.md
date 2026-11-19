@@ -1503,10 +1503,12 @@ build command also starts the reviewed work. See
 
 `--allow-package-writes` separately adds load-file preflight, package import,
 package custodian assignment and resolution, Bates exports, recipient ZIP
-delivery, and reviewed PDF publication with `publish_numbered_pdf`. These tools
-can read local sources and change the vault without using the processing
-consent flow. Publication needs a range an operator already reserved; MCP
-cannot grant original-retention consent.
+delivery, and reviewed PDF publication with `publish_numbered_pdf`. It also adds
+`export_load_file_package`, which writes a load-file package to a local path and
+can replace an existing file when the call sets `overwrite`. These tools can
+read local sources, write local files, and change the vault without using the
+processing consent flow. Publication needs a range an operator already
+reserved; MCP cannot grant original-retention consent.
 
 `--allow-export-writes` separately adds native export previews, start,
 cancellation, local download, and release. Status is available without write

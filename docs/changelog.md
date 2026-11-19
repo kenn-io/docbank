@@ -47,9 +47,10 @@ later are within the
   `--json` adds a `hints` array. A `needs_ocr` hint reports PDFs whose pages lack
   a text layer, and `docbank processing coverage` lists those pages. See
   [Why did a text search find nothing?](usage/searching.md#why-did-a-text-search-find-nothing)
-- Limit search to one folder with `docbank search --under /taxes/2026`. MCP
-  `search_documents`, `answer_question`, and `find_conflicts` accept the same
-  scope as `under_path`.
+- Limit search to one folder with
+  `docbank search invoice --under /taxes/2026`. MCP `search_documents`,
+  `answer_question`, and `find_conflicts` accept the same scope as
+  `under_path`.
 - Search people by role with `from:`, `to:`, `author:`, `between:`, `mentions:`,
   and related terms, and filter results with the web app's People facet. See
   [Find documents by person and role](usage/searching.md#find-documents-by-person-and-role).
