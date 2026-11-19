@@ -310,7 +310,8 @@ var (
 		table: "nodes", suffix: "ORDER BY id", validate: validateNodeRecord, checkExport: true})
 	contentVersionMetadata = newMetadataTable(metadataTable[metadataContentVersion]{
 		record: metadataContentVersion{Type: "content_version"}, table: "content_versions",
-		suffix: "ORDER BY node_id, node_revision, version_id", validate: validateContentVersionRecord, checkExport: true})
+		suffix: "ORDER BY node_id, node_revision, version_id", validate: validateContentVersionRecord,
+		insert: insertContentVersionTx, checkExport: true})
 	ingestMetadata = newMetadataTable(metadataTable[metadataIngest]{record: metadataIngest{Type: metadataIngestType},
 		table: "ingests", suffix: "ORDER BY id", validate: validateIngestRecord, checkExport: true})
 	provenanceMetadata = newMetadataTable(metadataTable[metadataProvenance]{record: metadataProvenance{Type: metadataProvenanceType},

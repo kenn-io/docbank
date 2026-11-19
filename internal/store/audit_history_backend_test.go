@@ -268,6 +268,10 @@ func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables 
 		if sourceMetadata {
 			columns = append(columns, "pdf_query_facts")
 		}
+		contentVersion := table == "content_versions"
+		if contentVersion {
+			columns = append(columns, "query_mime_family")
+		}
 		insert := "INSERT INTO " + table + "(" + strings.Join(columns, ",") + ")" + override + " VALUES(" + numberedPlaceholders(len(columns), 0) + ")"
 		for rows.Next() {
 			require.NoError(t, rows.Scan(destinations...))
@@ -281,6 +285,15 @@ func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables 
 			}
 
 			args := values
+			if contentVersion {
+				var mediaType *string
+				if raw := values[slices.Index(columns, "mime_type")]; raw != nil {
+					mimeBytes, ok := raw.([]byte)
+					require.True(t, ok)
+					mediaType = new(string(mimeBytes))
+				}
+				args = append(slices.Clone(values), postgresMIMEFamily(mediaType))
+			}
 			if sourceMetadata {
 				raw, ok := values[slices.Index(columns, "canonical_json")].([]byte)
 				require.True(t, ok)

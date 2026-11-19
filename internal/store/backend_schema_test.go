@@ -72,6 +72,8 @@ func checkBackendSchemaPostgres(t *testing.T) {
 	delete(right["media_input_artifacts"].Columns, "input_binding_json")
 	assert.Equal(t, backendColumn{Kind: "jsonb", Required: true}, right["source_metadata_generations"].Columns["pdf_query_facts"])
 	delete(right["source_metadata_generations"].Columns, "pdf_query_facts")
+	assert.Equal(t, backendColumn{Kind: "text"}, right["content_versions"].Columns["query_mime_family"])
+	delete(right["content_versions"].Columns, "query_mime_family")
 
 	for _, table := range []string{"extracted_text", "rendition_lexical_index"} {
 		assert.Equal(t, backendColumn{Kind: "text", Required: true}, right[table].Columns["search_text"])

@@ -78,6 +78,7 @@ CREATE TABLE {{schema}}.content_versions (
     blob_hash               TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blobs(hash) DEFERRABLE INITIALLY IMMEDIATE,
     size                    BIGINT NOT NULL,
     mime_type BYTEA,
+    query_mime_family       TEXT COLLATE "C",
     recorded_at             TEXT COLLATE "C" NOT NULL,
     node_revision           BIGINT NOT NULL,
     introduced_operation_id TEXT COLLATE "C" NOT NULL,

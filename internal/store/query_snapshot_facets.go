@@ -171,10 +171,10 @@ func materializeSnapshotFacet(
 	}
 	order := ""
 	if dimension != snapshotFacetDuplicates {
-		order = ` ORDER BY ` + identity + `,` + key
+		order = ` ORDER BY ` + identity + `,facet_key`
 	}
 	read := `WITH matched_members AS (` + statement + `)` + ctes + `
-		SELECT ` + identity + `,n.name,COALESCE(cv.mime_type,''),cv.size,n.modified_at,` + key + `,` + label + `
+		SELECT ` + identity + `,n.name,COALESCE(cv.mime_type,''),cv.size,n.modified_at,` + key + ` AS facet_key,` + label + `
 		FROM matched_members m JOIN nodes n ON n.id=m.node_id
 		JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=m.content_version_id
 		` + join + order
