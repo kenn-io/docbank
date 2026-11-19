@@ -135,6 +135,24 @@ test("masks selected PDF text using native spans and verified delivery", async (
       await expect(draw).toBeEnabled({ timeout: 60000 });
       const host = drawer.locator("embedpdf-container"),
         add = drawer.getByRole("button", { name: "Mask selected text", exact: true });
+      const resizeReader = async (size: { width: number; height: number }) => {
+        const dimensions = () =>
+          host.evaluate(async (el) => {
+            const registry = await (el as HTMLElement & { registry: Promise<PluginRegistry> })
+              .registry;
+            const { width, height } = registry
+              .getPlugin<ViewportPlugin>("viewport")!
+              .provides()
+              .getMetrics();
+            return { width, height };
+          });
+        const before = await dimensions();
+        await page.setViewportSize(size);
+        // The reader clears selections in its resize callback. A button can
+        // still be enabled from the old layout before that callback runs.
+        await expect.poll(dimensions).not.toEqual(before);
+        await expect(draw).toBeEnabled();
+      };
       const select = async (n: number, from: number, to: number) =>
         host.evaluate(
           async (el, { n, from, to }) => {
@@ -284,8 +302,7 @@ test("masks selected PDF text using native spans and verified delivery", async (
         continue;
       }
       if (kind === "small") {
-        await page.setViewportSize({ width: 640, height: 400 });
-        await expect(draw).toBeEnabled();
+        await resizeReader({ width: 640, height: 400 });
         await select(1, 11, 24);
         await expect(add).toBeEnabled();
         await drawer.locator(".review-footer").hover();
@@ -300,8 +317,7 @@ test("masks selected PDF text using native spans and verified delivery", async (
       const addBounds = (await add.boundingBox())!;
       await page.mouse.click(addBounds.x + addBounds.width / 2, addBounds.y + addBounds.height / 2);
       if (kind === "small") {
-        await page.setViewportSize({ width: 1440, height: 960 });
-        await expect(draw).toBeEnabled();
+        await resizeReader({ width: 1440, height: 960 });
       }
       await expect(drawer.getByText("Selected text · Page 1", { exact: true })).toBeVisible();
       const selectionStatus = drawer.locator(
