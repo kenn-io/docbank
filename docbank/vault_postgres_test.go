@@ -20,6 +20,7 @@ import (
 )
 
 func TestEmbeddedVaultLifecyclePostgres(t *testing.T) {
+	t.Parallel()
 	setup, owner := pgtest.NewDatabase(t)
 	ctx := t.Context()
 	source, err := New(ctx, Config{Root: filepath.Join(t.TempDir(), "source")})
