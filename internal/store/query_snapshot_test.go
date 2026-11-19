@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
@@ -11,7 +12,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/pgtest"
 	"go.kenn.io/docbank/internal/query"
+	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func snapshotTestQuery(t *testing.T, raw string) query.Query {
@@ -328,4 +331,116 @@ func checkDocumentSnapshotLexicalNULPostgres(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, canonical, record.Payload)
 	require.Equal(t, fingerprint, record.Fingerprint)
+}
+
+func checkMediaFamilyQueries(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	ctx := t.Context()
+	newFile := func(name, mimeType string) Node {
+		t.Helper()
+		node, err := s.CreateFile(ctx, s.RootID(), name, testSHA256([]byte(name)), 12, mimeType)
+		require.NoError(t, err)
+		return node
+	}
+	image := newFile("camera.PDF", `IMAGE/PNG ; name="a;b"`)
+	fallback := newFile("Résumé.PDF", `application/octet-stream; name="copy"`)
+	plain := newFile("notes.TXT", "")
+	broken := newFile("broken.PDF", `application/pdf; name="unterminated`)
+	dotfile := newFile(".pdf", "")
+	for _, tc := range []struct {
+		raw  string
+		want []int64
+	}{
+		{`{"syntax":"advanced","text":"media_family:document"}`, []int64{fallback.ID}},
+		{`{"filters":{"media_families":["document","text"]}}`, []int64{fallback.ID, plain.ID}},
+		{`{"filters":{"media_families":["image"]}}`, []int64{image.ID}},
+		{`{"syntax":"advanced","text":"media_family:unknown"}`, []int64{broken.ID, dotfile.ID}},
+	} {
+		t.Run(tc.raw, func(t *testing.T) {
+			result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, tc.raw)})
+			require.NoError(t, err)
+			ids := make([]int64, 0, len(result.Rows))
+			for _, row := range result.Rows {
+				ids = append(ids, row.NodeID)
+			}
+			require.ElementsMatch(t, tc.want, ids)
+		})
+	}
+	facets, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{
+		Query:  snapshotTestQuery(t, `{"filters":{"extensions":["pdf"],"media_families":["document"]}}`),
+		Facets: []string{"media_family"},
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, facets.Total)
+	family := facetByDimension(t, facets, "media_family")
+	require.EqualValues(t, 3, *family.Total)
+	counts := facetCounts(family)
+	require.EqualValues(t, 1, counts["document"])
+	require.EqualValues(t, 1, counts["image"])
+	require.EqualValues(t, 1, counts["unknown"])
+
+	saved, err := s.CreateSavedQuery(ctx, "Documents only", "", SavedQueryKindQuery,
+		[]byte(`{"filters":{"media_families":["document"]}}`))
+	require.NoError(t, err)
+	service := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	nested := snapshotTestQuery(t, `{"syntax":"advanced","text":"saved:\"Documents only\""}`)
+	before, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: nested})
+	require.NoError(t, err)
+	require.Len(t, before.Rows, 1)
+	require.Equal(t, fallback.ID, before.Rows[0].NodeID)
+	initial, _, err := service.RunSaved(ctx, "owner", saved.ID, saved.Revision, SnapshotRequest{}, nil)
+	require.NoError(t, err)
+
+	_, _, err = s.Move(ctx, fallback.ID, s.RootID(), "Résumé.JPG", fallback.Revision)
+	require.NoError(t, err)
+	replaced, _, err := s.ReplaceContent(ctx, image.ID, image.Revision, testSHA256([]byte("replacement")), 13, "application/octet-stream")
+	require.NoError(t, err)
+	next, current, err := service.RunSaved(ctx, "owner", saved.ID, saved.Revision, SnapshotRequest{}, nil)
+	require.NoError(t, err)
+	require.Equal(t, initial.RunID, next.PreviousRunID)
+	require.Len(t, current.Rows, 1)
+	require.Equal(t, replaced.CurrentVersionID, current.Rows[0].ContentVersionID)
+	require.Equal(t, "document", current.Rows[0].MediaFamily)
+	_, reverted, _, err := s.RevertContent(ctx, replaced.ID, replaced.Revision, image.CurrentVersionID)
+	require.NoError(t, err)
+	require.Equal(t, image.MimeType, reverted.MimeType)
+	restored, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: nested})
+	require.NoError(t, err)
+	require.Empty(t, restored.Rows)
+}
+
+func checkMediaFamilyRestorePostgres(t *testing.T) {
+	t.Helper()
+	ctx := t.Context()
+	source := newTestStore(t)
+	image, err := source.CreateFile(ctx, source.RootID(), "image.pdf", testSHA256([]byte("image")), 10, "image/png")
+	require.NoError(t, err)
+	const malformed = "application/pdf; name=\"copy\x00title\""
+	file, err := source.CreateFile(ctx, source.RootID(), "invalid.pdf", testSHA256([]byte("invalid")), 10, malformed)
+	require.NoError(t, err)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(ctx, &exported))
+	setup, owner := pgtest.NewDatabase(t)
+	cfg := pgschema.Config{Schema: "documents", SchemaOwner: owner}
+	require.NoError(t, ImportPostgresMetadata(ctx, setup, cfg, bytes.NewReader(exported.Bytes())))
+	restored := newPostgresSchemaStore(t, setup, cfg)
+
+	for _, tc := range []struct {
+		family string
+		id     int64
+	}{{"image", image.ID}, {"unknown", file.ID}} {
+		value := compilerQuery(t, "media_family:"+tc.family)
+		result, err := restored.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+		require.Equal(t, tc.id, result.Rows[0].NodeID)
+	}
+	version, err := restored.ContentVersionByID(ctx, file.CurrentVersionID)
+	require.NoError(t, err)
+	require.Equal(t, malformed, version.MimeType)
+	var reexported bytes.Buffer
+	require.NoError(t, restored.ExportMetadata(ctx, &reexported))
+	require.Equal(t, exported.Bytes(), reexported.Bytes())
 }

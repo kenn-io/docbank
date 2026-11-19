@@ -2715,7 +2715,7 @@ var backendSuites = []backendSuite{
 		}},
 	}},
 	{name: "processing-publication", postgres: "native rendition/embedding/photo workers", scope: "internal/processing tests qualify shared-build publication, durable resume, consent/source fencing, email-PDF receipt/export, supplied-media continuation, direct original/chunk embedding-worker recovery, photo descriptions, face detection, face embedding, face-vector index capture, ranked people selection and suggestion rebuilding. Foreground direct-file/image completion and index recovery use vector-index-publication and internal/processing scenarios."},
-	{name: "photo-browse", postgres: "native structured photo pages", scope: "Structured photo filters and orders, live cursors, facets, display previews, burst pages, album and export selection, and reject preflight and move. Lexical and semantic photo retrieval, PDF facts and media-family filters remain separate. The photo-snapshots suite uses the structured population.", scenarios: []backendScenario{
+	{name: "photo-browse", postgres: "native structured photo pages", scope: "Structured photo filters including media family, orders, live cursors, facets, display previews, burst pages, album and export selection, and reject preflight and move. Lexical and semantic photo retrieval and PDF facts remain separate. The photo-snapshots suite uses the structured population.", scenarios: []backendScenario{
 		{"PhotoBrowseStructuredFilterPages", func(t *testing.T) { t.Helper(); checkPhotoBrowseStructuredFilterPages(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoBrowseStructuredFilterPages(t, newPostgresQueryStore) }},
 		{"PhotoBrowseISOAndAssetPredicates", func(t *testing.T) { t.Helper(); checkPhotoBrowseISOAndAssetPredicates(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoBrowseISOAndAssetPredicates(t, newPostgresQueryStore) }},
 		{"PhotoBrowseMissingDisplayMediaType", func(t *testing.T) { t.Helper(); checkPhotoBrowseMissingDisplayMediaType(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoBrowseMissingDisplayMediaType(t, newPostgresQueryStore) }},
@@ -2757,7 +2757,7 @@ var backendSuites = []backendSuite{
 		{"PhotoRejectsMoveWaitsForSidecarSync", func(t *testing.T) { t.Helper(); checkPhotoRejectsMoveWaitsForSidecarSync(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoRejectsMoveWaitsForSidecarSync(t, newPostgresQueryStore) }},
 		{"PhotoRejectsMixedAndUnchanged", func(t *testing.T) { t.Helper(); checkPhotoRejectsMixedAndUnchanged(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoRejectsMixedAndUnchanged(t, newPostgresQueryStore) }},
 	}},
-	{name: "document-snapshots", postgres: "native document workspaces", scope: "Frozen document rows, structured selection and facets, name and body terms, selected rendition mentions, person roles and saved run receipts. PDF fact filters use pdf-fact-search. NEAR and media-family filters use SQLite.", scenarios: []backendScenario{
+	{name: "document-snapshots", postgres: "native document workspaces", scope: "Frozen document rows, structured selection and facets including media family, name and body terms, selected rendition mentions, person roles and saved run receipts. PDF fact filters use pdf-fact-search. NEAR uses SQLite.", scenarios: []backendScenario{
 		{"DocumentSnapshotFrozenRowsAndReceipts", func(t *testing.T) { t.Helper(); checkQuerySnapshotMaterializesFrozenRowsAndReceipts(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()
 			checkQuerySnapshotMaterializesFrozenRowsAndReceipts(t, newPostgresQueryStore)
@@ -2765,6 +2765,14 @@ var backendSuites = []backendSuite{
 		{"DocumentSnapshotSavedFacets", func(t *testing.T) { t.Helper(); checkDocumentSnapshotSavedFacets(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentSnapshotSavedFacets(t, newPostgresQueryStore) }},
 		{"DocumentSnapshotLexicalTerms", func(t *testing.T) { t.Helper(); checkDocumentSnapshotLexicalTerms(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentSnapshotLexicalTerms(t, newPostgresQueryStore) }},
 		{"DocumentSnapshotLexicalNUL", nil, checkDocumentSnapshotLexicalNULPostgres},
+		{"DocumentSnapshotMediaFamilies", func(t *testing.T) {
+			t.Helper()
+			checkMediaFamilyQueries(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkMediaFamilyQueries(t, newPostgresQueryStore)
+		}},
+		{"DocumentSnapshotRestoredMediaFamilies", nil, checkMediaFamilyRestorePostgres},
 		{"DocumentSnapshotPeopleFacet", func(t *testing.T) { t.Helper(); checkRoleSearchMatchesAndPeopleFacet(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRoleSearchMatchesAndPeopleFacet(t, newPostgresQueryStore) }},
 		{"DocumentSnapshotPendingPeople", func(t *testing.T) { t.Helper(); checkRoleSearchNegationWithPendingPeople(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRoleSearchNegationWithPendingPeople(t, newPostgresQueryStore) }},
 		{"DocumentSnapshotStructuredPeople", func(t *testing.T) {

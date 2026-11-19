@@ -36,6 +36,7 @@ later are within the
   provider keep it.
 - Building from source requires Go 1.27.4, which fixes the `net/http`
   vulnerability GO-2026-6859.
+- Usage telemetry is off unless you have opted in or set `TELEMETRY_ENABLED=1`; `DOCBANK_TELEMETRY_ENABLED=0` or `DO_NOT_TRACK=1` turns it off.
 
 ### New features
 
@@ -454,6 +455,9 @@ change the import path from `go.kenn.io/docbank` to
 - See in the processing plan when Docbank will refuse to send a file to the
   provider. Starting that plan fails with a 422 error, and the web drawer
   disables consent.
+- Turn off anonymous telemetry with `DO_NOT_TRACK=1`. CI runs and non-release
+  builds send none, and usage reports count additions, searches, and explicit
+  opens.
 - Supplied-transcript and supplied-captions profiles accept 4 GiB recordings,
   which changes their profile identity. Earlier consent stops applying, queued
   work from before the upgrade fails, and earlier transcripts count as uncovered
@@ -502,6 +506,10 @@ See the [full contribution history](https://github.com/kenn-io/docbank/compare/v
   recordings share the same audio, matches identify the selected recording so
   callers open the right message. Removed or changed recordings no longer crowd
   out valid results. See [exact-recording search](agents/integration.md#search-transcripts-for-exact-recordings).
+- Anonymous usage reporting now includes active session duration in four
+  buckets: under 1 minute, 1 to 5 minutes, 5 to 30 minutes, and over 30 minutes.
+  Time spent in background browser tabs does not count.
+
 ### Improvements
 
 - Resolve nested document paths faster in CLI and HTTP requests.
@@ -556,6 +564,10 @@ See the [full contribution history](https://github.com/kenn-io/docbank/compare/v
 - Import new files faster with fewer disk waits.
 - Re-import folders and repeat uploads faster for files smaller than 4 KiB under
   the default compression policy.
+- Anonymous usage reporting counts each screen once per local document store
+  per UTC day for each interface, including across restarts. The privacy dialog
+  explains screen reporting in the browser and terminal UI.
+
 ### Bug fixes
 
 - Restoring a backup keeps large originals compressed instead of leaving them
@@ -694,6 +706,9 @@ See the [full contribution history](https://github.com/kenn-io/docbank/compare/v
 - Open vaults when the account home is unwritable by setting `DOCBANK_LOCK_DIR`
   to a writable absolute directory. Processes accessing overlapping vaults must
   share that setting.
+- Report anonymous daemon activity and web app opens by default. Events exclude
+  document content, filenames, paths, tags, and searches. Set
+  `DOCBANK_TELEMETRY_ENABLED=0` and restart the daemon to opt out.
 - Refuse private-file writes on Unix locations where DocBank cannot verify
   private permissions, including NFS and FUSE mounts. This affects restored
   configuration and web launch files.

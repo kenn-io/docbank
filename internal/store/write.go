@@ -375,17 +375,15 @@ func (s *Store) createFileWithOperationTx(
 		return Node{}, ContentVersion{}, fmt.Errorf(
 			"creating file %q under node %d: %w", name, parentID, err)
 	}
-	var storedMime any
+	var recordedMIME *string
 	if mimeType != "" {
-		storedMime = storedString(s.postgresSchema != "", mimeType)
+		recordedMIME = &mimeType
 	}
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO content_versions (
-			version_id, node_id, blob_hash, size, mime_type, recorded_at,
-			node_revision, introduced_operation_id, transition_kind, source_version_id
-		 ) VALUES ($1, $2, $3, $4, $5, $6, 1, $7, 'content_create', NULL)`,
-		operation.versionID, id, blobHash, size, storedMime, operation.recordedAt,
-		operation.operationID); err != nil {
+	if err := insertContentVersionTx(ctx, tx, metadataContentVersion{
+		VersionID: operation.versionID, NodeID: id, BlobHash: blobHash, Size: size, MIMEType: recordedMIME,
+		RecordedAt: operation.recordedAt, NodeRevision: 1, IntroducedOperationID: operation.operationID,
+		TransitionKind: "content_create",
+	}, s.postgresSchema != ""); err != nil {
 		return Node{}, ContentVersion{}, fmt.Errorf(
 			"recording initial content version for node %d: %w", id, err)
 	}
