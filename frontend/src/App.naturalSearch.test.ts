@@ -1835,7 +1835,7 @@ it.each([
     if (submission === "Advanced")
       await fireEvent.click(screen.getByRole("button", { name: "Search" }));
     else {
-      await fireEvent.keyDown(window, { key: "Escape" });
+      await fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
       await fireEvent.submit(
         screen.getByRole("searchbox", { name: "Search documents" }).closest("form")!,
       );
@@ -2046,7 +2046,7 @@ it.each(["names", "meaning", "frozen"])(
     await fireEvent.input(screen.getByLabelText("Filters JSON"), {
       target: { value: '{"size_min":' },
     });
-    await fireEvent.keyDown(window, { key: "Escape" });
+    await fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
     for (const [action, count] of [
       ["Move to trash", 2],
       ["Undo", 3],
@@ -2082,7 +2082,7 @@ it.each(["names", "meaning", "frozen"])(
       expect((screen.getByLabelText("Filters JSON") as HTMLTextAreaElement).value).toBe(
         '{"size_min":',
       );
-      await fireEvent.keyDown(window, { key: "Escape" });
+      await fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
     }
   },
 );

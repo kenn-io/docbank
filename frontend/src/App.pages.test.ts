@@ -187,7 +187,7 @@ it("retains unfinished Advanced input and execution settings across Imports navi
   await fireEvent.input(screen.getByLabelText("Filters JSON"), {
     target: { value: '{"size_min":' },
   });
-  await fireEvent.keyDown(window, { key: "Escape" });
+  await fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
   await fireEvent.click(screen.getByRole("button", { name: "Imports" }));
   await screen.findByRole("main", { name: "Imports" });
   await fireEvent.click(screen.getByRole("button", { name: "All files" }));

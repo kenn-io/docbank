@@ -2007,7 +2007,7 @@ it("renders disabled maps without fetching and keeps the Library selection on Es
     onphotochange: vi.fn(),
   });
   await screen.findByText("Maps are disabled");
-  await fireEvent.keyDown(window, { key: "Escape" });
+  await fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
   expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
   expect(fetcher).not.toHaveBeenCalled();
   photos.dispose();

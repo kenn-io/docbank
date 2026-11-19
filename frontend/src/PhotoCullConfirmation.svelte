@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { Button, Modal, escapeCloses } from "@kenn-io/kit-ui";
+  import { Button, Modal } from "@kenn-io/kit-ui";
 
   let request = $state<{
     message: string;
@@ -20,13 +20,11 @@
 
 {#if request}
   {@const pending = request}
-  <div role="presentation" onkeydown={escapeCloses(() => answer(false))}>
-    <Modal title={pending.message} ariaLabel={pending.message} onclose={() => answer(false)}>
-      {#if pending.detail}<p>{pending.detail}</p>{/if}
-      {#snippet footer()}
-        <Button onclick={() => answer(false)}>Cancel</Button>
-        <Button tone="danger" surface="solid" onclick={() => answer(true)}>{pending.label}</Button>
-      {/snippet}
-    </Modal>
-  </div>
+  <Modal title={pending.message} ariaLabel={pending.message} onclose={() => answer(false)}>
+    {#if pending.detail}<p>{pending.detail}</p>{/if}
+    {#snippet footer()}
+      <Button onclick={() => answer(false)}>Cancel</Button>
+      <Button tone="danger" surface="solid" onclick={() => answer(true)}>{pending.label}</Button>
+    {/snippet}
+  </Modal>
 {/if}

@@ -131,7 +131,7 @@ it.each(["Escape", "outside click", "Advanced"])(
       target: { value: '{"size_min":2}' },
     });
     if (close === "Escape") {
-      await fireEvent.keyDown(window, { key: "Escape" });
+      await fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
     } else if (close === "outside click") {
       const overlay = screen.getByRole("dialog", { name: "Filters and sort" }).parentElement!;
       await fireEvent.pointerDown(overlay, { pointerId: 1 });
@@ -149,7 +149,7 @@ it.each(["Escape", "outside click", "Advanced"])(
       '{"size_min":2}',
     );
     await fireEvent.input(screen.getByLabelText("Filters JSON"), { target: { value: "{}" } });
-    await fireEvent.keyDown(window, { key: "Escape" });
+    await fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
     expect(screen.getByRole("button", { name: "Advanced" }).textContent).not.toContain("•");
     expect(new URLSearchParams(location.hash.slice(1)).has("query")).toBe(false);
   },
@@ -162,7 +162,7 @@ it("runs the top bar with the page size chosen in Advanced", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   await fireEvent.click(screen.getByRole("combobox", { name: "Documents per page: 100" }));
   await fireEvent.click(screen.getByRole("option", { name: "250" }));
-  await fireEvent.keyDown(window, { key: "Escape" });
+  await fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
   await fireEvent.submit(search.closest("form")!);
   await waitFor(() =>
     expect(fetch.mock.calls.some(([url]) => String(url) === "/api/v1/workspace/queries")).toBe(
@@ -244,7 +244,7 @@ it("uses submitted top-bar text after repairing retained invalid filters", async
   await fireEvent.input(screen.getByLabelText("Filters JSON"), {
     target: { value: '{"size_min":' },
   });
-  await fireEvent.keyDown(window, { key: "Escape" });
+  await fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
   await fireEvent.input(search, { target: { value: "new text" } });
   await fireEvent.submit(search.closest("form")!);
   await screen.findByRole("dialog", { name: "Filters and sort" });
