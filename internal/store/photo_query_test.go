@@ -2103,7 +2103,7 @@ func checkPhotoBrowseMediaTypeCursors(t *testing.T, open func(*testing.T) *Store
 		request := PhotoBrowseRequest{Query: snapshotTestQuery(t, sprintfPhotoSort("media_type", direction)), PageSize: 1}
 		var got []string
 		var next *PhotoBrowsePosition
-		for range len(types) {
+		for range types {
 			page, err := s.ListPhotoAssets(t.Context(), request, next)
 			require.NoError(t, err)
 			require.Len(t, page.Items, 1)
