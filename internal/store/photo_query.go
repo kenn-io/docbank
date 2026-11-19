@@ -392,7 +392,9 @@ func photoJoins(fragment string, postgres bool) string {
 }
 
 // The query compiler emits anonymous slots in static SQL fragments. Number
-// them after composition, in argument order, for PostgreSQL execution.
+// them after composition, in argument order, for PostgreSQL execution. Every
+// question mark here is a slot. Keep question marks in values bound as args,
+// and use function syntax for PostgreSQL operations that have a ? operator.
 func bindCompiledRead(statement string, postgres bool) string {
 	if !postgres {
 		return statement

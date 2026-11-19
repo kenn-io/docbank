@@ -1947,9 +1947,9 @@ The existing receipt lookup expressions keep their engine-specific indexes.
 The `photo-edit` contracts exercise native writes, stale plans, both conflict
 choices, generated sidecars, undo, audit history, queue invalidation and rollback.
 Face and description records also participate in metadata preparation; their
-native processing lifecycle is covered by the `photo-analysis` suite below. Query-based selections,
-`SkipUnavailable`, best-shot/representative choices, hidden-session management,
-photo review, and public PostgreSQL vault opening remain unqualified.
+native processing lifecycle is covered by the `photo-analysis` suite below.
+The `photo-browse` suite covers structured selection for albums, exports and
+reject moves. This authored-edit contract covers explicit targets.
 The processing worker's XML encoding and filesystem publication still run through
 the SQLite vault; this qualification covers their Store calls.
 
@@ -2182,10 +2182,9 @@ sort. PostgreSQL uses ordinary joins and the same membership access indexes;
 its runtime role can insert albums, update their mutable properties, and insert
 or delete members. It cannot update member identities or timestamps in place.
 
-This qualifies explicit-ID Store operations. Search-selected populations,
-`SkipUnavailable` selection, browse pages and albums created from frozen query
-snapshots remain within the search and delivery qualification boundaries. The
-public PostgreSQL vault lifecycle is still unavailable.
+The `photo-browse` suite also covers album membership selected by structured
+queries. `SkipUnavailable`, lexical selection and frozen-snapshot albums have
+separate qualification boundaries.
 
 #### Photo checkouts
 

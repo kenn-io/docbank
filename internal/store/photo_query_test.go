@@ -2107,3 +2107,82 @@ func checkPhotoBrowseMediaTypeCursors(t *testing.T, open func(*testing.T) *Store
 		require.Equal(t, want, got)
 	}
 }
+
+func checkPhotoBrowseStructuredFilterPages(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	ctx := t.Context()
+	s, collection, _, profile := collectionCoverageFixtureWithStore(t, open(t), 0)
+	coast, err := s.Mkdir(ctx, s.RootID(), "Côte")
+	require.NoError(t, err)
+	inland, err := s.Mkdir(ctx, s.RootID(), "Inland")
+	require.NoError(t, err)
+	other, err := s.BeginIngest(ctx, "cli", "Synthetic inland collection")
+	require.NoError(t, err)
+	embedded, err := s.BeginIngest(ctx, "Embedded:agent", "Synthetic supplied evidence")
+	require.NoError(t, err)
+	ingest := func(run IngestRun, parent Node, name string, size int64, mimeType string) Node {
+		t.Helper()
+		node, err := s.IngestFileExact(ctx, run, parent.ID, name, browseHash(name), size, mimeType, name, "")
+		require.NoError(t, err)
+		return node
+	}
+	large := ingest(collection, coast, "b-large.jpg", 100, "image/jpeg")
+	small := ingest(collection, coast, "z-small.jpg", 9, "image/jpeg")
+	medium := ingest(other, inland, "a-medium.png", 20, "image/png")
+	largest := ingest(embedded, coast, "c-largest.jpg", 1000, "image/jpeg")
+	browsePhotoMetadata(t, s, large, "coastal-camera",
+		photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString(`Sony\Mark`)))
+	_, err = s.SetCollectionLabel(ctx, collection.ID(), 1, new("Coastal survey"))
+	require.NoError(t, err)
+	tag, err := s.CreateTag(ctx, "Selected")
+	require.NoError(t, err)
+	_, err = s.AssignTag(ctx, tag.ID, large.ID, large.Revision)
+	require.NoError(t, err)
+	_, err = s.AssignTag(ctx, tag.ID, medium.ID, medium.Revision)
+	require.NoError(t, err)
+	collectionCoveragePublish(t, s, small, profile, "complete")
+	collectionCoveragePublish(t, s, medium, profile, "partial")
+	_, err = s.CreateSavedQuery(ctx, "Coastal JPEGs", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"collection:\"Coastal survey\" AND extension:jpg"}`))
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		name, raw string
+		want      []int64
+	}{
+		{"size asc", `{}`, []int64{small.ID, medium.ID, large.ID, largest.ID}},
+		{"size desc", `{"sort":{"field":"size","direction":"desc"}}`, []int64{largest.ID, large.ID, medium.ID, small.ID}},
+		{"size range", `{"filters":{"size_min":10,"size_max":100}}`, []int64{medium.ID, large.ID}},
+		{"path", `{"filters":{"paths":["/Côte"]}}`, []int64{small.ID, large.ID, largest.ID}},
+		{"excluded path", `{"filters":{"exclude_paths":["/Côte"]}}`, []int64{medium.ID}},
+		{"collection ID", fmt.Sprintf(`{"filters":{"collection_ids":[%q]}}`, collection.ID()), []int64{small.ID, large.ID}},
+		{"excluded collection", fmt.Sprintf(`{"filters":{"exclude_collection_ids":[%q]}}`, collection.ID()), []int64{medium.ID, largest.ID}},
+		{"tag", `{"syntax":"advanced","text":"tag:Selected"}`, []int64{medium.ID, large.ID}},
+		{"no tags", `{"filters":{"no_tags":true}}`, []int64{small.ID, largest.ID}},
+		{"saved reference", `{"syntax":"advanced","text":"saved:\"Coastal JPEGs\" AND tag:Selected"}`, []int64{large.ID}},
+		{"camera bytes", `{"filters":{"cameras":["sony\\mark"]}}`, []int64{large.ID}},
+		{"coverage", `{"filters":{"text_coverage":["complete"]}}`, []int64{small.ID}},
+		{"coverage in collection", `{"syntax":"advanced","text":"saved:\"Coastal JPEGs\" AND text_coverage:complete"}`, []int64{small.ID}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			value := snapshotTestQuery(t, tc.raw)
+			if tc.name != "size desc" {
+				value.Sort = query.Sort{Field: "size", Direction: "asc"}
+			}
+			request := PhotoBrowseRequest{Query: value, PageSize: 1,
+				Coverage: CoverageSelection{Configuration: "configured", ProfileFingerprint: profile.Fingerprint}}
+			var cursor *PhotoBrowsePosition
+			for index, want := range tc.want {
+				page, err := s.ListPhotoAssets(ctx, request, cursor)
+				require.NoError(t, err)
+				require.EqualValues(t, len(tc.want), page.Total)
+				require.Len(t, page.Items, 1)
+				require.Equal(t, want, page.Items[0].NodeID)
+				cursor = page.Next
+				if index+1 < len(tc.want) {
+					require.NotNil(t, cursor)
+				}
+			}
+			require.Nil(t, cursor)
+		})
+	}
+}
