@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
@@ -50,9 +49,9 @@ func TestTermReportRenditionTextLimit(t *testing.T) {
 	require.ErrorIs(t, err, report.ErrReportLimit)
 }
 
-func TestTermReportFrozenGenerationAndCurrentVersions(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkTermReportFrozenGenerationAndCurrentVersions(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	alpha, err := s.CreateFile(ctx, s.RootID(), "alpha.txt", fakeHash("report-alpha"), 10, "text/plain")
 	require.NoError(t, err)
@@ -80,12 +79,12 @@ func TestTermReportFrozenGenerationAndCurrentVersions(t *testing.T) {
 	require.NotEqual(t, frame.Members[0].Identity.VersionID, fresh.Members[0].Identity.VersionID)
 }
 
-func TestTermReportScopeAndEarliestAddition(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkTermReportScopeAndEarliestAddition(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	first := createCollectionRun(t, s, "alpha.txt", "term-scope-alpha")
 	_ = createCollectionRun(t, s, "beta.txt", "term-scope-beta")
-	ctx := context.Background()
+	ctx := t.Context()
 	request := termFrameRequest()
 	request.AllDocuments = false
 	request.CollectionIDs = []string{first.ID()}
@@ -101,11 +100,20 @@ func TestTermReportScopeAndEarliestAddition(t *testing.T) {
 	request.CollectionIDs = []string{"unknown"}
 	_, err = s.MaterializeTermReportFrame(ctx, request, report.CoverageSelection{Configuration: "unconfigured"}, budget, budget)
 	require.Error(t, err)
+
+	embedded, err := s.BeginIngest(ctx, "Embedded:agent", "Synthetic supplied evidence")
+	require.NoError(t, err)
+	_, err = s.IngestFileExact(ctx, embedded, s.RootID(), "supplied.txt",
+		testSHA256([]byte("synthetic supplied material")), 10, "text/plain", "supplied.txt", "")
+	require.NoError(t, err)
+	request.CollectionIDs = []string{embedded.ID()}
+	_, err = s.MaterializeTermReportFrame(ctx, request, report.CoverageSelection{Configuration: "unconfigured"}, budget, budget)
+	require.ErrorIs(t, err, ErrUnknownReportCollection)
 }
 
-func TestTermReportNativeTextProducesFrozenContentDate(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkTermReportNativeTextProducesFrozenContentDate(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	digest := sha256.Sum256([]byte("term-native"))
 	hash := hex.EncodeToString(digest[:])
@@ -151,9 +159,10 @@ func TestTermReportPrepareReleasesNativeTextBudget(t *testing.T) {
 	require.Less(t, budget.Used(), int64(len(text)), "discarded text must not consume the retained frame budget")
 }
 
-func TestTermReportMatchesSelectedProcessingProfile(t *testing.T) {
-	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+func checkTermReportMatchesSelectedProcessingProfile(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	selected := catalogProcessingProfile(t, false)
 	other := catalogProcessingProfileWith(t, false, func(profile *document.ProcessingProfileV1) {
 		profile.Rendition.Name = "other"
@@ -439,9 +448,9 @@ func TestTermReportCapturesExactRenditionBinding(t *testing.T) {
 	require.Equal(t, report.StateComplete, frame.Members[0].Coverage.SearchState)
 }
 
-func TestTermReportSelectedAdmission(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkTermReportSelectedAdmission(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	alpha, err := s.CreateFile(ctx, s.RootID(), "alpha.txt", testSHA256([]byte("selected-alpha")), 10, "text/plain")
 	require.NoError(t, err)
@@ -501,9 +510,9 @@ func TestTermReportSelectedAdmission(t *testing.T) {
 	require.ErrorIs(t, err, ErrReportSelectionChanged)
 }
 
-func TestRefreshTermReportSelection(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkRefreshTermReportSelection(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	a, err := s.CreateFile(ctx, s.RootID(), "changed.txt", testSHA256([]byte("old")), 3, "text/plain")
 	require.NoError(t, err)

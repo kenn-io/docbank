@@ -572,6 +572,7 @@ GRANT INSERT ON documents.batch_tag_receipts TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(name, description, payload, fingerprint, revision, updated_at, photo_scope)
     ON documents.saved_queries TO docbank_runtime;
 GRANT INSERT ON documents.saved_query_runs TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.term_report_history TO docbank_runtime;
 GRANT UPDATE(binding_epoch) ON documents.document_people_state TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(display_name, display_name_folded, state, revision,
     updated_at, key_face_id) ON documents.persons TO docbank_runtime;
@@ -1333,6 +1334,20 @@ matching, and people-role filters and facets. Text search reads either indexed
 extractions or the current rendition generation. People filters keep
 incomplete attribution distinct from a known absence. NEAR, media-family filters
 and PDF fact filters use SQLite.
+
+#### Term reports
+
+Both Store backends capture term matches, exact document versions and date
+evidence in a single read snapshot. A report scoped to a collection records
+its source evidence and excludes supplied evidence marked as embedded
+regardless of prefix casing. Attachment families follow current parent and
+child versions in both directions, including through a parent outside the
+selection. The frozen report keeps its evidence when documents change.
+
+The report worker can prepare reports from retained native text and selected
+renditions. Selection refresh reads current identities and paths together.
+The runtime role inserts history receipts and deletes those outside the latest
+100. Catalog export and import preserve the reusable requests and receipts.
 
 #### Backup capture and physical recovery
 

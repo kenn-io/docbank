@@ -53,7 +53,7 @@ func (g *termRelationGroups) join(a, b string) {
 	}
 }
 
-func readTermReportFamilies(ctx context.Context, q metadataQuerier, budget report.Budget, frame *report.Frame) error {
+func readTermReportFamilies(ctx context.Context, q metadataQuerier, budget report.Budget, frame *report.Frame, postgres bool) error {
 	versionIDs := make([]string, len(frame.Members))
 	for i, member := range frame.Members {
 		versionIDs[i] = member.Identity.VersionID
@@ -64,8 +64,8 @@ func readTermReportFamilies(ctx context.Context, q metadataQuerier, budget repor
 	}
 	// Traverse both directions so shared children retain connected parents outside
 	// the selected collection. Historical or trashed versions cannot connect groups.
-	rows, err := q.QueryContext(ctx, `WITH RECURSIVE family_versions(version_id) AS (
-		SELECT value FROM json_each(?)
+	traversal := `
+		SELECT value FROM json_each($1)
 		UNION
 		SELECT r.child_version_id FROM family_versions f
 		JOIN email_document_publications p ON p.parent_version_id=f.version_id
@@ -79,7 +79,28 @@ func readTermReportFamilies(ctx context.Context, q metadataQuerier, budget repor
 		JOIN email_document_publications p ON p.operation_id=r.operation_id
 		JOIN content_versions cv ON cv.version_id=p.parent_version_id
 		JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
-		WHERE n.kind='file' AND n.trashed_at IS NULL
+		WHERE n.kind='file' AND n.trashed_at IS NULL`
+	if postgres {
+		// PostgreSQL allows one recursive reference. Expand each frontier
+		// version with the parent and child index lookups inside that step.
+		traversal = `
+			SELECT value COLLATE "C" FROM jsonb_array_elements_text(CAST($1 AS jsonb))
+			UNION
+			SELECT relative.version_id FROM family_versions f
+			CROSS JOIN LATERAL (
+				SELECT r.child_version_id AS version_id FROM email_document_publications p
+				JOIN email_document_relations r ON r.operation_id=p.operation_id
+				WHERE p.parent_version_id=f.version_id
+				UNION ALL
+				SELECT p.parent_version_id FROM email_document_relations r
+				JOIN email_document_publications p ON p.operation_id=r.operation_id
+				WHERE r.child_version_id=f.version_id
+			) relative
+			JOIN content_versions cv ON cv.version_id=relative.version_id
+			JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
+			WHERE n.kind='file' AND n.trashed_at IS NULL`
+	}
+	rows, err := q.QueryContext(ctx, `WITH RECURSIVE family_versions(version_id) AS (`+traversal+`
 	) SELECT p.operation_id,COALESCE(r.occurrence_order,0),r.child_version_id,r.operation_id IS NOT NULL
 		FROM family_versions f JOIN email_document_publications p ON p.parent_version_id=f.version_id
 		LEFT JOIN email_document_relations r ON r.operation_id=p.operation_id
@@ -231,7 +252,7 @@ func currentTermRelationIdentity(ctx context.Context, q metadataQuerier,
 	var actual string
 	err := q.QueryRowContext(ctx, `SELECT cv.blob_hash FROM nodes n JOIN content_versions cv
 		ON cv.node_id=n.id AND cv.version_id=n.current_version_id
-		WHERE n.id=? AND n.current_version_id=? AND n.kind='file' AND n.trashed_at IS NULL`,
+		WHERE n.id=$1 AND n.current_version_id=$2 AND n.kind='file' AND n.trashed_at IS NULL`,
 		nodeID, versionID).Scan(&actual)
 	if errors.Is(err, sql.ErrNoRows) {
 		return report.Identity{}, false, nil

@@ -93,13 +93,17 @@ func (s *Store) SaveTermReportHistory(ctx context.Context, item TermReportHistor
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO term_report_history(
 			id,parent_id,observed_at,request_json,summary_json
-		) VALUES(?,?,?,?,?)`, item.Summary.ID, item.Summary.ParentID,
+		) VALUES($1,$2,$3,$4,$5)`, item.Summary.ID, item.Summary.ParentID,
 			item.Summary.ObservedAt.UTC().Format(timestampLayout), requestJSON, summaryJSON); err != nil {
 			return fmt.Errorf("saving report history: %w", err)
 		}
+		offset := "OFFSET $1"
+		if s.postgresSchema == "" {
+			offset = "LIMIT -1 " + offset
+		}
 		_, err := tx.ExecContext(ctx, `DELETE FROM term_report_history WHERE id IN (
 			SELECT id FROM term_report_history ORDER BY observed_at DESC,id DESC
-			LIMIT -1 OFFSET ?
+			`+offset+`
 		)`, termReportHistoryLimit)
 		return err
 	})
@@ -110,35 +114,41 @@ func (s *Store) ListTermReportHistory(ctx context.Context, offset, limit int) (T
 		return TermReportHistoryPage{}, errors.New("invalid report history page")
 	}
 	var page TermReportHistoryPage
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM term_report_history`).Scan(&page.Total); err != nil {
-		return page, err
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,parent_id,observed_at,request_json,summary_json
-		FROM term_report_history ORDER BY observed_at DESC,id DESC LIMIT ? OFFSET ?`, limit, offset)
-	if err != nil {
-		return page, err
-	}
-	defer func() { _ = rows.Close() }()
-	page.Items = make([]TermReportHistory, 0, limit)
-	pageBytes := 0
-	for rows.Next() {
-		var id, parentID, observedAt string
-		var requestJSON, summaryJSON []byte
-		if err := rows.Scan(&id, &parentID, &observedAt, &requestJSON, &summaryJSON); err != nil {
-			return TermReportHistoryPage{}, err
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM term_report_history`).Scan(&page.Total); err != nil {
+			return err
 		}
-		itemBytes := len(requestJSON) + len(summaryJSON)
-		if len(page.Items) != 0 && pageBytes+itemBytes > maxTermReportHistoryPage {
-			break
-		}
-		item, err := decodeTermReportHistory(id, parentID, observedAt, requestJSON, summaryJSON)
+		rows, err := tx.QueryContext(ctx, `SELECT id,parent_id,observed_at,request_json,summary_json
+			FROM term_report_history ORDER BY observed_at DESC,id DESC LIMIT $1 OFFSET $2`, limit, offset)
 		if err != nil {
-			return TermReportHistoryPage{}, err
+			return err
 		}
-		page.Items = append(page.Items, item)
-		pageBytes += itemBytes
+		defer func() { _ = rows.Close() }()
+		page.Items = make([]TermReportHistory, 0, limit)
+		pageBytes := 0
+		for rows.Next() {
+			var id, parentID, observedAt string
+			var requestJSON, summaryJSON []byte
+			if err := rows.Scan(&id, &parentID, &observedAt, &requestJSON, &summaryJSON); err != nil {
+				return err
+			}
+			itemBytes := len(requestJSON) + len(summaryJSON)
+			if len(page.Items) != 0 && pageBytes+itemBytes > maxTermReportHistoryPage {
+				break
+			}
+			item, err := decodeTermReportHistory(id, parentID, observedAt, requestJSON, summaryJSON)
+			if err != nil {
+				return err
+			}
+			page.Items = append(page.Items, item)
+			pageBytes += itemBytes
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return TermReportHistoryPage{}, err
 	}
-	return page, rows.Err()
+	return page, nil
 }
 
 func decodeTermReportHistory(id, parentID, observedAt string, requestJSON, summaryJSON []byte) (TermReportHistory, error) {

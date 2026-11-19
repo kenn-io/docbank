@@ -2768,6 +2768,42 @@ var backendSuites = []backendSuite{
 		{"DocumentSnapshotPendingPeople", func(t *testing.T) { t.Helper(); checkRoleSearchNegationWithPendingPeople(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRoleSearchNegationWithPendingPeople(t, newPostgresQueryStore) }},
 		{"DocumentSnapshotMentionsSelectedRendition", func(t *testing.T) { t.Helper(); checkRoleSearchMentionsSelectedRendition(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRoleSearchMentionsSelectedRendition(t, newPostgresQueryStore) }},
 	}},
+	{name: "term-reports", postgres: "native report preparation and history", scope: "Frozen term matches and date evidence, exact selected versions, current attachment families, bounded history and metadata round trips.", scenarios: []backendScenario{
+		{"TermReportFrozenGenerationAndCurrentVersions", func(t *testing.T) { t.Helper(); checkTermReportFrozenGenerationAndCurrentVersions(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkTermReportFrozenGenerationAndCurrentVersions(t, newPostgresQueryStore)
+		}},
+		{"TermReportScopeAndEarliestAddition", func(t *testing.T) { t.Helper(); checkTermReportScopeAndEarliestAddition(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkTermReportScopeAndEarliestAddition(t, newPostgresQueryStore) }},
+		{"TermReportNativeTextProducesFrozenContentDate", func(t *testing.T) { t.Helper(); checkTermReportNativeTextProducesFrozenContentDate(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkTermReportNativeTextProducesFrozenContentDate(t, newPostgresQueryStore)
+		}},
+		{"TermReportMatchesSelectedProcessingProfile", func(t *testing.T) { t.Helper(); checkTermReportMatchesSelectedProcessingProfile(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkTermReportMatchesSelectedProcessingProfile(t, newPostgresQueryStore)
+		}},
+		{"TermReportSelectedAdmission", func(t *testing.T) { t.Helper(); checkTermReportSelectedAdmission(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkTermReportSelectedAdmission(t, newPostgresQueryStore) }},
+		{"RefreshTermReportSelection", func(t *testing.T) { t.Helper(); checkRefreshTermReportSelection(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRefreshTermReportSelection(t, newPostgresQueryStore) }},
+		{"TermReportFamilyFollowsSelectedChildToCurrentExternalParents", func(t *testing.T) {
+			t.Helper()
+			checkTermReportFamilyFollowsSelectedChildToCurrentExternalParents(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkTermReportFamilyFollowsSelectedChildToCurrentExternalParents(t, newPostgresQueryStore)
+		}},
+		{"TermReportHistoryRetainsReusableRequestAcrossMetadataRoundTrip", func(t *testing.T) {
+			t.Helper()
+			checkTermReportHistoryRetainsReusableRequestAcrossMetadataRoundTrip(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkTermReportHistoryRetainsReusableRequestAcrossMetadataRoundTrip(t, newPostgresQueryStore)
+		}},
+		{"TermReportHistoryBoundsRetentionAcrossRestore", func(t *testing.T) { t.Helper(); checkTermReportHistoryBoundsRetentionAcrossRestore(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkTermReportHistoryBoundsRetentionAcrossRestore(t, newPostgresQueryStore)
+		}},
+		{"TermReportNativeTextBindsSelectedRow", func(t *testing.T) { t.Helper(); checkTermReportNativeTextBindsSelectedRow(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkTermReportNativeTextBindsSelectedRow(t, newPostgresQueryStore) }},
+	}},
 	{name: "photo-snapshots", postgres: "native structured photo workspaces", scope: "Frozen membership and order, current display rows, album creation, saved run receipts, capture-day facets and stale-member checks.", scenarios: []backendScenario{
 		{"PhotoSnapshotPageChecksRequestedMembershipAndPreservesFrozenRows", func(t *testing.T) {
 			t.Helper()
