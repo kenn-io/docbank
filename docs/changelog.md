@@ -12,9 +12,133 @@ later are within the
 
 ## Unreleased
 
+### Upgrading
+
+- Watches now skip Syncthing partial files, Syncthing conflict copies
+  (`*.sync-conflict-*`), and incomplete Chrome downloads (`*.crdownload`).
+  Conflict copies are finished files, so existing watches capture fewer files.
+  Files already archived stay. Set `default_excludes = false` on a watch to keep
+  archiving them. `docbank push --watch` does not apply these defaults.
+- A daemon started with `docbank daemon start` now runs until
+  `docbank daemon stop`. `[server] idle_timeout` applies only to daemons that
+  other commands start automatically. Stop explicitly started daemons you no
+  longer need.
+- Lexical search matches more loosely. Regular word forms match, so `invoices`
+  finds `invoice`, and common words such as `the` drop out when other words
+  remain. Quote words to require them next to each other and in order, as in
+  `"tax 2026"`. Recheck scripts that depend on exact result sets.
+- After upgrading, the daemon reads the text layer of existing PDFs in the
+  background so their words become searchable. New PDFs are indexed when added.
+  Scanned pages still need an [OCR profile](usage/document-processing.md#ocr).
+- A search-by-meaning choice recorded by another tool on this computer can turn
+  on indexing at the next daemon start. Docbank then downloads any missing
+  shared files and indexes locally. Vaults with a configured text embedding
+  provider keep it.
+- Building from source requires Go 1.27.4, which fixes the `net/http`
+  vulnerability GO-2026-6859.
+- Usage telemetry is off unless you have opted in or set `TELEMETRY_ENABLED=1`; `DOCBANK_TELEMETRY_ENABLED=0` or `DO_NOT_TRACK=1` turns it off.
+
+### New features
+
+- Search text-based PDFs as soon as they are added, without configuring a
+  processing profile. The built-in profile reads PDFs up to 500 MiB and 5,000
+  pages locally, and the Text tab shows its page text. Pages without a text
+  layer are recorded instead of failing the PDF.
+- Learn why a text search found nothing. The CLI prints hints on stderr, and
+  `--json` adds a `hints` array. A `needs_ocr` hint reports PDFs whose pages lack
+  a text layer, and `docbank processing coverage` lists those pages. See
+  [Why did a text search find nothing?](usage/searching.md#why-did-a-text-search-find-nothing)
+- Limit search to one folder with
+  `docbank search invoice --under /taxes/2026`. MCP `search_documents`,
+  `answer_question`, and `find_conflicts` accept the same scope as
+  `under_path`.
+- Search people by role with `from:`, `to:`, `author:`, `between:`, `mentions:`,
+  and related terms, and filter results with the web app's People facet. See
+  [Find documents by person and role](usage/searching.md#find-documents-by-person-and-role).
+- Turn on local search by meaning with `docbank processing local`, or from
+  **System → Search by meaning** in the web app. Setup reuses a compatible
+  Ollama `nomic-embed-text` index and its vectors. See
+  [Set up local text search](usage/document-processing.md#set-up-local-text-search).
+- Send each kind of file in a watched folder to its own processing profile with
+  `profiles = { document = "docling", image = "docling" }`. Each route still
+  needs its profile's consent. See
+  [Watched inboxes](configuration.md#watched-inboxes).
+- Name a person once and confirm suggested matches on their other photos. Run
+  `docbank processing faces` to turn on local suggestions; it shows the download
+  size first.
+  See [Face suggestions](usage/people.md#face-suggestions).
+- Find images and memes by their visible words or meaning through an opt-in
+  image-understanding profile. The saved text is labeled as a model
+  interpretation and does not identify people. See
+  [Image and meme understanding](configuration.md#image-and-meme-understanding).
+- Run document conversion and WAV or MP3 transcription on a separate machine
+  with `docbank-conversion-worker`. Accepted jobs survive dropped replies and
+  restarts. See [Conversion worker](usage/conversion-worker.md).
+- Connect Claude Code and Codex to Docbank's read-only MCP tools with
+  `docbank agent setup`. `--check` reports what still needs attention.
+- Find the right command by describing the task, as in
+  `docbank cli search "import a folder of PDFs"`.
+- Download complete originals through MCP with `get_original_download_url`. Each
+  URL works once and expires after 120 seconds. Behind an HTTPS proxy, set
+  `[mcp.http] public_origin`. See [Download originals](usage/mcp.md#download-originals).
+- Ask MCP `find_conflicts` where sources state different money, percent, or
+  duration figures. It reports the conflicting sentences and never picks a
+  winner.
+- Finish reviewed PDFs through MCP with `--allow-package-writes`.
+  `export_bates_file` can check a numbered PDF against its saved review,
+  `publish_numbered_pdf` publishes a range an operator already reserved, and
+  `export_recipient_package` saves a recipient ZIP. Original-retention consent
+  stays with the operator. See
+  [Publish a reserved numbered PDF](usage/mcp.md#publish-a-reserved-numbered-pdf).
+- Reserve Bates numbers for a reviewed PDF in the browser and keep the numbered
+  PDF in Productions. Download a recipient ZIP from the completed review. You
+  can edit masks and number the changed review while earlier deliveries stay
+  downloadable.
+- Mask a passage by selecting it in the PDF reader and choosing
+  **Mask selected text**.
+- Serve the web app under a path such as `/archive/` with `[web] base_path`. The
+  reverse proxy must preserve the path. See
+  [Serve Docbank under a path](usage/web.md#serve-docbank-under-a-path).
+- Connect to Kata over plain HTTP on a trusted private network with
+  `[integrations.kata] trust_private_network = true`. Public IP addresses still
+  require HTTPS.
+- Read verified originals from an existing vault in Go applications with
+  `OpenContentReader`, without initializing, upgrading, or writing to it. See
+  [Read an existing vault without owning it](embedding.md#read-an-existing-vault-without-owning-it).
+
+### Improvements
+
+- Run MCP `search_documents` without naming a profile. It picks one the same
+  way as `answer_question` and names the profile it used.
+- Read a document's current text with `docbank rendition window id:13` when
+  only one rendition has text. Otherwise the command lists the choices.
+- Index documents for local search by meaning on slow CPUs. The built-in server
+  now receives smaller requests with a longer timeout.
+- Continue browser uploads after the connection drops. The app reconnects and
+  checks stored files before sending their bytes again.
+- Check which documents received a tag after Docbank loses the result of a tag
+  change, then retry only the ones that still need it.
+- Recover from a reader that fails to load with **Reload Docbank**.
+- Use `docbank kata cite` with any Kata API schema from 0.21.0 within major
+  version 0, including Kata v0.22.0 and v0.23.0.
+
 ### Bug fixes
 
-- Usage telemetry is off unless you have opted in or set `TELEMETRY_ENABLED=1`; `DOCBANK_TELEMETRY_ENABLED=0` or `DO_NOT_TRACK=1` turns it off.
+- Save Voyage embeddings when Voyage returns `"text": null` with a valid
+  vector. Previously each retry paid for the same failed job.
+- Keep running PDF jobs on macOS after one large job. Previously every later
+  job was refused until the daemon restarted.
+- Free unused memory before refusing or cancelling a PDF job instead of failing
+  it because of earlier work.
+- Stop writing PDF library settings into your config directory. A failed write
+  could flag a valid PDF as `page_count_unavailable`.
+- Keep page-level text for Docling PDFs that contain tables, pictures, or scans,
+  so citations point to pages and scans keep their OCR text. Rebuild existing
+  renditions to apply the fix.
+- Stop flashing console windows on Windows when the daemon renders or stamps
+  PDFs.
+- Let `docbank daemon stop`, `daemon restart`, and upgrades finish in
+  containers that run without an init process.
 
 ## [v0.17.0](https://github.com/kenn-io/docbank/releases/tag/v0.17.0) — 2026-11-05
 

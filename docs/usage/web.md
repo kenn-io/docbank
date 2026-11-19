@@ -860,7 +860,7 @@ pinning are not browser workflows.
 
 ## Browse tags and search text
 
-Open **System → Search by meaning** to enable text search by meaning. Review the download size, choose **Turn on** to approve setup, then run `docbank daemon restart` when prompted and reopen the web app. Indexing starts after the restart and covers existing documents and new imports. The search-results hint opens this tab when search by meaning is off. A successful built-in Turn on records the choice for other Kenn apps on this computer. If another app recorded it, Docbank installs any missing shared files and starts indexing at its next launch. If setup fails, use **Turn on** to try again. Configured providers keep their settings.
+Open **System → Search by meaning** to enable text search by meaning. Review the download size, choose **Turn on** to approve setup, then run `docbank daemon restart` when prompted and reopen the web app. Indexing starts after the restart and covers existing documents and new imports. The search-results hint opens this tab when search by meaning is off. A successful built-in Turn on records the choice for other tools on this computer that share the built-in server. If another tool recorded it, Docbank installs any missing shared files and starts indexing at its next launch. If setup fails, use **Turn on** to try again. Configured providers keep their settings.
 
 Enter a word or phrase in the search box and press Enter. Results can match a
 live document name or verified extracted text. The results heading shows the

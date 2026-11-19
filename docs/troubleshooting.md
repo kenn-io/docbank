@@ -79,19 +79,22 @@ inside that directory are still skipped and reported. See
 
 ## Search cannot find document text
 
-Search indexes live node names and current supported text contents. Remember
-that each term is a prefix match, and inspect the extractor job:
+An empty CLI search prints hints on stderr that say why: files still being
+indexed, files with no searchable text, or PDF pages that need OCR (`needs_ocr`).
+Read them first, then check the background jobs:
 
 ```bash
-docbank search insur stat
+docbank search "lease renewal"
 docbank jobs
 ```
 
-Body indexing currently requires verified UTF-8 `text/*`, JSON, or JSONL no
-larger than 16 MiB. It is asynchronous and may take a few seconds after ingest
-or replacement. PDF, office-document, OCR, invalid-UTF-8, NUL-containing, and
-larger content is not indexed. Filename search still works. See
-[Searching](usage/searching.md) for the full contract.
+Docbank indexes UTF-8 text, Markdown, JSON, and JSONL up to 16 MiB, and the
+text layer of PDFs up to 500 MiB and 5,000 pages. Indexing runs in the
+background and may take a moment after a file is added. Scanned PDF pages,
+office documents, and images need a processing profile. Filename search still
+works for every file. See
+[Why did a text search find nothing?](usage/searching.md#why-did-a-text-search-find-nothing)
+and [how words match](usage/searching.md#how-do-words-match-in-lexical-search).
 
 The running extractor keeps transient blob open, read, and verification
 failures queued and retries them. Repair or restore unavailable content, then

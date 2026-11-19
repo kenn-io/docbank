@@ -73,7 +73,7 @@ release's `SHA256SUMS`. You can also download the archives from
 [GitHub Releases](https://github.com/kenn-io/docbank/releases) and verify them
 yourself.
 
-To build from source, install Go 1.27+, CGO, a C compiler, Node 24+, and npm:
+To build from source, install Go 1.27.4 or newer, CGO, a C compiler, Node 24+, and npm:
 
 ```bash
 git clone https://github.com/kenn-io/docbank.git
