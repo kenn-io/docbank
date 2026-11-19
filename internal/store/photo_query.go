@@ -8,6 +8,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"go.kenn.io/docbank/document"
@@ -29,12 +30,13 @@ func (s *Store) LookupPhotoFlags(ctx context.Context, assetIDs []string) ([]Phot
 			return nil, fmt.Errorf("%w: asset ID %q: %w", ErrInvalidPhotoAsset, id, err)
 		}
 	}
-	encoded, err := json.Marshal(assetIDs)
+	encoded, err := json.Marshal(assetIDs, json.FormatNilSliceAsNull(false))
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT a.asset_id,f.flag FROM `+photoBrowseDisplayFrom+
-		` WHERE a.asset_id IN (SELECT value FROM json_each(?)) AND `+photoBrowseLiveDisplay+
+	postgres := s.postgresSchema != ""
+	rows, err := s.db.QueryContext(ctx, `SELECT a.asset_id,f.flag FROM `+photoJoins(photoBrowseDisplayFrom, postgres)+
+		` WHERE a.asset_id IN (SELECT value FROM `+(metadataJSONDialect{postgres: postgres}).arrayValues("$1")+`) AND `+photoBrowseLiveDisplay+
 		` AND `+photoVisibilityPredicate(false)+` ORDER BY a.asset_id`, string(encoded))
 	if err != nil {
 		return nil, err
@@ -143,6 +145,7 @@ func (s *Store) ListPhotoAssets(
 		return PhotoBrowsePage{}, err
 	}
 	dimensions, coverage := request.Facets, request.Coverage
+	postgres := s.postgresSchema != ""
 	var page PhotoBrowsePage
 	err = s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) error {
 		if request.Hidden {
@@ -151,7 +154,7 @@ func (s *Store) ListPhotoAssets(
 			}
 		}
 		compiled, err := (queryCompiler{photoDisplayMetadata: true, photoHidden: request.Hidden}).compile(
-			ctx, request.Query, queryResolver{q: q})
+			ctx, request.Query, queryResolver{q: q, postgres: postgres})
 		if err != nil {
 			return err
 		}
@@ -178,32 +181,32 @@ func (s *Store) ListPhotoAssets(
 		if sortField == "relevance" && boundary != nil {
 			return ErrInvalidPhotoCursor
 		}
-		from, sortKey, ok := photoBrowseOrder(sortField)
+		from, sortKey, ok := photoBrowseOrderForBackend(sortField, postgres)
 		if !ok && sortField != "relevance" {
 			return fmt.Errorf("%w: unsupported sort", ErrInvalidPhotoQuery)
 		}
 		if len(request.assetIDs) > 0 {
 			// Selected exports seek asset IDs before sorting their small result.
-			from = photoBrowseDisplayFrom
+			from = photoJoins(photoBrowseDisplayFrom, postgres)
 			if sortField == "added_time" {
-				from += ` CROSS JOIN photo_set_members sm ON sm.asset_id=a.asset_id`
+				from += photoJoins(` CROSS JOIN photo_set_members sm ON sm.asset_id=a.asset_id`, postgres)
 			}
 		}
 		scope, err := newPhotoBrowseScope(ctx, q, compiled, generation.ID, coverage, request.Hidden)
 		if err != nil {
 			return err
 		}
-		displayFrom := photoBrowseDisplayFrom
-		countFrom := photoBrowseScopeFrom
+		displayFrom := photoJoins(photoBrowseDisplayFrom, postgres)
+		countFrom := photoJoins(photoBrowseScopeFrom, postgres)
 		if photoXMPQueueRestricted(compiled.Query) {
 			// Seek queued assets before their display files, then sort this small set.
-			displayFrom = `photo_xmp_unsettled xq CROSS JOIN ` + photoBrowseDisplayFrom
-			countFrom = `photo_xmp_unsettled xq CROSS JOIN ` + photoBrowseScopeFrom
+			displayFrom = `photo_xmp_unsettled xq CROSS JOIN ` + displayFrom
+			countFrom = `photo_xmp_unsettled xq CROSS JOIN ` + countFrom
 			scope.match.sql = `a.asset_id=xq.asset_id AND (` + scope.match.sql + `)`
 			scope.queue = ` CROSS JOIN photo_xmp_unsettled xq`
 			from = displayFrom
 			if sortField == "added_time" {
-				from += ` CROSS JOIN photo_set_members sm ON sm.asset_id=a.asset_id`
+				from += photoJoins(` CROSS JOIN photo_set_members sm ON sm.asset_id=a.asset_id`, postgres)
 			}
 		}
 		if len(request.assetIDs) > 0 {
@@ -245,7 +248,7 @@ func (s *Store) ListPhotoAssets(
 		if boundary == nil {
 			countScope := scope
 			if len(request.assetIDs) == 0 {
-				countCompiled, err := (queryCompiler{photoDisplayMetadata: true, photoMetadataSet: true, photoHidden: request.Hidden}).compile(ctx, request.Query, queryResolver{q: q})
+				countCompiled, err := (queryCompiler{photoDisplayMetadata: true, photoMetadataSet: true, photoHidden: request.Hidden}).compile(ctx, request.Query, queryResolver{q: q, postgres: postgres})
 				if err != nil {
 					return err
 				}
@@ -309,7 +312,7 @@ func (s *Store) ListPhotoAssets(
 					if sortField == "added_time" {
 						continue
 					}
-					key = photoBrowseMissingKey(sortField)
+					key = photoBrowseMissingKeyForBackend(sortField, postgres)
 					where = key + `=''`
 					order = `a.asset_id ASC`
 					if boundary != nil && boundary.Missing {
@@ -379,6 +382,37 @@ const photoBrowseDisplayFrom = photoBrowseScopeFrom + `
  LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id
  LEFT JOIN photo_timeline pl ON pl.file_id=f.file_id`
 
+// These join fragments all have ON clauses. SQLite uses CROSS JOIN to
+// preserve the selective outer loop, while PostgreSQL uses ordinary joins.
+func photoJoins(fragment string, postgres bool) string {
+	if postgres {
+		return strings.ReplaceAll(fragment, "CROSS JOIN", "JOIN")
+	}
+	return fragment
+}
+
+// The query compiler emits anonymous slots in static SQL fragments. Number
+// them after composition, in argument order, for PostgreSQL execution. Every
+// question mark here is a slot. Keep question marks in values bound as args,
+// and use function syntax for PostgreSQL operations that have a ? operator.
+func bindCompiledRead(statement string, postgres bool) string {
+	if !postgres {
+		return statement
+	}
+	var sql strings.Builder
+	sql.Grow(len(statement))
+	for index := 1; ; index++ {
+		before, after, ok := strings.Cut(statement, "?")
+		sql.WriteString(before)
+		if !ok {
+			return sql.String()
+		}
+		sql.WriteByte('$')
+		sql.WriteString(strconv.Itoa(index))
+		statement = after
+	}
+}
+
 const photoBrowseLiveDisplay = liveIncludedDisplayPredicate + ` AND n.kind='file'`
 
 func photoBrowseEligibleMemberPredicate(hidden bool) string {
@@ -407,34 +441,59 @@ const photoBrowseVersionJoins = `
  LEFT JOIN photo_timeline pl ON pl.file_id=f.file_id`
 
 func photoBrowseOrder(field string) (from, key string, ok bool) {
+	return photoBrowseOrderForBackend(field, false)
+}
+
+func photoIndexHint(index string, postgres bool) string {
+	if postgres {
+		return ""
+	}
+	return " INDEXED BY " + index
+}
+
+func photoBrowseOrderForBackend(field string, postgres bool) (from, key string, ok bool) {
 	switch field {
 	case "added_time":
-		return `photo_set_members sm CROSS JOIN photo_assets a ON a.asset_id=sm.asset_id ` + strings.TrimPrefix(photoBrowseDisplayFrom, `photo_assets a`), "sm.added_at", true
+		from = `photo_set_members sm CROSS JOIN photo_assets a ON a.asset_id=sm.asset_id ` + strings.TrimPrefix(photoBrowseDisplayFrom, `photo_assets a`)
+		key = "sm.added_at"
 	case "capture_time":
-		return `photo_timeline pl INDEXED BY photo_timeline_sort_key
+		from = `photo_timeline pl` + photoIndexHint("photo_timeline_sort_key", postgres) + `
  CROSS JOIN photo_files f ON f.file_id=pl.file_id
  CROSS JOIN photo_assets a ON a.asset_id=f.asset_id AND a.display_file_id=f.file_id
  CROSS JOIN nodes n ON n.id=f.node_id
  CROSS JOIN content_versions v ON v.version_id=n.current_version_id
  LEFT JOIN source_metadata_heads h ON h.source_sha256=v.blob_hash
  LEFT JOIN source_metadata_generations mg ON mg.generation_id=h.generation_id
- LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id`,
-			"pl.sort_key", true
+ LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id`
+		key = "pl.sort_key"
 	case "import_time":
-		return `nodes n INDEXED BY nodes_photo_import` + photoBrowseNodeJoins, "n.created_at", true
+		from = `nodes n` + photoIndexHint("nodes_photo_import", postgres) + photoBrowseNodeJoins
+		key = "n.created_at"
 	case "name":
-		return `nodes n INDEXED BY nodes_photo_name` + photoBrowseNodeJoins, "substr(n.name,1,1024)", true
+		from = `nodes n` + photoIndexHint("nodes_photo_name", postgres) + photoBrowseNodeJoins
+		key = "substr(n.name,1,1024)"
 	case "modified_at":
-		return `nodes n INDEXED BY nodes_live_modified` + photoBrowseNodeJoins, "n.modified_at", true
+		from = `nodes n` + photoIndexHint("nodes_live_modified", postgres) + photoBrowseNodeJoins
+		key = "n.modified_at"
 	case "size":
-		return `content_versions v INDEXED BY content_versions_photo_size` + photoBrowseVersionJoins,
-			"printf('%020d',v.size)", true
+		from = `content_versions v` + photoIndexHint("content_versions_photo_size", postgres) + photoBrowseVersionJoins
+		key = "printf('%020d',v.size)"
+		if postgres {
+			key = `lpad(CAST(v.size AS text),20,'0') COLLATE "C"`
+		}
 	case "media_type":
-		return `content_versions v INDEXED BY content_versions_photo_media_type` + photoBrowseVersionJoins,
-			"substr(COALESCE(v.mime_type,''),1,1024)", true
+		from = `content_versions v` + photoIndexHint("content_versions_photo_media_type", postgres) + photoBrowseVersionJoins
+		key = "substr(COALESCE(v.mime_type,''),1,1024)"
+		if postgres {
+			// SQLite substr(TEXT) counts characters and stops at NUL.
+			key = `substr(convert_from(CASE WHEN position('\x00'::bytea in v.mime_type)>0
+				THEN substr(v.mime_type,1,position('\x00'::bytea in v.mime_type)-1)
+				ELSE COALESCE(v.mime_type,'') END,'UTF8'),1,1024) COLLATE "C"`
+		}
 	default:
 		return "", "", false
 	}
+	return photoJoins(from, postgres), key, true
 }
 
 func validatePhotoQuerySort(value query.Query) error {
@@ -445,10 +504,14 @@ func validatePhotoQuerySort(value query.Query) error {
 }
 
 func photoBrowseMissingKey(field string) string {
+	return photoBrowseMissingKeyForBackend(field, false)
+}
+
+func photoBrowseMissingKeyForBackend(field string, postgres bool) string {
 	if field == "capture_time" {
 		return "COALESCE(pl.sort_key,'')"
 	}
-	_, key, _ := photoBrowseOrder(field)
+	_, key, _ := photoBrowseOrderForBackend(field, postgres)
 	return key
 }
 
@@ -456,6 +519,7 @@ func photoBrowseMissingKey(field string) string {
 // photo query in one collection generation.
 type photoBrowseScope struct {
 	match      compiledQueryFragment
+	postgres   bool
 	coverage   CoverageSelection
 	generation string
 	hidden     bool
@@ -478,7 +542,7 @@ func newPhotoBrowseScope(
 	if err != nil {
 		return photoBrowseScope{}, err
 	}
-	return photoBrowseScope{match: match, coverage: coverage, generation: generation, hidden: hidden}, nil
+	return photoBrowseScope{match: match, coverage: coverage, generation: generation, hidden: hidden, postgres: compiled.postgres}, nil
 }
 
 func (s photoBrowseScope) withCompiledMatch(compiled CompiledQuery) (photoBrowseScope, error) {
@@ -502,9 +566,10 @@ func (s photoBrowseScope) where() string {
 // where() before any placeholder for extra.
 func (s photoBrowseScope) bind(statement string, extra ...any) (string, []any, error) {
 	args := append(append([]any(nil), s.match.args...), extra...)
-	return bindQueryPopulation(compiledQueryFragment{
+	statement, args, err := bindQueryPopulationForBackend(compiledQueryFragment{
 		sql: statement, args: args, relations: s.match.relations,
-	}, s.coverage, s.generation)
+	}, s.coverage, s.generation, s.postgres)
+	return bindCompiledRead(statement, s.postgres), args, err
 }
 
 func photoBrowsePopulation(compiled CompiledQuery, generation string, coverage CoverageSelection) (compiledQueryFragment, error) {
@@ -532,7 +597,7 @@ func photoBrowseMatch(compiled CompiledQuery, generation string, coverage Covera
 	if err != nil {
 		return compiledQueryFragment{}, err
 	}
-	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files member CROSS JOIN (` + population.sql + `) matched ON matched.node_id=member.node_id WHERE member.asset_id=a.asset_id)`, args: population.args, relations: population.relations}, nil
+	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files member ` + photoJoins("CROSS JOIN", compiled.postgres) + ` (` + population.sql + `) matched ON matched.node_id=member.node_id WHERE member.asset_id=a.asset_id)`, args: population.args, relations: population.relations}, nil
 }
 
 // photoTextOperands joins the matches of the non-negated text operands, all

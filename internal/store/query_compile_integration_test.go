@@ -12,7 +12,7 @@ func compileFixtureQuery(t *testing.T, s *Store, text string, filters query.Filt
 	value, err := query.Parse([]byte(`{"syntax":"advanced"}`))
 	require.NoError(t, err)
 	value.Text, value.Filters = text, filters
-	compiled, err := compileQuery(t.Context(), value, queryResolver{q: s.db})
+	compiled, err := compileQuery(t.Context(), value, queryResolver{q: s.db, postgres: s.postgresSchema != ""})
 	require.NoError(t, err)
 	return compiled
 }

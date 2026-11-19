@@ -391,7 +391,8 @@ and image embedding can publish a vector index before returning. Face embedding,
 index-backed people ranking and suggestion rebuilding use shared worker and
 Store operations. Remote recording references, manual file import, acquisition
 consent, exact transcript reads and selected-recording search have shared
-scenarios below. Photo query compilation remains unqualified.
+scenarios below. Structured photo browsing and selection also use the native
+Store.
 Native multi-store catalog operations are qualified below; deployment adapters
 remain separate from public PostgreSQL vault opening. Paged tree walks, native
 file and folder imports, and stored-original ZIP workers have the filesystem
@@ -1161,8 +1162,7 @@ SQLite keeps its released membership triggers and receives no additional
 maintenance queries. The shared reader scenarios cover native original/chunk
 and image membership changes, leases, cleanup, warm-cache reuse and snapshots.
 Face members are covered by the processing suite through native face publication,
-index reconstruction and ranked people selection. Photo query compilation
-remains unqualified on PostgreSQL.
+index reconstruction and ranked people selection.
 Public PostgreSQL vault opening remains separate.
 
 #### Face embeddings and matching
@@ -1281,6 +1281,25 @@ embedding publication and vector index. The remote recording suite above covers
 selected transcript retrieval. Photo query compilation, PDF fact filters and
 selected image-interpretation search have separate qualification boundaries.
 Public PostgreSQL vault opening remains separate.
+
+#### Structured photo browsing and selection
+
+The `photo-browse` suite exercises native photo pages on SQLite and PostgreSQL.
+A page reads its count, matching live display files, facet groups, previews and
+quality from one snapshot. Continuation cursors keep the first total and seek
+within live order. PostgreSQL compares byte-stored camera, lens and location
+values without decoding them as text. Media-type sort keys use the same
+character limit and NUL boundary as SQLite.
+
+Burst pages keep connected groups together and recheck the cursor's grouping
+boundary. The same population selects album members, exact photo export
+members and reject candidates. Moving rejects rechecks flags, member revisions
+and XMP sidecar settlement under writer admission.
+
+SQLite retains the indexed join order for browsing, burst probes and XMP
+receipts. PostgreSQL uses its normal join planner. This suite covers structured
+filters and orders. Lexical and semantic photo retrieval, PDF facts, media-family
+filters and frozen query workspaces have separate qualification boundaries.
 
 #### Backup capture and physical recovery
 
@@ -1928,9 +1947,9 @@ The existing receipt lookup expressions keep their engine-specific indexes.
 The `photo-edit` contracts exercise native writes, stale plans, both conflict
 choices, generated sidecars, undo, audit history, queue invalidation and rollback.
 Face and description records also participate in metadata preparation; their
-native processing lifecycle is covered by the `photo-analysis` suite below. Query-based selections,
-`SkipUnavailable`, best-shot/representative choices, hidden-session management,
-photo review, and public PostgreSQL vault opening remain unqualified.
+native processing lifecycle is covered by the `photo-analysis` suite below.
+The `photo-browse` suite covers structured selection for albums, exports and
+reject moves. This authored-edit contract covers explicit targets.
 The processing worker's XML encoding and filesystem publication still run through
 the SQLite vault; this qualification covers their Store calls.
 
@@ -2163,10 +2182,9 @@ sort. PostgreSQL uses ordinary joins and the same membership access indexes;
 its runtime role can insert albums, update their mutable properties, and insert
 or delete members. It cannot update member identities or timestamps in place.
 
-This qualifies explicit-ID Store operations. Search-selected populations,
-`SkipUnavailable` selection, browse pages and albums created from frozen query
-snapshots remain within the search and delivery qualification boundaries. The
-public PostgreSQL vault lifecycle is still unavailable.
+The `photo-browse` suite also covers album membership selected by structured
+queries. `SkipUnavailable`, lexical selection and frozen-snapshot albums have
+separate qualification boundaries.
 
 #### Photo checkouts
 
@@ -2619,8 +2637,7 @@ schema can enroll its root without a copied fixture.
 
 Copying supporting catalogs qualifies their validation, not their producers.
 The [operation inventory](#backend-support-and-drift-checks) identifies native
-writes and their catalog-maintenance coverage. Public PostgreSQL opening,
-Photo query compilation remains unqualified. Logical metadata transfer
+writes and their catalog-maintenance coverage. Logical metadata transfer
 uses the internal import/export entry points described above.
 
 For PostgreSQL tests, start a disposable server, never an operator database:

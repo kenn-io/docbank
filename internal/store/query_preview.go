@@ -25,11 +25,16 @@ func (s *Store) CompileQuery(ctx context.Context, value query.Query) (compiled C
 		}
 		retErr = errors.Join(retErr, conn.Close())
 	}()
-	if _, err := conn.ExecContext(ctx, "BEGIN DEFERRED"); err != nil {
+	begin := "BEGIN DEFERRED"
+	postgres := s.postgresSchema != ""
+	if postgres {
+		begin = "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"
+	}
+	if _, err := conn.ExecContext(ctx, begin); err != nil {
 		return CompiledQuery{}, fmt.Errorf("starting query preview: %w", err)
 	}
 	active = true
-	compiled, err = compileQuery(ctx, value, queryResolver{q: conn})
+	compiled, err = compileQuery(ctx, value, queryResolver{q: conn, postgres: postgres})
 	if err != nil {
 		return CompiledQuery{}, err
 	}

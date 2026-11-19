@@ -152,12 +152,12 @@ func TestPhotoRejectsPreflightDoesNotBlockOnOpenWriter(t *testing.T) {
 	assert.Len(t, preview.Targets, 1)
 }
 
-func TestPhotoRejectsMoveGuards(t *testing.T) {
-	t.Parallel()
+func checkPhotoRejectsMoveGuards(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	changes := []string{"flag reread", "revision", "hidden state", "duplicate target", "no live files", "hidden locked at preflight and at move"}
 	for _, change := range changes {
 		t.Run(change, func(t *testing.T) {
-			s := newTestStore(t)
+			s := open(t)
 			asset, _ := photoTrashFixture(t, s)
 			asset = rejectSettledOriginals(t, s, asset)
 			ctx := t.Context()
@@ -218,9 +218,9 @@ func TestPhotoRejectsMoveGuards(t *testing.T) {
 }
 
 // An unread outside sidecar stales the preview until the worker settles it.
-func TestPhotoRejectsMoveWaitsForSidecarSync(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPhotoRejectsMoveWaitsForSidecarSync(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	asset, nodes := photoTrashFixture(t, s)
 	sidecar := fileByRole(asset.Files, PhotoRoleSidecar)
@@ -410,9 +410,9 @@ func TestPhotoRejectsFileBound(t *testing.T) {
 	assert.Len(t, roots, 1008)
 }
 
-func TestPhotoRejectsMixedAndUnchanged(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPhotoRejectsMixedAndUnchanged(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	expectedMembers := make(map[string][]PhotoRejectMember)
 	for i := range 21 {
 		dir, err := s.Mkdir(t.Context(), s.RootID(), fmt.Sprintf("mixed-%d", i))

@@ -161,9 +161,9 @@ func TestPhotoStackOtherKeysetSortsKeepIndividualRows(t *testing.T) {
 	require.ElementsMatch(t, ids, slices.Concat(pages...))
 }
 
-func TestPhotoStackDescendingTimestampTies(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPhotoStackDescendingTimestampTies(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	run, err := s.BeginIngest(t.Context(), "cli", "synthetic tied captures")
 	require.NoError(t, err)
 	var ids []string
@@ -421,11 +421,11 @@ func TestPhotoStackGroupsRejectInvalidInputs(t *testing.T) {
 	require.False(t, incomplete)
 }
 
-func TestPhotoStackCursorMembershipFrontier(t *testing.T) {
-	t.Parallel()
+func checkPhotoStackCursorMembershipFrontier(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	for _, direction := range []string{"asc", "desc"} {
 		t.Run(direction+"/camera edit", func(t *testing.T) {
-			s := newTestStore(t)
+			s := open(t)
 			ids := burstPhotos(t, s, 3)
 			run, err := s.BeginIngest(t.Context(), "cli", "synthetic cursor neighbors")
 			require.NoError(t, err)
@@ -450,7 +450,7 @@ func TestPhotoStackCursorMembershipFrontier(t *testing.T) {
 		})
 		for _, offset := range []int{0, 1, 2} {
 			t.Run(fmt.Sprintf("%s/boundary-%d", direction, offset), func(t *testing.T) {
-				s := newTestStore(t)
+				s := open(t)
 				run, err := s.BeginIngest(t.Context(), "cli", "synthetic cursor frontier")
 				require.NoError(t, err)
 				var ids []string
