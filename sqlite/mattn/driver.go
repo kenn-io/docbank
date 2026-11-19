@@ -23,6 +23,7 @@ import (
 const driverName = "docbank-sqlite3-query-v1"
 
 func init() {
+	disableMemoryStatus()
 	sql.Register(driverName, &sqlite3.SQLiteDriver{ConnectHook: func(conn *sqlite3.SQLiteConn) error {
 		if err := conn.RegisterFunc("docbank_query_media_family_v1", query.ClassifyMedia, true); err != nil {
 			return fmt.Errorf("register query media function: %w", err)

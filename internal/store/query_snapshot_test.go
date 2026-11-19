@@ -424,7 +424,10 @@ func checkMediaFamilyRestorePostgres(t *testing.T) {
 	require.NoError(t, source.ExportMetadata(ctx, &exported))
 	setup, owner := pgtest.NewDatabase(t)
 	cfg := pgschema.Config{Schema: "documents", SchemaOwner: owner}
-	require.NoError(t, ImportPostgresMetadata(ctx, setup, cfg, bytes.NewReader(exported.Bytes())))
+	release := pgtest.ReserveSchemaInstall(t)
+	err = ImportPostgresMetadata(ctx, setup, cfg, bytes.NewReader(exported.Bytes()))
+	release()
+	require.NoError(t, err)
 	restored := newPostgresSchemaStore(t, setup, cfg)
 
 	for _, tc := range []struct {

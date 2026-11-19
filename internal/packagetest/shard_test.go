@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -100,6 +101,9 @@ func meetShardTests(t *testing.T) string {
 }
 
 func TestRunShards(t *testing.T) {
+	if runtime.NumCPU() < 2 {
+		t.Skip("the child rendezvous requires two shard slots")
+	}
 	executable, err := os.Executable()
 	require.NoError(t, err)
 	wd, err := os.Getwd()

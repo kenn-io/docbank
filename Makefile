@@ -95,7 +95,7 @@ PG_STEPS := pgschema store backup embedded ingest checkout exporter mailbox proc
 
 test-pg:
 	@test -n "$${DOCBANK_TEST_POSTGRES_DSN:-}" || (echo 'Set DOCBANK_TEST_POSTGRES_DSN to a disposable PostgreSQL test server' >&2; exit 1)
-	@$(MAKE) --no-print-directory -j $(words $(PG_STEPS)) --output-sync=target $(addprefix test-pg-,$(PG_STEPS))
+	@$(MAKE) --no-print-directory -j $(words $(PG_STEPS)) $(if $(filter output-sync,$(.FEATURES)),--output-sync=target) $(addprefix test-pg-,$(PG_STEPS))
 
 .PHONY: $(addprefix test-pg-,$(PG_STEPS))
 test-pg-pgschema:
