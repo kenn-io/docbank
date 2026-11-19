@@ -12,8 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func checkRenditionWorkerResume(t *testing.T, open func(*testing.T) *Store) {
@@ -133,8 +131,8 @@ func checkRenditionSnapshotsPostgres(t *testing.T) {
 
 func checkRenditionPublicationRollbackPostgres(t *testing.T) {
 	t.Helper()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	ctx := t.Context()
 	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)

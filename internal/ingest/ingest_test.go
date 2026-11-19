@@ -357,6 +357,7 @@ func TestDetectMimeUsesClosedSuffixRefinements(t *testing.T) {
 		{name: "actual apng with png suffix", path: "animation.png", head: makeAPNG(37), resolver: "application/pdf", want: "image/png"},
 		{name: "apng beyond prefix", path: "animation.apng", head: makeAPNG(513)[:512], resolver: "application/pdf", want: "image/png"},
 		{name: "generic png suffix", path: "animation.apng", head: []byte(pngHeader), resolver: "application/pdf", want: "image/png"},
+		{name: "epub container", path: "book.epub", head: []byte("PK\x03\x04\x14\x00\x00\x00\x00\x00"), resolver: "application/pdf", want: "application/epub+zip"},
 		{name: "matroska audio", path: "audio.mka", head: matroska, resolver: "application/pdf", want: "audio/x-matroska"},
 		{name: "xmp sidecar", path: "sidecar.xmp", head: xmp, resolver: "application/pdf", want: "application/rdf+xml"},
 		{name: "xmp packet without xml declaration", path: "sidecar.xmp", head: xmpWithoutDeclaration, resolver: "application/pdf", want: "application/rdf+xml"},

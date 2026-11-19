@@ -8,9 +8,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
-
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func checkTrashRestorePostgres(t *testing.T) {
@@ -155,8 +152,8 @@ func checkPhotoTrashRestorePostgres(t *testing.T) {
 	for _, audited := range []bool{false, true} {
 		t.Run(fmt.Sprintf("audited=%t", audited), func(t *testing.T) {
 			ctx := t.Context()
-			setup, owner := pgtest.NewDatabase(t)
-			target := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+			setup, owner, login := newTemplateDatabase(t)
+			target := openPostgresStore(t, owner, login)
 			source := newTestStore(t)
 			source.vaultID = target.vaultID
 			_, err := source.writeDB.ExecContext(ctx, `UPDATE vault_metadata SET vault_uid=$1`, source.vaultID)

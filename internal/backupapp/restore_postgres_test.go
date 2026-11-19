@@ -73,8 +73,10 @@ func TestPhysicalRestoreIntoPostgres(t *testing.T) {
 			cfg := pgschema.Config{Schema: "documents", SchemaOwner: owner}
 			runtime := pgstoretest.RuntimeConfig(t, setup, cfg)
 			target := filepath.Join(t.TempDir(), "restored")
+			release := pgtest.ReserveSchemaInstall(t)
 			restored, err := backupapp.RestorePostgres(ctx, repo, "test-version", store.DefaultSQLiteDriver(), backupapp.PostgresRestoreTarget{Owner: setup, Runtime: runtime, Schema: cfg},
 				backup.RestoreOptions{TargetDir: target, SnapshotID: snapshot.SnapshotID, Jobs: 2})
+			release()
 			require.NoError(t, err)
 			require.Equal(t, snapshot.SnapshotID, restored.SnapshotID)
 			require.Equal(t, sourceOwnership.Vault, restored.VaultID)
@@ -145,6 +147,7 @@ func TestPhysicalRestorePublicationCollisionPostgres(t *testing.T) {
 	target := filepath.Join(parent, "target")
 	var once sync.Once
 	var collisionErr error
+	release := pgtest.ReserveSchemaInstall(t)
 	result, err := backupapp.RestorePostgres(ctx, repo, "test-version", store.DefaultSQLiteDriver(), backupapp.PostgresRestoreTarget{Owner: setup, Runtime: runtime, Schema: cfg},
 		backup.RestoreOptions{TargetDir: target, Progress: func(backup.ProgressEvent) {
 			once.Do(func() {
@@ -153,6 +156,7 @@ func TestPhysicalRestorePublicationCollisionPostgres(t *testing.T) {
 				}
 			})
 		}})
+	release()
 	require.NoError(t, collisionErr)
 	require.ErrorContains(t, err, "installing restored vault directory")
 	require.Nil(t, result)
@@ -161,7 +165,9 @@ func TestPhysicalRestorePublicationCollisionPostgres(t *testing.T) {
 	require.Equal(t, "existing data", string(data))
 
 	retry := filepath.Join(parent, "retry")
+	release = pgtest.ReserveSchemaInstall(t)
 	_, err = backupapp.RestorePostgres(ctx, repo, "test-version", store.DefaultSQLiteDriver(), backupapp.PostgresRestoreTarget{Owner: setup, Runtime: runtime, Schema: cfg}, backup.RestoreOptions{TargetDir: retry})
+	release()
 	require.NoError(t, err)
 	restored, err := store.OpenPostgres(ctx, runtime, cfg, retry)
 	require.NoError(t, err)
@@ -227,8 +233,10 @@ func checkPhysicalRestoreAbortedCommit(t *testing.T, changeSnapshot bool) {
 	ownerConfig.Tracer = tracer
 	writer := stdlib.OpenDB(*ownerConfig)
 	defer func() { require.NoError(t, writer.Close()) }()
+	release := pgtest.ReserveSchemaInstall(t)
 	result, err := backupapp.RestorePostgres(ctx, repo, "test-version", store.DefaultSQLiteDriver(),
 		backupapp.PostgresRestoreTarget{Owner: writer, Runtime: runtime, Schema: cfg}, backup.RestoreOptions{TargetDir: target, SnapshotID: snapshot.SnapshotID})
+	release()
 	require.ErrorContains(t, err, "restore directory was installed")
 	require.ErrorIs(t, err, context.Canceled)
 	require.NotNil(t, result)
@@ -261,9 +269,11 @@ func checkPhysicalRestoreAbortedCommit(t *testing.T, changeSnapshot bool) {
 	}
 
 	retry := filepath.Join(filepath.Dir(target), "retry")
+	release = pgtest.ReserveSchemaInstall(t)
 	committed, err := backupapp.RestorePostgres(ctx, repo, "test-version", store.DefaultSQLiteDriver(),
 		backupapp.PostgresRestoreTarget{Owner: setup, Runtime: runtime, Schema: cfg},
 		backup.RestoreOptions{TargetDir: retry, SnapshotID: snapshot.SnapshotID})
+	release()
 	require.NoError(t, err)
 	require.True(t, committed.CatalogCommitted)
 	require.Equal(t, result.VaultID, committed.VaultID)
@@ -303,8 +313,10 @@ func TestPhysicalRestoreRetriesDerivedIndexesPostgres(t *testing.T) {
 	_, err = setup.ExecContext(ctx, `REVOKE INSERT ON documents.document_event_state FROM `+role)
 	require.NoError(t, err)
 	target := filepath.Join(t.TempDir(), "restored")
+	release := pgtest.ReserveSchemaInstall(t)
 	result, err := backupapp.RestorePostgres(ctx, repo, "test-version", store.DefaultSQLiteDriver(),
 		backupapp.PostgresRestoreTarget{Owner: setup, Runtime: runtime, Schema: cfg}, backup.RestoreOptions{TargetDir: target})
+	release()
 	require.ErrorContains(t, err, "PostgreSQL restore committed; rebuilding projections")
 	require.ErrorContains(t, err, "permission denied for table document_event_state")
 	require.NotNil(t, result)
@@ -330,9 +342,11 @@ func TestBackupRestoresRenditionBytesAndSearchPostgres(t *testing.T) {
 	runtime := pgstoretest.RuntimeConfig(t, setup, cfg)
 	checkBackupRestoresRenditionBytesAndSearch(t, func(t *testing.T, repo *backup.Repo, target string) *store.Store {
 		t.Helper()
+		release := pgtest.ReserveSchemaInstall(t)
 		_, err := backupapp.RestorePostgres(t.Context(), repo, "test-version", store.DefaultSQLiteDriver(),
 			backupapp.PostgresRestoreTarget{Owner: setup, Runtime: runtime, Schema: cfg},
 			backup.RestoreOptions{TargetDir: target})
+		release()
 		require.NoError(t, err)
 		restored, err := store.OpenPostgres(t.Context(), runtime, cfg, target)
 		require.NoError(t, err)

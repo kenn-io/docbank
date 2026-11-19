@@ -13,17 +13,14 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
-
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func checkRenditionConnectionFailurePostgres(t *testing.T) {
 	t.Helper()
 	for _, failure := range []string{"before write", "waiter selection", "commit response"} {
 		t.Run(failure, func(t *testing.T) {
-			setup, owner := pgtest.NewDatabase(t)
-			s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+			setup, owner, login := newTemplateDatabase(t)
+			s := openPostgresStore(t, owner, login)
 			ctx := t.Context()
 			versions := seedRenditionCatalogVersions(t, s)
 			request := renditionJobTestRequest(versions[0], catalogProcessingProfile(t, false))

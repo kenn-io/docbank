@@ -9,8 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func checkSourceMetadataPhotoEffectsPostgres(t *testing.T) {
@@ -173,8 +171,8 @@ func checkMetadataPublicationRollbackPostgres(t *testing.T) {
 	t.Helper()
 	for _, blockedTable := range []string{"photo_technical_metadata", "document_event_actors", "document_event_builds"} {
 		t.Run(blockedTable, func(t *testing.T) {
-			setup, owner := pgtest.NewDatabase(t)
-			s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+			setup, owner, login := newTemplateDatabase(t)
+			s := openPostgresStore(t, owner, login)
 			ctx := t.Context()
 			node, err := s.CreateFile(ctx, s.RootID(), "rollback.txt", fakeHash("a7"), 1, "text/plain")
 			require.NoError(t, err)

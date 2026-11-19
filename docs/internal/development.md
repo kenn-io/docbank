@@ -1086,8 +1086,8 @@ Email-PDF and supplied-media service scenarios use the production runtimes with
 injected renderers/providers. All scenarios run the real worker, Store and
 consent records against managed blob files.
 
-`make test-pg` runs `TestProcessingWorkersPostgres` after the Store and backup
-lanes on both PostgreSQL versions. The SQLite entry points call the same shared
+`make test-pg` runs `TestProcessingWorkersPostgres` alongside the Store and
+backup lanes on both PostgreSQL versions. The SQLite entry points call the same shared
 scenarios and keep their existing parallelism. The named scenarios define the
 qualified coverage; other database-backed scenarios and checks that validate
 inputs without querying the database keep their existing SQLite/unit entry points.
@@ -1419,8 +1419,8 @@ derived indexes through the runtime role. The
 [backup architecture](../architecture/backup.md#restoring-into-postgresql)
 describes the directory and schema publication boundary and retry rules.
 
-`make test-pg` runs the backup application scenarios after the Store lane on both
-PostgreSQL versions. The shared scenarios verify loose and packed byte readback,
+`make test-pg` runs the backup application scenarios alongside the Store lane on
+both PostgreSQL versions. The shared scenarios verify loose and packed byte readback,
 photo state after source loss, and complete audited incremental history. The
 PostgreSQL source-loss scenario removes both the schema and source files before
 restoring. The ordinary SQLite suite runs the same recovery scenarios.
@@ -2762,11 +2762,28 @@ the test administrator needs database, role and event-trigger creation for the
 rollback fixtures. These are test privileges, not runtime requirements.
 `internal/pgtest` owns database creation and cleanup for both the schema and
 node and content-history query tests. `make test-pg` requires the DSN, bypasses
-cached test results, and runs these groups under the race detector. It limits
-parallel tests to four: each schema installation locks hundreds of catalog
-objects, so CPU-count concurrency can exhaust the default server lock table.
-The Store suite has an eight-minute timeout for the full contract inventory
-at that concurrency; the schema lifecycle suite has a separate three-minute limit.
+cached test results, and runs these groups under the race detector. It runs
+the packages at once, because each spends most of its time waiting on the
+server. Their `-parallel` values together keep the open connections below the
+server's default limit of 100.
+
+Store tests do not install the schema themselves. `internal/pgstoretest`
+installs it once per package run in a template database, and each test gets a
+file copy of that template. Shard processes of the same run find the template
+by a name the first process passes them in the environment. At most two
+schema installations run at once, in all test processes together: one holds
+about 2,400 locks until it commits, and the default server lock table has room
+for about 6,400. The template's runtime login uses one SCRAM iteration, because
+the tests open thousands of connections and its password is a public constant.
+
+A test's database is dropped after the test by a background goroutine.
+PostgreSQL makes every `DROP DATABASE` wait for a checkpoint, so tests that
+dropped their own databases waited for each other. Each package's `TestMain`
+passes the exit code through `pgtest.Finish`, which waits for the drops and
+fails the run if one fails. Packages that use the template call
+`pgstoretest.Finish` instead, which also drops the template in the process
+that named it. The Store suite has a ten-minute timeout; the schema lifecycle suite has
+a separate three-minute limit.
 Without that variable, ordinary `make test` skips PostgreSQL tests.
 A supplied but invalid connection fails rather than skipping.
 
@@ -2873,6 +2890,29 @@ working tree should let a new contributor understand the current system without
 replaying them. Keep work, ordering, blockers, and acceptance state outside
 the design documentation; these pages carry resulting capability and durable
 rationale.
+
+### Test run time
+
+`make test` and `make test-pg` run `go test` through
+`scripts/with-test-tmpdir.sh`. On Linux it points `TMPDIR` at a private
+directory under the memory-backed `/dev/shm`, because tests sync many small
+files and a disk makes each sync wait. The tests still make every sync. The
+directory stays the same between runs, so `go test` can reuse cached results.
+The wrapper also names a new directory in `DOCBANK_TEST_WASM_CACHE_DIR`. The
+`TestMain` of each package whose tests render PDFs calls
+`pdfiumtest.ShareCompiledCode`: the first test process compiles PDFium there
+under a file lock, and the other processes load the compiled code. Add the
+call to a package whose tests start rendering PDFs. The CLI tests share one built
+`docbank` binary the same way.
+
+A package whose tests cannot call `t.Parallel`, because they change
+environment variables, the working directory or other process-wide state,
+calls `packagetest.RunShards` from `TestMain`. It runs the top-level tests
+in several child processes of the test binary, one test at a time in each,
+and relays each test's output whole. A `Split` lets the children share the
+subtests of a test that dominates its package. Add a package to it when its
+serial tests set the length of the suite. A `-run` pattern that selects
+subtests, coverage, profiles and benchmarks run in one process.
 
 ### Timing checks
 

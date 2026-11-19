@@ -9,8 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/canonical"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func checkReceivedPackageStagingAndRetention(t *testing.T, newStore func(*testing.T) *Store) {
@@ -72,8 +70,8 @@ func checkReceivedPackageStagingAndRetention(t *testing.T, newStore func(*testin
 func checkReceivedPackageAdmissionRollbackPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	pkg := validPackageRequest(t, s)
 	run, err := s.BeginIngest(t.Context(), "package:loadfile", "synthetic-admission")
 	require.NoError(t, err)
@@ -107,8 +105,8 @@ func checkReceivedPackagePublicationRollbackPostgres(t *testing.T) {
 	t.Parallel()
 	for _, operation := range []string{"record", "complete", "cancel"} {
 		t.Run(operation, func(t *testing.T) {
-			setup, owner := pgtest.NewDatabase(t)
-			s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+			setup, owner, login := newTemplateDatabase(t)
+			s := openPostgresStore(t, owner, login)
 			job, record, labels, receipt := receivedRecordPublication(t, s)
 			var role string
 			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT current_user`).Scan(&role))

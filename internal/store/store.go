@@ -128,6 +128,7 @@ func openCurrentStore(
 	ctx context.Context,
 	path string, driver docsqlite.Driver, incarnation *metadataProcessingIncarnation,
 ) (*Store, error) {
+	createFromSchemaTemplate(ctx, path, driver)
 	db, err := driver.Open(path, docsqlite.OpenOptions{
 		Access: docsqlite.Create, TransactionMode: docsqlite.Deferred,
 	})

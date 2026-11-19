@@ -2,9 +2,10 @@ package store
 
 import (
 	"bytes"
-	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestEmailMetadataRoundTripAndTamper(t *testing.T) {

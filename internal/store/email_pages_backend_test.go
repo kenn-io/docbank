@@ -11,8 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func checkEmailPublicationBeginFailurePostgres(t *testing.T) {
@@ -51,8 +49,8 @@ func checkEmailPublicationBeginFailurePostgres(t *testing.T) {
 
 func checkEmailPublicationRollbackPostgres(t *testing.T) {
 	t.Helper()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	ctx := t.Context()
 	var role string
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT current_user`).Scan(&role))
@@ -118,8 +116,8 @@ func checkEmailPublicationRollbackPostgres(t *testing.T) {
 
 func checkPagePublicationRollbackPostgres(t *testing.T) {
 	t.Helper()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	ctx := t.Context()
 	request := pageStoreRequest(t, s)
 	job, err := s.QueuePageJob(ctx, uuid.NewString(), request)

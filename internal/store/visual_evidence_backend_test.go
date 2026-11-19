@@ -8,8 +8,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func checkPreviewBatchRecipes(t *testing.T, open func(*testing.T) *Store) {
@@ -47,8 +45,8 @@ func checkPreviewBatchRecipes(t *testing.T, open func(*testing.T) *Store) {
 func checkVisualPreviewPublicationRollbackPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	ctx := t.Context()
 	node, err := s.CreateFile(ctx, s.RootID(), "photo.jpg", fakeHash("61"), 12, "image/jpeg")
 	require.NoError(t, err)

@@ -12,8 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func checkAuditHistoryPostgres(t *testing.T) {
@@ -161,8 +159,8 @@ func checkAuditHistorySnapshotPostgres(t *testing.T) {
 // a production import path or a replacement for full metadata validation.
 func newAuditHistoryPostgresFixture(t *testing.T) (*Store, *Store, func(), string, Node, Node) {
 	t.Helper()
-	setup, owner := pgtest.NewDatabase(t)
-	reader := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	reader := openPostgresStore(t, owner, login)
 	source := newTestStore(t)
 	require.NoError(t, reader.db.QueryRowContext(t.Context(), `SELECT vault_uid FROM vault_metadata`).Scan(&source.vaultID))
 	_, err := source.writeDB.ExecContext(t.Context(), `UPDATE vault_metadata SET vault_uid=$1`, source.vaultID)

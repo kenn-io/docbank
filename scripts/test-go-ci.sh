@@ -9,7 +9,7 @@ if [ "$(go env CGO_ENABLED)" = 1 ]; then
 fi
 suite="$(go env GOOS)-$(go env GOARCH)-$cgo"
 mkdir -p gotestsum
-go tool gotestsum --format pkgname-and-test-fails --format-icons text \
+scripts/with-test-tmpdir.sh go tool gotestsum --format pkgname-and-test-fails --format-icons text \
 	--jsonfile "gotestsum/$suite.json" \
 	--rerun-fails=2 --rerun-fails-report "gotestsum/$suite-reruns.txt" \
 	--packages ./... -- -timeout 20m -tags fts5 "$@"

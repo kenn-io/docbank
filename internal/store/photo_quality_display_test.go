@@ -2,9 +2,10 @@ package store
 
 import (
 	"fmt"
+	"testing"
+
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"testing"
 )
 
 func TestPhotoQualityScalarBounds(t *testing.T) {

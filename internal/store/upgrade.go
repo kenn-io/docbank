@@ -299,8 +299,18 @@ func classifyDatabaseSchema(ctx context.Context, driver docsqlite.Driver, db *sq
 // classifyVersionedDatabaseSchema accepts only current or supported released layouts.
 func classifyVersionedDatabaseSchema(ctx context.Context, driver docsqlite.Driver, db *sql.DB, blobs, packs, vaultMetadata []string, scratchDir string) (databaseSchema, error) {
 	var version int
-	if err := db.QueryRowContext(ctx, `
-		SELECT schema_version FROM vault_metadata WHERE singleton = 1`).Scan(&version); err != nil {
+	err := db.QueryRowContext(ctx, `
+		SELECT schema_version FROM vault_metadata WHERE singleton = 1`).Scan(&version)
+	if errors.Is(err, sql.ErrNoRows) {
+		// A new vault starts as a copy of the schema template, and bootstrap
+		// then records its identity and version. Another opener may create
+		// the file and not have bootstrapped it yet.
+		if err := validateCurrentSchemaColumns(ctx, driver, db, blobs, packs, vaultMetadata, scratchDir); err != nil {
+			return databaseSchema{}, err
+		}
+		return databaseSchema{fresh: true}, nil
+	}
+	if err != nil {
 		return databaseSchema{}, fmt.Errorf("reading storage schema version: %w", err)
 	}
 	if version > currentStorageSchemaVersion {
@@ -364,13 +374,35 @@ func validateCurrentSchemaColumns(
 }
 
 func canonicalCurrentSchemaColumns(ctx context.Context, driver docsqlite.Driver, scratchDir string) (map[string][]string, error) {
-	return deriveCurrentSchemaColumns(ctx, driver, scratchDir)
+	if driver == DefaultSQLiteDriver() {
+		template, err := defaultSchemaTemplate(ctx, scratchDir)
+		if err != nil {
+			return nil, err
+		}
+		return template.columns, nil
+	}
+	built, err := buildCurrentSchema(ctx, driver, scratchDir, false)
+	if err != nil {
+		return nil, err
+	}
+	return built.columns, nil
 }
 
-func deriveCurrentSchemaColumns(ctx context.Context, driver docsqlite.Driver, scratchDir string) (columns map[string][]string, err error) {
+// builtSchema is an empty database with the current schema applied.
+type builtSchema struct {
+	// columns holds the sorted column names of each guarded table.
+	columns map[string][]string
+	// image is the database file. It is set only when the caller asked for it.
+	image []byte
+}
+
+// buildCurrentSchema applies the current schema to a temporary database with
+// driver and reads back the guarded tables' columns. With keepImage it also
+// returns the database file, written out of the write-ahead log.
+func buildCurrentSchema(ctx context.Context, driver docsqlite.Driver, scratchDir string, keepImage bool) (built builtSchema, err error) {
 	tempFile, err := os.CreateTemp(scratchDir, "docbank-current-schema-*.db")
 	if err != nil {
-		return nil, fmt.Errorf("creating temporary database: %w", err)
+		return builtSchema{}, fmt.Errorf("creating temporary database: %w", err)
 	}
 	tempPath := tempFile.Name()
 	var db *sql.DB
@@ -382,38 +414,58 @@ func deriveCurrentSchemaColumns(ctx context.Context, driver docsqlite.Driver, sc
 		err = errors.Join(err, closeErr, os.Remove(tempPath))
 	}()
 	if err := tempFile.Close(); err != nil {
-		return nil, fmt.Errorf("closing temporary database file: %w", err)
+		return builtSchema{}, fmt.Errorf("closing temporary database file: %w", err)
 	}
 
 	db, err = driver.Open(tempPath, docsqlite.OpenOptions{
 		Access: docsqlite.Create, TransactionMode: docsqlite.Immediate,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("opening temporary database with %s: %w", driver.Name(), err)
+		return builtSchema{}, fmt.Errorf("opening temporary database with %s: %w", driver.Name(), err)
 	}
 	// Match bootstrap's transaction boundary instead of syncing every schema
 	// statement separately each time an existing vault is opened.
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("beginning temporary schema transaction: %w", err)
+		return builtSchema{}, fmt.Errorf("beginning temporary schema transaction: %w", err)
 	}
 	if err := applySchema(ctx, tx); err != nil {
-		return nil, errors.Join(
+		return builtSchema{}, errors.Join(
 			fmt.Errorf("applying current schema to temporary database: %w", err), tx.Rollback(),
 		)
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("committing temporary schema transaction: %w", err)
+		return builtSchema{}, fmt.Errorf("committing temporary schema transaction: %w", err)
 	}
-	columns = make(map[string][]string, len(currentSchemaTables))
+	built.columns = make(map[string][]string, len(currentSchemaTables))
 	for _, table := range &currentSchemaTables {
-		columns[table], err = queryTableColumns(ctx, db, table)
+		built.columns[table], err = queryTableColumns(ctx, db, table)
 		if err != nil {
-			return nil, err
+			return builtSchema{}, err
 		}
-		slices.Sort(columns[table])
+		slices.Sort(built.columns[table])
 	}
-	return columns, nil
+	if !keepImage {
+		return built, nil
+	}
+	// The committed schema is in the write-ahead log until a checkpoint copies
+	// it into the database file.
+	var busy, logFrames, checkpointed int
+	if err := db.QueryRowContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`).Scan(&busy, &logFrames, &checkpointed); err != nil {
+		return builtSchema{}, fmt.Errorf("checkpointing temporary database: %w", err)
+	}
+	if busy != 0 {
+		return builtSchema{}, errors.New("checkpointing temporary database: the checkpoint did not finish")
+	}
+	closeErr := db.Close()
+	db = nil
+	if closeErr != nil {
+		return builtSchema{}, fmt.Errorf("closing temporary database: %w", closeErr)
+	}
+	if built.image, err = os.ReadFile(tempPath); err != nil {
+		return builtSchema{}, fmt.Errorf("reading temporary database: %w", err)
+	}
+	return built, nil
 }
 
 func validateV2Schema(ctx context.Context, db *sql.DB, blobs, packs []string) error {

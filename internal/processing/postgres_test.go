@@ -6,16 +6,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/pgstoretest"
-	"go.kenn.io/docbank/internal/pgtest"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func postgresProcessingStore(tb testing.TB) *store.Store {
 	tb.Helper()
-	setup, owner := pgtest.NewDatabase(tb)
-	cfg := pgschema.Config{Schema: "documents", SchemaOwner: owner}
-	connection := pgstoretest.RuntimeConfig(tb, setup, cfg)
+	_, cfg, connection := pgstoretest.NewDatabase(tb)
 	catalog, err := store.OpenPostgres(tb.Context(), connection, cfg, tb.TempDir())
 	require.NoError(tb, err)
 	return catalog

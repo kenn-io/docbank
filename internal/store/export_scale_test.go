@@ -9,9 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"uuid"
+
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/bundle"
-	"uuid"
 )
 
 func seedExportMembers(t *testing.T, s *Store, start, end int) []bundle.Member {

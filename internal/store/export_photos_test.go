@@ -8,9 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"uuid"
+
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/bundle"
-	"uuid"
 )
 
 func TestPhotoExportPlanRetainsAndRechecksCapturedAuthority(t *testing.T) {

@@ -7,27 +7,24 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/pgstoretest"
-	"go.kenn.io/docbank/internal/pgtest"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
-func postgresCheckoutService(t *testing.T, setup *sql.DB, owner string) Service {
+func postgresCheckoutService(t *testing.T) (Service, *sql.DB) {
 	t.Helper()
-	cfg := pgschema.Config{Schema: "documents", SchemaOwner: owner}
-	runtime := pgstoretest.RuntimeConfig(t, setup, cfg)
+	setup, cfg, runtime := pgstoretest.NewDatabase(t)
 	vault := t.TempDir()
 	catalog, err := store.OpenPostgres(t.Context(), runtime, cfg, vault)
 	require.NoError(t, err)
-	return checkoutServiceWithStore(t, vault, catalog)
+	return checkoutServiceWithStore(t, vault, catalog), setup
 }
 
 func TestPhotoCheckoutWorkersPostgres(t *testing.T) {
 	t.Parallel()
 	open := func(t *testing.T) Service {
 		t.Helper()
-		setup, owner := pgtest.NewDatabase(t)
-		return postgresCheckoutService(t, setup, owner)
+		s, _ := postgresCheckoutService(t)
+		return s
 	}
 	for _, scenario := range []struct {
 		name  string
@@ -48,8 +45,7 @@ func TestPhotoCheckoutWorkersPostgres(t *testing.T) {
 
 func TestCheckoutRecoversUnrecordedWorkingCopyPostgres(t *testing.T) {
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	s := postgresCheckoutService(t, setup, owner)
+	s, setup := postgresCheckoutService(t)
 	ctx := t.Context()
 	asset := checkoutPhoto(t, s, "photo.jpg", "original bytes")
 	c, op, _, root, err := s.Prepare(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, t.TempDir(), 0)

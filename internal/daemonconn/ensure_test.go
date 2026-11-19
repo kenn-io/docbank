@@ -43,7 +43,7 @@ func TestMain(m *testing.M) {
 	if address := os.Getenv("DOCBANK_START_TEST_CHILD"); address != "" && os.Getenv(EnvBackgroundDaemon) == "1" {
 		runUnreadyDaemonChild(address)
 	}
-	os.Exit(packagetest.RunWithLockRegistry(m))
+	os.Exit(packagetest.RunShardsWithLockRegistry(m))
 }
 
 // runUnreadyDaemonChild stands in for a spawned daemon that has not published

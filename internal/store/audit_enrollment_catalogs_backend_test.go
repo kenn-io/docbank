@@ -6,8 +6,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func retainedMetadataCatalogSeeds() map[string]func(*testing.T) *Store {
@@ -133,11 +131,11 @@ func checkAuditEnrollmentCatalogsPostgres(t *testing.T) {
 	for name, seed := range retainedMetadataCatalogSeeds() {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			setup, owner := pgtest.NewDatabase(t)
+			setup, owner, login := newTemplateDatabase(t)
 			source := seed(t)
 			target, err := source.Mkdir(t.Context(), source.RootID(), "Audited")
 			require.NoError(t, err)
-			destination := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+			destination := openPostgresStore(t, owner, login)
 			destination.vaultID = source.vaultID
 			_, err = setup.ExecContext(t.Context(), `UPDATE documents.vault_metadata SET vault_uid=$1`, source.vaultID)
 			require.NoError(t, err)
@@ -164,8 +162,8 @@ func checkAuditEnrollmentCatalogsPostgres(t *testing.T) {
 func checkAuditEnrollmentFreshPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	_, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	plan, err := s.PreviewInitialAudit(t.Context(), s.RootID(), "cli", nil)
 	require.NoError(t, err)
 	status, err := s.EnableInitialAudit(t.Context(), plan)
@@ -178,8 +176,8 @@ func checkAuditEnrollmentFreshPostgres(t *testing.T) {
 func checkAuditEnrollmentChangedPreviewPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	destination := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	destination := openPostgresStore(t, owner, login)
 	source := newTestStore(t)
 	source.vaultID = destination.vaultID
 	_, err := source.writeDB.ExecContext(t.Context(), `UPDATE vault_metadata SET vault_uid=$1`, source.vaultID)
@@ -216,8 +214,8 @@ func checkAuditEnrollmentChangedPreviewPostgres(t *testing.T) {
 func checkAuditEnrollmentPhotoReceiptPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	destination := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	destination := openPostgresStore(t, owner, login)
 	source := newTestStore(t)
 	source.vaultID = destination.vaultID
 	_, err := source.writeDB.ExecContext(t.Context(), `UPDATE vault_metadata SET vault_uid=$1`, source.vaultID)

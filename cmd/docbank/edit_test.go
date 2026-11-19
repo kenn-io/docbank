@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/packagetest"
+	"go.kenn.io/docbank/internal/pdfiumtest"
 )
 
 func TestEditCreatesVersionAndSkipsUnchangedContent(t *testing.T) {
@@ -296,6 +297,7 @@ func TestEditUnchangedRejectsConcurrentReplacement(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
+	pdfiumtest.ShareCompiledCode()
 	if os.Getenv("DOCBANK_EDIT_TEST_ORPHAN") == "1" {
 		os.Exit(runEditTestOrphan())
 	}
@@ -305,9 +307,22 @@ func TestMain(m *testing.M) {
 	if os.Getenv("DOCBANK_EDIT_TEST_HELPER") == "1" {
 		os.Exit(runEditHelper())
 	}
-	code := packagetest.RunWithLockRegistry(m)
-	if docbankBuildDir != "" {
-		if err := os.RemoveAll(docbankBuildDir); err != nil {
+	binaries := ""
+	docbankBinaryDir = os.Getenv(docbankBinaryDirEnv)
+	if docbankBinaryDir == "" {
+		dir, err := os.MkdirTemp("", "docbank-test-binaries-")
+		if err == nil {
+			err = os.Setenv(docbankBinaryDirEnv, dir)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "creating the test binary directory: %v\n", err)
+			os.Exit(1)
+		}
+		binaries, docbankBinaryDir = dir, dir
+	}
+	code := packagetest.RunShardsWithLockRegistry(m)
+	if binaries != "" {
+		if err := os.RemoveAll(binaries); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}
