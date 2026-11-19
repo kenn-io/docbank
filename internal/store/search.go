@@ -2871,7 +2871,7 @@ func (s *Store) normalizeSearchOptionsWithQuerier(
 		return SearchOptions{}, err
 	}
 	if opts.PDFFilter != "" {
-		predicate, err := compilePDFFilter(ctx, opts.PDFFilter)
+		predicate, err := compilePDFFilter(ctx, opts.PDFFilter, s.postgresSchema != "")
 		if err != nil {
 			return SearchOptions{}, err
 		}
@@ -3041,7 +3041,11 @@ func searchFilterSQL(opts SearchOptions, postgres bool, offset int) (string, []a
 	}
 	dialect := metadataJSONDialect{postgres}
 	if opts.PDFFilter != "" {
-		clauses = append(clauses, "AND ("+opts.pdfPredicate.sql+")")
+		predicate := opts.pdfPredicate.sql
+		if postgres {
+			predicate = bindCompiledPostgresRead(predicate, offset)
+		}
+		clauses = append(clauses, "AND ("+predicate+")")
 		args = append(args, opts.pdfPredicate.args...)
 	}
 	if opts.SourcePresent {

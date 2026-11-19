@@ -216,6 +216,7 @@ CREATE TABLE {{schema}}.source_metadata_generations (
     contract_version     TEXT COLLATE "C" NOT NULL,
     extractor_fingerprint TEXT COLLATE "C" NOT NULL,
     canonical_json       BYTEA NOT NULL,
+    pdf_query_facts      JSONB NOT NULL,
     checksum             TEXT COLLATE "C" NOT NULL,
     created_at           TEXT COLLATE "C" NOT NULL,
     UNIQUE (source_sha256, contract_version, extractor_fingerprint),

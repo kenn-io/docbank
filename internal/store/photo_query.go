@@ -399,9 +399,13 @@ func bindCompiledRead(statement string, postgres bool) string {
 	if !postgres {
 		return statement
 	}
+	return bindCompiledPostgresRead(statement, 0)
+}
+
+func bindCompiledPostgresRead(statement string, offset int) string {
 	var sql strings.Builder
 	sql.Grow(len(statement))
-	for index := 1; ; index++ {
+	for index := offset + 1; ; index++ {
 		before, after, ok := strings.Cut(statement, "?")
 		sql.WriteString(before)
 		if !ok {

@@ -1280,7 +1280,8 @@ including concurrent publication, empty and replaced content, truncation and
 text coverage. PostgreSQL plan checks use populated tables without disabling
 sequential scans. The processing suite runs hybrid retrieval with a real
 embedding publication and vector index. The remote recording suite above covers
-selected transcript retrieval. Photo query compilation, PDF fact filters and
+selected transcript retrieval. The PDF fact contract below covers filter-only,
+filename and document-body search. Photo retrieval and
 selected image-interpretation search have separate qualification boundaries.
 Public PostgreSQL vault opening remains separate.
 
@@ -1332,8 +1333,22 @@ The `document-snapshots` contracts cover these rows, saved-run comparison
 receipts, structured selection, filename and body terms, phrase and prefix
 matching, and people-role filters and facets. Text search reads either indexed
 extractions or the current rendition generation. People filters keep
-incomplete attribution distinct from a known absence. NEAR, media-family filters
-and PDF fact filters use SQLite.
+incomplete attribution distinct from a known absence. NEAR and media-family
+filters use SQLite.
+
+#### PDF fact filters
+
+Document snapshots, saved runs and lexical search filter on recorded PDF facts
+for the current original. Count bounds compare integers, permission names match
+exactly, and a boolean comparison requires a recorded value. A missing fact
+fails a positive comparison and can match its negation.
+
+PostgreSQL derives the search fields when it publishes validated source evidence
+and when it restores a catalog. Permissions use hex-encoded bytes for exact
+matching, including zero bytes. The projection stays with its immutable source
+generation. A query reads it through the active metadata head for the current
+version. Retained source evidence, its checksum and the export format keep their
+original bytes. SQLite continues to read the facts from validated source evidence.
 
 #### Term reports
 

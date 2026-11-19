@@ -2757,7 +2757,7 @@ var backendSuites = []backendSuite{
 		{"PhotoRejectsMoveWaitsForSidecarSync", func(t *testing.T) { t.Helper(); checkPhotoRejectsMoveWaitsForSidecarSync(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoRejectsMoveWaitsForSidecarSync(t, newPostgresQueryStore) }},
 		{"PhotoRejectsMixedAndUnchanged", func(t *testing.T) { t.Helper(); checkPhotoRejectsMixedAndUnchanged(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoRejectsMixedAndUnchanged(t, newPostgresQueryStore) }},
 	}},
-	{name: "document-snapshots", postgres: "native document workspaces", scope: "Frozen document rows, structured selection and facets, name and body terms, selected rendition mentions, person roles and saved run receipts. NEAR, media-family filters and PDF facts use SQLite.", scenarios: []backendScenario{
+	{name: "document-snapshots", postgres: "native document workspaces", scope: "Frozen document rows, structured selection and facets, name and body terms, selected rendition mentions, person roles and saved run receipts. PDF fact filters use pdf-fact-search. NEAR and media-family filters use SQLite.", scenarios: []backendScenario{
 		{"DocumentSnapshotFrozenRowsAndReceipts", func(t *testing.T) { t.Helper(); checkQuerySnapshotMaterializesFrozenRowsAndReceipts(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()
 			checkQuerySnapshotMaterializesFrozenRowsAndReceipts(t, newPostgresQueryStore)
@@ -2812,6 +2812,16 @@ var backendSuites = []backendSuite{
 		}},
 		{"TermReportNativeTextBindsSelectedRow", func(t *testing.T) { t.Helper(); checkTermReportNativeTextBindsSelectedRow(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkTermReportNativeTextBindsSelectedRow(t, newPostgresQueryStore) }},
 	}},
+	{name: "pdf-fact-search", postgres: "native PDF fact filters", scope: "Current source evidence in document snapshots, saved runs and ordinary search. Logical restore rebuilds the PostgreSQL query projection.", scenarios: []backendScenario{
+		{"PDFFactSearchMatchesRecordedEvidence", func(t *testing.T) {
+			t.Helper()
+			checkPDFFactSearchMatchesRecordedEvidence(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPDFFactSearchMatchesRecordedEvidence(t, newPostgresQueryStore)
+		}},
+		{"PDFFactSearchRestored", nil, checkPDFFactSearchRestoredPostgres},
+	}},
 	{name: "photo-snapshots", postgres: "native structured photo workspaces", scope: "Frozen membership and order, current display rows, album creation, saved run receipts, capture-day facets and stale-member checks.", scenarios: []backendScenario{
 		{"PhotoSnapshotPageChecksRequestedMembershipAndPreservesFrozenRows", func(t *testing.T) {
 			t.Helper()
@@ -2828,7 +2838,7 @@ var backendSuites = []backendSuite{
 	}},
 	{name: "photo-editing", postgres: "unqualified", scope: "Structured reject selection and movement use photo-browse. Explicit decisions use photo-review and people edits use people-curation. Structured frozen review sets use photo-snapshots."},
 	{name: "remote-recording-workflows", postgres: "native processing service", scope: "TestMediaWorkflowsPostgres qualifies reference retention, manual recording import, acquisition consent, exact transcript reads and source-selected lexical retrieval. Provider downloads and selected image-interpretation search are outside this qualification."},
-	{name: "search", postgres: "native document retrieval", scope: "lexical-search and semantic-results qualify document lexical, vector and hybrid retrieval. TestMediaWorkflowsPostgres covers selected transcript retrieval. Photo lexical search, PDF facts and selected image-interpretation search remain unqualified."},
+	{name: "search", postgres: "native document retrieval", scope: "lexical-search and semantic-results qualify document lexical, vector and hybrid retrieval. pdf-fact-search covers ordinary search with recorded PDF facts. TestMediaWorkflowsPostgres covers selected transcript retrieval. Photo lexical search and selected image-interpretation search remain unqualified."},
 	{name: "transfer-and-recovery", postgres: "native backup capture and physical recovery", scope: "internal/backupapp tests qualify repository capture, recovery into fresh SQLite and PostgreSQL vaults, loose/packed bytes, audited and photo recovery, source loss and missing-byte failure; metadata-export and metadata-import cover native logical transfer."},
 	{name: "organization", postgres: "native operations", scope: "Tags, audited bulk edits and saved definitions. Query execution and saved runs use document-snapshots and photo-snapshots.", scenarios: []backendScenario{
 		{"BatchTagsMixedChangesNoOpsAndCallerOrder", func(t *testing.T) {

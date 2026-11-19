@@ -348,7 +348,8 @@ var coreMetadataTables = []metadataRecordCodec{
 		}}),
 	newMetadataTable(metadataTable[metadataSourceMetadataGeneration]{
 		record: metadataSourceMetadataGeneration{Type: metadataSourceMetadataGenerationType},
-		table:  "source_metadata_generations", validate: validateSourceMetadataGenerationRecord}),
+		table:  "source_metadata_generations",
+		insert: importSourceMetadataGeneration}),
 	newMetadataTable(metadataTable[metadataSourceMetadataHead]{
 		record: metadataSourceMetadataHead{Type: metadataSourceMetadataHeadType}, table: "source_metadata_heads"}),
 	newMetadataTable(metadataTable[metadataVisualPreviewGeneration]{
@@ -771,7 +772,7 @@ JOIN backup_authorized_blobs a ON a.hash=g.source_sha256 ORDER BY g.generation_i
 			&record.ExtractorFingerprint, &record.CanonicalJSON, &record.Checksum, &record.CreatedAt); err != nil {
 			return err
 		}
-		if err := validateSourceMetadataGenerationRecord(record); err != nil {
+		if _, err := validateSourceMetadataGenerationRecord(record); err != nil {
 			return fmt.Errorf("validating source metadata for export: %w", err)
 		}
 		if err := write(record); err != nil {
@@ -804,22 +805,42 @@ JOIN backup_authorized_blobs a ON a.hash=h.source_sha256 ORDER BY h.source_sha25
 	return heads.Err()
 }
 
-func validateSourceMetadataGenerationRecord(record metadataSourceMetadataGeneration) error {
-	if record.Type != metadataSourceMetadataGenerationType || record.ContractVersion != document.SourceMetadataContractV1 {
-		return errors.New("invalid source metadata generation record")
-	}
-	metadata, checksum, err := document.DecodeSourceMetadataV1(record.CanonicalJSON)
+func importSourceMetadataGeneration(ctx context.Context, tx *sql.Tx, record metadataSourceMetadataGeneration, postgres bool) error {
+	metadata, err := validateSourceMetadataGenerationRecord(record)
 	if err != nil {
 		return err
 	}
+	if !postgres {
+		return insertMetadataRecord(ctx, tx, "source_metadata_generations", record, false)
+	}
+	facts, err := encodePDFQueryFacts(metadata)
+	if err != nil {
+		return err
+	}
+	generation := SourceMetadataGeneration{
+		GenerationID: record.GenerationID, SourceSHA256: record.SourceSHA256, ContractVersion: record.ContractVersion,
+		ExtractorFingerprint: record.ExtractorFingerprint, CanonicalJSON: record.CanonicalJSON,
+		Checksum: record.Checksum, CreatedAt: record.CreatedAt,
+	}
+	return insertSourceMetadataGenerationTx(ctx, tx, generation, facts, false)
+}
+
+func validateSourceMetadataGenerationRecord(record metadataSourceMetadataGeneration) (document.SourceMetadataV1, error) {
+	if record.Type != metadataSourceMetadataGenerationType || record.ContractVersion != document.SourceMetadataContractV1 {
+		return document.SourceMetadataV1{}, errors.New("invalid source metadata generation record")
+	}
+	metadata, checksum, err := document.DecodeSourceMetadataV1(record.CanonicalJSON)
+	if err != nil {
+		return document.SourceMetadataV1{}, err
+	}
 	if parsed, parseErr := packstore.ParseHash(record.ExtractorFingerprint); parseErr != nil || parsed.String() != record.ExtractorFingerprint {
-		return errors.New("source metadata extractor fingerprint is invalid")
+		return document.SourceMetadataV1{}, errors.New("source metadata extractor fingerprint is invalid")
 	}
 	if metadata.ContractVersion != record.ContractVersion || checksum != record.Checksum ||
 		sourceMetadataGenerationID(record.SourceSHA256, record.ContractVersion, record.ExtractorFingerprint, record.Checksum) != record.GenerationID {
-		return errors.New("source metadata generation identity or checksum does not match canonical evidence")
+		return document.SourceMetadataV1{}, errors.New("source metadata generation identity or checksum does not match canonical evidence")
 	}
-	return nil
+	return metadata, nil
 }
 
 func exportVisualPreviews(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
