@@ -62,9 +62,9 @@ func TestRoleSearchOperandSets(t *testing.T) {
 	require.Equal(t, "email.txt", selected.Rows[0].Name)
 }
 
-func TestRoleSearchMatchesAndPeopleFacet(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkRoleSearchMatchesAndPeopleFacet(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	version := seedCurrentRoleSearchEvent(t, s, "message.txt", "b1", []document.DocumentEventActorV1{})
 	person, err := s.CreatePerson(ctx, "Indigo Sender", "operator")
@@ -73,7 +73,7 @@ func TestRoleSearchMatchesAndPeopleFacet(t *testing.T) {
 		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: edge.id, Role: edge.role, Action: "assert", Revision: 1})
 		require.NoError(t, err)
 	}
-	for _, role := range []string{"author", "last_saved_by", "custodian", "recipient", "copied", "organizer", "attendee", "participant"} {
+	for _, role := range []string{"author", "last_saved_by", "custodian", "recipient", "copied", "organizer", "attendee", "participant", "blind_copy"} {
 		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: person.PersonID, Role: role, Action: "assert", Revision: 1})
 		require.NoError(t, err)
 	}
@@ -170,9 +170,9 @@ func checkRoleSearchCurrentPersonRelation(t *testing.T) {
 	check(true, direct.PersonID, "speaker", true)
 }
 
-func TestRoleSearchNegationWithPendingPeople(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkRoleSearchNegationWithPendingPeople(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	version := seedCurrentRoleSearchEvent(t, s, "sender.txt", "a3", []document.DocumentEventActorV1{{
 		Role: "sender", ActorKey: "email:sender@example.test", Address: "sender@example.test", DisplayName: "Sender Person", Claim: `"sender"`,
@@ -767,9 +767,10 @@ func TestRoleSearchMentionsRequireDocumentContent(t *testing.T) {
 	require.ElementsMatch(t, []int64{quoted.ID, last.ID, derived.ID, ascii.ID}, compiledFixtureIDs(t, s.db, compiled, ""))
 }
 
-func TestRoleSearchMentionsSelectedRendition(t *testing.T) {
-	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+func checkRoleSearchMentionsSelectedRendition(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Linden Vale", "operator")
 	require.NoError(t, err)
@@ -781,11 +782,11 @@ func TestRoleSearchMentionsSelectedRendition(t *testing.T) {
 	require.NoError(t, err)
 	attachment := RenditionAttachmentRecord{ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0], BuildID: build.ID, Profile: profile, AttachedAt: embeddingCatalogTime}
 	require.NoError(t, s.PublishRenditionAndLexicalHeads(ctx, attachment, RenditionHeadRecord{ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint, AttachmentID: attachment.ID, PublishedAt: embeddingCatalogTime}, generation.ID))
-	node, err := s.NodeByPath(ctx, "/synthetic-source-a.pdf")
+	value := snapshotTestQuery(t, `{"syntax":"advanced","text":"mentions:\"Linden Vale\""}`)
+	projection, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
 	require.NoError(t, err)
-	compiled := compileFixtureQuery(t, s, `mentions:"Linden Vale"`, query.Filters{})
-	require.NoError(t, s.withLexicalGenerationRead(ctx, func(q metadataQuerier, selected LexicalGeneration) error {
-		require.Equal(t, []int64{node.ID}, compiledFixtureIDs(t, q, compiled, selected.ID))
-		return nil
-	}))
+	require.Equal(t, generation.ID, projection.Generation.GenerationID)
+	require.Len(t, projection.Rows, 1)
+	require.Equal(t, versions[0], projection.Rows[0].ContentVersionID)
+	require.Equal(t, []string{"mentioned"}, projection.Rows[0].MatchedRoles)
 }

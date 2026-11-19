@@ -93,7 +93,7 @@ func (c queryCompiler) rolePredicateSQL(person, roleList string) string {
 	}
 	// One fresh-head scan answers match (1), known absence (0), and unknown (NULL).
 	head := strings.Replace(freshPeopleHeadSQL("cv.version_id"), " WHERE h.content_version_id=", " LEFT JOIN document_people p ON p.content_version_id=h.content_version_id AND p.generation_id=h.generation_id WHERE h.content_version_id=", 1)
-	return `(CASE WHEN ` + assertion + ` THEN TRUE ELSE (SELECT MAX(CASE WHEN ` + edge + ` THEN 1 ELSE 0 END) FROM ` + head + `) END)`
+	return `(CASE WHEN ` + assertion + ` THEN TRUE ELSE (SELECT MAX(CASE WHEN ` + edge + ` THEN 1 ELSE 0 END)=1 FROM ` + head + `) END)`
 }
 
 var betweenPersonRoles = func() []string {

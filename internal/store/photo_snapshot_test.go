@@ -484,11 +484,4 @@ func checkStructuredPhotoWorkspace(t *testing.T, open func(*testing.T) *Store) {
 	require.NoError(t, err)
 	require.Equal(t, run.RunID, next.PreviousRunID)
 	require.EqualValues(t, -1, next.Comparison.TotalDelta)
-
-	if s.postgresSchema != "" {
-		_, _, err = service.RunSaved(ctx, "owner", definition.ID, definition.Revision, SnapshotRequest{}, nil)
-		require.ErrorIs(t, err, ErrInvalidSnapshotRequest)
-		require.ErrorContains(t, err, "document snapshots require SQLite")
-		require.Zero(t, savedQueryRunCount(t, s, definition.ID, false))
-	}
 }

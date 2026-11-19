@@ -52,9 +52,9 @@ func TestQuerySnapshotMemberHashUsesNumericIdentityOrder(t *testing.T) {
 
 // Omitting member identity, source size, or frozen metadata from the selected
 // read view makes this fail even if a live search still returns both files.
-func TestQuerySnapshotMaterializesFrozenRowsAndReceipts(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkQuerySnapshotMaterializesFrozenRowsAndReceipts(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	run := createCollectionRun(t, s, "zeta.TXT", "snapshot-zeta")
 	zeta, err := s.NodeByPath(ctx, "/zeta.TXT")
@@ -187,4 +187,102 @@ func TestQuerySnapshotSortsTypedPrimaryAndAscendingIdentityTies(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []int64{first.ID, second.ID}, []int64{projection.Rows[0].NodeID, projection.Rows[1].NodeID},
 		"identity ties stay ascending even when the primary direction is descending")
+}
+
+func checkDocumentSnapshotSavedFacets(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	ctx := t.Context()
+	s, collection, nodes, profile := collectionCoverageFixtureWithStore(t, open(t), 3)
+	first, second, pending := nodes[0], nodes[1], nodes[2]
+	_, err := s.CreateFile(ctx, s.RootID(), "outside.pdf", first.BlobHash, first.Size, first.MimeType)
+	require.NoError(t, err)
+	label := "Synthetic review"
+	_, err = s.SetCollectionLabel(ctx, collection.ID(), 1, &label)
+	require.NoError(t, err)
+	tag, err := s.CreateTag(ctx, "Review")
+	require.NoError(t, err)
+	for _, node := range []Node{first, pending} {
+		_, err = s.AssignTag(ctx, tag.ID, node.ID, node.Revision)
+		require.NoError(t, err)
+	}
+	collectionCoveragePublish(t, s, first, profile, "complete")
+	collectionCoveragePublish(t, s, second, profile, "complete")
+
+	payload := fmt.Appendf(nil, `{"filters":{"collection_ids":[%q],"tag_ids":[%q],"text_coverage":["complete"]}}`, collection.ID(), tag.ID)
+	definition, err := s.CreateSavedQuery(ctx, label, "", SavedQueryKindQuery, payload)
+	require.NoError(t, err)
+	service := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	request := SnapshotRequest{
+		Coverage: CoverageSelection{Configuration: "configured", ProfileFingerprint: profile.Fingerprint},
+		Facets:   []string{"collections", "tags", "text_coverage", "duplicates"},
+	}
+	initial, page, err := service.RunSaved(ctx, "owner", definition.ID, definition.Revision, request, nil)
+	require.NoError(t, err)
+	require.Len(t, page.Rows, 1)
+	require.Equal(t, first.ID, page.Rows[0].NodeID)
+	require.Equal(t, page.MemberHash, initial.MemberHash)
+	require.Len(t, page.Facets, 4)
+	require.Equal(t, []SnapshotFacetValue{{Key: collection.ID(), Label: label, Count: 1, Selected: true}}, page.Facets[0].Values)
+	require.EqualValues(t, 2, *page.Facets[1].Total)
+	require.EqualValues(t, 1, *page.Facets[1].Missing)
+	require.EqualValues(t, 2, *page.Facets[2].Total)
+	require.EqualValues(t, 1, facetCounts(page.Facets[2])["unprocessed"])
+	require.EqualValues(t, 1, facetCounts(page.Facets[3])["duplicate"])
+
+	_, err = s.AssignTag(ctx, tag.ID, second.ID, second.Revision)
+	require.NoError(t, err)
+	next, updated, err := service.RunSaved(ctx, "owner", definition.ID, definition.Revision, request, nil)
+	require.NoError(t, err)
+	require.Len(t, updated.Rows, 2)
+	require.Equal(t, initial.RunID, next.PreviousRunID)
+	require.EqualValues(t, 1, next.Comparison.TotalDelta)
+	require.Equal(t, next, persistedSavedQueryRun(t, s, next.RunID))
+
+	emptyTag, err := s.CreateTag(ctx, "No members")
+	require.NoError(t, err)
+	empty := snapshotTestQuery(t, fmt.Sprintf(`{"filters":{"collection_ids":[%q],"tag_ids":[%q]}}`, collection.ID(), emptyTag.ID))
+	zero, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: empty, Facets: []string{"collections", "tags"}})
+	require.NoError(t, err)
+	require.Empty(t, zero.Rows)
+	require.Len(t, zero.Facets, 2)
+	require.Equal(t, []SnapshotFacetValue{{Key: collection.ID(), Label: label, Selected: true}}, zero.Facets[0].Values)
+	require.Contains(t, zero.Facets[1].Values, SnapshotFacetValue{Key: emptyTag.ID, Label: emptyTag.Name, Selected: true})
+}
+
+func checkDocumentSnapshotLexicalTerms(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	ctx := t.Context()
+	for _, doc := range []struct{ name, text string }{
+		{"harbor-record.txt", "ordinary witness notes"},
+		{"close.txt", "cobalt harbor map"},
+		{"apart.txt", "cobalt wide harbor map"},
+	} {
+		node, err := s.CreateFile(ctx, s.RootID(), doc.name, testSHA256([]byte(doc.name)), 50, "text/plain")
+		require.NoError(t, err)
+		require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+			BlobHash: node.BlobHash, Extractor: "synthetic", ExtractorVersion: 1, Status: ExtractionOK, Text: doc.text,
+		}))
+	}
+	for _, tc := range []struct {
+		query string
+		want  []string
+	}{
+		{`{"text":"coba har"}`, []string{"apart.txt", "close.txt"}},
+		{`{"syntax":"advanced","text":"\"cobalt harbor\""}`, []string{"close.txt"}},
+		{`{"syntax":"advanced","text":"name:harb*"}`, []string{"harbor-record.txt"}},
+		{`{"syntax":"advanced","text":"name:harb* OR \"cobalt harbor\""}`, []string{"close.txt", "harbor-record.txt"}},
+		{`{"syntax":"advanced","text":"cobalt AND NOT \"cobalt harbor\""}`, []string{"apart.txt"}},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			projection, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, tc.query)})
+			require.NoError(t, err)
+			names := make([]string, 0, len(projection.Rows))
+			for _, row := range projection.Rows {
+				names = append(names, row.Name)
+			}
+			require.Equal(t, tc.want, names)
+		})
+	}
 }

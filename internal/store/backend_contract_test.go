@@ -2757,6 +2757,17 @@ var backendSuites = []backendSuite{
 		{"PhotoRejectsMoveWaitsForSidecarSync", func(t *testing.T) { t.Helper(); checkPhotoRejectsMoveWaitsForSidecarSync(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoRejectsMoveWaitsForSidecarSync(t, newPostgresQueryStore) }},
 		{"PhotoRejectsMixedAndUnchanged", func(t *testing.T) { t.Helper(); checkPhotoRejectsMixedAndUnchanged(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoRejectsMixedAndUnchanged(t, newPostgresQueryStore) }},
 	}},
+	{name: "document-snapshots", postgres: "native document workspaces", scope: "Frozen document rows, structured selection and facets, name and body terms, selected rendition mentions, person roles and saved run receipts. NEAR, media-family filters and PDF facts use SQLite.", scenarios: []backendScenario{
+		{"DocumentSnapshotFrozenRowsAndReceipts", func(t *testing.T) { t.Helper(); checkQuerySnapshotMaterializesFrozenRowsAndReceipts(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkQuerySnapshotMaterializesFrozenRowsAndReceipts(t, newPostgresQueryStore)
+		}},
+		{"DocumentSnapshotSavedFacets", func(t *testing.T) { t.Helper(); checkDocumentSnapshotSavedFacets(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentSnapshotSavedFacets(t, newPostgresQueryStore) }},
+		{"DocumentSnapshotLexicalTerms", func(t *testing.T) { t.Helper(); checkDocumentSnapshotLexicalTerms(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentSnapshotLexicalTerms(t, newPostgresQueryStore) }},
+		{"DocumentSnapshotPeopleFacet", func(t *testing.T) { t.Helper(); checkRoleSearchMatchesAndPeopleFacet(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRoleSearchMatchesAndPeopleFacet(t, newPostgresQueryStore) }},
+		{"DocumentSnapshotPendingPeople", func(t *testing.T) { t.Helper(); checkRoleSearchNegationWithPendingPeople(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRoleSearchNegationWithPendingPeople(t, newPostgresQueryStore) }},
+		{"DocumentSnapshotMentionsSelectedRendition", func(t *testing.T) { t.Helper(); checkRoleSearchMentionsSelectedRendition(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRoleSearchMentionsSelectedRendition(t, newPostgresQueryStore) }},
+	}},
 	{name: "photo-snapshots", postgres: "native structured photo workspaces", scope: "Frozen membership and order, current display rows, album creation, saved run receipts, capture-day facets and stale-member checks.", scenarios: []backendScenario{
 		{"PhotoSnapshotPageChecksRequestedMembershipAndPreservesFrozenRows", func(t *testing.T) {
 			t.Helper()
@@ -2775,7 +2786,7 @@ var backendSuites = []backendSuite{
 	{name: "remote-recording-workflows", postgres: "native processing service", scope: "TestMediaWorkflowsPostgres qualifies reference retention, manual recording import, acquisition consent, exact transcript reads and source-selected lexical retrieval. Provider downloads and selected image-interpretation search are outside this qualification."},
 	{name: "search", postgres: "native document retrieval", scope: "lexical-search and semantic-results qualify document lexical, vector and hybrid retrieval. TestMediaWorkflowsPostgres covers selected transcript retrieval. Photo lexical search, PDF facts and selected image-interpretation search remain unqualified."},
 	{name: "transfer-and-recovery", postgres: "native backup capture and physical recovery", scope: "internal/backupapp tests qualify repository capture, recovery into fresh SQLite and PostgreSQL vaults, loose/packed bytes, audited and photo recovery, source loss and missing-byte failure; metadata-export and metadata-import cover native logical transfer."},
-	{name: "organization", postgres: "native operations", scope: "Tags, audited bulk edits and saved definitions; excludes query execution and delivery.", scenarios: []backendScenario{
+	{name: "organization", postgres: "native operations", scope: "Tags, audited bulk edits and saved definitions. Query execution and saved runs use document-snapshots and photo-snapshots.", scenarios: []backendScenario{
 		{"BatchTagsMixedChangesNoOpsAndCallerOrder", func(t *testing.T) {
 			t.Helper()
 			checkBatchTagsMixedChangesNoOpsAndCallerOrder(t, newTestStore)

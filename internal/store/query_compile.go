@@ -151,12 +151,7 @@ func (c queryCompiler) compileResolvedQuery(resolved query.ResolvedQuery) (compi
 	var expression compiledQueryFragment
 	var err error
 	if resolved.Query.Syntax == "simple" {
-		fts := ftsQuery(resolved.Query.Text)
-		if fts == "" {
-			expression = trueCompiledFragment()
-		} else {
-			expression = c.compileLexicalPredicate(fts, true)
-		}
+		expression = c.compileSimpleLexicalPredicate(resolved.Query.Text)
 	} else {
 		expression, err = c.compileResolvedExpression(resolved.Expression, "")
 		if err != nil {
@@ -299,10 +294,11 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "scalar operands cannot use prefix matching")
 		}
 		return c.compileScalarPredicate(field, syntax.Value, syntax.Start, syntax.End)
-	case field == "":
-		return c.compileLexicalPredicate(quoteFTSOperand(syntax.Value, syntax.Prefix), true), nil
-	case field == compiledNameField:
-		return c.compileLexicalPredicate(quoteFTSOperand(syntax.Value, syntax.Prefix), false), nil
+	case field == "" || field == compiledNameField:
+		if c.postgres && !c.photoDisplayMetadata {
+			return postgresDocumentLexicalPredicate(postgresLiteralQuery(syntax.Value, syntax.Prefix), field == ""), nil
+		}
+		return c.compileLexicalPredicate(quoteFTSOperand(syntax.Value, syntax.Prefix), field == ""), nil
 	case field == "path":
 		if syntax.Prefix {
 			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "path operands cannot use prefix matching")
@@ -342,6 +338,13 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 		if len(names) == 0 {
 			return compiledQueryFragment{sql: `FALSE`}, nil
 		}
+		if c.postgres {
+			phrases := make([]compiledQueryFragment, 0, len(names))
+			for _, name := range names {
+				phrases = append(phrases, postgresLiteralQuery(name, false))
+			}
+			return postgresDocumentContentPredicate(joinCompiledFragments(phrases, ` || `)), nil
+		}
 		parts := make([]string, 0, len(names))
 		for _, name := range names {
 			parts = append(parts, quoteFTSOperand(name, false))
@@ -374,6 +377,9 @@ func (c queryCompiler) compileNearExpression(expression *query.ResolvedExpressio
 	}
 	if len(expression.Children) != 2 {
 		return compiledQueryFragment{}, errors.New("resolved NEAR expression has invalid children")
+	}
+	if c.postgres && !c.photoDisplayMetadata {
+		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "NEAR queries require SQLite")
 	}
 	operands := make([]string, 2)
 	for index, child := range expression.Children {
@@ -673,6 +679,25 @@ func compileMediaFamilyPredicate(value string) compiledQueryFragment {
 	return compiledQueryFragment{
 		sql: `docbank_query_media_family_v1(COALESCE(cv.mime_type,''),n.name)=?`, args: []any{value},
 	}
+}
+
+func (c queryCompiler) compileSimpleLexicalPredicate(text string) compiledQueryFragment {
+	if c.postgres && !c.photoDisplayMetadata {
+		words := strings.Fields(text)
+		if len(words) == 0 {
+			return trueCompiledFragment()
+		}
+		terms := make([]compiledQueryFragment, 0, len(words))
+		for _, word := range words {
+			terms = append(terms, postgresLiteralQuery(word, true))
+		}
+		return postgresDocumentLexicalPredicate(joinCompiledFragments(terms, ` && `), true)
+	}
+	fts := ftsQuery(text)
+	if fts == "" {
+		return trueCompiledFragment()
+	}
+	return c.compileLexicalPredicate(fts, true)
 }
 
 func (c queryCompiler) compileLexicalPredicate(fts string, includeContent bool) compiledQueryFragment {
