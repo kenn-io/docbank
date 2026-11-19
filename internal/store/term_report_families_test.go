@@ -107,9 +107,9 @@ func repeatTermReportPublication(t *testing.T, s *Store, request document.EmailD
 	require.NoError(t, err)
 }
 
-func TestTermReportFamilyFollowsSelectedChildToCurrentExternalParents(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkTermReportFamilyFollowsSelectedChildToCurrentExternalParents(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	f := newEmailFixture(t, s, "external-parent.eml")
 	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
