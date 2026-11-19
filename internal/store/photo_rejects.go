@@ -89,7 +89,7 @@ func (s *Store) MovePhotoRejects(
 		}
 		live := 0
 		for _, target := range targets {
-			asset, nodes, err := photoRejectForMoveTx(ctx, tx, hidden, target)
+			asset, nodes, err := s.photoRejectForMoveTx(ctx, tx, hidden, target)
 			if err != nil {
 				return err
 			}
@@ -132,7 +132,7 @@ func validatePhotoRejectTargets(targets []PhotoRejectTarget) error {
 
 // photoRejectForMoveTx rereads one previewed target and reports any change
 // since the preview as stale.
-func photoRejectForMoveTx(
+func (s *Store) photoRejectForMoveTx(
 	ctx context.Context, tx *sql.Tx, hidden bool, target PhotoRejectTarget,
 ) (PhotoAsset, []Node, error) {
 	asset, err := photoAssetByIDQuery(ctx, tx, target.AssetID)
@@ -158,7 +158,7 @@ func photoRejectForMoveTx(
 		if err != nil {
 			return PhotoAsset{}, nil, err
 		}
-		if err := photoRejectSidecarReadTx(ctx, tx, file, node); err != nil {
+		if err := s.photoRejectSidecarReadTx(ctx, tx, file, node); err != nil {
 			return PhotoAsset{}, nil, err
 		}
 		memberRevision += photoRejectRevision(file.Role, node.Revision)
@@ -173,14 +173,17 @@ func photoRejectForMoveTx(
 
 // photoRejectSidecarReadTx refuses a linked sidecar whose current version sync has not read yet,
 // since an outside edit there may clear the reject. The worker's own writes and settled versions pass.
-func photoRejectSidecarReadTx(ctx context.Context, tx *sql.Tx, file PhotoFile, node Node) error {
+func (s *Store) photoRejectSidecarReadTx(ctx context.Context, tx *sql.Tx, file PhotoFile, node Node) error {
 	if file.Role != PhotoRoleSidecar || file.SidecarOfID == nil {
 		return nil
 	}
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
+	table := "photo_change_receipts r" + photoIndexHint("photo_change_receipts_xmp_file", d.postgres)
+	receipt := d.receiptColumn("r")
 	var unread bool
-	err := tx.QueryRowContext(ctx, `SELECT i.pending AND COALESCE(json_extract(r.after_json,'$.sync.sidecar.version_id'),'')<>? FROM photo_xmp_inputs i
- LEFT JOIN photo_change_receipts r INDEXED BY photo_change_receipts_xmp_file ON r.operation='xmp_sync' AND CAST(json_extract(r.after_json,'$.file_id') AS TEXT)=i.file_id
- WHERE i.file_id=?`, node.CurrentVersionID, *file.SidecarOfID).Scan(&unread)
+	err := tx.QueryRowContext(ctx, `SELECT i.pending AND COALESCE(`+d.text(receipt, "sync.sidecar.version_id")+`,'')<>$1 FROM photo_xmp_inputs i
+ LEFT JOIN `+table+` ON r.operation='xmp_sync' AND `+d.indexedText(receipt, "file_id")+`=i.file_id
+ WHERE i.file_id=$2`, node.CurrentVersionID, *file.SidecarOfID).Scan(&unread)
 	if errors.Is(err, sql.ErrNoRows) || err == nil && !unread {
 		return nil
 	}
@@ -232,7 +235,7 @@ func (s *Store) photoRejects(
 		return PhotoRejectsPreflight{}, err
 	}
 	compiler := queryCompiler{photoDisplayMetadata: true, photoHidden: request.Hidden}
-	compiled, err := compiler.compile(ctx, request.Query, queryResolver{q: q})
+	compiled, err := compiler.compile(ctx, request.Query, queryResolver{q: q, postgres: s.postgresSchema != ""})
 	if err != nil {
 		return PhotoRejectsPreflight{}, err
 	}
@@ -240,7 +243,7 @@ func (s *Store) photoRejects(
 	if err != nil {
 		return PhotoRejectsPreflight{}, err
 	}
-	countSQL, countArgs, err := scope.bind(`SELECT COUNT(*) FROM ` + photoBrowseDisplayFrom + ` WHERE ` + scope.where())
+	countSQL, countArgs, err := scope.bind(`SELECT COUNT(*) FROM ` + photoJoins(photoBrowseDisplayFrom, compiled.postgres) + ` WHERE ` + scope.where())
 	if err != nil {
 		return PhotoRejectsPreflight{}, err
 	}
@@ -249,7 +252,7 @@ func (s *Store) photoRejects(
 	if err := q.QueryRowContext(ctx, countSQL, countArgs...).Scan(&scopedCount); err != nil {
 		return PhotoRejectsPreflight{}, err
 	}
-	statement, args, err := scope.bind(photoRejectsSelect + ` WHERE ` + scope.where() +
+	statement, args, err := scope.bind(photoJoins(photoRejectsSelect, compiled.postgres) + ` WHERE ` + scope.where() +
 		` ORDER BY a.asset_id,member.file_id`)
 	if err != nil {
 		return PhotoRejectsPreflight{}, err

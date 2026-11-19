@@ -1139,8 +1139,7 @@ SQLite keeps its released membership triggers and receives no additional
 maintenance queries. The shared reader scenarios cover native original/chunk
 and image membership changes, leases, cleanup, warm-cache reuse and snapshots.
 Face members are covered by the processing suite through native face publication,
-index reconstruction and ranked people selection. Photo query compilation
-remains unqualified on PostgreSQL.
+index reconstruction and ranked people selection.
 Public PostgreSQL vault opening remains separate.
 
 #### Face embeddings and matching
@@ -1258,6 +1257,25 @@ sequential scans. The processing suite runs hybrid retrieval with a real
 embedding publication and vector index. Photo query compilation, PDF fact
 filters and selected recording/vision retrieval are outside this qualification.
 Public PostgreSQL vault opening remains separate.
+
+#### Structured photo browsing and selection
+
+The `photo-browse` suite exercises native photo pages on SQLite and PostgreSQL.
+A page reads its count, matching live display files, facet groups, previews and
+quality from one snapshot. Continuation cursors keep the first total and seek
+within live order. PostgreSQL compares byte-stored camera, lens and location
+values without decoding them as text. Media-type sort keys use the same
+character limit and NUL boundary as SQLite.
+
+Burst pages keep connected groups together and recheck the cursor's grouping
+boundary. The same population selects album members, exact photo export
+members and reject candidates. Moving rejects rechecks flags, member revisions
+and XMP sidecar settlement under writer admission.
+
+SQLite retains the indexed join order for browsing, burst probes and XMP
+receipts. PostgreSQL uses its normal join planner. This suite covers structured
+filters and orders. Lexical and semantic photo retrieval, PDF facts, media-family
+filters and frozen query workspaces have separate qualification boundaries.
 
 #### Backup capture and physical recovery
 
@@ -2596,8 +2614,7 @@ schema can enroll its root without a copied fixture.
 
 Copying supporting catalogs qualifies their validation, not their producers.
 The [operation inventory](#backend-support-and-drift-checks) identifies native
-writes and their catalog-maintenance coverage. Public PostgreSQL opening,
-Photo query compilation remains unqualified. Logical metadata transfer
+writes and their catalog-maintenance coverage. Logical metadata transfer
 uses the internal import/export entry points described above.
 
 For PostgreSQL tests, start a disposable server, never an operator database:

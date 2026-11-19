@@ -160,9 +160,9 @@ func TestPhotoBrowseMetadataMatch(t *testing.T) {
 	}
 }
 
-func TestPhotoBrowseISOAndAssetPredicates(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPhotoBrowseISOAndAssetPredicates(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	for _, item := range []struct {
 		name string
 		iso  int64
@@ -186,9 +186,9 @@ func TestPhotoBrowseISOAndAssetPredicates(t *testing.T) {
 	}
 }
 
-func TestPhotoBrowseMissingDisplayMediaType(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPhotoBrowseMissingDisplayMediaType(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	jpeg := browsePhotoNode(t, s, "untagged.jpg", browseHash("untagged-jpeg"), "")
 	_, err := s.PhotoAssetForNode(t.Context(), jpeg.ID)
 	require.NoError(t, err)
@@ -206,9 +206,9 @@ func TestPhotoBrowseMissingDisplayMediaType(t *testing.T) {
 	}
 }
 
-func TestPhotoBrowsePagesPastLongSortKeys(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPhotoBrowsePagesPastLongSortKeys(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	shared := strings.Repeat("a", MaxPhotoSortKeyCharacters+100)
 	want := map[string]bool{}
 	for _, name := range []string{shared + "y.jpg", shared + "x.jpg", strings.Repeat("0", 17000) + ".jpg", "b.jpg"} {
@@ -496,9 +496,9 @@ func TestPhotoMetadataMatchDensityLazy(t *testing.T) {
 	}
 }
 
-func TestPhotoBrowseEligibility(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPhotoBrowseEligibility(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	photo := browsePhotoNode(t, s, "included.jpg", browseHash("included"), "image/jpeg")
 	video := browsePhotoNode(t, s, "included.mp4", browseHash("video"), "video/mp4")
 	browsePhotoNode(t, s, "ordinary.txt", browseHash("ordinary"), "text/plain")
@@ -525,9 +525,9 @@ func TestPhotoBrowseEligibility(t *testing.T) {
 	require.Zero(t, *page.Facets[0].Total)
 }
 
-func TestPhotoBrowsePagination(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPhotoBrowsePagination(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	for i := range 7 {
 		node := browsePhotoNode(t, s, fmt.Sprintf("capture-%d.jpg", i), browseHash(fmt.Sprintf("capture-%d", i)), "image/jpeg")
 		if i < 5 {
@@ -601,9 +601,9 @@ func sprintfPhotoSort(field, direction string) string {
 	return fmt.Sprintf(`{"sort":{"field":%q,"direction":%q}}`, field, direction)
 }
 
-func TestPhotoBrowseSnapshotAndCursorBinding(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPhotoBrowseSnapshotAndCursorBinding(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	for i := range 3 {
 		browsePhotoNode(t, s, fmt.Sprintf("saved-%d.jpg", i), browseHash(fmt.Sprintf("saved-%d", i)), "image/jpeg")
 	}
@@ -629,12 +629,12 @@ func TestPhotoBrowseSnapshotAndCursorBinding(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidPhotoCursor)
 }
 
-func TestPhotoBrowseDuplicateScope(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPhotoBrowseDuplicateScope(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	hash := browseHash("identical")
 	ordinary := browsePhotoNode(t, s, "ordinary.bin", hash, "application/octet-stream")
-	_, err := s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at='2020-01-01T00:00:00.000000000Z' WHERE id=?`, ordinary.ID)
+	_, err := s.db.ExecContext(t.Context(), `UPDATE nodes SET modified_at='2020-01-01T00:00:00.000000000Z' WHERE id=$1`, ordinary.ID)
 	require.NoError(t, err)
 	browsePhotoNode(t, s, "one.jpg", hash, "image/jpeg")
 	browsePhotoNode(t, s, "two.jpg", hash, "image/jpeg")
@@ -642,16 +642,16 @@ func TestPhotoBrowseDuplicateScope(t *testing.T) {
 	require.Equal(t, int64(1), browsePhotoPage(t, s, `{"filters":{"collapse_duplicates":true}}`).Total)
 }
 
-func TestPhotoBrowseSavedDuplicateScope(t *testing.T) {
-	t.Parallel()
+func checkPhotoBrowseSavedDuplicateScope(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	for _, scope := range []string{"excluded", "hidden"} {
 		t.Run(scope, func(t *testing.T) {
-			s := newTestStore(t)
+			s := open(t)
 			ctx := t.Context()
 			hash := browseHash("saved-duplicate-scope")
 			older := browsePhotoNode(t, s, "older.jpg", hash, "image/jpeg")
 			included := browsePhotoNode(t, s, "included.jpg", hash, "image/jpeg")
-			_, err := s.db.ExecContext(ctx, `UPDATE nodes SET modified_at='2020-01-01T00:00:00.000000000Z' WHERE id=?`, older.ID)
+			_, err := s.db.ExecContext(ctx, `UPDATE nodes SET modified_at='2020-01-01T00:00:00.000000000Z' WHERE id=$1`, older.ID)
 			require.NoError(t, err)
 			asset, err := s.PhotoAssetForNode(ctx, older.ID)
 			require.NoError(t, err)
@@ -775,9 +775,9 @@ func TestPhotoBrowseCaptureTimeTolerance(t *testing.T) {
 	}
 }
 
-func TestPhotoBrowsePreviewStates(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPhotoBrowsePreviewStates(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	node := browsePhotoNode(t, s, "previews.jpg", browseHash("preview-source"), "image/jpeg")
 	recipe := visualPreviewRecipe()
 	recipe.MaxEdgePixels = 512
@@ -799,9 +799,9 @@ func TestPhotoBrowsePreviewStates(t *testing.T) {
 	require.Equal(t, "unsupported", page.Items[0].Previews["large"].State)
 }
 
-func TestPhotoPreviewGenerationBinding(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPhotoPreviewGenerationBinding(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	node := browsePhotoNode(t, s, "bound.jpg", browseHash("bound-source"), "image/jpeg")
 	asset, err := s.PhotoAssetForNode(ctx, node.ID)
@@ -869,9 +869,9 @@ func TestPhotoQueryUsesCompiledPopulation(t *testing.T) {
 	require.Zero(t, browsePhotoPage(t, s, `{"filters":{"gps_bounds":{"south":"-1","west":"-170","north":"1","east":"170"}}}`).Total)
 }
 
-func TestPhotoBrowseCurrentLiveMembers(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPhotoBrowseCurrentLiveMembers(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	node := browsePhotoNode(t, s, "current.jpg", browseHash("current-a"), "image/jpeg")
 	originalVersion := node.CurrentVersionID
@@ -903,9 +903,9 @@ func TestPhotoBrowseCurrentLiveMembers(t *testing.T) {
 	require.Zero(t, browsePhotoPage(t, s, `{}`).Total)
 }
 
-func TestPhotoBrowseDisplayAuthorityAndRotation(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPhotoBrowseDisplayAuthorityAndRotation(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	raw := browsePhotoNode(t, s, "display.raw", browseHash("display-raw"), "application/octet-stream")
 	jpeg := browsePhotoNode(t, s, "display.jpg", browseHash("display-jpeg"), "image/jpeg")
@@ -949,9 +949,9 @@ func TestPhotoBrowseDisplayAuthorityAndRotation(t *testing.T) {
 	require.Zero(t, browsePhotoPage(t, s, `{}`).Total)
 }
 
-func TestPhotoBrowseReadSnapshot(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPhotoBrowseReadSnapshot(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	node := browsePhotoNode(t, s, "snapshot.jpg", browseHash("snapshot-source"), "image/jpeg")
 	canonicalA := photoCanonical(t, photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("A")))
@@ -984,9 +984,9 @@ func TestPhotoBrowseReadSnapshot(t *testing.T) {
 	require.NoError(t, <-done)
 }
 
-func TestPhotoBrowseLocalCaptureDate(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPhotoBrowseLocalCaptureDate(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	for _, tc := range []struct{ name, stamp, offset string }{
 		{"january-1.jpg", "2024-01-01T23:30-08:00", "-08:00"},
 		{"january-2.jpg", "2024-01-02T00:30+14:00", "+14:00"},
@@ -1008,9 +1008,9 @@ func TestPhotoBrowseLocalCaptureDate(t *testing.T) {
 	require.Equal(t, "january-2.jpg", page.Items[0].Name, "sorting still uses the recorded offset")
 }
 
-func TestPhotoBrowseCameraAndLensIgnoreCase(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPhotoBrowseCameraAndLensIgnoreCase(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	node := browsePhotoNode(t, s, "camera.jpg", browseHash("camera-case"), "image/jpeg")
 	browsePhotoMetadata(t, s, node, "camera-case",
 		photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("SONY")),
@@ -1027,6 +1027,11 @@ func TestPhotoBrowseCameraAndLensIgnoreCase(t *testing.T) {
 
 func TestPhotoBrowseContinuationRetainsFirstTotal(t *testing.T) {
 	t.Parallel()
+	checkPhotoBrowseContinuationRetainsFirstTotal(t, newTestStore)
+}
+
+func checkPhotoBrowseContinuationRetainsFirstTotal(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	for _, tc := range []struct {
 		name, query, inserted, next string
 	}{
@@ -1034,7 +1039,7 @@ func TestPhotoBrowseContinuationRetainsFirstTotal(t *testing.T) {
 		{"name", `{"sort":{"field":"name","direction":"asc"}}`, "aa.jpg", "aa.jpg"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := newTestStore(t)
+			s := open(t)
 			for _, name := range []string{"a.jpg", "b.jpg"} {
 				browsePhotoNode(t, s, name, browseHash(name), "image/jpeg")
 			}
@@ -1167,7 +1172,7 @@ func TestPhotoBrowseRelevanceWithSharedPredicates(t *testing.T) {
 
 func mustPhotoCompiled(t *testing.T, s *Store, value query.Query) CompiledQuery {
 	t.Helper()
-	compiled, err := (queryCompiler{photoDisplayMetadata: true}).compile(t.Context(), value, queryResolver{q: s.db})
+	compiled, err := (queryCompiler{photoDisplayMetadata: true}).compile(t.Context(), value, queryResolver{q: s.db, postgres: s.postgresSchema != ""})
 	require.NoError(t, err)
 	return compiled
 }
@@ -1510,7 +1515,12 @@ func photoModifiedTime(t *testing.T, s *Store, name string) *string {
 
 func TestPhotoBrowsePlacesUndatedPhotosByFileModifiedTime(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
+	checkPhotoBrowsePlacesUndatedPhotosByFileModifiedTime(t, newTestStore)
+}
+
+func checkPhotoBrowsePlacesUndatedPhotosByFileModifiedTime(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "cli", "wallpapers")
 	require.NoError(t, err)
@@ -1860,9 +1870,9 @@ func TestPhotoAuthoredSearch(t *testing.T) {
 	})
 }
 
-func TestLookupPhotoFlags(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkLookupPhotoFlags(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
 	ids := []string{"00000000-0000-4000-8000-000000000001"}
@@ -1986,9 +1996,9 @@ func TestPhotoSourceClaimsFollowCurrentBytesAndRestore(t *testing.T) {
 	require.Equal(t, "z"+datedFolder, folder)
 }
 
-func TestPhotoFacetsCountSharedValuesOnce(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPhotoFacetsCountSharedValuesOnce(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	var ids []string
 	for i, camera := range [][2]string{{"Canon", "CANON"}, {"canon", ""}, {"", "Model"}, {"", ""}, {"Canon", "CANON"}} {
 		hash := browseHash(fmt.Sprint("grouped", i))
@@ -2073,5 +2083,37 @@ func TestPhotoFacetsCountSharedValuesOnce(t *testing.T) {
 				require.Equal(t, want[facet.Dimension], facet.Values, facet.Dimension)
 			}
 		}
+	}
+}
+
+func checkPhotoBrowseMediaTypeCursors(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	types := []string{`image/jpeg; note="a\\b"`, `image/jpeg; note="c"`, "image/jpeg; note=β", "image/jpeg\x00tail"}
+	for index, mediaType := range types {
+		node := browsePhotoNode(t, s, fmt.Sprintf("mime-%d.jpg", index), browseHash(mediaType), "image/jpeg")
+		// Media type is retained evidence. Seed the raw values while keeping
+		// the native photo enrollment produced by CreateFile.
+		_, err := s.db.ExecContext(t.Context(), `UPDATE content_versions SET mime_type=$1 WHERE version_id=$2`,
+			storedString(s.postgresSchema != "", mediaType), node.CurrentVersionID)
+		require.NoError(t, err)
+	}
+	want := []string{types[3], types[0], types[1], types[2]}
+	for _, direction := range []string{"asc", "desc"} {
+		request := PhotoBrowseRequest{Query: snapshotTestQuery(t, sprintfPhotoSort("media_type", direction)), PageSize: 1}
+		var got []string
+		var next *PhotoBrowsePosition
+		for range len(types) {
+			page, err := s.ListPhotoAssets(t.Context(), request, next)
+			require.NoError(t, err)
+			require.Len(t, page.Items, 1)
+			got = append(got, page.Items[0].MediaType)
+			next = page.Next
+		}
+		require.Nil(t, next)
+		if direction == "desc" {
+			slices.Reverse(want)
+		}
+		require.Equal(t, want, got)
 	}
 }

@@ -400,7 +400,12 @@ func TestPhotoSetCoverAndBackup(t *testing.T) {
 
 func TestPhotoSetSelectionMatchesGroupedAndCollapsedBrowse(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
+	checkPhotoSetSelectionMatchesGroupedAndCollapsedBrowse(t, newTestStore)
+}
+
+func checkPhotoSetSelectionMatchesGroupedAndCollapsedBrowse(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	raw := browsePhotoNode(t, s, "capture.raw", browseHash("raw-member"), "application/octet-stream")
 	jpeg := browsePhotoNode(t, s, "capture.jpg", browseHash("jpeg-member"), "image/jpeg")
@@ -417,7 +422,7 @@ func TestPhotoSetSelectionMatchesGroupedAndCollapsedBrowse(t *testing.T) {
 	hash := browseHash("duplicate")
 	outside := browsePhotoNode(t, s, "outside.jpg", hash, "image/jpeg")
 	inside := browsePhotoNode(t, s, "inside.jpg", hash, "image/jpeg")
-	_, err = s.db.ExecContext(ctx, `UPDATE nodes SET modified_at='2020-01-01T00:00:00.000000000Z' WHERE id=?`, outside.ID)
+	_, err = s.db.ExecContext(ctx, `UPDATE nodes SET modified_at='2020-01-01T00:00:00.000000000Z' WHERE id=$1`, outside.ID)
 	require.NoError(t, err)
 	asset, err := s.PhotoAssetForNode(ctx, inside.ID)
 	require.NoError(t, err)

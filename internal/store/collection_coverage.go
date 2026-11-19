@@ -67,13 +67,17 @@ func collectionGenerationTx(ctx context.Context, q metadataQuerier) (string, err
 // exact live current version. Callers own both membership and the read snapshot.
 // Build integrity is validated when staging, publishing, and restoring the catalog.
 func processingCoverageCTE() string {
-	return `coverage_selection AS (SELECT ? AS profile, ? AS generation),
+	return processingCoverageCTEForBackend(false)
+}
+
+func processingCoverageCTEForBackend(postgres bool) string {
+	return `coverage_selection AS (SELECT CAST(? AS TEXT) AS profile, CAST(? AS TEXT) AS generation),
 coverage_versions AS MATERIALIZED (
  SELECT n.id node_id, v.version_id, v.blob_hash
  FROM coverage_members m JOIN nodes n ON n.id=m.node_id
  JOIN content_versions v ON v.version_id=n.current_version_id AND v.node_id=n.id
  WHERE n.kind='file' AND n.trashed_at IS NULL
-), ` + processingVersionCoverageCTE(metadataJSONDialect{})
+), ` + processingVersionCoverageCTE(metadataJSONDialect{postgres: postgres})
 }
 
 // SQLite LENGTH(TEXT) stops at NUL. Match that released coverage decision

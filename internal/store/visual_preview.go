@@ -471,7 +471,7 @@ func (s *Store) PhotoVisualPreviewByGeneration(ctx context.Context, assetID, gen
 	if validateUUIDv4(assetID) != nil || validateCatalogSHA256(generationID, "preview generation") != nil || personID != "" && faceID != "" {
 		return VisualPreviewView{}, ErrNotFound
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return VisualPreviewView{}, err
 	}
@@ -488,7 +488,7 @@ func (s *Store) PhotoVisualPreviewByGeneration(ctx context.Context, assetID, gen
 			}
 		}
 	} else {
-		err = tx.QueryRowContext(ctx, `SELECT a.hidden_at,v.version_id,g.recipe_fingerprint FROM photo_assets a JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id JOIN visual_preview_generations g ON g.content_version_id=v.version_id WHERE `+liveIncludedDisplayPredicate+` AND a.asset_id=? AND g.generation_id=?`, assetID, generationID).Scan(&hidden, &versionID, &recipe)
+		err = tx.QueryRowContext(ctx, `SELECT a.hidden_at,v.version_id,g.recipe_fingerprint FROM photo_assets a JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id JOIN visual_preview_generations g ON g.content_version_id=v.version_id WHERE `+liveIncludedDisplayPredicate+` AND a.asset_id=$1 AND g.generation_id=$2`, assetID, generationID).Scan(&hidden, &versionID, &recipe)
 	}
 
 	if errors.Is(err, sql.ErrNoRows) {

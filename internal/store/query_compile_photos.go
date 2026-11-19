@@ -73,13 +73,13 @@ func (c queryCompiler) compilePhotoMetadataPredicate(headsFirst bool, predicate 
 		}
 		// Like xmp, match assets once, then expand them to their members.
 		return compiledQueryFragment{sql: `n.id IN (WITH m AS MATERIALIZED (
- SELECT asset.asset_id FROM ` + metadata + `
+ SELECT asset.asset_id FROM ` + photoJoins(metadata+`
  CROSS JOIN content_versions v ON v.blob_hash=h.source_sha256
  CROSS JOIN nodes dn ON dn.id=v.node_id AND dn.current_version_id=v.version_id
  CROSS JOIN photo_files display ON display.node_id=dn.id
  CROSS JOIN photo_assets asset ON asset.asset_id=display.asset_id AND asset.display_file_id=display.file_id
- WHERE ` + predicate + `)
- SELECT member.node_id FROM m CROSS JOIN photo_files member ON member.asset_id=m.asset_id)`, args: args}
+ WHERE `+predicate+`)
+ SELECT member.node_id FROM m CROSS JOIN photo_files member ON member.asset_id=m.asset_id)`, c.postgres), args: args}
 	}
 	return c.compilePhotoVersionPredicate(func(alias string) string {
 		return `EXISTS (SELECT 1 FROM source_metadata_heads h JOIN photo_technical_metadata p ON p.generation_id=h.generation_id WHERE h.source_sha256=` + alias + `.blob_hash AND ` + predicate + `)`
@@ -122,14 +122,14 @@ func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compile
 		if err := query.ValidateTextOperand(field, value); err != nil {
 			return compiledQueryFragment{}, err
 		}
-		originals := `SELECT f.node_id,f.asset_id FROM ` + photoXMPCandidatesSQL + ` WHERE f.eligible AND f.pending`
+		originals := `SELECT f.node_id,f.asset_id FROM ` + photoJoins(photoXMPCandidatesSQL, c.postgres) + ` WHERE f.eligible AND f.pending`
 		if strings.EqualFold(value, PhotoXMPStateConflict) {
-			originals = `SELECT f.node_id,f.asset_id FROM ` + photoXMPCandidatesSQL + ` WHERE f.eligible AND f.conflicts<>0`
+			originals = `SELECT f.node_id,f.asset_id FROM ` + photoJoins(photoXMPCandidatesSQL, c.postgres) + ` WHERE f.eligible AND f.conflicts<>0`
 		}
 
 		if c.photoDisplayMetadata {
 			// Check each original once, then expand matching assets to their members.
-			return compiledQueryFragment{sql: `n.id IN (WITH xf AS MATERIALIZED (` + originals + `) SELECT pf.node_id FROM xf CROSS JOIN photo_files pf ON pf.asset_id=xf.asset_id)`}, nil
+			return compiledQueryFragment{sql: `n.id IN (WITH xf AS MATERIALIZED (` + originals + `) SELECT pf.node_id FROM xf ` + photoJoins(`CROSS JOIN photo_files pf ON pf.asset_id=xf.asset_id)`, c.postgres)}, nil
 		}
 		return compiledQueryFragment{sql: `n.id IN (SELECT node_id FROM (` + originals + `))`}, nil
 	case "rating", "rating_min", "rating_max":
@@ -168,13 +168,13 @@ func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compile
 		if err := query.ValidateTextOperand(field, value); err != nil {
 			return compiledQueryFragment{}, err
 		}
-		return c.compilePhotoTextMetadataPredicate(value, `p.location_label=?`, value)
+		return c.compilePhotoTextMetadataPredicate(value, `p.location_label=?`, storedString(c.postgres, value))
 	case compiledCameraField, compiledLensField:
 		if err := query.ValidateTextOperand(field, value); err != nil {
 			return compiledQueryFragment{}, err
 		}
 		folded := cases.Fold().String(value)
-		return c.compilePhotoTextMetadataPredicate(value, `(p.`+field+`_make_folded=? OR p.`+field+`_model_folded=?)`, folded, folded)
+		return c.compilePhotoTextMetadataPredicate(value, `(p.`+field+`_make_folded=? OR p.`+field+`_model_folded=?)`, storedString(c.postgres, folded), storedString(c.postgres, folded))
 	case "iso", "iso_min", "iso_max":
 		n, err := query.ParseSizeOperand(value)
 		if err != nil {

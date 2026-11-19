@@ -374,7 +374,7 @@ func normalizeSnapshotPageSize(value int) (int, error) {
 
 func validateSnapshotCoverageProfile(ctx context.Context, q metadataQuerier, selection CoverageSelection) error {
 	var exists bool
-	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM processing_profiles WHERE profile_fingerprint=?)`, selection.ProfileFingerprint).Scan(&exists); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM processing_profiles WHERE profile_fingerprint=$1)`, selection.ProfileFingerprint).Scan(&exists); err != nil {
 		return err
 	}
 	if exists {

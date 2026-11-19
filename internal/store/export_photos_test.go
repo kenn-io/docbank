@@ -375,3 +375,24 @@ func TestPhotoExportSelectionIgnoresRelevanceOrder(t *testing.T) {
 	require.Len(t, members, 1)
 	require.Equal(t, nodes[2], members[0].NodeID)
 }
+
+func checkStructuredPhotoExportMembers(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	ctx := t.Context()
+	a := browsePhotoNode(t, s, "chosen.jpg", browseHash("chosen"), "image/jpeg")
+	b := browsePhotoNode(t, s, "second.jpg", browseHash("second"), "image/jpeg")
+	browsePhotoMetadata(t, s, a, "export-camera", photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Canon")))
+	selectPhotos := bundle.PhotoExportSelection{Query: snapshotTestQuery(t, `{"filters":{"cameras":["canon"]}}`)}
+	members, identity, err := s.ResolvePhotoExportMembers(ctx, selectPhotos)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	require.Equal(t, a.CurrentVersionID, members[0].VersionID)
+	require.Equal(t, a.BlobHash, members[0].SHA256)
+	require.Contains(t, identity, "sha256:")
+	excluded, err := s.PhotoAssetForNode(ctx, b.ID)
+	require.NoError(t, err)
+	selectPhotos.AssetIDs = []string{excluded.ID}
+	_, _, err = s.ResolvePhotoExportMembers(ctx, selectPhotos)
+	require.ErrorIs(t, err, bundle.ErrConflict)
+}
