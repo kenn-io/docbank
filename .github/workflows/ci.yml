@@ -56,7 +56,8 @@ jobs:
     if: &go-changed ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go')) }}
     name: PostgreSQL ${{ matrix.version }} metadata
     runs-on: ubuntu-26.04
-    timeout-minutes: 16
+    # Cold builds and all test suites share this job's budget.
+    timeout-minutes: 24
     strategy:
       fail-fast: false
       matrix:
