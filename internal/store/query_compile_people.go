@@ -29,10 +29,17 @@ func (c queryCompiler) compileRoleGroup(entries []query.PersonFilter) (compiledQ
 	if err != nil {
 		return compiledQueryFragment{}, err
 	}
-	person := `COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=json_extract(j.value,'$.person_id')),json_extract(j.value,'$.person_id'))`
+	entriesSQL := `json_each(?) j`
+	personID := `json_extract(j.value,'$.person_id')`
 	role := `SELECT value FROM json_each(j.value,'$.roles')`
+	if c.postgres {
+		entriesSQL = `jsonb_to_recordset(CAST(? AS jsonb)) AS j(person_id text, roles jsonb)`
+		personID = `j.person_id`
+		role = `SELECT value FROM jsonb_array_elements_text(j.roles) AS roles(value)`
+	}
+	person := `COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=` + personID + `),` + personID + `)`
 	args := []any{string(raw), document.PersonResolverFingerprint(), c.eventState.InputEpoch, c.eventState.ContractVersion, c.eventState.DeriverFingerprint, document.PersonResolverFingerprint(), c.eventState.InputEpoch, c.eventState.ContractVersion, c.eventState.DeriverFingerprint}
-	return compiledQueryFragment{sql: `(CASE WHEN NOT EXISTS(SELECT 1 FROM json_each(?) j WHERE (` + c.rolePredicateSQL(person, role) + `) IS NOT TRUE) THEN TRUE WHEN EXISTS(SELECT 1 FROM ` + freshPeopleHeadSQL("cv.version_id") + `) THEN FALSE END)`, args: args}, nil
+	return compiledQueryFragment{sql: `(CASE WHEN NOT EXISTS(SELECT 1 FROM ` + entriesSQL + ` WHERE (` + c.rolePredicateSQL(person, role) + `) IS NOT TRUE) THEN TRUE WHEN EXISTS(SELECT 1 FROM ` + freshPeopleHeadSQL("cv.version_id") + `) THEN FALSE END)`, args: args}, nil
 }
 
 func currentPersonAssertionFence(safe bool) string {
