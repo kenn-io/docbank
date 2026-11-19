@@ -1301,9 +1301,9 @@ and XMP sidecar settlement under writer admission.
 
 SQLite retains the indexed join order for browsing, burst probes and XMP
 receipts. PostgreSQL uses its normal join planner. This suite covers structured
-filters and orders. Lexical and semantic photo retrieval, PDF facts, media-family
-filters have separate qualification boundaries. The structured photo workspace
-suite below covers frozen membership.
+filters and orders, including media family for live asset members. Lexical and
+semantic photo retrieval and PDF facts have separate qualification boundaries.
+The structured photo workspace suite below covers frozen membership.
 
 #### Frozen photo workspaces and saved runs
 
@@ -1333,8 +1333,14 @@ The `document-snapshots` contracts cover these rows, saved-run comparison
 receipts, structured selection, filename and body terms, phrase and prefix
 matching, and people-role filters and facets. Text search reads either indexed
 extractions or the current rendition generation. People filters keep
-incomplete attribution distinct from a known absence. NEAR and media-family
-filters use SQLite.
+incomplete attribution distinct from a known absence. NEAR uses SQLite.
+
+Media-family filters use the current version's declared MIME type. A missing or
+generic declaration falls back to the live filename. A malformed declaration
+counts as unknown. PostgreSQL saves the shared Go classifier's MIME decision
+with each version and uses the shared extension catalog for fallback. Renaming
+a file updates fallback results immediately. Logical restore rebuilds the MIME
+decision from the original bytes, and exports retain their existing format.
 
 #### PDF fact filters
 

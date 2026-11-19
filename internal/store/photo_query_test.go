@@ -204,6 +204,23 @@ func checkPhotoBrowseMissingDisplayMediaType(t *testing.T, open func(*testing.T)
 		}
 		require.Contains(t, []string{page.Items[0].AssetID, page.Items[1].AssetID}, promoted.ID)
 	}
+	images := browsePhotoPage(t, s, `{"syntax":"advanced","text":"media_family:image AND extension:jpg"}`)
+	require.EqualValues(t, 1, images.Total)
+	require.Len(t, images.Items, 1)
+	require.Equal(t, "untagged.jpg", images.Items[0].Name)
+	documents := browsePhotoPage(t, s, `{"filters":{"media_families":["document"]}}`)
+	require.Zero(t, documents.Total)
+
+	sidecar := browsePhotoNode(t, s, "metadata.xmp", browseHash("untagged-sidecar"), "application/rdf+xml")
+	asset, err := s.PhotoAssetForNode(t.Context(), jpeg.ID)
+	require.NoError(t, err)
+	require.Len(t, asset.Files, 1)
+	_, err = s.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &asset.Files[0].ID)
+	require.NoError(t, err)
+	unknown := browsePhotoPage(t, s, `{"syntax":"advanced","text":"media_family:unknown AND extension:xmp"}`)
+	require.EqualValues(t, 1, unknown.Total)
+	require.Len(t, unknown.Items, 1)
+	require.Equal(t, "untagged.jpg", unknown.Items[0].Name)
 }
 
 func checkPhotoBrowsePagesPastLongSortKeys(t *testing.T, open func(*testing.T) *Store) {

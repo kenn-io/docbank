@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+
+	"go.kenn.io/docbank/internal/query"
 )
 
 // ContentVersion is one immutable byte identity recorded for a stable file
@@ -37,6 +39,29 @@ const contentVersionCols = `version_id, node_id, blob_hash,
 	COALESCE((SELECT md5 FROM blob_checksums WHERE blob_sha256=content_versions.blob_hash), ''), size,
 	COALESCE(mime_type, ''), recorded_at, node_revision,
 	introduced_operation_id, transition_kind, source_version_id`
+
+func insertContentVersionTx(ctx context.Context, tx *sql.Tx, row metadataContentVersion, postgres bool) error {
+	const columns = "version_id,node_id,blob_hash,size,mime_type,recorded_at,node_revision,introduced_operation_id,transition_kind,source_version_id"
+	const values = "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10"
+	statement := `INSERT INTO content_versions(` + columns + `) VALUES(` + values + `)`
+	args := []any{row.VersionID, row.NodeID, row.BlobHash, row.Size, storedOptionalString(postgres, row.MIMEType),
+		row.RecordedAt, row.NodeRevision, row.IntroducedOperationID, row.TransitionKind, row.SourceVersionID}
+	if postgres {
+		statement = `INSERT INTO content_versions(` + columns + `,query_mime_family) VALUES(` + values + `,$11)`
+		args = append(args, postgresMIMEFamily(row.MIMEType))
+	}
+	_, err := tx.ExecContext(ctx, statement, args...)
+	return err
+}
+
+func postgresMIMEFamily(mediaType *string) *string {
+	if mediaType != nil {
+		if family := query.MediaFamilyForDeclaration(*mediaType); family != "" {
+			return new(family)
+		}
+	}
+	return nil
+}
 
 func scanContentVersion(row interface{ Scan(args ...any) error }) (ContentVersion, error) {
 	var v ContentVersion
@@ -682,18 +707,15 @@ func (s *Store) installContentVersionWithOperationTx(
 	sourceVersionID *string, operation contentVersionOperation,
 ) (Node, ContentVersion, error) {
 	newRevision := n.Revision + 1
-	var storedMime any
+	var recordedMIME *string
 	if mimeType != "" {
-		storedMime = storedString(s.postgresSchema != "", mimeType)
+		recordedMIME = &mimeType
 	}
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO content_versions (
-			version_id, node_id, blob_hash, size, mime_type, recorded_at,
-			node_revision, introduced_operation_id, transition_kind, source_version_id
-		 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-		operation.versionID, n.ID, blobHash, size, storedMime, operation.recordedAt,
-		newRevision, operation.operationID,
-		transitionKind, sourceVersionID); err != nil {
+	if err := insertContentVersionTx(ctx, tx, metadataContentVersion{
+		VersionID: operation.versionID, NodeID: n.ID, BlobHash: blobHash, Size: size, MIMEType: recordedMIME,
+		RecordedAt: operation.recordedAt, NodeRevision: newRevision, IntroducedOperationID: operation.operationID,
+		TransitionKind: transitionKind, SourceVersionID: sourceVersionID,
+	}, s.postgresSchema != ""); err != nil {
 		return Node{}, ContentVersion{}, fmt.Errorf(
 			"recording %s content version for node %d: %w", transitionKind, n.ID, err)
 	}

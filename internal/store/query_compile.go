@@ -448,7 +448,7 @@ func collapsedSavedMembershipForBackend(nested compiledQueryFragment, postgres b
 }
 
 func (c queryCompiler) compileScalarPredicate(field, value string, start, end int) (compiledQueryFragment, error) {
-	if c.postgres && (field == "media_family" || c.photoDisplayMetadata && query.PDFFieldKind(field) != "") {
+	if c.postgres && c.photoDisplayMetadata && query.PDFFieldKind(field) != "" {
 		return compiledQueryFragment{}, compileExpressionError(start, end, "this filter is unavailable on PostgreSQL")
 	}
 	if query.PDFFieldKind(field) != "" {
@@ -478,7 +478,7 @@ func (c queryCompiler) compileScalarPredicate(field, value string, start, end in
 		case "extension":
 			return compileExtensionPredicate(value), nil
 		default:
-			return compileMediaFamilyPredicate(value), nil
+			return c.compileMediaFamilyFilter([]string{value}), nil
 		}
 	case "modified_after", "modified_before":
 		key, err := query.TimestampKey(value)
@@ -508,9 +508,6 @@ func (c queryCompiler) compileScalarPredicate(field, value string, start, end in
 }
 
 func (c queryCompiler) compileQueryFilters(filters query.Filters, start, end int) (compiledQueryFragment, error) {
-	if c.postgres && len(filters.MediaFamilies) != 0 {
-		return compiledQueryFragment{}, compileExpressionError(start, end, "media-family filters are unavailable on PostgreSQL")
-	}
 	var people compiledQueryFragment
 	if len(filters.People) > 0 {
 		if c.photoDisplayMetadata {
@@ -542,7 +539,7 @@ func (c queryCompiler) compileQueryFilters(filters query.Filters, start, end int
 		parts = append(parts, compiledQueryFragment{sql: `NOT EXISTS (SELECT 1 FROM node_tags nt WHERE nt.node_id=n.id)`})
 	}
 	parts = append(parts,
-		compileValuePredicates(filters.MediaFamilies, compileMediaFamilyPredicate),
+		c.compileMediaFamilyFilter(filters.MediaFamilies),
 		compileValuePredicates(filters.MIMETypes, c.compileMIMEPredicate),
 		compileValuePredicates(filters.Extensions, compileExtensionPredicate),
 	)
@@ -675,9 +672,25 @@ func compileExtensionPredicate(value string) compiledQueryFragment {
 	}
 }
 
-func compileMediaFamilyPredicate(value string) compiledQueryFragment {
+var queryExtensionFamiliesJSON = mustCatalogJSON(query.ExtensionMediaFamilies())
+
+func (c queryCompiler) compileMediaFamilyFilter(values []string) compiledQueryFragment {
+	if len(values) == 0 {
+		return compiledQueryFragment{}
+	}
+	family := `docbank_query_media_family_v1(COALESCE(cv.mime_type,''),n.name)`
+	args := make([]any, 0, len(values)+1)
+	if c.postgres {
+		family = `COALESCE(cv.query_mime_family,jsonb_extract_path_text(CAST(? AS jsonb),lower(
+			substring(split_part(replace(n.name,chr(92),'/'),'/',-1) from '^.+[.]([^.]+)$') COLLATE "C")),'unknown')`
+		args = append(args, queryExtensionFamiliesJSON)
+	}
+	for _, value := range values {
+		args = append(args, value)
+	}
 	return compiledQueryFragment{
-		sql: `docbank_query_media_family_v1(COALESCE(cv.mime_type,''),n.name)=?`, args: []any{value},
+		sql:  family + " IN (" + strings.TrimSuffix(strings.Repeat("?,", len(values)), ",") + ")",
+		args: args,
 	}
 }
 
