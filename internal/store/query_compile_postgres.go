@@ -7,7 +7,7 @@ func postgresLiteralQuery(text string, prefix bool) compiledQueryFragment {
 	if prefix {
 		phrase = `to_tsquery('pg_catalog.simple',NULLIF(CAST(` + phrase + ` AS text),'')||':*')`
 	}
-	return compiledQueryFragment{sql: phrase, args: []any{text}}
+	return compiledQueryFragment{sql: phrase, args: []any{lexicalSearchText(text)}}
 }
 
 func postgresDocumentLexicalPredicate(query compiledQueryFragment, includeContent bool) compiledQueryFragment {
