@@ -153,6 +153,7 @@ trash, maintenance, and restore.
 - [Docbank for agents](docs/agents.md) and [integration guide](docs/agents/integration.md)
 - [Embed in Go](docs/embedding.md) and [document processing packages](docs/document-understanding.md)
 - [CLI reference](docs/cli-reference.md) and [architecture overview](docs/architecture/overview.md)
+- [Usage reporting](docs/configuration.md#usage-reporting): anonymous, and off unless you agree
 
 Docbank has a sibling, [msgvault](https://msgvault.io), which archives
 communications. Msgvault preserves an immutable record of messages. Docbank

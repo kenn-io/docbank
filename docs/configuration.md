@@ -1529,6 +1529,21 @@ Missing, unreadable, empty, or oversized files fail startup instead of falling
 back. One trailing LF or CRLF is stripped. File keys are bounded before parsing.
 Secrets are resolved once per process; restart to rotate them.
 
+## Usage reporting
+
+Docbank can send general, anonymous usage telemetry. Usage telemetry is off
+unless you have opted in or set `TELEMETRY_ENABLED=1`.
+
+Any of these turns it off, even after you opted in:
+
+- `DOCBANK_TELEMETRY_ENABLED=0`
+- `TELEMETRY_ENABLED=0`
+- `DO_NOT_TRACK` set to any value except `0` or `false`
+- `CI` set to any value
+
+The daemon reads these when it starts; run `docbank daemon restart` after a
+change. Development builds never send telemetry.
+
 ## Photo map tiles
 
 Maps stay disabled until you set a raster tile provider and restart the daemon:
