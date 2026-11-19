@@ -226,3 +226,31 @@ func TestFaceWorkersPostgres(t *testing.T) {
 		})
 	}
 }
+
+func TestMediaWorkflowsPostgres(t *testing.T) {
+	t.Parallel()
+	for _, scenario := range []struct {
+		name  string
+		check func(*testing.T, publicationFixtureFactory)
+	}{
+		{"MediaAcquisitionPlanBindsCurrentPolicyPrincipalIncarnationAndExpiry", checkMediaAcquisitionPlanBindsCurrentPolicyPrincipalIncarnationAndExpiry},
+		{"RemoteRecordingReplaysBeforeOriginAdmission", checkRemoteRecordingReplaysBeforeOriginAdmission},
+		{"RemoteRecordingManualReference", checkRemoteRecordingManualReference},
+		{"RegisteredCapOriginSubmission", checkRegisteredCapOriginSubmission},
+		{"RemoteRecordingManualImport", checkRemoteRecordingManualImport},
+		{"RemoteRecordingManualIsolation", checkRemoteRecordingManualIsolation},
+		{"RemoteRecordingManualStatus", checkRemoteRecordingManualStatus},
+		{"RemoteRecordingEqualBytesKeepTranscriptBindingsBySource", checkRemoteRecordingEqualBytesKeepTranscriptBindingsBySource},
+		{"MediaTranscriptMismatchedContentVersionReturnsStaleWithoutText", checkMediaTranscriptMismatchedContentVersionReturnsStaleWithoutText},
+		{"MediaTranscriptFollowsCoverageAndTheCurrentFile", checkMediaTranscriptFollowsCoverageAndTheCurrentFile},
+		{"MediaTranscriptGeneratedBuildHasNoSuppliedInput", checkMediaTranscriptGeneratedBuildHasNoSuppliedInput},
+		{"MediaTranscriptSharedRecordingKeepsForeignCaptionOut", checkMediaTranscriptSharedRecordingKeepsForeignCaptionOut},
+		{"MediaSearchSelectsCoveringBuildBeforeLimits", checkMediaSearchSelectsCoveringBuildBeforeLimits},
+		{"MediaSearchKeepsHealthyMatchesDuringSourceChanges", checkMediaSearchKeepsHealthyMatchesDuringSourceChanges},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			t.Parallel()
+			scenario.check(t, postgresPublicationFixture)
+		})
+	}
+}

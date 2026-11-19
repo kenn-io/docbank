@@ -1025,11 +1025,6 @@ func checkPhotoBrowseCameraAndLensIgnoreCase(t *testing.T, open func(*testing.T)
 	}
 }
 
-func TestPhotoBrowseContinuationRetainsFirstTotal(t *testing.T) {
-	t.Parallel()
-	checkPhotoBrowseContinuationRetainsFirstTotal(t, newTestStore)
-}
-
 func checkPhotoBrowseContinuationRetainsFirstTotal(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	for _, tc := range []struct {
@@ -1511,11 +1506,6 @@ func photoModifiedTime(t *testing.T, s *Store, name string) *string {
 	}
 	t.Fatalf("photo %q not listed", name)
 	return nil
-}
-
-func TestPhotoBrowsePlacesUndatedPhotosByFileModifiedTime(t *testing.T) {
-	t.Parallel()
-	checkPhotoBrowsePlacesUndatedPhotosByFileModifiedTime(t, newTestStore)
 }
 
 func checkPhotoBrowsePlacesUndatedPhotosByFileModifiedTime(t *testing.T, open func(*testing.T) *Store) {

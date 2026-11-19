@@ -57,7 +57,12 @@ func remoteRecordingTestArtifact(
 
 func TestRemoteRecordingManualReference(t *testing.T) {
 	t.Parallel()
-	fixture := newPublicationFixture(t)
+	checkRemoteRecordingManualReference(t, newPublicationFixture)
+}
+
+func checkRemoteRecordingManualReference(t *testing.T, open publicationFixtureFactory) {
+	t.Helper()
+	fixture := open(t)
 	service := newRemoteRecordingTestService(t, fixture, "operator:remote", 0, nil)
 	reference := "https://private.invalid/share/call?token=synthetic-secret"
 	request := remoteRecordingTestRequest(
@@ -150,7 +155,12 @@ func TestRemoteRecordingCanonicalURLIdentity(t *testing.T) {
 
 func TestRemoteRecordingManualImport(t *testing.T) {
 	t.Parallel()
-	fixture := newPublicationFixture(t)
+	checkRemoteRecordingManualImport(t, newPublicationFixture)
+}
+
+func checkRemoteRecordingManualImport(t *testing.T, open publicationFixtureFactory) {
+	t.Helper()
+	fixture := open(t)
 	service := newRemoteRecordingTestService(t, fixture, "operator:manual", 0, remoteRecordingTestOrigins())
 	request := remoteRecordingTestRequest(uuid.New().String(),
 		"https://recordings.invalid/call?token=synthetic-secret", "", "call")
@@ -219,7 +229,12 @@ func TestRemoteRecordingManualImport(t *testing.T) {
 
 func TestRemoteRecordingManualIsolation(t *testing.T) {
 	t.Parallel()
-	fixture := newPublicationFixture(t)
+	checkRemoteRecordingManualIsolation(t, newPublicationFixture)
+}
+
+func checkRemoteRecordingManualIsolation(t *testing.T, open publicationFixtureFactory) {
+	t.Helper()
+	fixture := open(t)
 	service := newRemoteRecordingTestService(t, fixture, "operator:isolation", 0, remoteRecordingTestOrigins())
 	retained, err := service.SubmitRemoteRecording(t.Context(), remoteRecordingTestRequest(
 		uuid.New().String(), "https://recordings.invalid/isolation", "", "first"))
@@ -375,7 +390,12 @@ func TestRemoteRecordingManualBounds(t *testing.T) {
 
 func TestRemoteRecordingManualStatus(t *testing.T) {
 	t.Parallel()
-	fixture := newPublicationFixture(t)
+	checkRemoteRecordingManualStatus(t, newPublicationFixture)
+}
+
+func checkRemoteRecordingManualStatus(t *testing.T, open publicationFixtureFactory) {
+	t.Helper()
+	fixture := open(t)
 	service := newRemoteRecordingTestService(t, fixture, "operator:status-remote", 0,
 		remoteRecordingTestOrigins())
 	retained, err := service.SubmitRemoteRecording(t.Context(), remoteRecordingTestRequest(
@@ -434,7 +454,12 @@ func TestRemoteRecordingManualStatus(t *testing.T) {
 
 func TestRemoteRecordingEqualBytesKeepTranscriptBindingsBySource(t *testing.T) {
 	t.Parallel()
-	fixture := newPublicationFixture(t)
+	checkRemoteRecordingEqualBytesKeepTranscriptBindingsBySource(t, newPublicationFixture)
+}
+
+func checkRemoteRecordingEqualBytesKeepTranscriptBindingsBySource(t *testing.T, open publicationFixtureFactory) {
+	t.Helper()
+	fixture := open(t)
 	service := newRemoteRecordingTestService(t, fixture, "operator:equal-bytes", 0, nil)
 	raw := mediatest.WAV()
 	hash := processingSHA256(raw)

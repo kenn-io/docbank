@@ -2714,7 +2714,7 @@ var backendSuites = []backendSuite{
 			checkOlderCompleteReceiptCanCoexistWithNewerPendingCurrentCoverage(t, newPostgresQueryStore)
 		}},
 	}},
-	{name: "processing-publication", postgres: "native rendition/embedding/photo workers", scope: "internal/processing tests qualify shared-build publication, durable resume, consent/source fencing, email-PDF receipt/export, supplied-media continuation, direct original/chunk embedding-worker recovery, photo descriptions, face detection, face embedding, face-vector index capture, ranked people selection and suggestion rebuilding. Foreground direct-file/image completion and index recovery use vector-index-publication and internal/processing scenarios. Remote acquisition and photo query compilation remain unqualified."},
+	{name: "processing-publication", postgres: "native rendition/embedding/photo workers", scope: "internal/processing tests qualify shared-build publication, durable resume, consent/source fencing, email-PDF receipt/export, supplied-media continuation, direct original/chunk embedding-worker recovery, photo descriptions, face detection, face embedding, face-vector index capture, ranked people selection and suggestion rebuilding. Foreground direct-file/image completion and index recovery use vector-index-publication and internal/processing scenarios."},
 	{name: "photo-browse", postgres: "native structured photo pages", scope: "Structured photo filters and orders, live cursors, facets, display previews, burst pages, album and export selection, and reject preflight and move. Lexical and semantic photo retrieval, PDF facts, media-family filters and frozen snapshots remain separate.", scenarios: []backendScenario{
 		{"PhotoBrowseISOAndAssetPredicates", func(t *testing.T) { t.Helper(); checkPhotoBrowseISOAndAssetPredicates(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoBrowseISOAndAssetPredicates(t, newPostgresQueryStore) }},
 		{"PhotoBrowseMissingDisplayMediaType", func(t *testing.T) { t.Helper(); checkPhotoBrowseMissingDisplayMediaType(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoBrowseMissingDisplayMediaType(t, newPostgresQueryStore) }},
@@ -2727,7 +2727,7 @@ var backendSuites = []backendSuite{
 		{"PhotoBrowseReadSnapshot", func(t *testing.T) { t.Helper(); checkPhotoBrowseReadSnapshot(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoBrowseReadSnapshot(t, newPostgresQueryStore) }},
 		{"PhotoBrowseLocalCaptureDate", func(t *testing.T) { t.Helper(); checkPhotoBrowseLocalCaptureDate(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoBrowseLocalCaptureDate(t, newPostgresQueryStore) }},
 		{"PhotoBrowseCameraAndLensIgnoreCase", func(t *testing.T) { t.Helper(); checkPhotoBrowseCameraAndLensIgnoreCase(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoBrowseCameraAndLensIgnoreCase(t, newPostgresQueryStore) }},
-		{"PhotoBrowseContinuationRetainsFirstTotal", nil, func(t *testing.T) {
+		{"PhotoBrowseContinuationRetainsFirstTotal", func(t *testing.T) { t.Helper(); checkPhotoBrowseContinuationRetainsFirstTotal(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()
 			checkPhotoBrowseContinuationRetainsFirstTotal(t, newPostgresQueryStore)
 		}},
@@ -2737,13 +2737,16 @@ var backendSuites = []backendSuite{
 		{"LookupPhotoFlags", func(t *testing.T) { t.Helper(); checkLookupPhotoFlags(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkLookupPhotoFlags(t, newPostgresQueryStore) }},
 		{"PhotoBrowseDisplayAuthorityAndRotation", func(t *testing.T) { t.Helper(); checkPhotoBrowseDisplayAuthorityAndRotation(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoBrowseDisplayAuthorityAndRotation(t, newPostgresQueryStore) }},
 		{"PhotoBrowseCurrentLiveMembers", func(t *testing.T) { t.Helper(); checkPhotoBrowseCurrentLiveMembers(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoBrowseCurrentLiveMembers(t, newPostgresQueryStore) }},
-		{"PhotoBrowsePlacesUndatedPhotosByFileModifiedTime", nil, func(t *testing.T) {
+		{"PhotoBrowsePlacesUndatedPhotosByFileModifiedTime", func(t *testing.T) { t.Helper(); checkPhotoBrowsePlacesUndatedPhotosByFileModifiedTime(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()
 			checkPhotoBrowsePlacesUndatedPhotosByFileModifiedTime(t, newPostgresQueryStore)
 		}},
 		{"PhotoStackDescendingTimestampTies", func(t *testing.T) { t.Helper(); checkPhotoStackDescendingTimestampTies(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoStackDescendingTimestampTies(t, newPostgresQueryStore) }},
 		{"PhotoStackCursorMembershipFrontier", func(t *testing.T) { t.Helper(); checkPhotoStackCursorMembershipFrontier(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoStackCursorMembershipFrontier(t, newPostgresQueryStore) }},
-		{"PhotoSetSelectionMatchesGroupedAndCollapsedBrowse", nil, func(t *testing.T) {
+		{"PhotoSetSelectionMatchesGroupedAndCollapsedBrowse", func(t *testing.T) {
+			t.Helper()
+			checkPhotoSetSelectionMatchesGroupedAndCollapsedBrowse(t, newTestStore)
+		}, func(t *testing.T) {
 			t.Helper()
 			checkPhotoSetSelectionMatchesGroupedAndCollapsedBrowse(t, newPostgresQueryStore)
 		}},
@@ -2754,7 +2757,8 @@ var backendSuites = []backendSuite{
 		{"PhotoRejectsMixedAndUnchanged", func(t *testing.T) { t.Helper(); checkPhotoRejectsMixedAndUnchanged(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoRejectsMixedAndUnchanged(t, newPostgresQueryStore) }},
 	}},
 	{name: "photo-editing", postgres: "unqualified", scope: "Structured reject selection and movement use photo-browse. Explicit decisions use photo-review and people edits use people-curation. Frozen review sets remain unqualified."},
-	{name: "search", postgres: "native document retrieval", scope: "lexical-search and semantic-results qualify document lexical, vector and hybrid retrieval; photo query compilation, PDF facts and selected recording/vision retrieval remain unqualified."},
+	{name: "remote-recording-workflows", postgres: "native processing service", scope: "TestMediaWorkflowsPostgres qualifies reference retention, manual recording import, acquisition consent, exact transcript reads and source-selected lexical retrieval. Provider downloads and selected image-interpretation search are outside this qualification."},
+	{name: "search", postgres: "native document retrieval", scope: "lexical-search and semantic-results qualify document lexical, vector and hybrid retrieval. TestMediaWorkflowsPostgres covers selected transcript retrieval. Photo lexical search, PDF facts and selected image-interpretation search remain unqualified."},
 	{name: "transfer-and-recovery", postgres: "native backup capture and SQLite recovery", scope: "internal/backupapp tests qualify repository capture, loose/packed bytes, audited and photo recovery, source loss and missing-byte failure. PostgreSQL-target restore remains unqualified; metadata-export and metadata-import cover native logical transfer."},
 	{name: "organization", postgres: "native operations", scope: "Tags, audited bulk edits and saved definitions; excludes query execution and delivery.", scenarios: []backendScenario{
 		{"BatchTagsMixedChangesNoOpsAndCallerOrder", func(t *testing.T) {

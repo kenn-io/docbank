@@ -398,11 +398,6 @@ func TestPhotoSetCoverAndBackup(t *testing.T) {
 	}
 }
 
-func TestPhotoSetSelectionMatchesGroupedAndCollapsedBrowse(t *testing.T) {
-	t.Parallel()
-	checkPhotoSetSelectionMatchesGroupedAndCollapsedBrowse(t, newTestStore)
-}
-
 func checkPhotoSetSelectionMatchesGroupedAndCollapsedBrowse(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	s := open(t)
