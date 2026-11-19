@@ -1502,8 +1502,11 @@ build command also starts the reviewed work. See
 [Document processing](usage/document-processing.md) for the full flow.
 
 `--allow-package-writes` separately adds load-file preflight, package import,
-and package custodian assignment and resolution. These tools can read local
-sources and change the vault without using the processing consent flow.
+package custodian assignment and resolution, Bates exports, recipient ZIP
+delivery, and reviewed PDF publication with `publish_numbered_pdf`. These tools
+can read local sources and change the vault without using the processing
+consent flow. Publication needs a range an operator already reserved; MCP
+cannot grant original-retention consent.
 
 `--allow-export-writes` separately adds native export previews, start,
 cancellation, local download, and release. Status is available without write

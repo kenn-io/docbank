@@ -53,8 +53,8 @@ Start with [Importing documents](usage/importing.md) and
   limited in size.
 - Search the names of live documents with ranked results, and filter by path,
   media type, modification time, or tag ID.
-- Search the verified extracted text of UTF-8 text, Markdown, JSON, and related
-  text formats.
+- Search the verified extracted text of UTF-8 text, Markdown, JSON, related
+  text formats, and the text layer of PDFs.
 - List documents by filter alone, without a text query.
 - Save complete queries and reusable highlight sets in the web app or through
   the HTTP API.
@@ -244,12 +244,14 @@ matches, with optional query expansion, reranking, and QMD retrieval.
 [Document processing](architecture/document-processing.md) describes these
 components.
 
-The daemon can extract plain text and EPUB locally. With configuration, it can
-also transcribe audio and convert documents through Docling, run Mistral OCR, and use
+The daemon extracts plain text, EPUB, and PDF text layers locally. New PDFs
+are indexed for ordinary search when added. With configuration, it can also
+transcribe audio and convert documents through Docling, run Mistral OCR, and use
 [embedding runtimes](configuration.md#embedding-workers-and-credentials).
 Installing a provider package does not register it with the daemon, and does
-not prepare an import for semantic search. The default configuration has no
-processing profiles, and new imports do not run this workflow automatically.
+not prepare an import for semantic search. Other processing runs on new imports
+only after you turn it on, for example with local text search, face
+suggestions, or a watch that routes files to a profile.
 
 ## What Docbank does not do
 

@@ -16,7 +16,7 @@ arm64 processors.
 Installing a release archive needs no build toolchain. Building from source
 also requires:
 
-- Go 1.27 or newer with CGO enabled (the store uses
+- Go 1.27.4 or newer with CGO enabled (the store uses
   [mattn/go-sqlite3](https://github.com/mattn/go-sqlite3))
 - A C compiler (Xcode command-line tools on macOS, `gcc`/`clang` on Linux,
   or a MinGW-compatible compiler on Windows)
