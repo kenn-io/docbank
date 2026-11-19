@@ -141,7 +141,8 @@ func RuntimeConfig(tb testing.TB, setup *sql.DB, cfg pgschema.Config) *pgx.ConnC
 	require.NoError(tb, err)
 	_, err = setup.ExecContext(ctx, "GRANT INSERT,DELETE ON "+schema+".node_tags TO "+quotedRole+
 		"; GRANT INSERT ON "+schema+".batch_tag_receipts TO "+quotedRole+
-		"; GRANT INSERT,DELETE,UPDATE(name,description,payload,fingerprint,revision,updated_at,photo_scope) ON "+schema+".saved_queries TO "+quotedRole)
+		"; GRANT INSERT,DELETE,UPDATE(name,description,payload,fingerprint,revision,updated_at,photo_scope) ON "+schema+".saved_queries TO "+quotedRole+
+		"; GRANT INSERT ON "+schema+".saved_query_runs TO "+quotedRole)
 	require.NoError(tb, err)
 	_, err = setup.ExecContext(ctx, "GRANT INSERT ON "+schema+".source_metadata_generations,"+schema+".document_event_generations,"+schema+".document_events,"+schema+".document_event_actors,"+schema+".document_event_primaries TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(generation_id,published_at) ON "+schema+".source_metadata_heads TO "+quotedRole+
