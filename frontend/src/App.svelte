@@ -505,6 +505,12 @@
     event.returnValue = "";
   }
   type DocsPage = "searches" | "productions" | "imports" | "trash";
+  const docsPageTitles: Record<DocsPage, string> = {
+    searches: "Searches",
+    productions: "Productions",
+    imports: "Imports",
+    trash: "Trash",
+  };
   function pageAt(path: string): DocsPage | null {
     return path === "/searches" ||
       path === "/productions" ||
@@ -1200,6 +1206,7 @@
   let auditError = $state("");
 
   let activePanel = $state<Panel | null>(null);
+  let vault = $state<VaultDrawer>();
   let exportHasJob = $state(false);
   let exportInput = $state<ExportInput | null>(null);
   let exportNotice = $state("");
@@ -3764,6 +3771,32 @@
       ...parts.map((name, index) => ({ name, path: `/${parts.slice(0, index + 1).join("/")}` })),
     ];
   });
+  const tabTitle = $derived.by(() => {
+    let title: string;
+    if (!webSession) title = "Sign in";
+    else if (reader) title = reader.source.name;
+    else if (
+      activePanel &&
+      ["storage", "jobs", "backups", "auditEvidence", "searchByMeaning"].includes(activePanel.kind)
+    )
+      title = vault?.sectionLabel() ?? "System";
+    else if (photoMode) {
+      if (mapMode) title = "Map";
+      else if (hiddenMode) title = "Hidden";
+      else if (albumID)
+        title = photoAlbums?.items.find((album) => album.id === albumID)?.name ?? "Album";
+      else if (photoPath === "/photos/albums") title = "Albums";
+      else if (photoPath === "/photos/people") title = "People";
+      else title = "Photos";
+    } else if (docsPage) title = docsPageTitles[docsPage];
+    else if (activeQuery || queryBarOpen || snapshotActive) title = "Search";
+    else if (tagBrowse) title = activeTag?.name ?? activeTagID;
+    else title = breadcrumbs.at(-1)!.name;
+    return `${title} · Docbank`;
+  });
+  $effect(() => {
+    document.title = tabTitle;
+  });
 
   // Deep paths keep the first folder and the last two; the middle folds into a menu.
   const crumbItems = $derived<
@@ -4496,15 +4529,7 @@
           </div>{:else}<div class="photo-access-loading"><Spinner /></div>
         {/if}
       {:else if docsPage}
-        <ToolPage
-          title={docsPage === "searches"
-            ? "Searches"
-            : docsPage === "productions"
-              ? "Productions"
-              : docsPage === "imports"
-                ? "Imports"
-                : "Trash"}
-        >
+        <ToolPage title={docsPageTitles[docsPage]}>
           {#if docsPage === "searches"}
             {@render savedQueries(false, () => {})}
             <TermReportDrawer
@@ -5436,6 +5461,7 @@
       {/if}
       {#if ["jobs", "auditEvidence", "backups", "storage", "searchByMeaning"].includes(panel.kind)}
         <VaultDrawer
+          bind:this={vault}
           session={webSession}
           initialTab={panel.kind}
           searchByMeaning={localText}
