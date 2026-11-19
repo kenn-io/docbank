@@ -70,6 +70,8 @@ func checkBackendSchemaPostgres(t *testing.T) {
 
 	assert.Equal(t, backendColumn{Kind: "text", Required: true}, right["media_input_artifacts"].Columns["input_binding_json"])
 	delete(right["media_input_artifacts"].Columns, "input_binding_json")
+	assert.Equal(t, backendColumn{Kind: "jsonb", Required: true}, right["source_metadata_generations"].Columns["pdf_query_facts"])
+	delete(right["source_metadata_generations"].Columns, "pdf_query_facts")
 
 	for _, table := range []string{"extracted_text", "rendition_lexical_index"} {
 		assert.Equal(t, backendColumn{Kind: "text", Required: true}, right[table].Columns["search_text"])
@@ -236,8 +238,7 @@ func describeBackendColumns(t *testing.T, s *Store, table string) map[string]bac
 			column.Kind = "text"
 		case "blob", "bytea":
 			column.Kind = "bytes"
-		case "tsvector":
-			column.Kind = "tsvector"
+		case "tsvector", "jsonb":
 		case "real", "double precision":
 			column.Kind = "real"
 		default:

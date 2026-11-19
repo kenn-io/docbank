@@ -27,6 +27,22 @@ type SourceMetadataGeneration struct {
 	CreatedAt            string
 }
 
+func insertSourceMetadataGenerationTx(ctx context.Context, tx *sql.Tx, generation SourceMetadataGeneration, pdfFacts string, idempotent bool) error {
+	columns := "generation_id,source_sha256,contract_version,extractor_fingerprint,canonical_json,checksum,created_at"
+	args := []any{generation.GenerationID, generation.SourceSHA256, generation.ContractVersion,
+		generation.ExtractorFingerprint, generation.CanonicalJSON, generation.Checksum, generation.CreatedAt}
+	if pdfFacts != "" {
+		columns += ",pdf_query_facts"
+		args = append(args, pdfFacts)
+	}
+	conflict := ""
+	if idempotent {
+		conflict = " ON CONFLICT(source_sha256,contract_version,extractor_fingerprint) DO NOTHING"
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO source_metadata_generations(`+columns+`) VALUES(`+numberedPlaceholders(len(args), 0)+`)`+conflict, args...)
+	return err
+}
+
 // ErrSourceMetadataCorrupt means a stored source-metadata generation no
 // longer matches its own canonical checksum. Node reads omit the evidence
 // rather than fail; verification reports the corrupt row.
@@ -99,6 +115,13 @@ func (s *Store) PublishSourceMetadata(
 	if err != nil {
 		return SourceMetadataGeneration{}, fmt.Errorf("projecting photo technical metadata: %w", err)
 	}
+	var pdfFacts string
+	if s.postgresSchema != "" {
+		pdfFacts, err = encodePDFQueryFacts(metadata)
+		if err != nil {
+			return SourceMetadataGeneration{}, fmt.Errorf("projecting PDF query facts: %w", err)
+		}
+	}
 	generation := SourceMetadataGeneration{
 		SourceSHA256: sourceSHA256, ContractVersion: metadata.ContractVersion,
 		ExtractorFingerprint: extractorFingerprint, CanonicalJSON: append([]byte(nil), canonical...),
@@ -107,11 +130,7 @@ func (s *Store) PublishSourceMetadata(
 	generation.GenerationID = sourceMetadataGenerationID(sourceSHA256, metadata.ContractVersion,
 		extractorFingerprint, checksum)
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if _, execErr := tx.ExecContext(ctx, `INSERT INTO source_metadata_generations(
-			generation_id,source_sha256,contract_version,extractor_fingerprint,canonical_json,checksum,created_at
-		) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(source_sha256,contract_version,extractor_fingerprint) DO NOTHING`,
-			generation.GenerationID, sourceSHA256, metadata.ContractVersion, extractorFingerprint,
-			canonical, checksum, generation.CreatedAt); execErr != nil {
+		if execErr := insertSourceMetadataGenerationTx(ctx, tx, generation, pdfFacts, true); execErr != nil {
 			return fmt.Errorf("recording source metadata: %w", execErr)
 		}
 		var stored SourceMetadataGeneration

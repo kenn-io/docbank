@@ -448,11 +448,11 @@ func collapsedSavedMembershipForBackend(nested compiledQueryFragment, postgres b
 }
 
 func (c queryCompiler) compileScalarPredicate(field, value string, start, end int) (compiledQueryFragment, error) {
-	if c.postgres && (query.PDFFieldKind(field) != "" || field == "media_family") {
+	if c.postgres && (field == "media_family" || c.photoDisplayMetadata && query.PDFFieldKind(field) != "") {
 		return compiledQueryFragment{}, compileExpressionError(start, end, "this filter is unavailable on PostgreSQL")
 	}
 	if query.PDFFieldKind(field) != "" {
-		return compilePDFPredicate(field, value, start, end)
+		return c.compilePDFPredicate(field, value, start, end)
 	}
 	if field == "person" {
 		return c.compilePersonPredicate(value), nil

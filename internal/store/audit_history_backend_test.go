@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/pgtest"
 	"go.kenn.io/docbank/internal/store/pgschema"
 )
@@ -263,6 +264,10 @@ func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables 
 		if searchable {
 			columns = append(columns, "search_text")
 		}
+		sourceMetadata := table == "source_metadata_generations"
+		if sourceMetadata {
+			columns = append(columns, "pdf_query_facts")
+		}
 		insert := "INSERT INTO " + table + "(" + strings.Join(columns, ",") + ")" + override + " VALUES(" + numberedPlaceholders(len(columns), 0) + ")"
 		for rows.Next() {
 			require.NoError(t, rows.Scan(destinations...))
@@ -276,6 +281,15 @@ func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables 
 			}
 
 			args := values
+			if sourceMetadata {
+				raw, ok := values[slices.Index(columns, "canonical_json")].([]byte)
+				require.True(t, ok)
+				metadata, _, err := document.DecodeSourceMetadataV1(raw)
+				require.NoError(t, err)
+				facts, err := encodePDFQueryFacts(metadata)
+				require.NoError(t, err)
+				args = append(slices.Clone(values), facts)
+			}
 			if searchable {
 				text := ""
 				if raw := values[slices.Index(columns, "text")]; raw != nil {
