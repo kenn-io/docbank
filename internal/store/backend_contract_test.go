@@ -2766,6 +2766,13 @@ var backendSuites = []backendSuite{
 		{"DocumentSnapshotLexicalTerms", func(t *testing.T) { t.Helper(); checkDocumentSnapshotLexicalTerms(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentSnapshotLexicalTerms(t, newPostgresQueryStore) }},
 		{"DocumentSnapshotPeopleFacet", func(t *testing.T) { t.Helper(); checkRoleSearchMatchesAndPeopleFacet(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRoleSearchMatchesAndPeopleFacet(t, newPostgresQueryStore) }},
 		{"DocumentSnapshotPendingPeople", func(t *testing.T) { t.Helper(); checkRoleSearchNegationWithPendingPeople(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRoleSearchNegationWithPendingPeople(t, newPostgresQueryStore) }},
+		{"DocumentSnapshotStructuredPeople", func(t *testing.T) {
+			t.Helper()
+			checkRoleSearchSavedRunPreservesMergedDefinitionReceipt(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkRoleSearchSavedRunPreservesMergedDefinitionReceipt(t, newPostgresQueryStore)
+		}},
 		{"DocumentSnapshotMentionsSelectedRendition", func(t *testing.T) { t.Helper(); checkRoleSearchMentionsSelectedRendition(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRoleSearchMentionsSelectedRendition(t, newPostgresQueryStore) }},
 	}},
 	{name: "term-reports", postgres: "native report preparation and history", scope: "Frozen term matches and date evidence, exact selected versions, current attachment families, bounded history and metadata round trips.", scenarios: []backendScenario{
