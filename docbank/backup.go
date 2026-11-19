@@ -117,7 +117,7 @@ type BackupRestoreOptions struct {
 	SnapshotID string
 	Target     string
 	// SQLite selects the driver for BackupRepository.Restore. Nil uses the
-	// build default. Vault.RestoreBackup always uses its open vault's driver.
+	// build default. Vault.RestoreBackup uses the open vault's driver on SQLite.
 	SQLite docsqlite.Driver
 	// ProtectedRoots are host-owned storage trees that the restore target must
 	// not equal, contain, or be contained by.
@@ -337,7 +337,11 @@ func (v *Vault) RestoreBackup(
 	}
 	defer v.lifecycle.RUnlock()
 	opts.ProtectedRoots = append([]string{v.root.Name()}, opts.ProtectedRoots...)
-	return repository.restore(ctx, opts, v.metadata.SQLiteDriver())
+	driver := v.metadata.SQLiteDriver()
+	if driver == nil {
+		return repository.Restore(ctx, opts)
+	}
+	return repository.restore(ctx, opts, driver)
 }
 
 // Restore materializes and verifies a snapshot without opening the original

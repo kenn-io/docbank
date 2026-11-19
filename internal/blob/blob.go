@@ -291,6 +291,12 @@ func NewWithOptions(catalog packstore.Catalog, blobsDir string, opts Options) (*
 	return newWithOptions(catalog, blobsDir, opts, readerOwner)
 }
 
+// NewExistingWithOptions opens writable storage with a preexisting, matching
+// primary marker. It leaves marker publication to the installer or restore.
+func NewExistingWithOptions(catalog primaryLocationCatalog, blobsDir string, opts Options) (*Store, error) {
+	return newWithOptions(catalog, blobsDir, opts, readerExisting)
+}
+
 type readerMode uint8
 
 const (

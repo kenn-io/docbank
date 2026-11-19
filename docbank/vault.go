@@ -302,7 +302,13 @@ func openVaultWithCatalog(
 		}
 	}
 	blobOptions.Registry = blob.NewRegistry(ctx, metadata.VaultID(), bindings, specs)
-	blobs, err := blob.NewWithOptions(store.NewPackCatalog(metadata), layout.BlobsDir(), blobOptions)
+	packCatalog := store.NewPackCatalog(metadata)
+	var blobs *blob.Store
+	if metadata.SQLiteDriver() == nil {
+		blobs, err = blob.NewExistingWithOptions(packCatalog, layout.BlobsDir(), blobOptions)
+	} else {
+		blobs, err = blob.NewWithOptions(packCatalog, layout.BlobsDir(), blobOptions)
+	}
 	if err != nil {
 		_ = blobOptions.Registry.Close()
 		return nil, err
@@ -522,12 +528,17 @@ func (v *Vault) Close() error {
 	return errors.Join(workerErr, v.blobs.Close(), v.metadata.Close(), v.spoolLock.Release(), v.lock.Release(), v.root.Close())
 }
 
-// SQLiteDriver reports the adapter selected for this vault.
+// SQLiteDriver reports the adapter selected for this vault. PostgreSQL vaults
+// return an empty string.
 func (v *Vault) SQLiteDriver() string {
 	if v == nil || v.metadata == nil {
 		return ""
 	}
-	return v.metadata.SQLiteDriver().Name()
+	driver := v.metadata.SQLiteDriver()
+	if driver == nil {
+		return ""
+	}
+	return driver.Name()
 }
 
 // ID reports the stable logical vault identity preserved by metadata export,

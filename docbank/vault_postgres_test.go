@@ -3,27 +3,26 @@ package docbank
 import (
 	"context"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/kit/backup"
+	"go.kenn.io/kit/packstore"
 
-	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/pgstoretest"
 	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/store/pgschema"
-	"go.kenn.io/docbank/internal/version"
 )
 
 func TestEmbeddedVaultLifecyclePostgres(t *testing.T) {
 	t.Parallel()
 	setup, owner := pgtest.NewDatabase(t)
 	ctx := t.Context()
-	source, err := New(ctx, Config{Root: filepath.Join(t.TempDir(), "source")})
+	sourceRoot := filepath.Join(t.TempDir(), "source")
+	source, err := New(ctx, Config{Root: sourceRoot})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, source.Close()) })
 
@@ -47,31 +46,64 @@ func TestEmbeddedVaultLifecyclePostgres(t *testing.T) {
 	require.NoError(t, err)
 	snapshot, err := source.CreateBackup(ctx, repository, BackupOptions{Jobs: 1})
 	require.NoError(t, err)
+	catalog := PostgresCatalog{Schema: "documents", SchemaOwner: owner}
+	_, err = SetupPostgres(ctx, setup, catalog)
+	require.NoError(t, err)
+	runtime := pgstoretest.RuntimeConfig(t, setup, catalog.schemaConfig())
+	target := filepath.Join(t.TempDir(), "restored")
+	nested := filepath.Join(sourceRoot, "nested-restore")
+	refused, err := repository.RestorePostgres(ctx, setup, catalog, runtime, BackupRestoreOptions{Target: nested, SnapshotID: snapshot.ID})
+	require.ErrorIs(t, err, ErrBackupRestoreTargetActive)
+	require.Empty(t, refused)
+	require.NoDirExists(t, nested)
 	require.NoError(t, source.Close())
 
-	schema := pgschema.Config{Schema: "documents", SchemaOwner: owner}
-	runtime := pgstoretest.RuntimeConfig(t, setup, schema)
-	target := filepath.Join(t.TempDir(), "restored")
-	_, err = backupapp.RestorePostgres(ctx, repository.repo, version.Version, store.DefaultSQLiteDriver(),
-		backupapp.PostgresRestoreTarget{Owner: setup, Runtime: runtime, Schema: schema},
-		backup.RestoreOptions{TargetDir: target, SnapshotID: snapshot.ID, Jobs: 1})
+	ownerRuntime, err := pgx.ParseConfig(os.Getenv("DOCBANK_TEST_POSTGRES_DSN"))
 	require.NoError(t, err)
-	config, blobOptions, err := normalizeVaultConfig(ctx, Config{Root: target})
+	ownerRuntime.Database = runtime.Database
+	refused, err = repository.RestorePostgres(ctx, setup, catalog, ownerRuntime, BackupRestoreOptions{Target: target, SnapshotID: snapshot.ID})
+	require.ErrorContains(t, err, "separate runtime role")
+	require.Empty(t, refused)
+	require.NoDirExists(t, target)
+
+	otherSetup, _ := pgtest.NewDatabase(t)
+	otherRuntime := pgstoretest.RuntimeConfig(t, otherSetup, catalog.schemaConfig())
+	refused, err = repository.RestorePostgres(ctx, setup, catalog, otherRuntime, BackupRestoreOptions{Target: target, SnapshotID: snapshot.ID})
+	require.ErrorContains(t, err, "must name the same vault catalog")
+	require.Empty(t, refused)
+	require.NoDirExists(t, target)
+
+	report, err := repository.RestorePostgres(ctx, setup, catalog, runtime,
+		BackupRestoreOptions{Target: target, SnapshotID: snapshot.ID, Jobs: 1})
 	require.NoError(t, err)
-	layout := home.Layout{Root: config.Root}
+	require.Equal(t, PostgresRestoreReport{
+		CatalogCommitted: true, SnapshotID: snapshot.ID, VaultID: source.ID(), Target: target,
+	}, report)
+	unbound := home.Layout{Root: t.TempDir()}
+	require.NoError(t, os.MkdirAll(unbound.BlobsDir(), 0o700))
+	lock, err := unbound.TryLockExclusive()
+	require.NoError(t, err)
+	require.NoError(t, lock.Release())
+	unboundVault, err := OpenPostgres(ctx, Config{Root: unbound.Root}, catalog, runtime)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	require.Nil(t, unboundVault)
+	physical, err := packstore.NewLayout(unbound.BlobsDir(), packstore.LayoutOptions{Staging: packstore.StagingSameDirectory})
+	require.NoError(t, err)
+	require.NoFileExists(t, physical.OwnershipPath())
+
+	layout := home.Layout{Root: target}
 	open := func(ctx context.Context) (*Vault, error) {
-		return openVaultWithCatalog(ctx, config, blobOptions, layout, layout.OpenAndLockExclusive,
-			func(ctx context.Context) (*store.Store, error) {
-				return store.OpenPostgres(ctx, runtime, schema, layout.Root)
-			})
+		return OpenPostgres(ctx, Config{Root: target}, catalog, runtime)
 	}
 	vault, err := open(ctx)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
 	require.NoFileExists(t, layout.DBPath())
+	require.Empty(t, vault.SQLiteDriver())
 	contender, err := open(ctx)
 	require.ErrorIs(t, err, ErrVaultLocked)
 	require.Nil(t, contender)
+	require.ErrorIs(t, RebuildPostgresRestore(ctx, target, catalog, runtime), ErrVaultLocked)
 
 	moved, err := vault.BatchMove(ctx, []BatchMoveItem{
 		{SourcePath: "/alpha.txt", DestinationPath: "/beta.txt"},
@@ -96,11 +128,12 @@ func TestEmbeddedVaultLifecyclePostgres(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, vault.metadata.ValidateMetadata(ctx))
 	checkEmbeddedVaultWalk(t, vault, moved, created.Node)
-	report, err := vault.Verify(ctx, VerifyOptions{})
+	verified, err := vault.Verify(ctx, VerifyOptions{})
 	require.NoError(t, err)
-	require.Empty(t, report.Problems)
-	require.Equal(t, 3, report.OK)
+	require.Empty(t, verified.Problems)
+	require.Equal(t, 3, verified.OK)
 	require.NoError(t, vault.Close())
+	require.NoError(t, RebuildPostgresRestore(ctx, target, catalog, runtime))
 
 	reopened, err := open(ctx)
 	require.NoError(t, err)
@@ -114,10 +147,10 @@ func TestEmbeddedVaultLifecyclePostgres(t *testing.T) {
 	require.NoError(t, err)
 	recoverySnapshot, err := reopened.CreateBackup(ctx, recoveryRepository, BackupOptions{Jobs: 1})
 	require.NoError(t, err)
-	require.NoError(t, reopened.Close())
 	sqliteTarget := filepath.Join(t.TempDir(), "recovered")
-	_, err = recoveryRepository.Restore(ctx, BackupRestoreOptions{SnapshotID: recoverySnapshot.ID, Target: sqliteTarget, Jobs: 1})
+	_, err = reopened.RestoreBackup(ctx, recoveryRepository, BackupRestoreOptions{SnapshotID: recoverySnapshot.ID, Target: sqliteTarget, Jobs: 1})
 	require.NoError(t, err)
+	require.NoError(t, reopened.Close())
 	recovered, err := New(ctx, Config{Root: sqliteTarget})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, recovered.Close()) })

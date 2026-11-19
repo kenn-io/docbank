@@ -349,8 +349,8 @@ remaining implementation work in Kata rather than adding task lists to this guid
 
 ### PostgreSQL schema lifecycle
 
-`internal/store/pgschema` owns canonical PostgreSQL catalogs for internal
-store qualification. Initial and additional audit enrollment work through the
+`internal/store/pgschema` owns canonical PostgreSQL catalog setup and validation.
+Initial and additional audit enrollment work through the
 native preview and commit methods, including complete retained-metadata
 validation. Native directory/file creation, content confirmation, replacement,
 revert, and rename/move also work, including audited mutations and the required
@@ -384,8 +384,8 @@ Photo metadata edits and undo, XMP conflict settlement and sidecar publication
 also use shared operations for explicit asset selections. Quality scores, hidden-photo
 sessions and photo settings have native Store contracts as well.
 
-A public PostgreSQL-backed vault is not available yet: daemon and embedded
-operations still open SQLite. Direct embedding-worker publication/recovery, photo
+The Go embedding API can [restore and open a PostgreSQL vault](../embedding.md#restore-and-open-a-postgresql-vault).
+The standalone daemon opens SQLite. Direct embedding-worker publication/recovery, photo
 descriptions and face detection have qualification below. Foreground direct-file
 and image embedding can publish a vector index before returning. Face embedding,
 index-backed people ranking and suggestion rebuilding use shared worker and
@@ -405,7 +405,8 @@ schema, and runs `pgschema.Validate` before loading vault roots. It creates no
 schema and performs no repair. The returned Store owns its pool; `Close` releases
 it. Setup and logical restore keep their separate owner credentials. The Store
 contract suite and native backup tests use this opener through the same
-`pgstoretest.RuntimeConfig` grant fixture. Public Vault opening stays separate.
+`pgstoretest.RuntimeConfig` grant fixture. Embedded opening uses the same
+runtime validation while holding the local root lock.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
 and uses the explicit `Schema` setting. The database must use `UTF8` encoding;
@@ -728,8 +729,8 @@ privileges: an owner can revoke its own write privileges and still retain the
 authority to alter objects or grant those privileges again.
 
 PostgreSQL schemas are disposable until the first deployment whose data must
-survive upgrades. An ordinary Docbank release does not establish that boundary:
-the public vault lifecycle still opens only SQLite. Edit
+survive upgrades. Embedding and restore qualification still use disposable
+schemas. Edit
 `internal/store/pgschema/schema.sql` directly; no manual version bump or migration
 is needed during this period. The build hashes the exact embedded SQL template
 with SHA-256 once at package initialization, before substituting the vault schema
@@ -973,12 +974,12 @@ the change stream and audit records commit together. PostgreSQL refreshes XMP
 export work from the final coordinates, including the original and new siblings
 of a moved sidecar. SQLite keeps its existing triggers.
 
-`make test-pg` runs `TestEmbeddedVaultLifecyclePostgres` through the embedded
-Vault's internal catalog opener. The scenario restores a SQLite backup with
+`make test-pg` runs `TestEmbeddedVaultLifecyclePostgres` through `SetupPostgres`,
+`BackupRepository.RestorePostgres`, and `OpenPostgres`. The scenario restores a SQLite backup with
 packed content into PostgreSQL, opens the owned blob root, checks exclusive
 access, moves and creates audited files, walks the catalog, and verifies the
 content bytes. It closes and reopens the vault, then takes another backup and
-restores it into SQLite. Public Vault constructors still select SQLite.
+restores it into SQLite through the open vault.
 
 #### Document export plans and jobs
 
@@ -1543,8 +1544,7 @@ their next insertion position without relaxing the runtime identity column.
 
 This is logical recovery. Before publishing a restored vault, restore and verify
 all blob bytes and physical pack authority separately. A metadata stream alone
-cannot recover those bytes. Filesystem backup/restore and public PostgreSQL
-vault opening remain separate boundaries.
+cannot recover those bytes. See the [physical restore contract](../architecture/backup.md#restoring-into-postgresql).
 
 The `metadata-export` and `metadata-import` contracts cover pinned snapshots,
 native audited transfer, retained-catalog round trips, backup blob selection,
