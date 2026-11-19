@@ -1143,9 +1143,9 @@ func TestPhotoXMPQueryFiltersWithStacks(t *testing.T) {
 	require.Equal(t, ids[:2], page.Stacks[0].AssetIDs)
 }
 
-func TestPhotoXMPBatchRenameInvalidation(t *testing.T) {
-	t.Parallel()
-	s, _, raw := xmpSidecarPhoto(t, newTestStore(t))
+func checkPhotoXMPBatchRenameInvalidation(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s, _, raw := xmpSidecarPhoto(t, open(t))
 	importXMP(t, s, raw.ID, PhotoAuthored{Rating: 3, Confirmed: PhotoConfirmedRating})
 	require.Empty(t, xmpTargets(t, s))
 	work, _, err := s.ClassifyPhotoXMP(t.Context(), raw.ID)

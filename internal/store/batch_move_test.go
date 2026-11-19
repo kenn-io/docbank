@@ -3,13 +3,17 @@ package store
 import (
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/docbank/internal/pgtest"
+	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
-func TestBatchMoveAppliesFinalTopologyAtomically(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkBatchMoveAppliesFinalTopologyAtomically(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	left, err := s.Mkdir(ctx, s.RootID(), "left")
 	require.NoError(t, err)
@@ -67,9 +71,9 @@ func TestBatchMoveSupportsNestedNetChanges(t *testing.T) {
 	assert.Equal(t, "/y/b", results[1].Path)
 }
 
-func TestBatchMoveResolvesDestinationParentsInFinalTree(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkBatchMoveResolvesDestinationParentsInFinalTree(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	a, err := s.Mkdir(ctx, s.RootID(), "a")
 	require.NoError(t, err)
@@ -174,9 +178,9 @@ func TestBatchMoveCanOccupyVacatedDirectoryCoordinate(t *testing.T) {
 	assert.Equal(t, archive.ID, *archived.ParentID)
 }
 
-func TestBatchMoveFailureRollsBackWholePlan(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkBatchMoveFailureRollsBackWholePlan(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	src, err := s.Mkdir(ctx, s.RootID(), "src")
 	require.NoError(t, err)
@@ -199,6 +203,40 @@ func TestBatchMoveFailureRollsBackWholePlan(t *testing.T) {
 	children, err := s.Children(ctx, dst.ID)
 	require.NoError(t, err)
 	assert.Empty(t, children)
+}
+
+func checkBatchMoveChangeWriteRollbackPostgres(t *testing.T) {
+	t.Helper()
+	setup, owner := pgtest.NewDatabase(t)
+	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	ctx := t.Context()
+	first, err := s.CreateFile(ctx, s.RootID(), "first.txt", fakeHash("first"), 5, "text/plain")
+	require.NoError(t, err)
+	second, err := s.CreateFile(ctx, s.RootID(), "second.txt", fakeHash("second"), 6, "text/plain")
+	require.NoError(t, err)
+	parent, err := s.NodeByID(ctx, s.RootID())
+	require.NoError(t, err)
+	changes, head, err := s.VaultChanges(ctx, "", 10)
+	require.NoError(t, err)
+	var role string
+	require.NoError(t, s.db.QueryRowContext(ctx, "SELECT current_user").Scan(&role))
+	_, err = setup.ExecContext(ctx, "REVOKE INSERT ON documents.vault_changes FROM "+pgx.Identifier{role}.Sanitize())
+	require.NoError(t, err)
+
+	_, err = s.BatchMove(ctx, []BatchMoveRequest{
+		{SourcePath: "/first.txt", DestinationPath: "/second.txt"},
+		{SourcePath: "/second.txt", DestinationPath: "/first.txt"},
+	})
+	require.ErrorContains(t, err, "permission denied for table vault_changes")
+	for path, want := range map[string]Node{"/first.txt": first, "/second.txt": second, "/": parent} {
+		got, err := s.NodeByPath(ctx, path)
+		require.NoError(t, err)
+		require.Equal(t, want, got, path)
+	}
+	after, afterHead, err := s.VaultChanges(ctx, "", 10)
+	require.NoError(t, err)
+	require.Equal(t, changes, after)
+	require.Equal(t, head, afterHead)
 }
 
 func TestBatchMoveRejectsDuplicateSourceAndMissingFinalParent(t *testing.T) {

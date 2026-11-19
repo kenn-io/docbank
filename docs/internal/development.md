@@ -964,6 +964,22 @@ The existing claim fencing and archive format are shared with SQLite. Rendering,
 query-selected populations and public vault opening are outside these worker
 contracts.
 
+#### Batch moves and embedded vault lifecycle
+
+Batch moves resolve sources against the starting tree and destinations against
+the final tree. The two backends can swap occupied names, move into a directory
+that is itself moving, and return receipts in request order. Node changes,
+the change stream and audit records commit together. PostgreSQL refreshes XMP
+export work from the final coordinates, including the original and new siblings
+of a moved sidecar. SQLite keeps its existing triggers.
+
+`make test-pg` runs `TestEmbeddedVaultLifecyclePostgres` through the embedded
+Vault's internal catalog opener. The scenario restores a SQLite backup with
+packed content into PostgreSQL, opens the owned blob root, checks exclusive
+access, moves and creates audited files, walks the catalog, and verifies the
+content bytes. It closes and reopens the vault, then takes another backup and
+restores it into SQLite. Public Vault constructors still select SQLite.
+
 #### Document export plans and jobs
 
 The native Store supports explicit members, current node IDs, chunked uploads
