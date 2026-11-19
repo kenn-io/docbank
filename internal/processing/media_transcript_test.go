@@ -56,7 +56,12 @@ func TestMediaTranscriptUsesCoverageProfileDuringRetry(t *testing.T) {
 
 func TestMediaTranscriptMismatchedContentVersionReturnsStaleWithoutText(t *testing.T) {
 	t.Parallel()
-	fixture := newPublicationFixture(t)
+	checkMediaTranscriptMismatchedContentVersionReturnsStaleWithoutText(t, newPublicationFixture)
+}
+
+func checkMediaTranscriptMismatchedContentVersionReturnsStaleWithoutText(t *testing.T, open publicationFixtureFactory) {
+	t.Helper()
+	fixture := open(t)
 	raw := mediatest.WAV()
 	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(raw))
 	require.NoError(t, err)
@@ -91,9 +96,8 @@ type captionFixture struct {
 	profile        string
 }
 
-func newCaptionFixture(t *testing.T, ref string) captionFixture {
+func newCaptionFixture(t *testing.T, ref string, fixture publicationFixture) captionFixture {
 	t.Helper()
-	fixture := newPublicationFixture(t)
 	base := newRemoteRecordingTestService(t, fixture, "operator:"+ref, 0, nil)
 	remote := loomRemoteForTest(t, base, ref)
 	video := mediatest.H264AACMP4()
@@ -139,7 +143,12 @@ func (f captionFixture) caption(t *testing.T, occurrenceID, cue string) MediaRec
 
 func TestMediaTranscriptFollowsCoverageAndTheCurrentFile(t *testing.T) {
 	t.Parallel()
-	f := newCaptionFixture(t, "transcript-read")
+	checkMediaTranscriptFollowsCoverageAndTheCurrentFile(t, newPublicationFixture)
+}
+
+func checkMediaTranscriptFollowsCoverageAndTheCurrentFile(t *testing.T, open publicationFixtureFactory) {
+	t.Helper()
+	f := newCaptionFixture(t, "transcript-read", open(t))
 	request := MediaTranscriptRequest{SourceID: f.remote.SourceID,
 		SourceVersionID: f.videoReceipt.SourceVersionID, ContentVersionID: f.videoReceipt.ContentVersionID}
 	read := func() MediaTranscript {
@@ -216,7 +225,12 @@ func TestMediaTranscriptFollowsCoverageAndTheCurrentFile(t *testing.T) {
 
 func TestMediaTranscriptGeneratedBuildHasNoSuppliedInput(t *testing.T) {
 	t.Parallel()
-	f := newMediaStateFixture(t)
+	checkMediaTranscriptGeneratedBuildHasNoSuppliedInput(t, newPublicationFixture)
+}
+
+func checkMediaTranscriptGeneratedBuildHasNoSuppliedInput(t *testing.T, open publicationFixtureFactory) {
+	t.Helper()
+	f := mediaStateFixtureWithPublication(t, open(t))
 	retained, err := f.service.SubmitSuppliedMedia(t.Context(),
 		f.suppliedRequest(uuid.New().String(), &MediaProcessingRequest{Profile: "speech"}))
 	require.NoError(t, err)
@@ -236,11 +250,16 @@ func TestMediaTranscriptGeneratedBuildHasNoSuppliedInput(t *testing.T) {
 
 func TestMediaTranscriptSharedRecordingKeepsForeignCaptionOut(t *testing.T) {
 	t.Parallel()
-	f := newCaptionFixture(t, "transcript-shared")
+	checkMediaTranscriptSharedRecordingKeepsForeignCaptionOut(t, newPublicationFixture)
+}
+
+func checkMediaTranscriptSharedRecordingKeepsForeignCaptionOut(t *testing.T, open publicationFixtureFactory) {
+	t.Helper()
+	f := newCaptionFixture(t, "transcript-shared", open(t))
 	queuedA := f.caption(t, f.remote.OccurrenceID, "caption A")
 	runLoomRenditionJob(t, f.captions, queuedA.JobID)
 
-	occurrenceB, sourceVersionB := "occurrence-shared-b", "source-version-shared-b"
+	occurrenceB, sourceVersionB := "occurrence\\shared-b", "source-version\x00shared-b"
 	_, err := f.fixture.catalog.RecordMediaOccurrence(t.Context(), store.MediaOperation{
 		ID: uuid.New().String(), Principal: f.base.principal, Verb: "declare_occurrence",
 		RequestSHA256: processingSHA256([]byte(occurrenceB)), SourceID: f.remote.SourceID,

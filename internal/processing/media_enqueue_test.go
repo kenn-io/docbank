@@ -378,7 +378,11 @@ func TestMediaContinuationCancellationBeforeEmbeddingResumesAfterReopen(t *testi
 	})
 }
 
-type mediaWorkerProvider struct{ *workerProvider }
+type mediaWorkerProvider struct {
+	*workerProvider
+
+	text string
+}
 
 func (provider *mediaWorkerProvider) Render(
 	ctx context.Context,
@@ -387,6 +391,9 @@ func (provider *mediaWorkerProvider) Render(
 ) (document.RenditionResult, error) {
 	result, err := provider.workerProvider.Render(ctx, upload, authorization)
 	result.Evidence.Family = "audio"
+	if err == nil && provider.text != "" {
+		result.Evidence.Units[0].Text = provider.text
+	}
 	return result, err
 }
 

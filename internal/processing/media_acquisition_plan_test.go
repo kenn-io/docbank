@@ -37,7 +37,12 @@ func TestMediaAcquisitionPlanRejectsTamperingAndDifferentKey(t *testing.T) {
 
 func TestMediaAcquisitionPlanBindsCurrentPolicyPrincipalIncarnationAndExpiry(t *testing.T) {
 	t.Parallel()
-	fixture := newPublicationFixture(t)
+	checkMediaAcquisitionPlanBindsCurrentPolicyPrincipalIncarnationAndExpiry(t, newPublicationFixture)
+}
+
+func checkMediaAcquisitionPlanBindsCurrentPolicyPrincipalIncarnationAndExpiry(t *testing.T, open publicationFixtureFactory) {
+	t.Helper()
+	fixture := open(t)
 	now := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
 	var key [32]byte
 	key[0] = 9
@@ -132,7 +137,12 @@ func TestMediaAcquisitionPlanBindsCurrentPolicyPrincipalIncarnationAndExpiry(t *
 
 func TestRemoteRecordingReplaysBeforeOriginAdmission(t *testing.T) {
 	t.Parallel()
-	fixture := newPublicationFixture(t)
+	checkRemoteRecordingReplaysBeforeOriginAdmission(t, newPublicationFixture)
+}
+
+func checkRemoteRecordingReplaysBeforeOriginAdmission(t *testing.T, open publicationFixtureFactory) {
+	t.Helper()
+	fixture := open(t)
 	policy := MediaOriginPolicy{OriginID: "original", Provider: "synthetic",
 		ReferencePrefixes: []string{"https://recordings.invalid/"}}
 	newService := func(principal string, origins map[string]MediaOriginPolicy) *Service {

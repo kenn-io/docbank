@@ -389,8 +389,9 @@ operations still open SQLite. Direct embedding-worker publication/recovery, phot
 descriptions and face detection have qualification below. Foreground direct-file
 and image embedding can publish a vector index before returning. Face embedding,
 index-backed people ranking and suggestion rebuilding use shared worker and
-Store operations. Remote-media acquisition, photo query compilation and
-PostgreSQL-target backup recovery remain unqualified.
+Store operations. Remote recording references, manual file import, acquisition
+consent, exact transcript reads and selected-recording search have shared
+scenarios below. Photo query compilation remains unqualified.
 Native multi-store catalog operations are qualified below; deployment adapters
 remain separate from public PostgreSQL vault opening. Paged tree walks, native
 file and folder imports, and stored-original ZIP workers have the filesystem
@@ -1062,7 +1063,28 @@ lanes on both PostgreSQL versions. The SQLite entry points call the same shared
 scenarios and keep their existing parallelism. The named scenarios define the
 qualified coverage; other database-backed scenarios and checks that validate
 inputs without querying the database keep their existing SQLite/unit entry points.
-Remote-media acquisition remains separate.
+
+#### Remote recordings and selected transcript search
+
+`TestMediaWorkflowsPostgres` runs the processing service against the native
+runtime-role Store and managed blob files. It exercises remote reference
+retention and replay, manual recording import, exact source-version status,
+and acquisition grant and revocation receipts. Replaying a grant after
+revocation preserves the receipt and leaves consent revoked. The suite uses
+synthetic origins and locally supplied recordings.
+
+Transcript reads use the selected source version and its covering rendition.
+Two source versions can reference the same file and still have different
+supplied inputs. Reading a supplied transcript requires a visible input binding
+for that source version. Search resolves the eligible version/build pairs before
+applying the lexical candidate limit, then rechecks source authority before
+returning matches. Shared scenarios cover generated and supplied transcripts, pending
+retries, and changes to current files, rendition heads or occurrence visibility
+during search. The search engines use their native scores.
+
+These scenarios cover manual import and local acquisition authorization.
+Provider downloads and selected image-interpretation search are outside this
+qualification.
 
 #### Embedding and photo workers
 
@@ -1255,8 +1277,9 @@ The `lexical-search` backend suite exercises these reads on both engines,
 including concurrent publication, empty and replaced content, truncation and
 text coverage. PostgreSQL plan checks use populated tables without disabling
 sequential scans. The processing suite runs hybrid retrieval with a real
-embedding publication and vector index. Photo query compilation, PDF fact
-filters and selected recording/vision retrieval are outside this qualification.
+embedding publication and vector index. The remote recording suite above covers
+selected transcript retrieval. Photo query compilation, PDF fact filters and
+selected image-interpretation search have separate qualification boundaries.
 Public PostgreSQL vault opening remains separate.
 
 #### Backup capture and physical recovery
