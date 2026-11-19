@@ -67,7 +67,7 @@ it("restores a full query beside sign-in without running it as empty-text folder
         String(url) === "/api/v1/workspace/queries",
     ),
   ).toBe(false);
-  await fireEvent.keyDown(window, { key: "Escape" });
+  await fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
   await fireEvent.click(screen.getByRole("button", { name: "Searches" }));
   await screen.findByRole("main", { name: "Searches" });
   await screen.findByText(/No searches/);

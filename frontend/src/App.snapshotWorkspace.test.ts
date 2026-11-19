@@ -886,7 +886,7 @@ it("retains edits made while a submitted search is still running", async () => {
   complete(new Response(JSON.stringify(snapshot(initialQuery, [], {}, 0))));
   await screen.findByRole("region", { name: "Frozen query results" });
   expect((screen.getByLabelText("Filters JSON") as HTMLTextAreaElement).value).toBe('{"size_min":');
-  await fireEvent.keyDown(window, { key: "Escape" });
+  await fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   expect(screen.getByRole("combobox", { name: "Documents per page: 50" })).toBeTruthy();
   expect((screen.getByLabelText("Filters JSON") as HTMLTextAreaElement).value).toBe('{"size_min":');

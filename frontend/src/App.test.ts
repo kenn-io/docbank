@@ -2154,7 +2154,7 @@ it("navigates the displayed page, keeps checkbox selection independent, and acti
 
   await fireEvent.keyDown(window, { key: "j" });
   expect(screen.getByLabelText("Document details for alpha.txt")).toBeTruthy();
-  await fireEvent.keyDown(window, { key: "Escape" });
+  await fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
   expect(screen.queryByText(/selected on this page/)).toBeNull();
 
   await fireEvent.keyDown(window, { key: "/", shiftKey: true });
