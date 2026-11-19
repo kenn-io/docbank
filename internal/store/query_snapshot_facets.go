@@ -217,17 +217,17 @@ func materializeCaptureDayFacet(
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
-	statement, args, err := bindQueryPopulation(compiledQueryFragment{
-		sql: `SELECT COALESCE(pl.day,''),COUNT(*) FROM ` + photoBrowseScopeFrom +
+	statement, args, err := bindQueryPopulationForBackend(compiledQueryFragment{
+		sql: `SELECT COALESCE(pl.day,''),COUNT(*) FROM ` + photoJoins(photoBrowseScopeFrom, compiled.postgres) +
 			` LEFT JOIN photo_timeline pl ON pl.file_id=f.file_id` +
 			` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(false) + ` AND ` + match.sql +
 			` GROUP BY COALESCE(pl.day,'') ORDER BY COALESCE(pl.day,'') DESC`,
 		args: match.args, relations: match.relations,
-	}, coverage, generation)
+	}, coverage, generation, compiled.postgres)
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
-	rows, err := q.QueryContext(ctx, statement, args...)
+	rows, err := q.QueryContext(ctx, bindCompiledRead(statement, compiled.postgres), args...)
 	if err != nil {
 		return SnapshotFacet{}, err
 	}

@@ -49,11 +49,11 @@ const savedQueryRunSelect = `SELECT
 	previous_member_hash,previous_total,previous_query_fingerprint,photos
 	FROM saved_query_runs `
 
-func insertSavedQueryRunTx(
+func (s *Store) insertSavedQueryRunTx(
 	ctx context.Context, tx *sql.Tx, savedQueryID string, expectedRevision int64,
 	projection SnapshotProjection, page SnapshotPage,
 ) (SavedQueryRun, error) {
-	root, err := (queryResolver{q: tx}).Resolve(ctx, query.ReferenceSaved, savedQueryID, true)
+	root, err := (queryResolver{q: tx, postgres: s.postgresSchema != ""}).Resolve(ctx, query.ReferenceSaved, savedQueryID, true)
 	if err != nil && !errors.Is(err, query.ErrUnknownReference) {
 		return SavedQueryRun{}, fmt.Errorf("rechecking saved query %s before run receipt: %w", savedQueryID, err)
 	}
@@ -67,7 +67,7 @@ func insertSavedQueryRunTx(
 	if rootFingerprint != projection.QueryFingerprint {
 		return SavedQueryRun{}, fmt.Errorf("saved query %s definition changed before run receipt: %w", savedQueryID, ErrStaleRevision)
 	}
-	if err := recheckSavedQueryRunDependencies(ctx, tx, projection.Dependencies); err != nil {
+	if err := s.recheckSavedQueryRunDependencies(ctx, tx, projection.Dependencies); err != nil {
 		return SavedQueryRun{}, err
 	}
 	runID, err := newUUIDv4()
@@ -85,11 +85,11 @@ func insertSavedQueryRunTx(
 	// Keep unrelated run histories out of the successor lookup while holding
 	// the write transaction. Commit order, not materialization time, defines the head.
 	err = tx.QueryRowContext(ctx, `SELECT r.run_id,r.member_hash,r.total,r.query_fingerprint
-		FROM saved_query_runs r WHERE r.saved_query_id=? AND r.photos=? AND NOT EXISTS(
+		FROM saved_query_runs r WHERE r.saved_query_id=$1 AND r.photos=$2 AND NOT EXISTS(
 			SELECT 1 FROM saved_query_runs successor
 			WHERE successor.saved_query_id=r.saved_query_id AND successor.photos=r.photos AND successor.previous_run_id=r.run_id
 		) LIMIT 1`,
-		savedQueryID, run.Photos).Scan(&previousRunID, &previousHash, &previousTotal, &previousFingerprint)
+		savedQueryID, boolInt(run.Photos)).Scan(&previousRunID, &previousHash, &previousTotal, &previousFingerprint)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return SavedQueryRun{}, fmt.Errorf("selecting previous saved query run: %w", err)
 	}
@@ -111,20 +111,20 @@ func insertSavedQueryRunTx(
 		run_id,saved_query_id,saved_query_revision,query_fingerprint,snapshot_id,
 		member_hash,total,total_bytes,ran_at,expires_at,previous_run_id,
 		previous_member_hash,previous_total,previous_query_fingerprint,photos
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, run.RunID, run.SavedQueryID,
+	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, run.RunID, run.SavedQueryID,
 		run.SavedQueryRevision, run.QueryFingerprint, run.SnapshotID, run.MemberHash,
 		run.Total, run.TotalBytes, formatSavedQueryRunTime(run.RanAt),
 		formatSavedQueryRunTime(run.ExpiresAt), nullableString(run.PreviousRunID),
 		nullableString(run.PreviousMemberHash), nullablePreviousTotal(run),
-		nullableString(run.PreviousQueryFingerprint), run.Photos)
+		nullableString(run.PreviousQueryFingerprint), boolInt(run.Photos))
 	if err != nil {
 		return SavedQueryRun{}, fmt.Errorf("inserting saved query run: %w", err)
 	}
 	return run, nil
 }
 
-func recheckSavedQueryRunDependencies(ctx context.Context, tx *sql.Tx, dependencies []query.Dependency) error {
-	resolver := queryResolver{q: tx}
+func (s *Store) recheckSavedQueryRunDependencies(ctx context.Context, tx *sql.Tx, dependencies []query.Dependency) error {
+	resolver := queryResolver{q: tx, postgres: s.postgresSchema != ""}
 	for _, observed := range dependencies {
 		current, err := resolver.Resolve(ctx, observed.Kind, observed.ID, true)
 		if err != nil && !errors.Is(err, query.ErrUnknownReference) {

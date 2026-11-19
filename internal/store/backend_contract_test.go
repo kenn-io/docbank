@@ -1536,7 +1536,7 @@ var backendSuites = []backendSuite{
 		{"PhotoReviewSnapshot", nil, checkPhotoReviewSnapshotPostgres},
 		{"PhotoReviewRetainedVectors", nil, checkPhotoReviewRetainedVectorsPostgres},
 	}},
-	{name: "photo-albums", postgres: "native operations", scope: "Album lifecycle, explicit membership and cover summaries. Structured query membership uses photo-browse. Frozen snapshot delivery remains separate.", scenarios: []backendScenario{
+	{name: "photo-albums", postgres: "native operations", scope: "Album lifecycle, explicit membership and cover summaries. Structured query membership uses photo-browse. Create an album from a structured frozen selection through photo-snapshots.", scenarios: []backendScenario{
 		{"PhotoSetLifecycle", func(t *testing.T) { t.Helper(); checkPhotoSetLifecycle(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoSetLifecycle(t, newPostgresQueryStore) }},
 		{"PhotoSetCovers", nil, func(t *testing.T) {
 			t.Helper()
@@ -2715,7 +2715,7 @@ var backendSuites = []backendSuite{
 		}},
 	}},
 	{name: "processing-publication", postgres: "native rendition/embedding/photo workers", scope: "internal/processing tests qualify shared-build publication, durable resume, consent/source fencing, email-PDF receipt/export, supplied-media continuation, direct original/chunk embedding-worker recovery, photo descriptions, face detection, face embedding, face-vector index capture, ranked people selection and suggestion rebuilding. Foreground direct-file/image completion and index recovery use vector-index-publication and internal/processing scenarios."},
-	{name: "photo-browse", postgres: "native structured photo pages", scope: "Structured photo filters and orders, live cursors, facets, display previews, burst pages, album and export selection, and reject preflight and move. Lexical and semantic photo retrieval, PDF facts, media-family filters and frozen snapshots remain separate.", scenarios: []backendScenario{
+	{name: "photo-browse", postgres: "native structured photo pages", scope: "Structured photo filters and orders, live cursors, facets, display previews, burst pages, album and export selection, and reject preflight and move. Lexical and semantic photo retrieval, PDF facts and media-family filters remain separate. The photo-snapshots suite uses the structured population.", scenarios: []backendScenario{
 		{"PhotoBrowseStructuredFilterPages", func(t *testing.T) { t.Helper(); checkPhotoBrowseStructuredFilterPages(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoBrowseStructuredFilterPages(t, newPostgresQueryStore) }},
 		{"PhotoBrowseISOAndAssetPredicates", func(t *testing.T) { t.Helper(); checkPhotoBrowseISOAndAssetPredicates(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoBrowseISOAndAssetPredicates(t, newPostgresQueryStore) }},
 		{"PhotoBrowseMissingDisplayMediaType", func(t *testing.T) { t.Helper(); checkPhotoBrowseMissingDisplayMediaType(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoBrowseMissingDisplayMediaType(t, newPostgresQueryStore) }},
@@ -2757,7 +2757,21 @@ var backendSuites = []backendSuite{
 		{"PhotoRejectsMoveWaitsForSidecarSync", func(t *testing.T) { t.Helper(); checkPhotoRejectsMoveWaitsForSidecarSync(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoRejectsMoveWaitsForSidecarSync(t, newPostgresQueryStore) }},
 		{"PhotoRejectsMixedAndUnchanged", func(t *testing.T) { t.Helper(); checkPhotoRejectsMixedAndUnchanged(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoRejectsMixedAndUnchanged(t, newPostgresQueryStore) }},
 	}},
-	{name: "photo-editing", postgres: "unqualified", scope: "Structured reject selection and movement use photo-browse. Explicit decisions use photo-review and people edits use people-curation. Frozen review sets remain unqualified."},
+	{name: "photo-snapshots", postgres: "native structured photo workspaces", scope: "Frozen membership and order, current display rows, album creation, saved run receipts, capture-day facets and stale-member checks.", scenarios: []backendScenario{
+		{"PhotoSnapshotPageChecksRequestedMembershipAndPreservesFrozenRows", func(t *testing.T) {
+			t.Helper()
+			checkPhotoSnapshotPageChecksRequestedMembershipAndPreservesFrozenRows(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoSnapshotPageChecksRequestedMembershipAndPreservesFrozenRows(t, newPostgresQueryStore)
+		}},
+		{"PhotoSnapshotRunRejectsMemberLeavingLibrary", func(t *testing.T) { t.Helper(); checkPhotoSnapshotRunRejectsMemberLeavingLibrary(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoSnapshotRunRejectsMemberLeavingLibrary(t, newPostgresQueryStore)
+		}},
+		{"StructuredPhotoWorkspace", func(t *testing.T) { t.Helper(); checkStructuredPhotoWorkspace(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkStructuredPhotoWorkspace(t, newPostgresQueryStore) }},
+	}},
+	{name: "photo-editing", postgres: "unqualified", scope: "Structured reject selection and movement use photo-browse. Explicit decisions use photo-review and people edits use people-curation. Structured frozen review sets use photo-snapshots."},
 	{name: "remote-recording-workflows", postgres: "native processing service", scope: "TestMediaWorkflowsPostgres qualifies reference retention, manual recording import, acquisition consent, exact transcript reads and source-selected lexical retrieval. Provider downloads and selected image-interpretation search are outside this qualification."},
 	{name: "search", postgres: "native document retrieval", scope: "lexical-search and semantic-results qualify document lexical, vector and hybrid retrieval. TestMediaWorkflowsPostgres covers selected transcript retrieval. Photo lexical search, PDF facts and selected image-interpretation search remain unqualified."},
 	{name: "transfer-and-recovery", postgres: "native backup capture and physical recovery", scope: "internal/backupapp tests qualify repository capture, recovery into fresh SQLite and PostgreSQL vaults, loose/packed bytes, audited and photo recovery, source loss and missing-byte failure; metadata-export and metadata-import cover native logical transfer."},

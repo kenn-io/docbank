@@ -571,6 +571,7 @@ GRANT INSERT, DELETE ON documents.node_tags TO docbank_runtime;
 GRANT INSERT ON documents.batch_tag_receipts TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(name, description, payload, fingerprint, revision, updated_at, photo_scope)
     ON documents.saved_queries TO docbank_runtime;
+GRANT INSERT ON documents.saved_query_runs TO docbank_runtime;
 GRANT UPDATE(binding_epoch) ON documents.document_people_state TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(display_name, display_name_folded, state, revision,
     updated_at, key_face_id) ON documents.persons TO docbank_runtime;
@@ -1299,7 +1300,23 @@ and XMP sidecar settlement under writer admission.
 SQLite retains the indexed join order for browsing, burst probes and XMP
 receipts. PostgreSQL uses its normal join planner. This suite covers structured
 filters and orders. Lexical and semantic photo retrieval, PDF facts, media-family
-filters and frozen query workspaces have separate qualification boundaries.
+filters have separate qualification boundaries. The structured photo workspace
+suite below covers frozen membership.
+
+#### Frozen photo workspaces and saved runs
+
+The `photo-snapshots` suite exercises structured photo workspaces on SQLite and
+PostgreSQL. A snapshot freezes membership, order, version and display evidence.
+Reading current display rows preserves that order and checks that each requested
+member is still in the Library. Creating an album from the snapshot keeps the
+frozen order.
+
+A saved run rechecks the definition, its dependencies and every frozen photo
+inside writer admission before it inserts a receipt. The receipt records the
+previous committed run and the change in membership. Runtime access to receipts
+is append-only. The calendar's capture-day facet uses the same photo membership
+and excludes photos outside the Library. Ranked photo workspaces have a separate
+qualification boundary. Document snapshots use the SQLite Store.
 
 #### Backup capture and physical recovery
 
@@ -2183,8 +2200,9 @@ its runtime role can insert albums, update their mutable properties, and insert
 or delete members. It cannot update member identities or timestamps in place.
 
 The `photo-browse` suite also covers album membership selected by structured
-queries. `SkipUnavailable`, lexical selection and frozen-snapshot albums have
-separate qualification boundaries.
+queries. The `photo-snapshots` suite covers albums created from a frozen
+structured query. Lexical selection and `SkipUnavailable` have separate
+qualification boundaries.
 
 #### Photo checkouts
 

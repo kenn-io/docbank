@@ -440,10 +440,6 @@ const photoBrowseVersionJoins = `
  LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id
  LEFT JOIN photo_timeline pl ON pl.file_id=f.file_id`
 
-func photoBrowseOrder(field string) (from, key string, ok bool) {
-	return photoBrowseOrderForBackend(field, false)
-}
-
 func photoIndexHint(index string, postgres bool) string {
 	if postgres {
 		return ""
@@ -501,10 +497,6 @@ func validatePhotoQuerySort(value query.Query) error {
 		return fmt.Errorf("%w: added_time requires exactly one filters.set_ids album", ErrInvalidPhotoQuery)
 	}
 	return nil
-}
-
-func photoBrowseMissingKey(field string) string {
-	return photoBrowseMissingKeyForBackend(field, false)
 }
 
 func photoBrowseMissingKeyForBackend(field string, postgres bool) string {
