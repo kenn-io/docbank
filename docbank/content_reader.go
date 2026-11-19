@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/home"
@@ -35,8 +36,21 @@ func OpenContentReader(ctx context.Context, config ContentReaderConfig) (_ *Cont
 	if err != nil {
 		return nil, err
 	}
+	// Schema checks and SQLite write temporary files; keep them out of the vault.
+	for _, dir := range []string{os.TempDir(), os.Getenv("SQLITE_TMPDIR")} {
+		if dir == "" {
+			continue
+		}
+		inside, err := home.PathWithin(normalized.Root, dir)
+		if err != nil {
+			return nil, err
+		}
+		if inside {
+			return nil, fmt.Errorf("temporary directory %s is inside the vault", dir)
+		}
+	}
 	layout := home.Layout{Root: normalized.Root}
-	root, lock, scratchDir, err := layout.OpenExistingAndLockExclusiveNoCreate()
+	root, lock, err := layout.OpenExistingAndLockExclusiveNoCreate()
 	if errors.Is(err, home.ErrExistingVaultMissing) {
 		return nil, fmt.Errorf("opening existing vault: %w: %w", ErrVaultNeedsOwner, err)
 	}
@@ -55,7 +69,7 @@ func OpenContentReader(ctx context.Context, config ContentReaderConfig) (_ *Cont
 	if pending {
 		return nil, fmt.Errorf("pending restore handoff: %w", ErrVaultNeedsOwner)
 	}
-	metadata, err := store.OpenExisting(ctx, layout.DBPath(), normalized.SQLite, scratchDir)
+	metadata, err := store.OpenExisting(ctx, layout.DBPath(), normalized.SQLite, "")
 	if err != nil {
 		return nil, err
 	}

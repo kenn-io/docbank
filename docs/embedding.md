@@ -752,23 +752,37 @@ defer content.Reader.Close()
 ```
 
 `reader.ID()` returns the vault identity. The reader holds the same exclusive
-hierarchy lock as an owner and returns `ErrVaultLocked` when the tree is busy.
-`ErrVaultNeedsOwner` means an owner must initialize, upgrade, or recover the
-vault first, including when SQLite sidecars or a restore handoff are present.
-Sidecars are checked before the schema, so a sidecar also takes precedence over a newer schema.
-Newer, unsupported, or unreadable schemas, invalid identity, wrong ownership markers,
-and non-regular database or handoff files retain their own errors. The existing
-`vault.lock` must be writable. The lock registry (`DOCBANK_LOCK_DIR` when set)
-must be writable and outside the vault; a registry inside it is a configuration
-error. Docbank creates the registry directory and its lock files as needed. When
-checking a current-schema database, Docbank creates a temporary
-`docbank-current-schema-*.db` file in the registry. The default registry is
-`.local/state/docbank/target-locks` in the account home. Docbank deletes the file
-before `OpenContentReader` returns, but a crash during the check can leave it
-there. SQLite may use temporary files of its own. Only the
-primary blob store is attached; content available only on a secondary store
-returns `ErrContentUnavailable`. Close every stream before closing the reader;
-reader close waits for all streams to close.
+hierarchy lock as an owner until `Close` returns. Close every stream first,
+because `Close` waits for open streams.
+
+`OpenContentReader` returns:
+
+- `ErrVaultLocked` when a daemon, embedded vault, restore, or another reader
+  holds an overlapping tree.
+- `ErrVaultNeedsOwner` when an owner must initialize, upgrade, or recover the
+  vault first. That covers a missing root, `vault.lock`, database, blob
+  directory, or blob ownership marker. It also covers an empty database, an
+  older schema, SQLite `-wal`, `-shm`, or `-journal` files, and a pending
+  restore handoff.
+- Other errors for a newer or unreadable schema, an invalid vault identity, a
+  mismatched blob ownership marker, or a database or handoff path that is not
+  a regular file.
+
+The reader changes nothing inside the vault. It writes in two places outside
+it:
+
+- The lock registry, `DOCBANK_LOCK_DIR` when set. The reader creates the
+  directory and its lock files as needed.
+- The system temporary directory. Checking the schema creates a
+  `docbank-current-schema-*.db` file there and deletes it before
+  `OpenContentReader` returns. A crash during the check can leave it behind.
+  SQLite may also write its own temporary files there, or in `SQLITE_TMPDIR`
+  when set.
+
+The reader refuses to open when the lock registry, the system temporary
+directory, or `SQLITE_TMPDIR` is inside the vault. The existing `vault.lock`
+must be writable. The reader attaches only the primary blob store, so content
+stored only on a secondary store returns `ErrContentUnavailable`.
 
 ## Identify a vault and verify reads
 
@@ -1225,7 +1239,8 @@ Do not point a daemon and an embedded application at the same root. `New` holds
 the same exclusive hierarchy lock as the daemon for the entire vault lifetime
 and fails if the requested root overlaps another active vault or restore target.
 
-`OpenContentReader` also holds this exclusive lock until `Close` returns. Close the reader after reading.
+[`OpenContentReader`](#read-an-existing-vault-without-owning-it) takes the
+same lock, so close the reader before a daemon or `New` opens that root.
 
 The standalone CLI remains daemon-first and never opens storage directly.
 Embedding is a distinct application ownership mode, not a second privileged path
