@@ -2,7 +2,6 @@ package docbank_test
 
 import (
 	"crypto/sha256"
-	"database/sql"
 	"fmt"
 	"io"
 	"io/fs"
@@ -19,8 +18,7 @@ import (
 	docbank "go.kenn.io/docbank/docbank"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/home"
-	"go.kenn.io/docbank/internal/store"
-	docsqlite "go.kenn.io/docbank/sqlite"
+	"go.kenn.io/kit/packstore"
 )
 
 func assertReaderContent(t *testing.T, reader *docbank.ContentReader, path, want string) {
@@ -224,35 +222,38 @@ func TestContentReaderRejectsRegistryInsideVault(t *testing.T) {
 	})
 }
 
-type recordingScratchDriver struct {
-	docsqlite.Driver
-
-	paths []string
-}
-
-func (d *recordingScratchDriver) Open(path string, opts docsqlite.OpenOptions) (*sql.DB, error) {
-	if opts.Access == docsqlite.Create {
-		d.paths = append(d.paths, path)
+func TestContentReaderRejectsTempInsideVault(t *testing.T) {
+	for _, names := range [][]string{{"TMPDIR", "TMP"}, {"SQLITE_TMPDIR"}} {
+		t.Run(names[0], func(t *testing.T) {
+			root := t.TempDir()
+			vault, err := docbank.New(t.Context(), docbank.Config{Root: root})
+			require.NoError(t, err)
+			require.NoError(t, vault.Close())
+			inside := filepath.Join(root, "tmp")
+			require.NoError(t, os.Mkdir(inside, 0o700))
+			for _, name := range names {
+				t.Setenv(name, inside)
+			}
+			assertReaderRefusedUnchanged(t, root, func(err error) {
+				t.Helper()
+				require.ErrorContains(t, err, "temporary directory")
+				require.NotErrorIs(t, err, docbank.ErrVaultNeedsOwner)
+			})
+		})
 	}
-	return d.Driver.Open(path, opts)
 }
 
 func TestContentReaderStorageUnchanged(t *testing.T) {
+	t.Parallel()
 	missing := filepath.Join(t.TempDir(), "missing")
 	_, err := docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: missing})
 	require.ErrorIs(t, err, docbank.ErrVaultNeedsOwner)
 	_, err = os.Lstat(missing)
 	require.ErrorIs(t, err, os.ErrNotExist)
 
-	for _, kind := range []string{"loose", "packed", "tampered", "external registry"} {
+	for _, kind := range []string{"loose", "packed", "tampered"} {
 		t.Run(kind, func(t *testing.T) {
-			registry := ""
-			if kind == "external registry" {
-				registry = t.TempDir()
-				t.Setenv("DOCBANK_LOCK_DIR", registry)
-			} else {
-				t.Parallel()
-			}
+			t.Parallel()
 			root := t.TempDir()
 			vault, err := docbank.New(t.Context(), docbank.Config{Root: root})
 			require.NoError(t, err)
@@ -276,20 +277,8 @@ func TestContentReaderStorageUnchanged(t *testing.T) {
 			}
 			stabilizeReaderTree(t, root)
 			before := snapshotReaderTree(t, root)
-			config := docbank.ContentReaderConfig{Root: root}
-			var driver *recordingScratchDriver
-			if kind == "external registry" {
-				driver = &recordingScratchDriver{Driver: store.DefaultSQLiteDriver()}
-				config.SQLite = driver
-			}
-			reader, err := docbank.OpenContentReader(t.Context(), config)
+			reader, err := docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
 			require.NoError(t, err)
-			if driver != nil {
-				require.Len(t, driver.paths, 1)
-				canonicalRegistry, err := filepath.EvalSymlinks(registry)
-				require.NoError(t, err)
-				require.Equal(t, canonicalRegistry, filepath.Dir(driver.paths[0]))
-			}
 			if kind == "loose" {
 				require.Equal(t, id, reader.ID())
 				_, err = docbank.New(t.Context(), docbank.Config{Root: root})
@@ -299,7 +288,7 @@ func TestContentReaderStorageUnchanged(t *testing.T) {
 				content, err := reader.OpenContent(t.Context(), "/source")
 				require.NoError(t, err)
 				_, err = io.ReadAll(content.Reader)
-				require.Error(t, err)
+				require.ErrorIs(t, err, packstore.ErrPhysicalCorrupt)
 				_ = content.Reader.Close()
 			} else {
 				assertReaderContent(t, reader, "/source", data)
