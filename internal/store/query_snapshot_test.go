@@ -286,3 +286,46 @@ func checkDocumentSnapshotLexicalTerms(t *testing.T, open func(*testing.T) *Stor
 		})
 	}
 }
+
+func checkDocumentSnapshotLexicalNULPostgres(t *testing.T) {
+	t.Helper()
+	s := newPostgresQueryStore(t)
+	ctx := t.Context()
+	for _, doc := range []struct{ name, text string }{
+		{"adjacent.txt", "cobalt harbor"},
+		{"separate.txt", "cobalt wide harbor"},
+	} {
+		node, err := s.CreateFile(ctx, s.RootID(), doc.name, testSHA256([]byte(doc.name)), int64(len(doc.text)), "text/plain")
+		require.NoError(t, err)
+		require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+			BlobHash: node.BlobHash, Extractor: "synthetic", ExtractorVersion: 1, Status: ExtractionOK, Text: doc.text,
+		}))
+	}
+	const raw = `{"syntax":"advanced","text":"\"cobalt\u0000harbor\""}`
+	value := snapshotTestQuery(t, raw)
+	canonical, fingerprint, err := query.CanonicalWithFingerprint(value)
+	require.NoError(t, err)
+	require.Contains(t, string(canonical), `cobalt\u0000harbor`)
+
+	projection, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Len(t, projection.Rows, 1)
+	require.Equal(t, "adjacent.txt", projection.Rows[0].Name)
+	require.Equal(t, "\"cobalt\x00harbor\"", projection.Query.Text)
+	require.Equal(t, fingerprint, projection.QueryFingerprint)
+
+	definition, err := s.CreateSavedQuery(ctx, "Harbor phrase", "", SavedQueryKindQuery, []byte(raw))
+	require.NoError(t, err)
+	service := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	run, page, err := service.RunSaved(ctx, "owner", definition.ID, definition.Revision, SnapshotRequest{}, nil)
+	require.NoError(t, err)
+	require.Len(t, page.Rows, 1)
+	require.Equal(t, "adjacent.txt", page.Rows[0].Name)
+	require.Equal(t, value.Text, page.Query.Text)
+	require.Equal(t, fingerprint, run.QueryFingerprint)
+	record, err := s.SavedQueryByID(ctx, definition.ID)
+	require.NoError(t, err)
+	require.Equal(t, canonical, record.Payload)
+	require.Equal(t, fingerprint, record.Fingerprint)
+}

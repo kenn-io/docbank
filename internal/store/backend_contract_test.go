@@ -2764,6 +2764,7 @@ var backendSuites = []backendSuite{
 		}},
 		{"DocumentSnapshotSavedFacets", func(t *testing.T) { t.Helper(); checkDocumentSnapshotSavedFacets(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentSnapshotSavedFacets(t, newPostgresQueryStore) }},
 		{"DocumentSnapshotLexicalTerms", func(t *testing.T) { t.Helper(); checkDocumentSnapshotLexicalTerms(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentSnapshotLexicalTerms(t, newPostgresQueryStore) }},
+		{"DocumentSnapshotLexicalNUL", nil, checkDocumentSnapshotLexicalNULPostgres},
 		{"DocumentSnapshotPeopleFacet", func(t *testing.T) { t.Helper(); checkRoleSearchMatchesAndPeopleFacet(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRoleSearchMatchesAndPeopleFacet(t, newPostgresQueryStore) }},
 		{"DocumentSnapshotPendingPeople", func(t *testing.T) { t.Helper(); checkRoleSearchNegationWithPendingPeople(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRoleSearchNegationWithPendingPeople(t, newPostgresQueryStore) }},
 		{"DocumentSnapshotStructuredPeople", func(t *testing.T) {
