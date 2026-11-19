@@ -62,9 +62,9 @@ func TestRoleSearchOperandSets(t *testing.T) {
 	require.Equal(t, "email.txt", selected.Rows[0].Name)
 }
 
-func TestRoleSearchMatchesAndPeopleFacet(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkRoleSearchMatchesAndPeopleFacet(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	version := seedCurrentRoleSearchEvent(t, s, "message.txt", "b1", []document.DocumentEventActorV1{})
 	person, err := s.CreatePerson(ctx, "Indigo Sender", "operator")
@@ -73,7 +73,7 @@ func TestRoleSearchMatchesAndPeopleFacet(t *testing.T) {
 		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: edge.id, Role: edge.role, Action: "assert", Revision: 1})
 		require.NoError(t, err)
 	}
-	for _, role := range []string{"author", "last_saved_by", "custodian", "recipient", "copied", "organizer", "attendee", "participant"} {
+	for _, role := range []string{"author", "last_saved_by", "custodian", "recipient", "copied", "organizer", "attendee", "participant", "blind_copy"} {
 		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: person.PersonID, Role: role, Action: "assert", Revision: 1})
 		require.NoError(t, err)
 	}
@@ -170,9 +170,9 @@ func checkRoleSearchCurrentPersonRelation(t *testing.T) {
 	check(true, direct.PersonID, "speaker", true)
 }
 
-func TestRoleSearchNegationWithPendingPeople(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkRoleSearchNegationWithPendingPeople(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	version := seedCurrentRoleSearchEvent(t, s, "sender.txt", "a3", []document.DocumentEventActorV1{{
 		Role: "sender", ActorKey: "email:sender@example.test", Address: "sender@example.test", DisplayName: "Sender Person", Claim: `"sender"`,
@@ -414,11 +414,12 @@ func TestPublishedBccActorQueryPrivacy(t *testing.T) {
 	require.Empty(t, betweenResult.Rows)
 }
 
-func TestRoleSearchSavedRunPreservesMergedDefinitionReceipt(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkRoleSearchSavedRunPreservesMergedDefinitionReceipt(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	version := seedCurrentRoleSearchEvent(t, s, "saved-merged.txt", "f2", []document.DocumentEventActorV1{})
+	absent := seedCurrentRoleSearchEvent(t, s, "missing-role.txt", "f6", []document.DocumentEventActorV1{})
 	survivor, err := s.CreatePerson(ctx, "Saved Survivor", "operator")
 	require.NoError(t, err)
 	retired, err := s.CreatePerson(ctx, "Saved Retired", "operator")
@@ -427,16 +428,31 @@ func TestRoleSearchSavedRunPreservesMergedDefinitionReceipt(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: retired.PersonID, Role: "author", Action: "assert", Revision: 1})
 	require.NoError(t, err)
-	payload := fmt.Appendf(nil, `{"filters":{"people":[{"person_id":%q,"roles":["speaker"]},{"person_id":%q,"roles":["author"]},{"person_id":%q,"roles":["speaker"]}]}}`, retired.PersonID, retired.PersonID, survivor.PersonID)
+	payload := fmt.Appendf(nil, `{"filters":{"people":[{"person_id":%q,"roles":["speaker"]},{"person_id":%q,"roles":["author","sender"]},{"person_id":%q,"roles":["speaker"]}]}}`, retired.PersonID, retired.PersonID, survivor.PersonID)
 	definition, err := s.CreateSavedQuery(ctx, "Merged person", "", SavedQueryKindQuery, payload)
 	require.NoError(t, err)
 	_, err = s.MergePersons(ctx, survivor.PersonID, retired.PersonID, "11111111-1111-4111-8111-111111111111", survivor.Revision, retired.Revision)
 	require.NoError(t, err)
+	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: absent.ID, PersonID: survivor.PersonID, Role: "speaker", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	_, err = s.CreateSavedQuery(ctx, "Nested merged person", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"saved:\"Merged person\""}`))
+	require.NoError(t, err)
+	negative := snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT saved:\"Nested merged person\""}`)
+	pending, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: negative})
+	require.NoError(t, err)
+	require.Empty(t, pending.Rows)
+
 	publishRoleFixtures(t, s)
+	confirmed, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: negative})
+	require.NoError(t, err)
+	require.Len(t, confirmed.Rows, 1)
+	require.Equal(t, absent.ID, confirmed.Rows[0].ContentVersionID)
+
 	value := snapshotTestQuery(t, string(payload))
 	result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Facets: []string{"person_role"}})
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
+	require.Equal(t, version.ID, result.Rows[0].ContentVersionID)
 	require.Equal(t, value.Filters.People, result.Query.Filters.People)
 	require.Equal(t, []string{"author", "speaker"}, result.Rows[0].MatchedRoles)
 	require.Equal(t, survivor.PersonID, result.Facets[0].Values[0].Key)
@@ -448,6 +464,8 @@ func TestRoleSearchSavedRunPreservesMergedDefinitionReceipt(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	run, page, err := service.RunSaved(ctx, "owner", definition.ID, definition.Revision, SnapshotRequest{Facets: []string{"person_role"}}, nil)
 	require.NoError(t, err)
+	require.Len(t, page.Rows, 1)
+	require.Equal(t, version.ID, page.Rows[0].ContentVersionID)
 	require.Equal(t, definition.Fingerprint, run.QueryFingerprint)
 	fingerprint, err := query.Fingerprint(page.Query)
 	require.NoError(t, err)
@@ -767,9 +785,10 @@ func TestRoleSearchMentionsRequireDocumentContent(t *testing.T) {
 	require.ElementsMatch(t, []int64{quoted.ID, last.ID, derived.ID, ascii.ID}, compiledFixtureIDs(t, s.db, compiled, ""))
 }
 
-func TestRoleSearchMentionsSelectedRendition(t *testing.T) {
-	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+func checkRoleSearchMentionsSelectedRendition(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Linden Vale", "operator")
 	require.NoError(t, err)
@@ -781,11 +800,11 @@ func TestRoleSearchMentionsSelectedRendition(t *testing.T) {
 	require.NoError(t, err)
 	attachment := RenditionAttachmentRecord{ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0], BuildID: build.ID, Profile: profile, AttachedAt: embeddingCatalogTime}
 	require.NoError(t, s.PublishRenditionAndLexicalHeads(ctx, attachment, RenditionHeadRecord{ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint, AttachmentID: attachment.ID, PublishedAt: embeddingCatalogTime}, generation.ID))
-	node, err := s.NodeByPath(ctx, "/synthetic-source-a.pdf")
+	value := snapshotTestQuery(t, `{"syntax":"advanced","text":"mentions:\"Linden Vale\""}`)
+	projection, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
 	require.NoError(t, err)
-	compiled := compileFixtureQuery(t, s, `mentions:"Linden Vale"`, query.Filters{})
-	require.NoError(t, s.withLexicalGenerationRead(ctx, func(q metadataQuerier, selected LexicalGeneration) error {
-		require.Equal(t, []int64{node.ID}, compiledFixtureIDs(t, q, compiled, selected.ID))
-		return nil
-	}))
+	require.Equal(t, generation.ID, projection.Generation.GenerationID)
+	require.Len(t, projection.Rows, 1)
+	require.Equal(t, versions[0], projection.Rows[0].ContentVersionID)
+	require.Equal(t, []string{"mentioned"}, projection.Rows[0].MatchedRoles)
 }

@@ -219,9 +219,6 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 	ctx context.Context, request SnapshotRequest, options snapshotMaterializeOptions,
 ) (SnapshotProjection, error) {
 	postgres := s.postgresSchema != ""
-	if postgres && !request.Photos && !request.FacetsOnly {
-		return SnapshotProjection{}, fmt.Errorf("%w: document snapshots require SQLite", ErrInvalidSnapshotRequest)
-	}
 	options = options.withDefaults()
 	options.PhotoRanking = request.PhotoRanking
 	pageSize, facets := request.PageSize, request.Facets

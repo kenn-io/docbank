@@ -138,7 +138,7 @@ func materializeSnapshotFacet(
 	if dimension != snapshotFacetDuplicates && reflect.DeepEqual(facetQuery.Filters, compiled.Query.Filters) {
 		return materializeSnapshotFacetFromRows(ctx, q, compiled.Query, dimension, snapshotRows, memberLimit)
 	}
-	facetCompiled, err := (queryCompiler{}).compile(ctx, facetQuery, queryResolver{q: q})
+	facetCompiled, err := (queryCompiler{}).compile(ctx, facetQuery, queryResolver{q: q, postgres: compiled.postgres})
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
@@ -146,7 +146,7 @@ func materializeSnapshotFacet(
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
-	statement, args, err := bindQueryPopulation(population, coverage, generationID)
+	statement, args, err := bindQueryPopulationForBackend(population, coverage, generationID, compiled.postgres)
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
@@ -154,14 +154,14 @@ func materializeSnapshotFacet(
 	ctes, join, key, label := "", "", `''`, `''`
 	switch dimension {
 	case "collections":
-		ctes = `, ` + CollectionMembershipCTE
+		ctes = `, ` + collectionMembershipSQL(compiled.postgres)
 		join = `LEFT JOIN collection_members cm ON cm.node_id=n.id LEFT JOIN collection_labels cl ON cl.ingest_id=cm.ingest_id`
 		key, label = `COALESCE(cm.ingest_id,'')`, `COALESCE(cl.label,cm.ingest_id,'')`
 	case snapshotFacetTags:
 		join = `LEFT JOIN node_tags nt ON nt.node_id=n.id LEFT JOIN tags t ON t.id=nt.tag_id`
 		key, label = `COALESCE(t.id,'')`, `COALESCE(t.name,'')`
 	case snapshotFacetTextCoverage:
-		ctes = `, coverage_members AS (SELECT node_id FROM matched_members), ` + processingCoverageCTE()
+		ctes = `, coverage_members AS (SELECT node_id FROM matched_members), ` + processingCoverageCTEForBackend(compiled.postgres)
 		join = `JOIN processing_coverage pc ON pc.node_id=n.id AND pc.version_id=cv.version_id`
 		key, label = `pc.state`, `pc.state`
 		args = append(args, coverage.ProfileFingerprint, generationID)
@@ -173,11 +173,12 @@ func materializeSnapshotFacet(
 	if dimension != snapshotFacetDuplicates {
 		order = ` ORDER BY ` + identity + `,` + key
 	}
-	rows, err := q.QueryContext(ctx, `WITH matched_members AS (`+statement+`)`+ctes+`
-		SELECT `+identity+`,n.name,COALESCE(cv.mime_type,''),cv.size,n.modified_at,`+key+`,`+label+`
+	read := `WITH matched_members AS (` + statement + `)` + ctes + `
+		SELECT ` + identity + `,n.name,COALESCE(cv.mime_type,''),cv.size,n.modified_at,` + key + `,` + label + `
 		FROM matched_members m JOIN nodes n ON n.id=m.node_id
 		JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=m.content_version_id
-		`+join+order, args...)
+		` + join + order
+	rows, err := q.QueryContext(ctx, bindCompiledRead(read, compiled.postgres), args...)
 	if err != nil {
 		return SnapshotFacet{}, fmt.Errorf("materializing %s facet: %w", dimension, err)
 	}
@@ -531,13 +532,13 @@ func fillSelectedSnapshotFacetLabels(
 			labels[key] = name
 		case snapshotFacetTags:
 			var name string
-			if err := q.QueryRowContext(ctx, `SELECT name FROM tags WHERE id=?`, key).Scan(&name); err != nil {
+			if err := q.QueryRowContext(ctx, `SELECT name FROM tags WHERE id=$1`, key).Scan(&name); err != nil {
 				return fmt.Errorf("reading selected tag facet label: %w", err)
 			}
 			labels[key] = name
 		case "collections":
 			var value sql.NullString
-			if err := q.QueryRowContext(ctx, `SELECT label FROM collection_labels WHERE ingest_id=?`, key).Scan(&value); err != nil {
+			if err := q.QueryRowContext(ctx, `SELECT label FROM collection_labels WHERE ingest_id=$1`, key).Scan(&value); err != nil {
 				if !errors.Is(err, sql.ErrNoRows) {
 					return fmt.Errorf("reading selected collection facet label: %w", err)
 				}

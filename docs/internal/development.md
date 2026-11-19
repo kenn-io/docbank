@@ -1316,7 +1316,23 @@ inside writer admission before it inserts a receipt. The receipt records the
 previous committed run and the change in membership. Runtime access to receipts
 is append-only. The calendar's capture-day facet uses the same photo membership
 and excludes photos outside the Library. Ranked photo workspaces have a separate
-qualification boundary. Document snapshots use the SQLite Store.
+qualification boundary.
+
+#### Document query snapshots
+
+The Store freezes document query results and their facets in one read snapshot
+on SQLite and PostgreSQL. The rows include the exact versions, tags,
+operational collections and processing coverage visible at that point. A facet
+recomputes its population when its own root filter is selected. Nested saved
+queries keep their filters. The duplicates facet counts matching documents with
+peers anywhere in the current vault.
+
+The `document-snapshots` contracts cover these rows, saved-run comparison
+receipts, structured selection, filename and body terms, phrase and prefix
+matching, and people-role filters and facets. Text search reads either indexed
+extractions or the current rendition generation. People filters keep
+incomplete attribution distinct from a known absence. NEAR, media-family filters
+and PDF fact filters use SQLite.
 
 #### Backup capture and physical recovery
 
