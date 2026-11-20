@@ -1542,7 +1542,7 @@ proof for the target's allocation lineage. The snapshot's final allocator
 high-water marks must equal its verified lineage tail and cannot be lower than
 the target's. A missing scope, shorter chain, divergent audit or
 allocation-lineage prefix, pre-audit snapshot, or different vault ID is rejected
-with `audit_protected` before publication.
+before publication.
 
 High-water comparison alone is not enough. Copies restored from one snapshot
 share a vault ID and may independently consume the same numeric node IDs and
@@ -1585,12 +1585,11 @@ without collapsing individual node events or presenting the group as one atomic
 mutation.
 
 !!! info "Planned"
-    Scope timelines and version comparison are planned to use the same
-    canonical event model. Comparison is planned to be type-aware without
-    inventing semantic equivalence: plain text and canonical metadata may
-    render inline or side by side, while images, PDFs, Office documents, and
-    unknown binary formats begin with identity and metadata changes plus
-    verified download and open actions.
+    Version comparison is planned to use the same canonical event model.
+    Comparison is planned to be type-aware without inventing semantic
+    equivalence: plain text and canonical metadata may render inline or side by
+    side, while images, PDFs, Office documents, and unknown binary formats begin
+    with identity and metadata changes plus verified download and open actions.
 
 ### CLI and agents
 
