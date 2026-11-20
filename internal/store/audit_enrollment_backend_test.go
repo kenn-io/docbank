@@ -5,9 +5,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func checkAuditEnrollmentPhotosPostgres(t *testing.T) {
@@ -47,8 +44,8 @@ func checkAuditEnrollmentPhotosPostgres(t *testing.T) {
 		return out
 	}
 
-	setup, owner := pgtest.NewDatabase(t)
-	destination := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	destination := openPostgresStore(t, owner, login)
 	source, asset, raw := xmpSidecarPhoto(t, newTestStore(t))
 	// Both backends represent the same vault, including canonical record hashes.
 	source.vaultID = destination.vaultID

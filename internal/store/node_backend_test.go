@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/pgstoretest"
-	"go.kenn.io/docbank/internal/pgtest"
 	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
@@ -19,8 +18,31 @@ import (
 // constructs the qualified store surface; complete PostgreSQL vaults are not openable.
 func newPostgresQueryStore(t *testing.T) *Store {
 	t.Helper()
-	setup, owner := pgtest.NewDatabase(t)
-	return newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	_, cfg, config := pgstoretest.NewDatabase(t)
+	s, err := OpenPostgres(t.Context(), config, cfg, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	return s
+}
+
+// newTemplateDatabase returns a new database that already holds the
+// canonical "documents" schema, its owner, and the settings of a runtime
+// login with the qualified Store grants. Use it when a test needs the
+// installed schema, not the installation.
+func newTemplateDatabase(t *testing.T) (*sql.DB, string, *pgx.ConnConfig) {
+	t.Helper()
+	setup, cfg, runtime := pgstoretest.NewDatabase(t)
+	return setup, cfg.SchemaOwner, runtime
+}
+
+// openPostgresStore opens a Store in the "documents" schema through the
+// runtime login settings from newTemplateDatabase.
+func openPostgresStore(t *testing.T, owner string, login *pgx.ConnConfig) *Store {
+	t.Helper()
+	s, err := OpenPostgres(t.Context(), login, pgschema.Config{Schema: "documents", SchemaOwner: owner}, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	return s
 }
 
 func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *Store {

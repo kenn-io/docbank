@@ -5,10 +5,11 @@ import (
 	"slices"
 	"strings"
 
+	"testing"
+
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/query"
-	"testing"
 
 	"github.com/stretchr/testify/require"
 )

@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -357,6 +358,7 @@ func TestDetectMimeUsesClosedSuffixRefinements(t *testing.T) {
 		{name: "actual apng with png suffix", path: "animation.png", head: makeAPNG(37), resolver: "application/pdf", want: "image/png"},
 		{name: "apng beyond prefix", path: "animation.apng", head: makeAPNG(513)[:512], resolver: "application/pdf", want: "image/png"},
 		{name: "generic png suffix", path: "animation.apng", head: []byte(pngHeader), resolver: "application/pdf", want: "image/png"},
+		{name: "epub container", path: "book.epub", head: []byte("PK\x03\x04\x14\x00\x00\x00\x00\x00"), resolver: "application/pdf", want: "application/epub+zip"},
 		{name: "matroska audio", path: "audio.mka", head: matroska, resolver: "application/pdf", want: "audio/x-matroska"},
 		{name: "xmp sidecar", path: "sidecar.xmp", head: xmp, resolver: "application/pdf", want: "application/rdf+xml"},
 		{name: "xmp packet without xml declaration", path: "sidecar.xmp", head: xmpWithoutDeclaration, resolver: "application/pdf", want: "application/rdf+xml"},
@@ -376,6 +378,32 @@ func TestDetectMimeUsesClosedSuffixRefinements(t *testing.T) {
 			})
 			require.Equal(t, tc.want, got)
 			require.Equal(t, tc.wantCalls, called)
+		})
+	}
+}
+
+func TestDetectMimePreservesRecognizedZIPContainersWithEPUBSuffix(t *testing.T) {
+	const ods = "application/vnd.oasis.opendocument.spreadsheet"
+	const docx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	type member struct{ name, content string }
+	for _, tc := range []struct {
+		name, want string
+		members    []member
+	}{
+		{"spreadsheet", ods, []member{{"mimetype", ods}, {"content.xml", "<spreadsheet/>"}}},
+		{"document", docx, []member{{"[Content_Types].xml", "<Types/>"}, {"word/document.xml", "<document/>"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var content bytes.Buffer
+			archive := zip.NewWriter(&content)
+			for _, entry := range tc.members {
+				file, err := archive.CreateHeader(&zip.FileHeader{Name: entry.name, Method: zip.Store})
+				require.NoError(t, err)
+				_, err = io.WriteString(file, entry.content)
+				require.NoError(t, err)
+			}
+			require.NoError(t, archive.Close())
+			require.Equal(t, tc.want, DetectMIME(tc.name+".epub", content.Bytes()))
 		})
 	}
 }

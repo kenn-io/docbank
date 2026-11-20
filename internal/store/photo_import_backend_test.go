@@ -7,8 +7,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func checkPhotoImportEmbeddedObservation(t *testing.T, open func(*testing.T) *Store) {
@@ -40,8 +38,8 @@ func checkPhotoImportEmbeddedObservation(t *testing.T, open func(*testing.T) *St
 func checkPhotoImportRollbackPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "photo-import", "/synthetic")
 	require.NoError(t, err)

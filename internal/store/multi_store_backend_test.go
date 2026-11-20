@@ -12,8 +12,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 )
@@ -36,8 +34,8 @@ func multiStoreOperation(t *testing.T, s *Store, plan PlacementPlan, kind string
 func checkMultiStorePhysicalRoundTripPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	ctx := t.Context()
 	catalog := NewPackCatalog(s)
 	primaryLayout, err := packstore.NewLayout(t.TempDir(), packstore.LayoutOptions{Staging: packstore.StagingSameDirectory})
@@ -203,8 +201,8 @@ func checkMultiStoreReadSnapshotsPostgres(t *testing.T) {
 func checkStorageRepairRollbackPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	ctx := t.Context()
 	node, err := s.CreateFile(ctx, s.RootID(), "repair.txt", fakeHash("f3"), 12, "text/plain")
 	require.NoError(t, err)

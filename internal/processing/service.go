@@ -2879,6 +2879,9 @@ func extensionForMediaType(value string) string {
 		"text/x-go": ".go", "text/x-python": ".py", "text/javascript": ".js",
 		"image/jpeg": ".jpg", "audio/wav": ".wav", "audio/x-wav": ".wav", "video/mp4": ".mp4",
 		"audio/mpeg": ".mp3", "audio/mp4": ".m4a", "audio/x-m4a": ".m4a", "message/rfc822": ".eml",
+		"application/epub+zip": ".epub", "application/vnd.oasis.opendocument.spreadsheet": ".ods",
+		"application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":         ".xlsx",
 	}[base]; extension != "" {
 		return extension
 	}

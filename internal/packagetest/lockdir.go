@@ -13,12 +13,18 @@ const inheritedLockDirEnv = "DOCBANK_TEST_LOCK_DIR"
 
 // RunWithLockRegistry isolates test locks and lets children inherit their parent's registry.
 func RunWithLockRegistry(m *testing.M) int {
-	return runWithLockRegistry(m, os.RemoveAll)
+	return runWithLockRegistry(m.Run, os.RemoveAll)
 }
 
-func runWithLockRegistry(m *testing.M, removeAll func(string) error) (code int) {
+// RunShardsWithLockRegistry runs RunShards inside one lock registry shared by
+// every shard, as RunWithLockRegistry shares it with other child processes.
+func RunShardsWithLockRegistry(m *testing.M) int {
+	return runWithLockRegistry(func() int { return RunShards(m) }, os.RemoveAll)
+}
+
+func runWithLockRegistry(run func() int, removeAll func(string) error) (code int) {
 	if dir := os.Getenv(LockDirEnv); dir != "" && os.Getenv(inheritedLockDirEnv) == dir {
-		return m.Run()
+		return run()
 	}
 	dir, err := os.MkdirTemp("", "docbank-test-locks-")
 	if err != nil {
@@ -45,5 +51,5 @@ func runWithLockRegistry(m *testing.M, removeAll func(string) error) (code int) 
 		fmt.Fprintf(os.Stderr, "setting %s: %v\n", inheritedLockDirEnv, err)
 		return 1
 	}
-	return m.Run()
+	return run()
 }

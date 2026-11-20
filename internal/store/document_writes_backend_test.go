@@ -5,8 +5,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 	"go.kenn.io/kit/pack"
 )
 
@@ -153,8 +151,8 @@ func checkDocumentPhotoMaintenancePostgres(t *testing.T) {
 	node, err := source.IngestFileExact(ctx, run, source.RootID(), "photo.jpg", fakeHash("a4"), 20, "image/jpeg", "/photos/photo.jpg", "2024-03-05T10:00:00Z")
 	require.NoError(t, err)
 	browsePhotoMetadata(t, source, node, "photo-exif", exifCapture("2024-06-10T12:00:00Z"))
-	setup, owner := pgtest.NewDatabase(t)
-	target := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	target := openPostgresStore(t, owner, login)
 	tables := append(append([]string{}, postgresEnrollmentCatalogs...), "blob_locations", "blob_packs", "blob_pack_entries", "photo_source_claims", "photo_timeline")
 	copyStoreCatalogFixture(t, source, setup, tables)
 	target.primaryStoreID = source.primaryStoreID
@@ -194,8 +192,8 @@ func checkDocumentSidecarWorkPostgres(t *testing.T) {
 	source, asset, raw := xmpSidecarPhoto(t, newTestStore(t))
 	importXMP(t, source, raw.ID, PhotoAuthored{Rating: 3, Confirmed: PhotoConfirmedRating})
 	require.Empty(t, xmpTargets(t, source))
-	setup, owner := pgtest.NewDatabase(t)
-	target := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	target := openPostgresStore(t, owner, login)
 	tables := append(append([]string{}, postgresEnrollmentCatalogs...), "blob_locations", "blob_packs", "blob_pack_entries", "photo_source_claims", "photo_timeline")
 	copyStoreCatalogFixture(t, source, setup, tables)
 	target.primaryStoreID = source.primaryStoreID
@@ -244,8 +242,8 @@ func checkDocumentTextSuppressionPostgres(t *testing.T) {
 	require.NoError(t, err)
 	_, err = source.PurgeDerivatives(ctx, PurgeRequest{ContentVersionIDs: []string{node.CurrentVersionID}})
 	require.NoError(t, err)
-	setup, owner := pgtest.NewDatabase(t)
-	target := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	target := openPostgresStore(t, owner, login)
 	tables := append(append([]string{}, postgresEnrollmentCatalogs...), "blob_locations")
 	copyStoreCatalogFixture(t, source, setup, tables)
 	target.primaryStoreID = source.primaryStoreID
@@ -274,8 +272,8 @@ func checkDocumentBlobPromotionPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
 	ctx := t.Context()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	hash := fakeHash("c1")
 	physical := BlobPhysical{Encoding: "zstd", StoredBytes: 4, PackEligible: true, Created: true, MD5: "11111111111111111111111111111111"}
 	require.NoError(t, s.RecordBlob(ctx, hash, 20, physical))
@@ -312,8 +310,8 @@ func checkDocumentReintroducedPackMappingsPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
 	ctx := t.Context()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	hash := fakeHash("d1")
 	// Logical collection may leave dead mappings in immutable packs. One is
 	// primary, one belongs to a secondary: reintroduction removes only the first.

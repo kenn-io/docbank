@@ -12,15 +12,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/canonical"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func checkSealedDeliveryReservationRollbackPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	ctx := t.Context()
 	snapshot, request := numberedSnapshotFixture(t, s)
 	var role string
@@ -57,8 +55,8 @@ func checkSealedDeliveryReservationRollbackPostgres(t *testing.T) {
 func checkSealedDeliveryArtifactRollbackPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	ctx := t.Context()
 	snapshot, inputs := batesFixture(t, s)
 	namespace, err := s.EnsureBatesNamespace(ctx, "PUBLISH", "", 6)
@@ -111,9 +109,8 @@ func checkSealedDeliveryArtifactRollbackPostgres(t *testing.T) {
 func checkSealedDeliveryConcurrentReservationsPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	cfg := pgschema.Config{Schema: "documents", SchemaOwner: owner}
-	stores := []*Store{newPostgresSchemaStore(t, setup, cfg), newPostgresSchemaStore(t, setup, cfg)}
+	_, owner, login := newTemplateDatabase(t)
+	stores := []*Store{openPostgresStore(t, owner, login), openPostgresStore(t, owner, login)}
 	snapshot, request := numberedSnapshotFixture(t, stores[0])
 	const count = 8
 	var group sync.WaitGroup

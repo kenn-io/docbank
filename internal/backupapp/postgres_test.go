@@ -8,17 +8,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/pgstoretest"
-	"go.kenn.io/docbank/internal/pgtest"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/store/pgschema"
 	"go.kenn.io/kit/backup"
 )
 
 func postgresArchiveFixture(t *testing.T) *archiveFixture {
 	t.Helper()
-	setup, owner := pgtest.NewDatabase(t)
-	cfg := pgschema.Config{Schema: "documents", SchemaOwner: owner}
-	connection := pgstoretest.RuntimeConfig(t, setup, cfg)
+	setup, cfg, connection := pgstoretest.NewDatabase(t)
 	dir := t.TempDir()
 	metadata, err := store.OpenPostgres(t.Context(), connection, cfg, dir)
 	require.NoError(t, err)

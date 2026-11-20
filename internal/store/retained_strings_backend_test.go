@@ -3,10 +3,11 @@ package store
 import (
 	"encoding/json/v2"
 	"fmt"
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/document"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 )
 
 func seedNULMailbox(t *testing.T, s *Store) *Store {

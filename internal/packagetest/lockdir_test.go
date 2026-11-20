@@ -13,9 +13,12 @@ import (
 func TestMain(m *testing.M) {
 	if os.Getenv("DOCBANK_LOCK_REGISTRY_TEST_CHILD") == "1" {
 		if os.Getenv("DOCBANK_LOCK_REGISTRY_TEST_REMOVE_FAIL") == "1" {
-			os.Exit(runWithLockRegistry(m, func(string) error { return os.ErrPermission }))
+			os.Exit(runWithLockRegistry(m.Run, func(string) error { return os.ErrPermission }))
 		}
 		os.Exit(RunWithLockRegistry(m))
+	}
+	if os.Getenv(shardTestParentEnv) == "1" {
+		os.Exit(RunShards(m, Split{Test: "TestShardChildSplit", Subtests: []string{"one", "two", "group/inner", "group/outer_inner"}}))
 	}
 	os.Exit(m.Run())
 }

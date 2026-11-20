@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,21 +29,21 @@ import (
 	"go.kenn.io/docbank/internal/home"
 )
 
-var docbankBuildDir string // Allocated on first build; TestMain removes it.
+// docbankBinaryDirEnv names the directory where the package's test processes
+// share the binaries they build. TestMain creates it in the first process and
+// removes it after the run, so a build never outlives the source it came from.
+const docbankBinaryDirEnv = "DOCBANK_TEST_BINARY_DIR"
+
+// docbankBinaryDir is read in TestMain, before any test runs. The directory
+// changes with every run, and go test would never reuse a cached result if a
+// test's own log recorded the variable.
+var docbankBinaryDir string
+
 var docbankBuildMu sync.Mutex
 var docbankBuilds = map[string]struct {
 	bin string
 	err error
 }{}
-
-// ensureDocbankBuildDir allocates the shared build directory on first use,
-// so test processes that never build a binary leave no directory behind.
-func ensureDocbankBuildDir() (err error) {
-	if docbankBuildDir == "" {
-		docbankBuildDir, err = os.MkdirTemp("", "docbank-test-binaries-")
-	}
-	return err
-}
 
 func buildDocbank(tb testing.TB) string {
 	tb.Helper()
@@ -58,31 +61,52 @@ func buildDocbankVersion(tb testing.TB, v string) string {
 	defer docbankBuildMu.Unlock()
 	build, ok := docbankBuilds[v]
 	if !ok {
-		build.bin, build.err = func() (string, error) {
-			if err := ensureDocbankBuildDir(); err != nil {
-				return "", err
-			}
-			name := fmt.Sprintf("docbank-%d", len(docbankBuilds))
-			if runtime.GOOS == "windows" {
-				name += ".exe"
-			}
-			bin := filepath.Join(docbankBuildDir, name)
-			args := []string{"build", "-tags", "fts5"}
-			if v != "" {
-				args = append(args, "-ldflags", "-X go.kenn.io/docbank/internal/version.Version="+v)
-			}
-			args = append(args, "-o", bin, "go.kenn.io/docbank/cmd/docbank")
-			cmd := exec.CommandContext(tb.Context(), "go", args...)
-			cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
-			if out, err := cmd.CombinedOutput(); err != nil {
-				return "", fmt.Errorf("build docbank: %w\n%s", err, out)
-			}
-			return bin, nil
-		}()
+		build.bin, build.err = buildSharedDocbank(tb.Context(), v)
 		docbankBuilds[v] = build
 	}
 	require.NoError(tb, build.err)
 	return build.bin
+}
+
+// buildSharedDocbank builds the binary once for all of the run's test
+// processes. A lock makes a process wait while another one builds it.
+func buildSharedDocbank(ctx context.Context, v string) (_ string, err error) {
+	dir := docbankBinaryDir
+	if dir == "" {
+		return "", errors.New(docbankBinaryDirEnv + " is not set; TestMain sets it")
+	}
+	name := "docbank"
+	if v != "" {
+		name += "-" + v
+	}
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	bin := filepath.Join(dir, name)
+	lock := flock.New(bin + ".lock")
+	if err := lock.Lock(); err != nil {
+		return "", fmt.Errorf("locking docbank build: %w", err)
+	}
+	defer func() { err = errors.Join(err, lock.Unlock()) }()
+	if _, err := os.Stat(bin); err == nil {
+		return bin, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	// Build beside the binary and rename it, so a failed build leaves nothing
+	// that a later process would take for a finished one.
+	partial := bin + ".partial"
+	args := []string{"build", "-tags", "fts5"}
+	if v != "" {
+		args = append(args, "-ldflags", "-X go.kenn.io/docbank/internal/version.Version="+v)
+	}
+	args = append(args, "-o", partial, "go.kenn.io/docbank/cmd/docbank")
+	cmd := exec.CommandContext(ctx, "go", args...)
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("build docbank: %w\n%s", err, out)
+	}
+	return bin, os.Rename(partial, bin)
 }
 
 var pidRe = regexp.MustCompile(`pid (\d+)`)

@@ -33,7 +33,7 @@ BUILD_TAGS := fts5
 # every run; other Go jobs upload failures and reruns. CI sets PG_SUITE so each
 # PostgreSQL version has its own files.
 PG_SUITE ?= postgres
-gotestsum = mkdir -p gotestsum && go tool gotestsum --format pkgname-and-test-fails --format-icons text \
+gotestsum = mkdir -p gotestsum && scripts/with-test-tmpdir.sh go tool gotestsum --format pkgname-and-test-fails --format-icons text \
 	--jsonfile gotestsum/$(1).json --rerun-fails=2 --rerun-fails-report gotestsum/$(1)-reruns.txt \
 	--packages "$(2)" --
 
@@ -82,31 +82,51 @@ clean:
 	rm -rf frontend/dist
 
 test:
-	go test -timeout 20m -tags "$(BUILD_TAGS)" ./...
+	scripts/with-test-tmpdir.sh go test -timeout 20m -tags "$(BUILD_TAGS)" ./...
 
 .PHONY: backend-coverage test-pg
 backend-coverage:
 	go test -v -tags "$(BUILD_TAGS)" ./internal/store -run '^$$' -args -backend-coverage
 
+# Limit package and test parallelism to leave PostgreSQL connections for
+# readers, schema setup, and database cleanup. Processing has its own phase
+# because its long worker scenarios compete with Store for CPU and database I/O.
+PG_STEPS := pgschema store backup embedded ingest checkout exporter mailbox
+
 test-pg:
 	@test -n "$${DOCBANK_TEST_POSTGRES_DSN:-}" || (echo 'Set DOCBANK_TEST_POSTGRES_DSN to a disposable PostgreSQL test server' >&2; exit 1)
+	@$(MAKE) --no-print-directory -j 3 $(if $(filter output-sync,$(.FEATURES)),--output-sync=target) $(addprefix test-pg-,$(PG_STEPS))
+	@$(MAKE) --no-print-directory test-pg-processing
+
+.PHONY: $(addprefix test-pg-,$(PG_STEPS)) test-pg-processing
+test-pg-pgschema:
 	$(call gotestsum,$(PG_SUITE)-pgschema,./internal/store/pgschema) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)"
-	# The full Store contract suite includes photo edits and XMP synchronization.
-	# It creates a database for each of about a thousand tests and takes about
-	# five and a half minutes on PostgreSQL 18 in CI, so allow nearly twice that.
-	$(call gotestsum,$(PG_SUITE)-store,./internal/store) -race -parallel 4 -count=1 -timeout 10m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
-	$(call gotestsum,$(PG_SUITE)-backup,./internal/backupapp) -race -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
-	$(call gotestsum,$(PG_SUITE)-embedded,./docbank) -race -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
+# The full Store contract suite includes photo edits and XMP synchronization.
+# It creates a database for each of about a thousand tests and takes about
+# five and a half minutes on PostgreSQL 18 in CI, so allow nearly twice that.
+test-pg-store:
+	$(call gotestsum,$(PG_SUITE)-store,./internal/store) -race -parallel 12 -count=1 -timeout 10m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
+test-pg-backup:
+	$(call gotestsum,$(PG_SUITE)-backup,./internal/backupapp) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
+test-pg-embedded:
+	$(call gotestsum,$(PG_SUITE)-embedded,./docbank) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
+test-pg-ingest:
 	$(call gotestsum,$(PG_SUITE)-ingest,./internal/ingest) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
+test-pg-checkout:
 	$(call gotestsum,$(PG_SUITE)-checkout,./internal/checkout) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
+test-pg-exporter:
 	$(call gotestsum,$(PG_SUITE)-exporter,./internal/exporter) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
+test-pg-mailbox:
 	$(call gotestsum,$(PG_SUITE)-mailbox,./internal/mailbox) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
-	# Processing reached 176 seconds in CI under the old three-minute guard.
-	# Keep room for shared worker scenarios and slower runners.
-	$(call gotestsum,$(PG_SUITE)-processing,./internal/processing) -race -parallel 4 -count=1 -timeout 5m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
+# Allow time for the large face and media search scenarios on slower runners.
+# The trailing "/" keeps the tests in one process. Separate shard processes
+# each load the place-name gazetteer under the race detector with one CPU,
+# which doubled the package runtime.
+test-pg-processing:
+	$(call gotestsum,$(PG_SUITE)-processing,./internal/processing) -race -parallel 4 -count=1 -timeout 8m -tags "$(BUILD_TAGS)" -run 'Postgres$$/'
 
 test-v:
-	go test -timeout 20m -tags "$(BUILD_TAGS)" -v ./...
+	scripts/with-test-tmpdir.sh go test -timeout 20m -tags "$(BUILD_TAGS)" -v ./...
 
 openapi:
 	go run -tags "$(BUILD_TAGS)" ./cmd/docbank openapi > internal/api/openapi.yaml

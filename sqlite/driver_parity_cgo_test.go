@@ -40,3 +40,7 @@ func TestDriverParity(t *testing.T) {
 func TestMattnDriverSynchronous(t *testing.T) {
 	assertDriverSynchronous(t, mattn.Driver{})
 }
+
+func TestMattnStatementReuse(t *testing.T) {
+	assertStatementReuse(t, mattn.Driver{})
+}

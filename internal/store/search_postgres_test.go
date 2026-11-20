@@ -18,8 +18,8 @@ import (
 func checkLexicalSearchIndexesPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	ctx := t.Context()
 	// A populated corpus gives the planner a reason to choose the selective GIN
 	// lookup. Use canonical DDL and normal runtime reads, without forcing a plan.

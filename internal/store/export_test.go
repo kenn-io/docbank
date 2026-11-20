@@ -8,10 +8,11 @@ import (
 	"testing/synctest"
 	"time"
 
+	"uuid"
+
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/bundle"
-	"uuid"
 )
 
 // A lost response must not cause a source resolver to select a newer head.

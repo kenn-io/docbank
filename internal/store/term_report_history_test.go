@@ -152,7 +152,10 @@ func restoreTermReportHistory(t *testing.T, postgres bool, exported []byte) *Sto
 	if postgres {
 		setup, owner := pgtest.NewDatabase(t)
 		cfg := pgschema.Config{Schema: "reports", SchemaOwner: owner}
-		require.NoError(t, ImportPostgresMetadata(ctx, setup, cfg, bytes.NewReader(exported)))
+		release := pgtest.ReserveSchemaInstall(t)
+		err := ImportPostgresMetadata(ctx, setup, cfg, bytes.NewReader(exported))
+		release()
+		require.NoError(t, err)
 		return newPostgresSchemaStore(t, setup, cfg)
 	}
 	restored := newTestStore(t)

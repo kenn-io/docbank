@@ -7,8 +7,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func checkPeopleSnapshotsPostgres(t *testing.T) {
@@ -132,8 +130,8 @@ func checkPeopleRollbackPostgres(t *testing.T) {
 	for _, operation := range []string{"name", "undo", "merge", "split", "candidate"} {
 		t.Run(operation, func(t *testing.T) {
 			t.Parallel()
-			setup, owner := pgtest.NewDatabase(t)
-			s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+			setup, owner, login := newTemplateDatabase(t)
+			s := openPostgresStore(t, owner, login)
 			ctx := t.Context()
 			person, err := s.CreatePerson(ctx, "Ada", "operator")
 			require.NoError(t, err)
@@ -214,8 +212,8 @@ func checkPeopleRollbackPostgres(t *testing.T) {
 func checkPeopleRetainedPackageCustodyPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	source := newTestStore(t)
 	source.vaultID = s.vaultID
 	ctx := t.Context()

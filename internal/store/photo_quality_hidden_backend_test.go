@@ -9,8 +9,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func checkPhotoQualityLifecycle(t *testing.T, newStore func(*testing.T) *Store) {
@@ -168,8 +166,8 @@ func checkPhotoHiddenLifecyclePostgres(t *testing.T) {
 func checkPhotoQualityHiddenRollbackPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	ctx := t.Context()
 	var role string
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT current_user`).Scan(&role))
@@ -277,8 +275,8 @@ func checkPhotoQualityRetainedDismissalPostgres(t *testing.T) {
 	source := newTestStore(t)
 	node, face := faceForDecisionTest(t, source, "")
 	decideFaceForTest(t, source, node, face.FaceID, "", "dismiss")
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	copyStoreCatalogFixture(t, source, setup, postgresEnrollmentCatalogs)
 	faces, inputs, err := s.PhotoQualityFaces(t.Context(), node.CurrentVersionID)
 	require.NoError(t, err)

@@ -6,13 +6,14 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/query"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/query"
 )
 
 func browsePhotoNode(t *testing.T, s *Store, name, hash, mime string) Node {

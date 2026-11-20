@@ -150,6 +150,10 @@ func closedMIMERefinement(
 		if detected.Is("image/tiff") {
 			return "image/x-nikon-nef"
 		}
+	case ".epub":
+		if detected.Is("application/zip") {
+			return "application/epub+zip"
+		}
 	case ".mka":
 		if detected.Is("video/x-matroska") {
 			return "audio/x-matroska"

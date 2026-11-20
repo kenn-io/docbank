@@ -46,12 +46,6 @@ type pdfiumEngine struct {
 // between sessions can leave their physical pages resident until a later GC.
 var wasmBacking = newBackingManager(512 << 20)
 
-// Exactly one embedded module is compiled. Keep its code-only cache for the
-// process lifetime as well: retiring a large compilation for every engine can
-// retain heap-system pages even after all runtime/document handles are closed.
-// The exclusive backing lease serializes compilation and runtime access.
-var wasmCode = wazero.NewCompilationCache()
-
 type backingManager struct {
 	mu       sync.Mutex
 	token    chan struct{}
@@ -628,9 +622,16 @@ func (e *pdfiumEngine) withInstanceContext(ctx context.Context, fn func(context.
 	}))
 	runtimeConfig := wazero.NewRuntimeConfig().WithCoreFeatures(api.CoreFeaturesV2 | experimental.CoreFeaturesExceptionHandling).
 		WithMemoryLimitPages(uint32(e.recipe.WASMMemoryBytes / 65536)).WithCloseOnContextDone(true).WithCompilationCache(e.cache) //nolint:gosec // Recipe validation bounds the page count to 8192.
+	release, err := lockSharedCode()
+	if err != nil {
+		return err
+	}
 	pool, err := webassembly.InitWithWASM(webassembly.Config{Context: ctx, WASM: wasmBytes, FSConfig: wazero.NewFSConfig(),
 		RuntimeConfig: runtimeConfig, MaxTotal: 1, Stdout: io.Discard, Stderr: io.Discard})
-	if err != nil {
+	if err = errors.Join(err, release(err == nil)); err != nil {
+		if pool != nil {
+			err = errors.Join(err, pool.Close())
+		}
 		return fmt.Errorf("initialize isolated PDFium: %w", err)
 	}
 	defer pool.Close() //nolint:errcheck // Original processing error is authoritative; runtime still closes.

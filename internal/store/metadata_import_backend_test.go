@@ -22,9 +22,9 @@ import (
 	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
-func checkMetadataImportCatalogsPostgres(t *testing.T) {
-	t.Helper()
-	t.Parallel()
+// metadataImportCatalogSeeds returns the stores whose metadata
+// checkMetadataImportCatalogsPostgres imports, by subtest name.
+func metadataImportCatalogSeeds() map[string]func(*testing.T) *Store {
 	seeds := retainedMetadataCatalogSeeds()
 	seeds["NUL watch"] = func(t *testing.T) *Store {
 		t.Helper()
@@ -416,6 +416,13 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 	}
 	// Verify these native fixtures actually produce the custom records whose
 	// insertion behavior the round trip must exercise.
+	return seeds
+}
+
+func checkMetadataImportCatalogsPostgres(t *testing.T) {
+	t.Helper()
+	t.Parallel()
+	seeds := metadataImportCatalogSeeds()
 	requiredKinds := map[string][]string{
 		"NUL watch":                       {"watch_source"},
 		"NUL package header":              {"package", "package_volume"},
@@ -471,10 +478,15 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 			var input bytes.Buffer
 			require.NoError(t, source.ExportMetadata(ctx, &input))
 			require.Subset(t, metadataImportRecordTypes(t, input.Bytes()), requiredKinds[name])
-			setup, owner := pgtest.NewDatabase(t)
+			// The target is a copy of a fresh installation, which import
+			// accepts as pristine. Other tests import into empty databases.
+			setup, owner, login := newTemplateDatabase(t)
 			cfg := pgschema.Config{Schema: "documents", SchemaOwner: owner}
-			require.NoError(t, ImportPostgresMetadata(ctx, setup, cfg, bytes.NewReader(input.Bytes())))
-			runtime := newPostgresSchemaStore(t, setup, cfg)
+			release := pgtest.ReserveSchemaInstall(t)
+			err := ImportPostgresMetadata(ctx, setup, cfg, bytes.NewReader(input.Bytes()))
+			release()
+			require.NoError(t, err)
+			runtime := openPostgresStore(t, owner, login)
 			var output bytes.Buffer
 			require.NoError(t, runtime.ExportMetadata(ctx, &output))
 			require.Equal(t, input.String(), output.String())
@@ -1042,7 +1054,9 @@ func checkMetadataImportRollbackPostgres(t *testing.T) {
 			ctx := t.Context()
 			setup, owner := pgtest.NewDatabase(t)
 			cfg := pgschema.Config{Schema: "documents", SchemaOwner: owner}
+			release := pgtest.ReserveSchemaInstall(t)
 			before, err := pgschema.Setup(ctx, setup, cfg)
+			release()
 			require.NoError(t, err)
 			var broken = io.MultiReader(bytes.NewReader(input.Bytes()), failedMetadataReader{errors.New("source interrupted")})
 			writer := setup
@@ -1068,13 +1082,18 @@ func checkMetadataImportRollbackPostgres(t *testing.T) {
 				t.Cleanup(func() { require.NoError(t, writer.Close()) })
 				broken = bytes.NewReader(input.Bytes())
 			}
-			require.Error(t, ImportPostgresMetadata(ctx, writer, cfg, broken))
+			release = pgtest.ReserveSchemaInstall(t)
+			err = ImportPostgresMetadata(ctx, writer, cfg, broken)
+			release()
+			require.Error(t, err)
 			if late {
 				require.NoError(t, injectionErr)
 				require.True(t, injected)
 			}
 
+			release = pgtest.ReserveSchemaInstall(t)
 			after, err := pgschema.Setup(ctx, setup, cfg)
+			release()
 			require.NoError(t, err)
 			require.Equal(t, before, after)
 			var nodes, blobs, highWater int64
@@ -1085,7 +1104,10 @@ func checkMetadataImportRollbackPostgres(t *testing.T) {
 			require.Zero(t, blobs)
 			require.Equal(t, int64(1), highWater)
 
-			require.NoError(t, ImportPostgresMetadata(ctx, setup, cfg, bytes.NewReader(input.Bytes())))
+			release = pgtest.ReserveSchemaInstall(t)
+			err = ImportPostgresMetadata(ctx, setup, cfg, bytes.NewReader(input.Bytes()))
+			release()
+			require.NoError(t, err)
 		})
 	}
 }
@@ -1103,12 +1125,18 @@ func checkMetadataImportAdmissionPostgres(t *testing.T) {
 	var originalPath string
 	require.NoError(t, setup.QueryRowContext(ctx, `SHOW search_path`).Scan(&originalPath))
 	runtime := newPostgresSchemaStore(t, setup, cfg)
-	require.ErrorContains(t, ImportPostgresMetadata(ctx, runtime.db, cfg, bytes.NewReader(input.Bytes())), "schema owner role")
-	_, err := runtime.Mkdir(ctx, runtime.RootID(), "keep-this")
+	release := pgtest.ReserveSchemaInstall(t)
+	err := ImportPostgresMetadata(ctx, runtime.db, cfg, bytes.NewReader(input.Bytes()))
+	release()
+	require.ErrorContains(t, err, "schema owner role")
+	_, err = runtime.Mkdir(ctx, runtime.RootID(), "keep-this")
 	require.NoError(t, err)
 	var before, after bytes.Buffer
 	require.NoError(t, runtime.ExportMetadata(ctx, &before))
-	require.ErrorContains(t, ImportPostgresMetadata(ctx, setup, cfg, bytes.NewReader(input.Bytes())), "not pristine")
+	release = pgtest.ReserveSchemaInstall(t)
+	err = ImportPostgresMetadata(ctx, setup, cfg, bytes.NewReader(input.Bytes()))
+	release()
+	require.ErrorContains(t, err, "not pristine")
 	require.NoError(t, runtime.ExportMetadata(ctx, &after))
 	require.Equal(t, before.String(), after.String())
 	var path string
@@ -1131,7 +1159,9 @@ func checkMetadataImportKeepsFreshConsentPostgres(t *testing.T) {
 	require.NoError(t, source.ExportMetadata(ctx, &input))
 	setup, owner := pgtest.NewDatabase(t)
 	cfg := pgschema.Config{Schema: "documents", SchemaOwner: owner}
+	release := pgtest.ReserveSchemaInstall(t)
 	require.NoError(t, ImportPostgresMetadata(ctx, setup, cfg, bytes.NewReader(input.Bytes())))
+	release()
 	runtime := newPostgresSchemaStore(t, setup, cfg)
 	_, err = runtime.AuthorizeProviderOperation(ctx, request)
 	require.ErrorIs(t, err, ErrProcessingConsentRequired)

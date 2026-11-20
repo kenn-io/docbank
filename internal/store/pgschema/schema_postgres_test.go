@@ -20,6 +20,13 @@ import (
 	"go.kenn.io/docbank/internal/pgtest"
 )
 
+func setupFreshSchema(t *testing.T, db *sql.DB, cfg Config) (uuid.UUID, error) {
+	t.Helper()
+	release := pgtest.ReserveSchemaInstall(t)
+	defer release()
+	return Setup(t.Context(), db, cfg)
+}
+
 func TestSchemaRequiresUTF8(t *testing.T) {
 	t.Parallel()
 	admin, owner := pgtest.NewDatabase(t)
@@ -50,7 +57,7 @@ func TestSetupPreservesIdentity(t *testing.T) {
 	t.Parallel()
 	db, owner := pgtest.NewDatabase(t)
 	cfg := Config{Schema: "documents", SchemaOwner: owner}
-	id, err := Setup(t.Context(), db, cfg)
+	id, err := setupFreshSchema(t, db, cfg)
 	require.NoError(t, err)
 	require.NotEqual(t, uuid.Nil(), id)
 	var version int
@@ -105,7 +112,7 @@ func TestSetupPreservesIdentity(t *testing.T) {
 	assert.Equal(t, id, stored)
 
 	// A separate schema is a separate vault, even within the same database.
-	other, err := Setup(t.Context(), db, Config{Schema: "other_documents", SchemaOwner: owner})
+	other, err := setupFreshSchema(t, db, Config{Schema: "other_documents", SchemaOwner: owner})
 	require.NoError(t, err)
 	assert.NotEqual(t, id, other)
 }
@@ -144,7 +151,7 @@ func TestRuntimeCannotChangeSchema(t *testing.T) {
 	setup := connect(owner, "fixture-owner-only", "")
 	runtime := connect(role, "fixture-runtime-only", "")
 	cfg := Config{Schema: "documents", SchemaOwner: owner}
-	id, err := Setup(t.Context(), setup, cfg)
+	id, err := setupFreshSchema(t, setup, cfg)
 	require.NoError(t, err)
 	_, err = admin.ExecContext(t.Context(), "GRANT USAGE ON SCHEMA documents TO "+quotedRole+"; GRANT SELECT ON documents.vault_metadata TO "+quotedRole)
 	require.NoError(t, err)
@@ -266,7 +273,7 @@ func TestSetupRefusesUnownedOrInvalidState(t *testing.T) {
 			db, owner := pgtest.NewDatabase(t)
 			cfg := Config{Schema: "documents", SchemaOwner: owner}
 			if tc.name != "empty schema" && tc.name != "unrelated schema" {
-				_, err := Setup(t.Context(), db, cfg)
+				_, err := setupFreshSchema(t, db, cfg)
 				require.NoError(t, err)
 			}
 			_, err := db.ExecContext(t.Context(), tc.prepare)
@@ -301,14 +308,14 @@ func TestSetupRollsBackFailedCommit(t *testing.T) {
 		CREATE EVENT TRIGGER install_failure ON ddl_command_end WHEN TAG IN ('CREATE TABLE')
 		EXECUTE FUNCTION public.install_commit_failure();`)
 	require.NoError(t, err)
-	_, err = Setup(t.Context(), db, Config{Schema: "documents", SchemaOwner: owner})
+	_, err = setupFreshSchema(t, db, Config{Schema: "documents", SchemaOwner: owner})
 	require.ErrorContains(t, err, "test deferred commit failure")
 	var exists bool
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname='documents')`).Scan(&exists))
 	assert.False(t, exists, "failed commit must not publish a schema or identity")
 	_, err = db.ExecContext(t.Context(), `DROP EVENT TRIGGER install_failure`)
 	require.NoError(t, err)
-	_, err = Setup(t.Context(), db, Config{Schema: "documents", SchemaOwner: owner})
+	_, err = setupFreshSchema(t, db, Config{Schema: "documents", SchemaOwner: owner})
 	require.NoError(t, err)
 }
 
@@ -319,11 +326,14 @@ func TestConcurrentSetup(t *testing.T) {
 	const count = 6
 	ids := make([]uuid.UUID, count)
 	errs := make([]error, count)
+	// The calls race for one schema; only the first installs it.
+	release := pgtest.ReserveSchemaInstall(t)
 	var wg sync.WaitGroup
 	for i := range count {
 		wg.Go(func() { ids[i], errs[i] = Setup(t.Context(), db, cfg) })
 	}
 	wg.Wait()
+	release()
 	for i := range count {
 		require.NoError(t, errs[i])
 		assert.Equal(t, ids[0], ids[i])
@@ -334,6 +344,8 @@ func TestSetupCancellationDoesNotPublish(t *testing.T) {
 	t.Parallel()
 	db, owner := pgtest.NewDatabase(t)
 	cfg := Config{Schema: "documents", SchemaOwner: owner}
+	release := pgtest.ReserveSchemaInstall(t)
+	defer release()
 	tx, err := db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })

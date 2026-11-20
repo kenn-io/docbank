@@ -3,11 +3,12 @@ package store
 import (
 	"bytes"
 	"encoding/json/v2"
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/document"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 )
 
 func TestEmailDocumentsMetadataRoundTripAndTamper(t *testing.T) {

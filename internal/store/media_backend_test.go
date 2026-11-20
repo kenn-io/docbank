@@ -11,8 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func checkMediaConsentAndContinuations(t *testing.T, open func(*testing.T) *Store) {
@@ -91,8 +89,8 @@ func checkMediaPublicationRollbackPostgres(t *testing.T) {
 	t.Helper()
 	for _, operation := range []string{"supplied", "remote", "input"} {
 		t.Run(operation, func(t *testing.T) {
-			setup, owner := pgtest.NewDatabase(t)
-			s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+			setup, owner, login := newTemplateDatabase(t)
+			s := openPostgresStore(t, owner, login)
 			ctx := t.Context()
 			hash := testSHA256([]byte("new media content"))
 			sourceID := testSHA256([]byte("new media source"))

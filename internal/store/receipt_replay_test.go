@@ -7,9 +7,10 @@ import (
 	"fmt"
 	"testing"
 
+	"uuid"
+
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/bundle"
-	"uuid"
 )
 
 func TestReplayReceiptDecidesEachLookupOutcome(t *testing.T) {
