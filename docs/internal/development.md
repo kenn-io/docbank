@@ -728,37 +728,31 @@ role, directly or indirectly. This ownership check is separate from object
 privileges: an owner can revoke its own write privileges and still retain the
 authority to alter objects or grant those privileges again.
 
-PostgreSQL schemas are disposable until the first deployment whose data must
-survive upgrades. Embedding and restore qualification still use disposable
-schemas. Edit
-`internal/store/pgschema/schema.sql` directly; no manual version bump or migration
-is needed during this period. The build hashes the exact embedded SQL template
-with SHA-256 once at package initialization, before substituting the vault schema
-name. `Setup` records this fingerprint in `vault_metadata` in the installation
-transaction. Both `Setup` and runtime `Validate` reject a missing or different
-fingerprint with a "recreate this schema" error; neither repairs it. Any SQL-file
-change, including comments or formatting, changes the fingerprint. Existing
-development schemas with the older integer version are also refused. Recreate
-only disposable development schemas with the current build, never retained data.
-Go-written seed rows in `Setup` are outside the fingerprint; an incompatible seed
-change must also change the SQL template so existing development schemas are refused.
+PostgreSQL retained history starts at version 1,
+`internal/store/pgschema/migrations/000001_initial_schema.up.sql`.
+Fresh setup installs `internal/store/pgschema/schema.sql` and records the
+current version. Upgrade runs the contiguous `NNNNNN_description.up.sql`
+chain under the schema-owner setup lock and commits the SQL and version
+together. The fingerprint in `vault_metadata` identifies the names and exact
+bytes of all applied migrations. Runtime opening requires the current version
+and matching history. It performs validation only. Initialization and import
+can install a missing catalog and require the current version on an existing
+catalog. Run owner setup explicitly to upgrade.
 
-Before the first retained deployment, establish the current schema as migration
-1 (`000001_initial_schema.up.sql`) and add a CI check that installs the numbered
-chain and compares it with the canonical schema. This is the PostgreSQL upgrade
-floor, independent of SQLite layout versions and JSONL format versions. From
-that cutoff onward, every change to the schema needs a numbered
-`NNNNNN_description.up.sql` transition, including indexes or defaults added while
-porting an operation. A port that changes only Go or queries needs none. Keep at
-most one new migration per PR; revise it while it remains branch-only and has
-been applied only to disposable databases.
+For a schema change, update the canonical SQL and add the next forward
+migration. Include changes to indexes, defaults, and incompatible seed
+values. Migration SQL runs inside the setup transaction. Keep at most one
+migration per PR. Once a migration reaches main or
+a retained catalog, fix it through a new forward migration. `make test-pg`
+compares a catalog installed by current setup with one upgraded from the
+version 1 schema and seed rows. It checks the installed objects and required
+rows. SQLite layout and portable metadata versions have their own history.
 
-Keep one complete forward chain, and commit each transition and its version
-together under the setup lock. Runtime startup never migrates. Once a migration
-reaches main or a deployed database it is immutable; fix forward. Recovery uses
-a pre-upgrade backup and compatible binary, not down migrations. This discipline
-does not change SQLite's JSONL cutover policy. The migration chain and its CI
-comparison must land before retained PostgreSQL deployments are supported.
+Back up and close the vault before running owner setup on a newer build.
+Apply the current runtime grants before reopening. Recover with a compatible
+backup and binary. For fingerprint-only development builds, recreate
+disposable catalogs. Preserve any data you need in a portable backup from the
+matching build and restore it into a fresh numbered catalog.
 
 Do not add SQL `CHECK` constraints. Value validation belongs in Go and must be
 shared by writes, imports, restores and audits. Primary keys, foreign keys,
@@ -1054,8 +1048,9 @@ Logical metadata can move between PostgreSQL and SQLite without changing the
 format. Use `ImportMetadata` for a pristine SQLite Store. For PostgreSQL, use
 `store.ImportPostgresMetadata(ctx, ownerPool, cfg, reader)` with
 `pgschema.Config{Schema: "documents", SchemaOwner: "docbank_owner"}` and a pool
-connected as that schema owner. The internal import entry point runs `Setup`,
-refuses a nonpristine target, and uses the existing storage writer transaction.
+connected as that schema owner. The internal import entry point installs a
+missing catalog or checks that it is current. Import requires a pristine
+target and uses the storage writer transaction.
 It selects the schema through `SET LOCAL search_path`; the caller's pool stays
 open with its original session settings. Runtime credentials cannot perform
 setup or change the vault identity, and need no additional grants.
@@ -1560,8 +1555,7 @@ failed streams and destinations, late database failures, runtime refusal and
 fresh processing consent. PostgreSQL imports are read through the runtime role
 and exported back through the existing SQLite importer. Retained fixtures
 qualify the transfer, not their producers. Runtime SELECT grants cover export;
-import uses the separate schema-owner credentials. The schema fingerprint
-changes with deferrable references; recreate stale disposable test schemas.
+import uses the separate schema-owner credentials.
 
 #### PostgreSQL reference implementations
 
@@ -1577,7 +1571,7 @@ their `internal` packages are not importable shared libraries.
 | AgentsView [catalog adapter][av-pg-catalog] and [query dialect][av-dialect] | Shared filtering, pagination and result assembly; explicit backend SQL and typed scanning | Docbank is an authoritative vault, not a disposable mirror. Keep its existing `Store` and mutation helpers; no replica registry or second implementation of audit and publication |
 | AgentsView [pool opening][av-connect] and [hosted validation][av-hosted] | Configure every pooled connection, validate effective schema at opening, and account for connection reuse | Its tenant/RLS schema is a separate design, not Docbank's permission model. Do not copy its CHECK constraints, tenant tables or triggers |
 | [msgvault embedded archive][mv-archive] | pgx through `database/sql`; separate setup and validation-only opening; `current_schema()` check | Docbank serializes setup itself and requires a dedicated schema; it does not copy ambient-schema defaults or msgvault's migration ledger |
-| [Kata PostgreSQL operations][kata-operations] | `Schema`/`SchemaOwner` naming, owner/runtime role separation, transaction advisory lock | Embedded setup uses a caller-owned pool and runtime opening uses a separate login. Schema fingerprints reject stale disposable schemas. Numbered migrations start before retained deployments. |
+| [Kata PostgreSQL operations][kata-operations] | `Schema`/`SchemaOwner` naming, owner/runtime role separation, transaction advisory lock | Embedded setup uses a caller-owned pool and migrates numbered schemas. Runtime opening uses a separate login and validates the installed migration history. |
 | [Kata numbered migrations][kata-migrations] and [sequence export][kata-sequences] | Canonical fresh DDL, immutable forward SQL, atomic version stamps, and preservation of allocated IDs through transfer | Version history belongs to Docbank; its audit format requires a transactional node counter rather than a native identity sequence |
 | AgentsView [behavior parity][av-parity] and [pool tests][av-pool-tests]; msgvault and Kata PostgreSQL lanes | Exercise real backends and their public operations, including errors, filtering and reused connections | Keep Docbank's canonical setup fixture, separate runtime role, PostgreSQL 16/18 lanes and both SQLite builds; no new fixture schema or per-test container |
 

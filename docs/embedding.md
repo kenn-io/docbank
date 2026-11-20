@@ -21,8 +21,7 @@ dedicated schema owner and a separate runtime login. Give the process a private
 local directory for its vault files and run one owning process per vault
 catalog. The standalone daemon and `New` use SQLite.
 
-Use disposable PostgreSQL schemas during development. The first retained
-deployment requires a numbered migration baseline. See the
+Docbank's numbered PostgreSQL catalog starts at version 1. See the
 [schema lifecycle and runtime grants](https://github.com/kenn-io/docbank/blob/main/docs/internal/development.md#postgresql-schema-lifecycle).
 
 For a fresh vault, call `InitializePostgres` with a caller-owned `*sql.DB`
@@ -30,7 +29,8 @@ connected as the schema owner, a `PostgresCatalog` with the schema and owner
 names, and a new vault directory under an existing parent. It installs the
 catalog if needed and publishes a private root with the matching primary
 ownership marker. Apply the runtime grants. Repeating initialization on the
-same bound and closed root returns its existing vault ID.
+same bound and closed root returns its existing vault ID. An existing catalog
+must already be at the current schema version.
 
 If initialization reports that it installed a directory before an error, keep
 the directory and retry at that path to verify the binding. If the catalog
@@ -53,6 +53,12 @@ commit, keep that directory and follow the
 Call `OpenPostgres` with `Config{Root: vaultRoot}`, the same catalog, and the
 runtime login. It checks the catalog binding and the filesystem marker and holds
 the root lock until `Close`. Use `CreateBackup` to capture a portable snapshot.
+
+Before upgrading, stop writes, capture and verify a portable backup, and
+close the vault.
+Call `SetupPostgres` with the new build and the owner connection, apply its
+runtime grants, then reopen. For data written by a fingerprint-only development
+build, restore a portable backup into a fresh numbered catalog.
 
 ## Run native MCP reads
 

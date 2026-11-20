@@ -23,7 +23,7 @@ func InitializePostgresPrimary(
 	ctx context.Context, db *sql.DB, cfg pgschema.Config, existing bool,
 	publish func(context.Context, packstore.Ownership) error,
 ) (uuid.UUID, error) {
-	if _, err := pgschema.Setup(ctx, db, cfg); err != nil {
+	if _, err := pgschema.Install(ctx, db, cfg); err != nil {
 		return uuid.Nil(), err
 	}
 	s := &Store{db: db, writeDB: db, postgresSchema: cfg.Schema}

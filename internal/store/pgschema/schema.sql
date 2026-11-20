@@ -25,6 +25,7 @@ $$;
 CREATE TABLE {{schema}}.vault_metadata (
     singleton      SMALLINT PRIMARY KEY,
     vault_uid      UUID NOT NULL UNIQUE,
+    schema_version INTEGER NOT NULL,
     schema_fingerprint TEXT COLLATE "C" NOT NULL,
     primary_storage_bound BOOLEAN NOT NULL DEFAULT FALSE
 );

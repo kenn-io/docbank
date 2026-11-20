@@ -53,9 +53,12 @@ func TestSetupPreservesIdentity(t *testing.T) {
 	id, err := Setup(t.Context(), db, cfg)
 	require.NoError(t, err)
 	require.NotEqual(t, uuid.Nil(), id)
+	var version int
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT schema_version FROM documents.vault_metadata`).Scan(&version))
+	require.Equal(t, len(migrations), version)
 	var installed string
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT schema_fingerprint FROM documents.vault_metadata`).Scan(&installed))
-	require.Equal(t, fmt.Sprintf("%x", sha256.Sum256([]byte(schemaSQL))), installed, "setup must identify the SQL this build embeds")
+	require.Equal(t, migrations[version-1].fingerprint, installed)
 	var rootID, childID int64
 	var rootCreated string
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT id,created_at FROM documents.nodes WHERE parent_id IS NULL`).Scan(&rootID, &rootCreated))
@@ -202,20 +205,23 @@ func TestRuntimeCannotChangeSchema(t *testing.T) {
 		_, err = Validate(t.Context(), selected, cfg)
 		require.ErrorContains(t, err, "requires a separate runtime role", "selecting a lesser role must not hide the login's privileges")
 	})
+	t.Run("owner upgrades a populated catalog", func(t *testing.T) {
+		checkOwnerMigration(t, setup, runtime, cfg)
+	})
 	t.Run("schema fingerprint mismatch", func(t *testing.T) {
 		var installedFingerprint string
 		require.NoError(t, admin.QueryRowContext(t.Context(), `SELECT schema_fingerprint FROM documents.vault_metadata`).Scan(&installedFingerprint))
 		// Both the setup and runtime entry points must refuse incompatible
 		// schemas without rewriting the fingerprint, identity or existing data.
-		checkRefused := func(t *testing.T) {
+		checkRefused := func(t *testing.T, message string) {
 			t.Helper()
 			var before, after sql.NullString
 			query := `SELECT to_jsonb(m)->>'schema_fingerprint' FROM documents.vault_metadata m`
 			require.NoError(t, admin.QueryRowContext(t.Context(), query).Scan(&before))
 			_, err := Setup(t.Context(), setup, cfg)
-			require.ErrorContains(t, err, "recreate this schema")
+			require.ErrorContains(t, err, message)
 			_, err = Validate(t.Context(), runtime, cfg)
-			require.ErrorContains(t, err, "recreate this schema")
+			require.ErrorContains(t, err, message)
 			require.NoError(t, admin.QueryRowContext(t.Context(), query).Scan(&after))
 			require.Equal(t, before, after)
 			var kept uuid.UUID
@@ -226,7 +232,7 @@ func TestRuntimeCannotChangeSchema(t *testing.T) {
 			t.Run(fmt.Sprintf("fingerprint %q", fingerprint), func(t *testing.T) {
 				_, err := admin.ExecContext(t.Context(), `UPDATE documents.vault_metadata SET schema_fingerprint=$1`, fingerprint)
 				require.NoError(t, err)
-				checkRefused(t)
+				checkRefused(t, "migration history differs")
 			})
 		}
 		_, err := admin.ExecContext(t.Context(), `UPDATE documents.vault_metadata SET schema_fingerprint=$1`, installedFingerprint)
@@ -234,10 +240,10 @@ func TestRuntimeCannotChangeSchema(t *testing.T) {
 		actual, err := Validate(t.Context(), runtime, cfg)
 		require.NoError(t, err)
 		require.Equal(t, id, actual)
-		t.Run("older integer version", func(t *testing.T) {
-			_, err := admin.ExecContext(t.Context(), `ALTER TABLE documents.vault_metadata DROP COLUMN schema_fingerprint, ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 4`)
+		t.Run("fingerprint-only development layout", func(t *testing.T) {
+			_, err := admin.ExecContext(t.Context(), `ALTER TABLE documents.vault_metadata DROP COLUMN schema_version`)
 			require.NoError(t, err)
-			checkRefused(t)
+			checkRefused(t, "unsupported table layout")
 		})
 	})
 }
@@ -248,7 +254,7 @@ func TestSetupRefusesUnownedOrInvalidState(t *testing.T) {
 		{"empty schema", `CREATE SCHEMA documents`},
 		{"unrelated schema", `CREATE SCHEMA documents; CREATE TABLE documents.kept(value text); INSERT INTO documents.kept VALUES('keep me')`},
 		{"wrong singleton", `UPDATE documents.vault_metadata SET singleton=2`},
-		{"multiple identities", `INSERT INTO documents.vault_metadata(singleton,vault_uid,schema_fingerprint) SELECT 2,'11111111-1111-4111-8111-111111111111',schema_fingerprint FROM documents.vault_metadata`},
+		{"multiple identities", `INSERT INTO documents.vault_metadata(singleton,vault_uid,schema_version,schema_fingerprint) SELECT 2,'11111111-1111-4111-8111-111111111111',schema_version,schema_fingerprint FROM documents.vault_metadata`},
 		{"missing identity", `DELETE FROM documents.vault_metadata`},
 		{"nil identity", `UPDATE documents.vault_metadata SET vault_uid='00000000-0000-0000-0000-000000000000'`},
 		{"wrong table shape", `ALTER TABLE documents.vault_metadata DROP CONSTRAINT vault_metadata_pkey`},

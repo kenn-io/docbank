@@ -18,7 +18,7 @@ func RestorePostgresMetadata(
 	ctx context.Context, db *sql.DB, cfg pgschema.Config, input io.Reader, verified *Store,
 	publish func(context.Context, packstore.Ownership) error,
 ) error {
-	if _, err := pgschema.Setup(ctx, db, cfg); err != nil {
+	if _, err := pgschema.Install(ctx, db, cfg); err != nil {
 		return err
 	}
 	s := &Store{db: db, writeDB: db, postgresSchema: cfg.Schema}

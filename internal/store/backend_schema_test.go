@@ -39,12 +39,13 @@ func checkBackendSchemaPostgres(t *testing.T) {
 	postgres := newPostgresQueryStore(t)
 	left := describeBackendSchema(t, sqlite)
 	right := describeBackendSchema(t, postgres)
-	// SQLite retains numbered released layouts; disposable PostgreSQL layouts
-	// identify the embedded SQL directly until retained deployments begin.
+	// The two backends track their own layout versions and migration history.
 	assert.Equal(t, backendColumn{Kind: "integer", Required: true}, left["vault_metadata"].Columns["schema_version"])
 	assert.Equal(t, backendColumn{Kind: "text", Required: true}, right["vault_metadata"].Columns["schema_fingerprint"])
+	assert.Equal(t, backendColumn{Kind: "integer", Required: true}, right["vault_metadata"].Columns["schema_version"])
 	assert.Equal(t, backendColumn{Kind: "boolean", Required: true}, right["vault_metadata"].Columns["primary_storage_bound"])
 	delete(left["vault_metadata"].Columns, "schema_version")
+	delete(right["vault_metadata"].Columns, "schema_version")
 	delete(right["vault_metadata"].Columns, "schema_fingerprint")
 	delete(right["vault_metadata"].Columns, "primary_storage_bound")
 	assert.Equal(t, backendColumn{Kind: "text", Required: true}, right["collection_snapshot_members"].Columns["source_collection_ids_json"])
