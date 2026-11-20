@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-19
+last_edited: 2026-11-20
 title: Embed in Go
 description: Run Docbank vaults inside a Go application with SQLite or PostgreSQL metadata.
 ---
@@ -1272,6 +1272,20 @@ The adapter is selected when the vault opens. Query and transaction operations
 then run directly on that driver's `database/sql` pool. Standalone backup and
 restore paths use the same adapter boundary rather than silently switching
 SQLite implementations.
+
+Docbank's adapters register their own `database/sql` drivers. Connection hooks
+your application registers with `modernc.org/sqlite`, such as those added with
+its package-level `RegisterConnectionHook`, do not run on vault connections.
+The same holds for a `ConnectHook` on your own `github.com/mattn/go-sqlite3`
+driver.
+
+In a CGO build, the first vault opened through the mattn adapter, the default
+there, turns off SQLite memory statistics for the whole process. That removes a
+global lock from every SQLite allocation. SQLite enforces
+`PRAGMA soft_heap_limit` and `hard_heap_limit` only while those statistics are
+on. If your application relies on a heap limit,
+open its own SQLite connection before the first vault: once SQLite has
+initialized, Docbank leaves the setting alone.
 
 ## Ownership boundary
 

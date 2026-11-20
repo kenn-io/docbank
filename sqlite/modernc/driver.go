@@ -1,4 +1,8 @@
 // Package modernc adapts modernc.org/sqlite to Docbank without CGO.
+//
+// Driver opens connections through a private modernc.org/sqlite Driver, so
+// hooks and functions registered with modernc's package-level functions, such
+// as RegisterConnectionHook, do not run on Docbank's connections.
 package modernc
 
 import (

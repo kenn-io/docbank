@@ -23,7 +23,6 @@ import (
 const driverName = "docbank-sqlite3-query-v1"
 
 func init() {
-	disableMemoryStatus()
 	sql.Register(driverName, &sqlite3.SQLiteDriver{ConnectHook: func(conn *sqlite3.SQLiteConn) error {
 		if err := conn.RegisterFunc("docbank_query_media_family_v1", query.ClassifyMedia, true); err != nil {
 			return fmt.Errorf("register query media function: %w", err)
@@ -52,6 +51,9 @@ type Driver struct{}
 func (Driver) Name() string { return "mattn/go-sqlite3" }
 
 func (Driver) Open(path string, opts docsqlite.OpenOptions) (*sql.DB, error) {
+	if err := disableMemoryStatusOnce(); err != nil {
+		return nil, err
+	}
 	busy := opts.BusyTimeout
 	switch {
 	case busy == docsqlite.NoBusyWait:
