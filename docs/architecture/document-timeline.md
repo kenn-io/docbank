@@ -7,28 +7,29 @@ description: How Docbank derives date claims from stored document evidence.
 # Document timeline
 
 Docbank derives a timeline index from each retained content version. A
-**document event** means that one identified source says a date about that
-version. It is a claim with its source, original value, precision, timezone
-status, parse confidence, and evidence reference attached.
+**document event** records what one identified source says about a date for that
+version, along with the source, original value, precision, timezone status,
+parse confidence, and evidence reference.
 
-An event is not proof that something happened. It does not change document
-identity, replace the original bytes, or become user-authored metadata. Two
-sources can disagree, and Docbank keeps both claims. Even when two claims have
-the same date, they stay separate because their evidence is separate.
+A document event is a claim, not proof that something happened. It does not
+change document identity, replace the original bytes, or become user-authored
+metadata. If two sources disagree, Docbank keeps both claims. Even when two
+claims state the same date, Docbank keeps them separate because their evidence
+is separate.
 
-Each derivation slot is identified by the content version, source key, and
-date kind. Editing a file creates a new version with its own generation (the
-immutable set of events derived for that version). It does not rewrite the
-earlier version's events.
+Docbank identifies each derivation slot by its content version, source key, and
+date kind. When you edit a file, you create a new version with its own
+generation, which is the immutable set of events derived for that version. The
+earlier version's events stay unchanged.
 
-A superseding provenance correction updates the claim for each version linked
-to the original observation. It does not attach that observation to a newer
-content version. The earlier provenance facts remain in the audit history.
+A superseding provenance correction updates the claim for each version linked to
+the original observation without attaching that observation to a newer content
+version. Earlier provenance facts remain in the audit history.
 
 ## Date kinds
 
-The index uses sixteen closed date kinds. Each describes what the source says,
-not what Docbank has independently established.
+The index uses sixteen closed date kinds. Each kind describes what the source
+says, not something Docbank has independently established.
 
 | Kind | Meaning |
 | --- | --- |
@@ -51,88 +52,92 @@ not what Docbank has independently established.
 
 ## Precision and timezone honesty
 
-An event preserves one of seven precisions: year, month, date, hour, minute,
-second, or fractional second. Missing components are never filled in. A date
-such as `2024-06` stays a month. `2024-06-12` stays a date even when the source
-also names a timezone.
+Every event keeps one of seven precisions: year, month, date, hour, minute,
+second, or fractional second. Docbank never fills in missing components. A value
+such as `2024-06` stays a month, and `2024-06-12` stays a date even when the
+source also names a timezone.
 
-Timezone state is recorded as UTC, a numeric offset, a named zone, omitted, or
-invalid. Docbank computes a UTC key only for hour-or-finer values with UTC or a
-valid numeric offset. A named zone is preserved but remains floating because a
-name alone may be ambiguous. Omitted and invalid zones also remain floating.
-Unsupported leap seconds remain diagnostics. The machine's local timezone is
-never used to complete a partial claim.
+Docbank records each event's timezone state as UTC, a numeric offset, a named
+zone, omitted, or invalid. It computes a UTC key only for values at hour
+precision or finer that carry UTC or a valid numeric offset. A named zone stays
+on the event as a floating value because a name alone may be ambiguous, and
+omitted or invalid zones also stay floating. Unsupported leap seconds remain
+diagnostics, and Docbank never uses the machine's local timezone to complete a
+partial claim.
 
-Every valid civil value gets a fixed-width calendar key. That key keeps coarse
-and floating claims sortable without pretending they are instants.
+Every valid civil value gets a fixed-width calendar key. That key lets you sort
+coarse and floating claims without pretending they are instants.
 
 ## Undated versions
 
-The model keeps versions with no usable source date as part of the population.
-The current recipe records the content version's own `recorded_at` value as a
+Versions with no usable source date stay in the timeline population. The current
+recipe records the content version's own `recorded_at` value as a
 `vault_recorded` fallback, so a normal retained version still has one
-explainable claim when its source metadata has none. Missing source dates are
-never filled from the machine clock or silently removed from coverage.
+explainable claim when its source metadata has none. Docbank never fills in a
+missing source date from the machine clock and never silently removes undated
+versions from coverage.
 
 ## Primary dates
 
-A primary date is a presentation choice over the retained claims. It is stored
-with the rule ID and a plain-language reason, so a caller can explain the
-choice. Safe and full disclosure each have their own result.
+A primary date is a presentation choice picked from a version's retained claims.
+Docbank stores it with the rule ID and a plain-language reason, so callers can
+explain the choice. Safe disclosure and full disclosure each have their own
+result.
 
 The current rule selects dates in the vault scope. Email, message, calendar,
-image, audio/video, and other documents each use an order that fits the
-document kind. `imported` and `vault_recorded` are last-resort fallbacks.
-Safe selection excludes events marked sensitive and events containing a
-sensitive actor, such as a Bcc recipient. Full selection retains those claims.
+image, audio and video, and other documents each use an order that fits their
+document kind, with `imported` and `vault_recorded` as last-resort fallbacks.
+Safe selection skips events marked sensitive and events containing a sensitive
+actor, such as a Bcc recipient. Full selection retains those claims.
 
 ## Generations and rebuilds
 
 The `document-events/v1` index is a derived SQLite projection. Each immutable
-generation binds canonical event bytes to one content version, the
-deriver fingerprint, and a digest of all consumed evidence. A mutable head
-selects the generation currently served for that version. Publication checks
-the input epoch, exact-version dirty revision, and immutable evidence
+generation binds canonical event bytes to one content version, the deriver
+fingerprint, and a digest of all consumed evidence, while a mutable head selects
+the generation currently served for that version. Docbank decodes source
+metadata before opening the write transaction. During publication, it checks the
+input epoch, the exact-version dirty revision, and the immutable evidence
 identities in the same transaction, so a stale worker cannot publish over
-changed evidence. Source metadata is decoded before the write transaction.
-Events, actors, and primary choices stay together in the canonical record.
+changed evidence. Events, actors, and primary choices stay together in the
+canonical record.
 
 A rebuild advances the input epoch and scans every retained version, including
-history and trash. The current recipe reads active `source-metadata/v1`, exact
-provenance bindings, and the content-version record. It then publishes a fresh
-generation or a bounded failed or unavailable attempt. A rebuild does not
-alter originals, rerun source extraction, call a rendition provider, or
-recreate a rendition that derivative purge removed.
+history and trash. Using the current recipe, the worker reads active
+`source-metadata/v1`, exact provenance bindings, and the content-version record,
+then publishes either a fresh generation or a bounded failed or unavailable
+attempt. Rebuilds do not alter originals, rerun source extraction, call a
+rendition provider, or recreate a rendition that derivative purge removed.
 
-Removing a retained version cascades its dirty state, attempts, head, and
-generation, and advances the publication epoch. Trashing a node keeps them
-because the version still exists. When consumed evidence is corrected or
-removed, Docbank revokes the affected head and marks the exact version dirty in
-the same transaction. Rendition purge does not do that because renditions are
-not an input to this index.
+When you remove a retained version, Docbank cascades the removal to its dirty
+state, attempts, head, and generation, and advances the publication epoch.
+Trashing a node keeps all of those records because the version still exists.
+When consumed evidence is corrected or removed, Docbank revokes the affected
+head and marks that exact version dirty in the same transaction. A rendition
+purge does not do that because renditions are not an input to this index.
 
 ## Backup and restore
 
-A logical backup ships the authority used by the current recipe: original
+A logical backup ships the authority that the current recipe uses: original
 content versions, source metadata, provenance facts, and exact-version
 provenance bindings. It omits timeline generations, heads, attempts, dirty
 markers, epochs, and rebuild receipts.
 
-Restore validates the shipped authority and rebuilds the projection locally
-for every retained version. The restored index therefore reflects the evidence
-in that backup rather than copying disposable SQLite rows from the source
-vault. A terminal `unavailable` result does not block restore because it means
-valid authority exceeded a timeline bound or could not supply a bounded view.
-This includes retained dates outside the index's civil-year range, such as
-year 0000. The original provenance date remains intact. Restore still fails
-when a target remains `pending` or `failed`. Inspect coverage after recovery to
-find unavailable versions. See [Backup and recovery](backup.md) for the wider
-restore boundary.
+During restore, Docbank validates the shipped authority and rebuilds the
+projection locally for every retained version, so the restored index reflects
+the evidence in that backup rather than disposable SQLite rows copied from the
+source vault. A terminal `unavailable` result does not block restore because it
+means valid authority exceeded a timeline bound or could not supply a bounded
+view, including retained dates outside the index's civil-year range such as year
+0000. The original provenance date stays intact. Restore still fails when a
+target remains `pending` or `failed`. After recovery, inspect coverage to find
+unavailable versions. See [Backup and recovery](backup.md) for the wider restore
+boundary.
 
 ## Coverage and rebuild APIs
 
-`GET /api/v1/timeline/coverage` reports current-file coverage. Embedded Go
-callers use `Vault.DocumentEventCoverage`. Both return:
+To check current-file coverage, call `GET /api/v1/timeline/coverage`, or call
+`Vault.DocumentEventCoverage` from embedded Go code. Both return:
 
 - `selected`: current file versions, including files in trash
 - `indexed`: versions with a fresh generation, head, and matching indexed attempt
@@ -148,41 +153,41 @@ callers use `Vault.DocumentEventCoverage`. Both return:
 The four state counts satisfy `selected = indexed + pending + failed +
 unavailable`. Diagnostic counters overlap those states and each other.
 
-Daemon callers start or replay a rebuild with `POST
-/api/v1/timeline/rebuilds`, supplying a canonical UUIDv4 `operation_id`, and
-read its durable receipt with `GET
-/api/v1/timeline/rebuilds/{operation_id}`. The receipt counts every retained
-version, while the coverage endpoint reports current file heads. Embedded Go
-callers use `Vault.RebuildDocumentEvents`. It drains the same provider-free
-worker before returning. Receipts update during the rebuild and when the scan
-finishes. Synchronous rebuilds stop after three consecutive listing failures
-or three failures of the same target. Explicit rebuilds remain strict indexing
-requests. Daemon receipts finish `failed` when a target is failed or
-unavailable. The embedded call returns that receipt with an error while any
-target is pending, failed, or unavailable.
+To start or replay a rebuild through the daemon, send
+`POST /api/v1/timeline/rebuilds` with a canonical UUIDv4 `operation_id`, and
+read its durable receipt with `GET /api/v1/timeline/rebuilds/{operation_id}`.
+The receipt counts every retained version, while the coverage endpoint reports
+current file heads. Embedded Go callers use `Vault.RebuildDocumentEvents`, which
+drains the same provider-free worker before returning. Receipts update during
+the rebuild and when the scan finishes. Synchronous rebuilds stop after three
+consecutive listing failures or three failures of the same target. Explicit
+rebuilds remain strict indexing requests. Daemon receipts finish `failed` when a
+target is failed or unavailable, and the embedded call returns that receipt with
+an error while any target is pending, failed, or unavailable.
 
 ## Document–person attribution
 
-The daemon also rebuilds document–person links from retained actors, custodian
-assignments, and operator decisions. It waits for event data before deriving
-links for a version.
+The daemon also rebuilds document-person links from retained actors, custodian
+assignments, and operator decisions. For any version, it waits for event data
+before deriving links.
 
-Start or replay a full rebuild with `POST /api/v1/people/rebuilds`, supplying a
-canonical UUIDv4 `operation_id`. Read progress with
+To start or replay a full rebuild, send `POST /api/v1/people/rebuilds` with a
+canonical UUIDv4 `operation_id`. You can read progress with
 `GET /api/v1/people/rebuilds/{operation_id}` and current-file coverage with
 `GET /api/v1/people/coverage`. These responses contain counts, not person
-evidence. The rebuild counts every retained version. Missing event data and
-retryable failures keep it running. Terminal unavailable results finish the
-receipt as `failed`.
+evidence. The rebuild counts every retained version, keeps running through
+missing event data and retryable failures, and finishes the receipt as `failed`
+on terminal unavailable results.
 
-Person rename, retire, merge, and split edits invalidate derived document
-links by advancing the binding epoch. The daemon backfill republishes them
-after the authority change.
+When you rename, retire, merge, or split a person, Docbank advances the binding
+epoch to invalidate derived document links. The daemon backfill then republishes
+them after the authority change.
 
-Embedded callers run `Vault.RebuildDocumentEvents` before
-`Vault.RebuildDocumentPeople` and read coverage with `Vault.DocumentPeopleCoverage`.
-An incomplete rebuild returns its receipt and an error. Retry with the same
-operation ID after the prerequisite or failure is resolved.
+In embedded Go code, call `Vault.RebuildDocumentEvents` before
+`Vault.RebuildDocumentPeople`, and read coverage with
+`Vault.DocumentPeopleCoverage`. An incomplete rebuild returns its receipt and an
+error. Once the prerequisite or failure is resolved, retry with the same
+operation ID.
 
-Backups preserve person and custody records. Restore rebuilds the links without
-copying old rebuild receipts. See [Backup and recovery](backup.md).
+Backups preserve person and custody records, and restore rebuilds the links
+without copying old rebuild receipts. See [Backup and recovery](backup.md).
