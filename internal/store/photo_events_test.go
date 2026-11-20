@@ -237,7 +237,6 @@ func TestPhotoEventsIgnoreBrowserImportBookkeeping(t *testing.T) {
 	digest := fakeHash("a1")
 	require.NoError(t, s.PinBrowserPhotoGroupHashes(ctx, id, 0, []string{digest}))
 	require.Empty(t, events, "pinning hashes")
-
 }
 
 // A claim heartbeat moves the job's update time, which ranks which attempt a photo's coverage reports.

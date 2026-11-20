@@ -89,7 +89,7 @@ func dumpReleasedTable(t *testing.T, q metadataQuerier, table string, out *strin
 	t.Helper()
 	columns, err := queryTableColumns(t.Context(), q, table)
 	require.NoError(t, err)
-	rows, err := q.QueryContext(t.Context(), `SELECT `+strings.Join(columns, ",")+` FROM `+table+` ORDER BY rowid`)
+	rows, err := q.QueryContext(t.Context(), `SELECT `+strings.Join(columns, ",")+` FROM `+table)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
 	values := make([]any, len(columns))
@@ -97,11 +97,16 @@ func dumpReleasedTable(t *testing.T, q metadataQuerier, table string, out *strin
 	for i := range values {
 		pointers[i] = &values[i]
 	}
+	var records []string
 	for rows.Next() {
 		require.NoError(t, rows.Scan(pointers...))
-		fmt.Fprintf(out, "%s %q\n", table, values)
+		records = append(records, fmt.Sprintf("%s %q\n", table, values))
 	}
 	require.NoError(t, rows.Err())
+	slices.Sort(records)
+	for _, record := range records {
+		out.WriteString(record)
+	}
 }
 
 func TestUpgradeReleasedV0160KeepsPhotoCheckoutState(t *testing.T) {
@@ -205,6 +210,14 @@ func TestUpgradeReleasedV0170KeepsExplicitPhotoRefresh(t *testing.T) {
 			grantRenditionJobConsent(t, legacy, request)
 			job, waiter, err := legacy.EnqueueRenditionJob(ctx, request)
 			require.NoError(t, err)
+			originalRequest := renditionJobTestRequest(node.CurrentVersionID, catalogProcessingProfile(t, false))
+			originalRequest.ExecutionIdentity.Upload.SHA256 = node.BlobHash
+			originalRequest.ExecutionIdentity.Authorization.SourceSHA256 = node.BlobHash
+			originalRequest.ExecutionIdentity.Upload.ByteLength = 8
+			originalRequest.ExecutionIdentity.Authorization.SourceBytes = 8
+			grantRenditionJobConsent(t, legacy, originalRequest)
+			_, _, err = legacy.EnqueueRenditionJob(ctx, originalRequest)
+			require.NoError(t, err)
 			faceRequest := photoVisionJobRequest(t, legacy, node.CurrentVersionID, producerA, false, document.FaceDetectionProviderID)
 			grantRenditionJobConsent(t, legacy, faceRequest)
 			faceJob, faceWaiter, err := legacy.EnqueueRenditionJob(ctx, faceRequest)
@@ -263,7 +276,6 @@ func TestUpgradeReleasedV0170KeepsExplicitPhotoRefresh(t *testing.T) {
 			values := photoSuggestionValues(t, s, asset.ID)
 			require.Len(t, values, 1)
 			require.Equal(t, "Refreshed description.", values[0].Value.Caption)
-
 		})
 	}
 }

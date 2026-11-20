@@ -1259,7 +1259,7 @@ it.each(["plan", "register"])("replans after %s disconnects before upload", asyn
       .fn()
       .mockResolvedValue({ import_id: "new-preview", groups: [[0]], unsupported: [] }),
     registerPhotoImport: vi.fn().mockResolvedValue("saved"),
-    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added" }),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "asset" }),
   };
   const view = render(PhotoImportDrawer, {
     channel: initial,
@@ -1772,7 +1772,7 @@ it("allows retry after a rejected registration", async () => {
       .mockResolvedValue("preview"),
     listPhotoImports: vi.fn().mockResolvedValue([]),
     inspectPhotoImport: vi.fn(),
-    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added" }),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "asset" }),
   };
   render(PhotoImportDrawer, {
     channel,
