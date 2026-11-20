@@ -879,7 +879,7 @@ func restoreV48SourceState(ctx context.Context, source metadataQuerier, target *
 		}
 		// Portable metadata excludes derived uploads; the same vault retains their
 		// jobs and the explicit requests that can replace dismissed descriptions.
-		derivedJobs := `json_extract(execution_identity_json,'$.upload.input_kind')='derived_upload'`
+		derivedJobs := metadataJSONDialect{}.text("execution_identity_json", "upload.input_kind") + `='derived_upload'`
 		if err := copyReleasedRows(ctx, source, tx, "rendition_jobs", derivedJobs); err != nil {
 			return err
 		}

@@ -209,11 +209,38 @@ func TestUpgradeReleasedV0170KeepsExplicitPhotoRefresh(t *testing.T) {
 			grantRenditionJobConsent(t, legacy, faceRequest)
 			faceJob, faceWaiter, err := legacy.EnqueueRenditionJob(ctx, faceRequest)
 			require.NoError(t, err)
+			var otherJobs, otherWaiters []string
+			for _, photo := range []struct{ name, hash string }{{"second.jpg", "b2"}, {"third.jpg", "d4"}} {
+				other := createReleasedFixtureFile(t, legacy, photo.name, fakeHash(photo.hash), 8, "image/jpeg")
+				_, err := legacy.CreatePhotoAsset(ctx, other.ID, "image", "photo")
+				require.NoError(t, err)
+				otherRequest := photoDescriptionJobRequest(t, legacy, other.CurrentVersionID, producerB, true)
+				grantRenditionJobConsent(t, legacy, otherRequest)
+				otherJob, otherWaiter, err := legacy.EnqueueRenditionJob(ctx, otherRequest)
+				require.NoError(t, err)
+				otherJobs = append(otherJobs, otherJob.ID)
+				otherWaiters = append(otherWaiters, otherWaiter.ID)
+			}
+			tables := []string{"rendition_jobs", "rendition_job_waiters", "photo_description_explicit_waiters"}
+			var sourceRows strings.Builder
+			for _, table := range tables {
+				dumpReleasedTable(t, db, table, &sourceRows)
+			}
 			require.NoError(t, db.Close())
 
 			s, err := Open(ctx, path, driver.driver)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, s.Close()) }()
+			backupDB, err := driver.driver.Open(path+".schema-v48.bak", docsqlite.OpenOptions{Access: docsqlite.ReadOnlyImmutable})
+			require.NoError(t, err)
+			var backupRows, upgradedRows strings.Builder
+			for _, table := range tables {
+				dumpReleasedTable(t, backupDB, table, &backupRows)
+				dumpReleasedTable(t, s.db, table, &upgradedRows)
+			}
+			require.NoError(t, backupDB.Close())
+			require.Equal(t, sourceRows.String(), backupRows.String())
+			require.Equal(t, sourceRows.String(), upgradedRows.String())
 			var backup bytes.Buffer
 			require.NoError(t, s.ExportMetadata(ctx, &backup))
 			_, err = s.RenditionJobWaiterByID(ctx, waiter.ID)
@@ -222,6 +249,12 @@ func TestUpgradeReleasedV0170KeepsExplicitPhotoRefresh(t *testing.T) {
 			require.NoError(t, err)
 			_, err = s.RenditionJobWaiterByID(ctx, faceWaiter.ID)
 			require.NoError(t, err)
+			for i, id := range otherJobs {
+				_, err = s.RenditionJobByID(ctx, id)
+				require.NoError(t, err)
+				_, err = s.RenditionJobWaiterByID(ctx, otherWaiters[i])
+				require.NoError(t, err)
+			}
 			at := time.Now().UTC().Add(time.Minute)
 			claim, err := s.ClaimRenditionJob(ctx, job.ID, "description-worker", at, time.Hour)
 			require.NoError(t, err)

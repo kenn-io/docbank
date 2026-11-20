@@ -601,72 +601,90 @@ it("keeps one inspect action for the selected pending import", async () => {
   expect(screen.getAllByRole("button", { name: "Inspect import" })).toHaveLength(2);
 });
 
-it("retains the first matching selected file while a saved group is pending", async () => {
-  const hash = "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb";
-  const saved = {
-    import_id: "saved",
-    source_id: "source",
-    label: "Photos",
-    destination: "/photos",
-    created_at: "2026-01-01T00:00:00Z",
-    group_count: 1,
-    groups: [
-      { status: "pending" as const, files: [{ relative_path: "é.JPG", size: 1 }], hashes: [hash] },
-    ],
-    skipped: [{ path: "é.JPG", reason: "Duplicate path" }],
-  };
-  const remaining = { ...saved, groups: [{ ...saved.groups[0], status: "remaining" as const }] };
-  const channel: PhotoImportTransport = {
-    planPhotoImport: vi.fn(),
-    registerPhotoImport: vi.fn(),
-    listPhotoImports: vi.fn().mockResolvedValue([saved]),
-    inspectPhotoImport: vi.fn().mockResolvedValueOnce(saved).mockResolvedValue(remaining),
-    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "asset" }),
-  };
-  render(PhotoImportDrawer, {
-    channel,
-    vaultID: "pending-files",
-    session: "session",
-    onclose: vi.fn(),
-    oncomplete: vi.fn(),
-    onauthfailure: vi.fn(),
-  });
-  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
-  await fireEvent.change(await screen.findByLabelText("Saved import"), {
-    target: { value: "saved" },
-  });
-  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
-  await screen.findByText("Still finishing");
-  const first = new File(["a"], "é.JPG");
-  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
-    target: { files: [first, new File(["b"], "e\u0301.JPG")] },
-  });
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Inspect import" })).toHaveProperty(
-      "disabled",
-      false,
-    ),
-  );
-  expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty("disabled", true);
-  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
-  await waitFor(() =>
+it.each([
+  { bytes: "a", changed: false },
+  { bytes: "b", changed: true },
+])(
+  "checks a selected file when a pending group becomes remaining: $changed",
+  async ({ bytes, changed }) => {
+    const hash = "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb";
+    const saved = {
+      import_id: "saved",
+      source_id: "source",
+      label: "Photos",
+      destination: "/photos",
+      created_at: "2026-01-01T00:00:00Z",
+      group_count: 1,
+      groups: [
+        {
+          status: "pending" as const,
+          files: [{ relative_path: "é.JPG", size: 1 }],
+          hashes: [hash],
+        },
+      ],
+      skipped: [{ path: "é.JPG", reason: "Duplicate path" }],
+    };
+    const remaining = { ...saved, groups: [{ ...saved.groups[0], status: "remaining" as const }] };
+    const channel: PhotoImportTransport = {
+      planPhotoImport: vi.fn(),
+      registerPhotoImport: vi.fn(),
+      listPhotoImports: vi.fn().mockResolvedValue([saved]),
+      inspectPhotoImport: vi.fn().mockResolvedValueOnce(saved).mockResolvedValue(remaining),
+      uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "asset" }),
+    };
+    render(PhotoImportDrawer, {
+      channel,
+      vaultID: "pending-files",
+      session: "session",
+      onclose: vi.fn(),
+      oncomplete: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+    await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+    await fireEvent.change(await screen.findByLabelText("Saved import"), {
+      target: { value: "saved" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+    await screen.findByText("Still finishing");
+    const first = new File([bytes], "é.JPG");
+    await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+      target: { files: [first, new File(["b"], "e\u0301.JPG")] },
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Inspect import" })).toHaveProperty(
+        "disabled",
+        false,
+      ),
+    );
     expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty(
       "disabled",
-      false,
-    ),
-  );
-  await fireEvent.click(screen.getByRole("button", { name: "Resume remaining" }));
-  await waitFor(() =>
-    expect(channel.uploadPhotoGroup).toHaveBeenCalledWith(
-      "saved",
-      0,
-      [first],
-      expect.any(AbortSignal),
-      expect.any(Function),
-      [hash],
-    ),
-  );
-});
+      true,
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+    if (changed) {
+      await screen.findByText("File changed");
+      expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
+      return;
+    }
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty(
+        "disabled",
+        false,
+      ),
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "Resume remaining" }));
+    await waitFor(() =>
+      expect(channel.uploadPhotoGroup).toHaveBeenCalledWith(
+        "saved",
+        0,
+        [first],
+        expect.any(AbortSignal),
+        expect.any(Function),
+        [hash],
+      ),
+    );
+  },
+);
 
 it.each(["pinned", "changed"])(
   "keeps the declared filename when a preview is %s",
@@ -811,6 +829,7 @@ it("uses inspected hashes when selecting files after a rejected upload", async (
 });
 
 it("refuses changed bytes and lists files outside the saved import", async () => {
+  const hashFile = vi.spyOn(upload, "hashFile");
   const saved = {
     import_id: "saved-import",
     source_id: "source",
@@ -862,6 +881,7 @@ it("refuses changed bytes and lists files outside the saved import", async () =>
       false,
     ),
   );
+  hashFile.mockClear();
   await fireEvent.change(screen.getByLabelText("Choose photo files"), {
     target: {
       files: [
@@ -872,8 +892,9 @@ it("refuses changed bytes and lists files outside the saved import", async () =>
     },
   });
   await screen.findByText("File changed");
+  expect(hashFile.mock.calls.map(([file]) => file.name)).toEqual(["left.JPG"]);
   await screen.findByText("Outside this import");
-  await screen.findByText("Files changed since this group was imported.");
+  expect(screen.getByText("Imported earlier")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty("disabled", true);
   await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
   await waitFor(() => expect(channel.inspectPhotoImport).toHaveBeenCalledTimes(2));

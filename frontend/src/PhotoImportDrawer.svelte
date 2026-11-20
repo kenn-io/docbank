@@ -335,6 +335,13 @@
       destroyed
     )
       return;
+    const recheckFiles =
+      preserve &&
+      (saved.groups ?? []).some(
+        (group, index) =>
+          group.status === "remaining" &&
+          (items[index]?.state === "pending" || items[index]?.state === "unconfirmed"),
+      );
     if (preserve) {
       for (const [index, group] of (saved.groups ?? []).entries()) {
         const item = items[index];
@@ -347,11 +354,13 @@
         } else if (group.status === "remaining") {
           setState(
             item,
-            item.files.length === group.files.length
-              ? "ready"
-              : item.state === "changed"
-                ? "changed"
-                : "missing",
+            item.state === "pending" || item.state === "unconfirmed"
+              ? "missing"
+              : item.files.length === group.files.length
+                ? "ready"
+                : item.state === "changed"
+                  ? "changed"
+                  : "missing",
           );
           item.error = undefined;
         } else setState(item, group.status);
@@ -385,6 +394,11 @@
     destination = saved.destination;
     plannedDestination = destination;
     plannedChannel = activeChannel;
+    if (recheckFiles) {
+      const extras = extraFiles;
+      await chooseSavedFiles(items.flatMap((item) => item.files));
+      extraFiles = extras;
+    }
     if (saved.groups?.some((group) => group.status === "committed")) await oncomplete();
     if (
       saved.groups?.length &&
@@ -441,11 +455,16 @@
       ]);
       extraFiles = files.map(localFilePath).filter((name) => !known.has(name));
       for (const [index, group] of (savedImport.groups ?? []).entries()) {
+        if (group.status === "committed") continue;
         const item = items[index];
         const prior = new Map(item.files.map((file) => [localFilePath(file), file]));
         const matched = group.files.map(
           (file) => byPath.get(file.relative_path) ?? prior.get(file.relative_path),
         );
+        if (group.status !== "remaining") {
+          item.files = matched.filter((file): file is File => !!file);
+          continue;
+        }
         let changed = false;
         for (const [i, file] of matched.entries()) {
           if (!file) continue;
@@ -460,19 +479,13 @@
           if (expectedHash && (await hashFile(file, active.signal, () => {})) !== expectedHash)
             changed = true;
         }
-        if (group.status === "committed") {
-          item.error = changed
-            ? "Files changed since this group was imported."
-            : receiptReason(group.receipt?.reason);
-          continue;
-        }
         if (changed || matched.some((file) => !file)) {
           item.files = changed ? [] : matched.filter((file): file is File => !!file);
-          if (group.status === "remaining") setState(item, changed ? "changed" : "missing");
+          setState(item, changed ? "changed" : "missing");
         } else {
           item.files = matched as File[];
           item.hashes = group.files.map((file, i) => group.hashes?.[i] || file.expected_hash || "");
-          if (group.status === "remaining") setState(item, "ready");
+          setState(item, "ready");
         }
       }
     } catch (cause) {
