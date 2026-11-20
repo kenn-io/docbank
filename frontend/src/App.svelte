@@ -3805,14 +3805,14 @@
       else if (photoPath === "/photos/people") title = "People";
       else if (missingPhotoAlbum) title = "Album not found";
       else if (mapMode && (!tiles.tile_url || !photoValidated))
-        title = mapAlbumID && scopedAlbum ? `Map · ${scopedAlbum.name}` : "Map";
+        title = photoValidated && mapAlbumID && scopedAlbum ? `Map · ${scopedAlbum.name}` : "Map";
       else if (photos?.comparing) title = "Compare photos";
       else if (photos?.culling && photos.cull?.complete) title = "Pass complete";
       else if (photoID || photos?.culling) title = (photoValidated && photoName) || "Photo";
       else if (mapMode) title = mapAlbumID && scopedAlbum ? `Map · ${scopedAlbum.name}` : "Map";
       else if (person && photos?.query.filters.person_ids?.includes(person.id))
-        title = `${person.name} · Photos`;
-      else if (albumID) title = scopedAlbum?.name ?? "Album";
+        title = photoValidated ? `${person.name} · Photos` : "Person photos";
+      else if (albumID) title = (photoValidated && scopedAlbum?.name) || "Album";
       else title = "Photos";
     } else if (docsPage) title = docsPageTitles[docsPage];
     else if (activeQuery || queryBarOpen || snapshotActive) title = "Search";

@@ -320,8 +320,9 @@ it("names the current screen in the browser tab", async () => {
   await fireEvent.click(await screen.findByRole("button", { name: "Ada" }));
   await screen.findByText("Person: Ada");
   await waitFor(() => expect(document.title).toBe("Ada · Photos · Docbank"));
-  await conceal("Ada · Photos · Docbank");
+  await conceal("Person photos · Docbank");
   await screen.findByText("Person: Ada");
+  await waitFor(() => expect(document.title).toBe("Ada · Photos · Docbank"));
   await fireEvent.click(screen.getByRole("button", { name: "Albums" }));
   await waitFor(() => expect(document.title).toBe("Albums · Docbank"));
   await fireEvent.click(screen.getByRole("button", { name: "People" }));
@@ -345,7 +346,13 @@ it("names the current screen in the browser tab", async () => {
   await fireEvent.click(await screen.findByRole("link", { name: /Trip/ }));
   await screen.findByRole("heading", { name: "Trip" });
   await waitFor(() => expect(document.title).toBe("Trip · Docbank"));
+  await conceal("Album · Docbank");
+  await screen.findByRole("heading", { name: "Trip" });
+  await waitFor(() => expect(document.title).toBe("Trip · Docbank"));
   await fireEvent.click(screen.getByRole("button", { name: "Map" }));
+  await screen.findByRole("heading", { name: "Photos in view" });
+  await waitFor(() => expect(document.title).toBe("Map · Trip · Docbank"));
+  await conceal("Map · Docbank");
   await screen.findByRole("heading", { name: "Photos in view" });
   await waitFor(() => expect(document.title).toBe("Map · Trip · Docbank"));
 });
