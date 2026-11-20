@@ -1,7 +1,115 @@
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { root } from "./version-test-fixtures.js";
+import { photo, photoMetadataResponse, storage } from "./photo-test-fixtures.js";
+import { PhotoCull } from "./photoCull.svelte.js";
+import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
+
+beforeEach(() => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+});
+
+it("names the photo shown in Cull and restores the library title", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  storage();
+  vi.stubGlobal("indexedDB", new IDBFactory());
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  vi.spyOn(PhotoCull.prototype, "restore").mockResolvedValue(false);
+  vi.spyOn(PhotoCull.prototype, "start").mockImplementation(async function (this: PhotoCull) {
+    this.run = {
+      ids: ["photo-1", "photo-2"],
+      checkpoint: {
+        runID: "run",
+        revision: 0,
+        pass: ["photo-1", "photo-2"],
+        position: 0,
+        visited: [],
+        skipped: [],
+        unavailable: [],
+        scope: "all",
+        autoAdvance: true,
+      },
+    };
+    return true;
+  });
+  const rows = [photo(1), photo(2)];
+  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true });
+    if (url.includes("/audit/status"))
+      return Response.json({ vault_id: "11111111-1111-4111-8111-111111111111" });
+    if (url.endsWith("/photos/assets/query")) {
+      const ids: string[] | undefined = JSON.parse(String(init.body)).query.filters?.asset_ids;
+      return Response.json({
+        items: ids ? rows.filter((row) => ids.includes(row.asset_id)) : rows,
+        total: rows.length,
+      });
+    }
+    return (
+      photoMetadataResponse(url, init) ??
+      Response.json({ items: [], nodes: [], tags: [], profiles: [] })
+    );
+  });
+  render(App);
+  const cull = await screen.findByRole("button", { name: "Cull" });
+  await waitFor(() => expect((cull as HTMLButtonElement).disabled).toBe(false));
+  await fireEvent.click(cull);
+  const dialog = await screen.findByRole("dialog", { name: "Cull photos" });
+  await within(dialog).findByText("Photo 1.jpg");
+  await waitFor(() => expect(document.title).toBe("Photo 1.jpg · Docbank"));
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Next photo" }));
+  await within(dialog).findByText("Photo 2.jpg");
+  await waitFor(() => expect(document.title).toBe("Photo 2.jpg · Docbank"));
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Exit cull" }));
+  await waitFor(() => expect(document.title).toBe("Photos · Docbank"));
+});
+
+it("names a missing or loading linked photo and then its resolved name", async () => {
+  history.replaceState(
+    null,
+    "",
+    "/photos#web_session=synthetic&web_upload_secret=proof&photo=photo-1",
+  );
+  storage();
+  let resolvePhoto!: (response: Response) => void;
+  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true });
+    if (url.endsWith("/photos/assets/query")) {
+      const ids: string[] | undefined = JSON.parse(String(init.body)).query.filters?.asset_ids;
+      if (ids?.includes("photo-2"))
+        return new Promise<Response>((resolve) => (resolvePhoto = resolve));
+      return Response.json({ items: [], total: 0 });
+    }
+    return (
+      photoMetadataResponse(url, init) ??
+      Response.json({ items: [], nodes: [], tags: [], profiles: [] })
+    );
+  });
+  render(App);
+  await screen.findByText("This photo is no longer in this view.");
+  await waitFor(() => expect(document.title).toBe("Photo · Docbank"));
+  history.pushState(null, "", "/photos#photo=photo-2");
+  window.dispatchEvent(new HashChangeEvent("hashchange"));
+  await waitFor(() => expect(resolvePhoto).toBeTypeOf("function"));
+  expect(document.title).toBe("Photo · Docbank");
+  resolvePhoto(Response.json({ items: [photo(2)], total: 1 }));
+  await waitFor(() => expect(document.title).toBe("Photo 2.jpg · Docbank"));
+  await fireEvent.click(screen.getByRole("button", { name: "Close photo viewer" }));
+  await waitFor(() => expect(document.title).toBe("Photos · Docbank"));
+});
 
 afterEach(() => {
   cleanup();
@@ -15,18 +123,6 @@ afterEach(() => {
 
 it("names the current screen in the browser tab", async () => {
   history.replaceState(null, "", "/#web_session=synthetic&web_upload_secret=proof");
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  );
-  Object.defineProperty(Element.prototype, "scrollIntoView", {
-    configurable: true,
-    value: vi.fn(),
-  });
   const folder = { ...root, id: 2, parent_id: 1, name: "Taxes", path: "/Taxes" };
   const archive = { ...root, id: 4, parent_id: 1, name: "Archive", path: "/Archive" };
   const nested = { ...root, id: 7, parent_id: 4, name: "Taxes", path: "/Archive/Taxes" };
@@ -151,18 +247,6 @@ it("names the current screen in the browser tab", async () => {
 
 it("names a saved tag view when its tag was deleted", async () => {
   history.replaceState(null, "", "/#web_session=synthetic&web_upload_secret=proof");
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  );
-  Object.defineProperty(Element.prototype, "scrollIntoView", {
-    configurable: true,
-    value: vi.fn(),
-  });
   const tagID = "33333333-3333-4333-8333-333333333333";
   const folder = { ...root, id: 2, parent_id: 1, name: "Archive", path: "/Archive" };
   let catalogReads = 0;

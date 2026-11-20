@@ -3801,7 +3801,7 @@
       const photos = activePhotos();
       const person = photos?.personFilter;
       if (missingPhotoAlbum) title = "Album not found";
-      else if (photoID && photoName) title = photoName;
+      else if (photoID || photos?.culling) title = photoName ?? "Photo";
       else if (mapMode) title = mapAlbumID && scopedAlbum ? `Map · ${scopedAlbum.name}` : "Map";
       else if (person && photos?.query.filters.person_ids?.includes(person.id))
         title = `${person.name} · Photos`;
@@ -4471,6 +4471,7 @@
                 ></EmptyState
               >
             {:else if !tiles.tile_url}<PhotosWorkspace
+                bind:this={libraryWorkspace}
                 onperson={openPersonPhotos}
                 {vaultID}
                 onhelp={openShortcutHelp}
