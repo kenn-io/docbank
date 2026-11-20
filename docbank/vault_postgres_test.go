@@ -2,6 +2,7 @@ package docbank
 
 import (
 	"context"
+	"database/sql"
 	"io"
 	"os"
 	"path/filepath"
@@ -79,6 +80,37 @@ func TestInitializePostgres(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reopened.Close()) })
 	checkEmbeddedContent(t, reopened, "/first.txt", created.Node.ID, data)
+}
+
+func TestInitializeReusedOwnerConnectionPostgres(t *testing.T) {
+	t.Parallel()
+	for _, table := range []string{"vault_metadata", "blob_stores"} {
+		t.Run(table, func(t *testing.T) {
+			t.Parallel()
+			ownerDB, owner := pgtest.NewDatabase(t)
+			ctx := t.Context()
+			catalog := PostgresCatalog{Schema: "documents", SchemaOwner: owner}
+			runtime := pgstoretest.RuntimeConfig(t, ownerDB, catalog.schemaConfig())
+			addOwnerTempTable(t, ownerDB, catalog, table)
+
+			root := filepath.Join(t.TempDir(), "vault")
+			id, err := InitializePostgres(ctx, ownerDB, catalog, root)
+			require.NoError(t, err)
+			vault, err := OpenPostgres(ctx, Config{Root: root}, catalog, runtime)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, vault.Close()) })
+			require.Equal(t, id.String(), vault.ID())
+		})
+	}
+}
+
+func addOwnerTempTable(t *testing.T, owner *sql.DB, catalog PostgresCatalog, table string) {
+	t.Helper()
+	// Pin the pool to the session that owns the temporary relation.
+	owner.SetMaxOpenConns(1)
+	_, err := owner.ExecContext(t.Context(), "CREATE TEMP TABLE "+pgx.Identifier{table}.Sanitize()+
+		" AS TABLE "+pgx.Identifier{catalog.Schema, table}.Sanitize())
+	require.NoError(t, err)
 }
 
 type abortInitialStorageCommit struct{ root string }
@@ -186,6 +218,8 @@ func TestEmbeddedVaultLifecyclePostgres(t *testing.T) {
 	require.Empty(t, refused)
 	require.NoDirExists(t, target)
 
+	addOwnerTempTable(t, setup, catalog, "vault_metadata")
+	addOwnerTempTable(t, setup, catalog, "blob_stores")
 	report, err := repository.RestorePostgres(ctx, setup, catalog, runtime,
 		BackupRestoreOptions{Target: target, SnapshotID: snapshot.ID, Jobs: 1})
 	require.NoError(t, err)

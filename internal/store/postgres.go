@@ -65,7 +65,9 @@ func OpenPostgres(ctx context.Context, connection *pgx.ConnConfig, cfg pgschema.
 func (s *Store) PostgresPrimaryBound() bool { return s.postgresPrimaryBound }
 
 func selectPostgresStorageSchema(ctx context.Context, tx *sql.Tx, schema string) error {
-	if _, err := tx.ExecContext(ctx, `SET LOCAL search_path=`+pgx.Identifier{schema}.Sanitize()+`,pg_catalog`); err != nil {
+	// PostgreSQL implicitly searches temporary relations first. List pg_temp
+	// last so a reused owner session gives the vault catalog priority.
+	if _, err := tx.ExecContext(ctx, `SET LOCAL search_path=`+pgx.Identifier{schema}.Sanitize()+`,pg_catalog,pg_temp`); err != nil {
 		return fmt.Errorf("selecting postgres storage schema: %w", err)
 	}
 	return nil
