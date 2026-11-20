@@ -237,20 +237,7 @@ func TestPhotoEventsIgnoreBrowserImportBookkeeping(t *testing.T) {
 	digest := fakeHash("a1")
 	require.NoError(t, s.PinBrowserPhotoGroupHashes(ctx, id, 0, []string{digest}))
 	require.Empty(t, events, "pinning hashes")
-	run, err := s.BrowserPhotoImportRun(ctx, id)
-	require.NoError(t, err)
-	group := PhotoImportGroup{
-		BrowserGroup: &BrowserPhotoGroupRef{ImportID: id, Ordinal: 0},
-		Members: []PhotoImportMember{{Name: "capture.xmp", Role: PhotoRoleSidecar, BlobHash: digest,
-			Size: 4, OriginalPath: members[0].SourcePath}},
-		CreateOnly: true,
-	}
-	_, err = s.IngestPhotoGroup(ctx, run, group)
-	require.NoError(t, err)
-	requirePhotoSignal(t, events, "ingesting a photo")
-	_, err = s.IngestPhotoGroup(ctx, run, group)
-	require.NoError(t, err)
-	require.Empty(t, events, "replaying a receipt")
+
 }
 
 // A claim heartbeat moves the job's update time, which ranks which attempt a photo's coverage reports.

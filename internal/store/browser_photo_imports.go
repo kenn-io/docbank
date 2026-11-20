@@ -339,22 +339,6 @@ func saveBrowserPhotoReceiptTx(ctx context.Context, tx *sql.Tx, ref BrowserPhoto
 	return nil
 }
 
-func sameBrowserPhotoMembers(encoded string, proposed []BrowserPhotoGroupMember) bool {
-	var existing []BrowserPhotoGroupMember
-	if json.Unmarshal([]byte(encoded), &existing) != nil || len(existing) != len(proposed) {
-		return false
-	}
-	for i := range existing {
-		if existing[i].DeclaredHash == "" {
-			existing[i].DeclaredHash = proposed[i].DeclaredHash
-		}
-		if existing[i] != proposed[i] {
-			return false
-		}
-	}
-	return true
-}
-
 // RegisterBrowserPhotoImport saves the complete plan before any upload starts.
 func (s *Store) RegisterBrowserPhotoImport(ctx context.Context, plan BrowserPhotoImport) (uuid.UUID, error) {
 	if plan.SourceID == uuid.Nil() || len(plan.Groups) == 0 {
@@ -373,56 +357,11 @@ func (s *Store) RegisterBrowserPhotoImport(ctx context.Context, plan BrowserPhot
 	}
 	id := uuid.New()
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		inserted, err := tx.ExecContext(ctx, `INSERT INTO browser_photo_imports
+		if _, err := tx.ExecContext(ctx, `INSERT INTO browser_photo_imports
 			(import_id, vault_id, source_id, label, destination, anchor_id, suffix_json, skipped_json, created_at, format_version)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,1) ON CONFLICT (vault_id,source_id) DO NOTHING`, id.String(), s.VaultID(), plan.SourceID.String(),
-			plan.Label, plan.Destination, plan.Directory.anchorID, string(segments), string(skipped), nowRFC3339())
-		if err != nil {
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,1)`, id.String(), s.VaultID(), plan.SourceID.String(),
+			plan.Label, plan.Destination, plan.Directory.anchorID, string(segments), string(skipped), nowRFC3339()); err != nil {
 			return err
-		}
-		count, err := inserted.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if count == 0 {
-			var existingID, label, destination, existingSkipped string
-			var version int64
-			if err := tx.QueryRowContext(ctx, `SELECT import_id,label,destination,skipped_json,format_version FROM browser_photo_imports WHERE vault_id=$1 AND source_id=$2`, s.VaultID(), plan.SourceID.String()).Scan(&existingID, &label, &destination, &existingSkipped, &version); err != nil {
-				return err
-			}
-			if version != 1 || label != plan.Label || destination != plan.Destination || existingSkipped != string(skipped) {
-				return errors.New("browser photo import declaration changed")
-			}
-			rows, err := tx.QueryContext(ctx, `SELECT members_json FROM browser_photo_import_groups WHERE import_id=$1 ORDER BY ordinal`, existingID)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = rows.Close() }()
-			index := 0
-			for rows.Next() {
-				var existing string
-				if err := rows.Scan(&existing); err != nil {
-					return err
-				}
-				if index >= len(plan.Groups) {
-					return errors.New("browser photo import declaration changed")
-				}
-				if !sameBrowserPhotoMembers(existing, plan.Groups[index].Members) {
-					return errors.New("browser photo import declaration changed")
-				}
-				index++
-			}
-			if err := rows.Err(); err != nil {
-				return err
-			}
-			if index != len(plan.Groups) {
-				return errors.New("browser photo import declaration changed")
-			}
-			id, err = uuid.Parse(existingID)
-			if err != nil {
-				return fmt.Errorf("parse saved browser photo import ID: %w", err)
-			}
-			return nil
 		}
 		for index, group := range plan.Groups {
 			if len(group.Members) == 0 {

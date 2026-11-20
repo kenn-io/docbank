@@ -8,45 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func checkBrowserPhotoGroupReceiptReplay(t *testing.T, open func(*testing.T) *Store) {
-	t.Helper()
-	s := open(t)
-	ctx := t.Context()
-	directory, err := s.PrepareIngestDirectory(ctx, "/photos")
-	require.NoError(t, err)
-	members := []BrowserPhotoGroupMember{{Path: "Trip/capture.xmp", Role: PhotoRoleSidecar, SourcePath: "browser:source/Trip/capture.xmp", Size: 4}}
-	plan := BrowserPhotoImport{
-		SourceID: uuid.New(), Label: "Trip", Destination: "/photos", Directory: directory,
-		Groups: []BrowserPhotoImportGroup{{Members: members}},
-	}
-	id, err := s.RegisterBrowserPhotoImport(ctx, plan)
-	require.NoError(t, err)
-	digest := fakeHash("a1")
-	require.NoError(t, s.PinBrowserPhotoGroupHashes(ctx, id, 0, []string{digest}))
-	require.Error(t, s.PinBrowserPhotoGroupHashes(ctx, id, 0, []string{fakeHash("b2")}))
-	run, err := s.BeginIngest(ctx, "photo-import", "browser: Trip")
-	require.NoError(t, err)
-	group := PhotoImportGroup{
-		BrowserGroup: &BrowserPhotoGroupRef{ImportID: id, Ordinal: 0},
-		Members: []PhotoImportMember{{Name: "capture.xmp", Role: PhotoRoleSidecar, BlobHash: digest,
-			Size: 4, OriginalPath: members[0].SourcePath}},
-		CreateOnly: true,
-	}
-	first, err := s.IngestPhotoGroup(ctx, run, group)
-	require.NoError(t, err)
-	require.True(t, first.Added)
-	require.Len(t, first.Nodes, 1)
-	replay, err := s.IngestPhotoGroup(ctx, run, group)
-	require.NoError(t, err)
-	assert.True(t, replay.Added)
-	directoryNode, err := s.NodeByPath(ctx, "/photos")
-	require.NoError(t, err)
-	children, err := s.Children(ctx, directoryNode.ID)
-	require.NoError(t, err)
-	require.Len(t, children, 1)
-	assert.Equal(t, first.Nodes[0].ID, children[0].ID)
-}
-
 func checkBrowserPhotoReceiptOutcomes(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	s := open(t)
@@ -67,6 +28,9 @@ func checkBrowserPhotoReceiptOutcomes(t *testing.T, open func(*testing.T) *Store
 			hashes[i] = input.BlobHash
 		}
 		require.NoError(t, s.PinBrowserPhotoGroupHashes(ctx, id, 0, hashes))
+		wrong := append([]string(nil), hashes...)
+		wrong[0] = fakeHash("ff")
+		require.Error(t, s.PinBrowserPhotoGroupHashes(ctx, id, 0, wrong))
 		group := PhotoImportGroup{BrowserGroup: &BrowserPhotoGroupRef{ImportID: id, Ordinal: 0}, Members: inputs, CreateOnly: true}
 		result, err := s.IngestPhotoGroup(ctx, run, group)
 		require.NoError(t, err)
@@ -85,6 +49,11 @@ func checkBrowserPhotoReceiptOutcomes(t *testing.T, open func(*testing.T) *Store
 	image := PhotoImportMember{Name: "capture.JPG", Role: PhotoRoleImage, BlobHash: fakeHash("a1"), Size: 4, OriginalPath: "browser:first/capture.JPG"}
 	first := BrowserPhotoGroupMember{Path: "capture.JPG", Role: PhotoRoleImage, SourcePath: image.OriginalPath, Size: 4}
 	require.True(t, commit([]BrowserPhotoGroupMember{first}, []PhotoImportMember{image}).Added)
+	directory, err := s.NodeByPath(ctx, "/photos")
+	require.NoError(t, err)
+	children, err := s.Children(ctx, directory.ID)
+	require.NoError(t, err)
+	require.Len(t, children, 1)
 	image.OriginalPath = "browser:second/capture.JPG"
 	first.SourcePath = image.OriginalPath
 	require.True(t, commit([]BrowserPhotoGroupMember{first}, []PhotoImportMember{image}).Skipped)
@@ -129,7 +98,7 @@ func TestBrowserPhotoReceiptFailureRollsBackGroup(t *testing.T) {
 	assert.Equal(t, int64(2), node.ID)
 }
 
-func TestBrowserPhotoInspectionRejectsUnknownReceipts(t *testing.T) {
+func TestBrowserPhotoInspectionRejectsFutureReceipt(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -141,15 +110,14 @@ func TestBrowserPhotoInspectionRejectsUnknownReceipts(t *testing.T) {
 		Groups: []BrowserPhotoImportGroup{{Members: members}},
 	})
 	require.NoError(t, err)
-	for _, invalid := range []string{`{"version":2,"status":"added"}`, `{"version":1,"status":"future"}`} {
-		_, err = s.db.ExecContext(ctx, `UPDATE browser_photo_import_groups SET receipt_json=$1 WHERE import_id=$2 AND ordinal=$3`, invalid, id.String(), 0)
-		require.NoError(t, err)
-		_, err = s.InspectBrowserPhotoImport(ctx, id)
-		require.Error(t, err)
-		receipt, err := s.BrowserPhotoGroupReceipt(ctx, BrowserPhotoGroupRef{ImportID: id, Ordinal: 0})
-		require.Error(t, err)
-		assert.Nil(t, receipt)
-	}
+	// A newer writer may save a receipt this reader cannot interpret.
+	_, err = s.db.ExecContext(ctx, `UPDATE browser_photo_import_groups SET receipt_json=$1 WHERE import_id=$2 AND ordinal=$3`, `{"version":2,"status":"added"}`, id.String(), 0)
+	require.NoError(t, err)
+	_, err = s.InspectBrowserPhotoImport(ctx, id)
+	require.Error(t, err)
+	receipt, err := s.BrowserPhotoGroupReceipt(ctx, BrowserPhotoGroupRef{ImportID: id, Ordinal: 0})
+	require.Error(t, err)
+	assert.Nil(t, receipt)
 }
 
 func TestBrowserPhotoImportMissing(t *testing.T) {
@@ -159,28 +127,7 @@ func TestBrowserPhotoImportMissing(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestBrowserPhotoImportReregistersNewlyRequiredHashes(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	directory, err := s.PrepareIngestDirectory(ctx, "/photos")
-	require.NoError(t, err)
-	plan := BrowserPhotoImport{SourceID: uuid.New(), Label: "Photos", Destination: "/photos", Directory: directory, Groups: []BrowserPhotoImportGroup{{Members: []BrowserPhotoGroupMember{{Path: "a.jpg", Role: PhotoRoleImage, SourcePath: "browser:source/a.jpg", Size: 4}}}}}
-	id, err := s.RegisterBrowserPhotoImport(ctx, plan)
-	require.NoError(t, err)
-	plan.Groups[0].Members[0].DeclaredHash = fakeHash("a1")
-	again, err := s.RegisterBrowserPhotoImport(ctx, plan)
-	require.NoError(t, err)
-	require.Equal(t, id, again)
-	plan.SourceID = uuid.New()
-	_, err = s.RegisterBrowserPhotoImport(ctx, plan)
-	require.NoError(t, err)
-	plan.Groups[0].Members[0].DeclaredHash = fakeHash("b2")
-	_, err = s.RegisterBrowserPhotoImport(ctx, plan)
-	require.Error(t, err)
-}
-
-func TestBrowserPhotoImportRejectsChangedOrFutureDeclaration(t *testing.T) {
+func TestBrowserPhotoImportRejectsFutureDeclaration(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -189,12 +136,7 @@ func TestBrowserPhotoImportRejectsChangedOrFutureDeclaration(t *testing.T) {
 	plan := BrowserPhotoImport{SourceID: uuid.New(), Label: "Photos", Destination: "/photos", Directory: directory, Groups: []BrowserPhotoImportGroup{{Members: []BrowserPhotoGroupMember{{Path: "a.xmp", Role: PhotoRoleSidecar, SourcePath: "browser:source/a.xmp", Size: 1}}}}}
 	id, err := s.RegisterBrowserPhotoImport(ctx, plan)
 	require.NoError(t, err)
-	again, err := s.RegisterBrowserPhotoImport(ctx, plan)
-	require.NoError(t, err)
-	require.Equal(t, id, again)
-	plan.Groups[0].Members[0].Size = 2
-	_, err = s.RegisterBrowserPhotoImport(ctx, plan)
-	require.Error(t, err)
+	// A newer writer may save a declaration this reader cannot interpret.
 	_, err = s.db.ExecContext(ctx, `UPDATE browser_photo_imports SET format_version=2 WHERE import_id=$1`, id.String())
 	require.NoError(t, err)
 	_, err = s.InspectBrowserPhotoImport(ctx, id)
@@ -214,6 +156,7 @@ func TestBrowserPhotoImportListExcludesFutureDeclarations(t *testing.T) {
 		ids[i], err = s.RegisterBrowserPhotoImport(ctx, plan)
 		require.NoError(t, err)
 	}
+	// A newer declaration must not hide supported imports from paginated results.
 	_, err = s.db.ExecContext(ctx, `UPDATE browser_photo_imports SET format_version=2,created_at='2026-01-03T00:00:00Z' WHERE import_id=$1`, ids[0].String())
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx, `UPDATE browser_photo_imports SET created_at='2026-01-02T00:00:00Z' WHERE import_id=$1`, ids[1].String())

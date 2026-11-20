@@ -1238,34 +1238,22 @@ func TestBrowserPhotoPlanRejectsZeroSource(t *testing.T) {
 	require.Equal(t, "validation", reply.Code)
 }
 
-func TestBrowserPhotoReplansWithSameSource(t *testing.T) {
+func TestBrowserPhotoInspectsBySource(t *testing.T) {
 	t.Parallel()
 	ts, catalog := newTestServer(t, nil)
 	conn := browserUploadSocket(t, ts)
 	data := []byte("<x:xmpmeta/>")
 	hash := sha256.Sum256(data)
 	member := map[string]any{"relative_path": "capture.xmp", "expected_hash": hex.EncodeToString(hash[:]), "size": len(data)}
-	var registeredID string
-	for i := range 2 {
-		require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "plan_photo_import", "request_id": "plan", "destination": "/photos", "source_id": "20000000-0000-4000-8000-000000000001", "files": []map[string]any{member}}))
-		plan := readPhotoResponse(t, conn)
-		require.Equal(t, "photo_import_plan", plan.Type)
-		id := registerBrowserPhotos(t, conn, plan.ImportID)
-		if i == 0 {
-			registeredID = id
-			receipt := uploadBrowserPhoto(t, conn, id, 0, member, data)
-			require.Equal(t, "photo_group_receipt", receipt.Type)
-		} else {
-			require.Equal(t, registeredID, id)
-			require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "begin_photo_group", "request_id": "replay", "import_id": id, "group": 0, "hashes": photoGroupHashes(t, []map[string]any{member})}))
-			receipt := readPhotoResponse(t, conn)
-			require.Equal(t, "photo_group_receipt", receipt.Type)
-			assert.Equal(t, "added", receipt.Receipt.Status)
-		}
-	}
+	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "plan_photo_import", "request_id": "plan", "destination": "/photos", "source_id": "20000000-0000-4000-8000-000000000001", "files": []map[string]any{member}}))
+	plan := readPhotoResponse(t, conn)
+	require.Equal(t, "photo_import_plan", plan.Type)
+	id := registerBrowserPhotos(t, conn, plan.ImportID)
+	require.Equal(t, "photo_group_receipt", uploadBrowserPhoto(t, conn, id, 0, member, data).Type)
 	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "inspect_photo_import", "request_id": "source", "source_id": "20000000-0000-4000-8000-000000000001"}))
 	inspected := readPhotoResponse(t, conn)
 	require.Equal(t, "photo_import_inspection", inspected.Type)
+	assert.Equal(t, id, inspected.SavedImport.ImportID)
 	assert.Equal(t, "committed", inspected.SavedImport.Groups[0].Status)
 	dest, err := catalog.NodeByPath(t.Context(), "/photos")
 	require.NoError(t, err)

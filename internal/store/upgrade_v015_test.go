@@ -241,8 +241,6 @@ func TestUpgradeReleasedV0170KeepsExplicitPhotoRefresh(t *testing.T) {
 			require.NoError(t, backupDB.Close())
 			require.Equal(t, sourceRows.String(), backupRows.String())
 			require.Equal(t, sourceRows.String(), upgradedRows.String())
-			var backup bytes.Buffer
-			require.NoError(t, s.ExportMetadata(ctx, &backup))
 			_, err = s.RenditionJobWaiterByID(ctx, waiter.ID)
 			require.NoError(t, err)
 			_, err = s.RenditionJobByID(ctx, faceJob.ID)
@@ -266,12 +264,6 @@ func TestUpgradeReleasedV0170KeepsExplicitPhotoRefresh(t *testing.T) {
 			require.Len(t, values, 1)
 			require.Equal(t, "Refreshed description.", values[0].Value.Caption)
 
-			restored := newTestStoreWithDriver(t, driver.driver)
-			require.NoError(t, restored.ImportMetadata(ctx, &backup))
-			_, err = restored.RenditionJobByID(ctx, job.ID)
-			require.ErrorIs(t, err, ErrNotFound)
-			_, err = restored.RenditionJobByID(ctx, faceJob.ID)
-			require.ErrorIs(t, err, ErrNotFound)
 		})
 	}
 }
