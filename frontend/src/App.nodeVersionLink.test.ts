@@ -122,7 +122,7 @@ it("names a linked version with its document folder", async () => {
   );
   render(App);
   await screen.findByText(oldID);
-  await waitFor(() => expect(document.title).toBe(`example.txt · /Taxes · ${oldID} · Docbank`));
+  await waitFor(() => expect(document.title).toBe(`example.txt (${oldID}) · /Taxes · Docbank`));
 });
 
 it("keeps the resolved linked selection when root rows arrive after sign-in", async () => {
@@ -138,7 +138,7 @@ it("keeps the resolved linked selection when root rows arrive after sign-in", as
   render(App);
   await signIn();
   await screen.findByText(oldID);
-  await waitFor(() => expect(document.title).toBe(`example.txt · ${oldID} · Docbank`));
+  await waitFor(() => expect(document.title).toBe(`example.txt (${oldID}) · Docbank`));
   await waitFor(() => expect(release).toBeTypeOf("function"));
   await act(() =>
     release(
@@ -291,7 +291,7 @@ it("reopens exact versions on Back and Forward and uses the renamed node instead
     location.hash = link();
   });
   await screen.findByText(oldID);
-  await waitFor(() => expect(document.title).toBe(`example.txt · ${oldID} · Docbank`));
+  await waitFor(() => expect(document.title).toBe(`example.txt (${oldID}) · Docbank`));
   const mountedDrawer = screen.getByRole("dialog");
   expect(location.hash).toBe(link());
   const drawer = within(mountedDrawer);
@@ -304,7 +304,7 @@ it("reopens exact versions on Back and Forward and uses the renamed node instead
     await timeline.findByRole("button", { name: detailsName(currentVersion, "Replaced") }),
   );
   await within(mountedDrawer).findByText(currentID);
-  await waitFor(() => expect(document.title).toBe(`example.txt · ${currentID} · Docbank`));
+  await waitFor(() => expect(document.title).toBe(`example.txt (${currentID}) · Docbank`));
   expect(location.hash).toBe(link(currentID));
   const push = vi.spyOn(history, "pushState");
   await fireEvent.click(currentDetails());

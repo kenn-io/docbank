@@ -86,7 +86,7 @@
   import { People } from "./people.svelte.js";
   import UserIcon from "@lucide/svelte/icons/user";
   import PhotoAlbumsIndex from "./PhotoAlbumsIndex.svelte";
-  import { PhotoAlbums, photoDragType } from "./photoAlbums.svelte.js";
+  import { PhotoAlbums, missingAlbum, photoDragType } from "./photoAlbums.svelte.js";
   import StarIcon from "@lucide/svelte/icons/star";
   import TargetIcon from "@lucide/svelte/icons/target";
   import { localPreferenceStorage } from "./browser-storage.js";
@@ -459,16 +459,7 @@
   const albumScopeID = $derived(albumID || mapAlbumID);
   let photoAlbums = $state<PhotoAlbums>();
   const scopedAlbum = $derived(photoAlbums?.items.find((item) => item.id === albumScopeID));
-  const missingPhotoAlbum = $derived(
-    Boolean(
-      albumScopeID &&
-      photoAlbums?.initialized &&
-      !photoAlbums.loading &&
-      !photoAlbums.busy &&
-      !photoAlbums.loadError &&
-      !scopedAlbum,
-    ),
-  );
+  const missingPhotoAlbum = $derived(missingAlbum(photoAlbums, albumScopeID));
   let peopleView = $state<People>();
   let albumPhotos = $state<Photos>();
   let mapPhotos = $state<Photos>();
@@ -3801,7 +3792,7 @@
       title = nodeVersionError
         ? "Version unavailable"
         : linked
-          ? `${linked.node.name}${parent === "/" ? "" : ` · ${parent}`} · ${linked.version.id}`
+          ? `${linked.node.name} (${linked.version.id})${parent === "/" ? "" : ` · ${parent}`}`
           : "Version";
     } else if (activePanel && systemPanelKinds.includes(activePanel.kind))
       title = vault?.sectionLabel() ?? "System";
@@ -3812,7 +3803,8 @@
       if (missingPhotoAlbum) title = "Album not found";
       else if (photoID && photoName) title = photoName;
       else if (mapMode) title = mapAlbumID && scopedAlbum ? `Map · ${scopedAlbum.name}` : "Map";
-      else if (person && photos?.query.filters.person_ids?.includes(person.id)) title = person.name;
+      else if (person && photos?.query.filters.person_ids?.includes(person.id))
+        title = `${person.name} · Photos`;
       else if (hiddenMode) title = "Hidden";
       else if (albumID) title = scopedAlbum?.name ?? "Album";
       else if (photoPath === "/photos/albums") title = "Albums";

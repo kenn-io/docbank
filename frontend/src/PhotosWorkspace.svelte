@@ -67,7 +67,7 @@
   import SelectionDock from "./SelectionDock.svelte";
   import PhotoAlbumPicker from "./PhotoAlbumPicker.svelte";
   import PhotoAlbumPending from "./PhotoAlbumPending.svelte";
-  import { type PhotoAlbums, type PhotoAlbumItem } from "./photoAlbums.svelte.js";
+  import { missingAlbum, type PhotoAlbums, type PhotoAlbumItem } from "./photoAlbums.svelte.js";
   import { PhotoCull as CullRun } from "./photoCull.svelte.js";
   import { photoCullStorage } from "./photoCullStorage.js";
   import PhotoCull from "./PhotoCull.svelte";
@@ -1502,7 +1502,7 @@
                   tone={editor.noticeTone}
                   message={editor.notice}
                 />{/if}
-              {#if albumID && albums && albums.initialized && !albums.loading && !albums.busy && modal !== "delete" && !albums.loadError && !album}<EmptyState
+              {#if missingAlbum(albums, albumID) && modal !== "delete"}<EmptyState
                   title="Album not found"
                   ><Button onclick={() => onnavigate("/photos/albums")}>Back to albums</Button
                   ></EmptyState

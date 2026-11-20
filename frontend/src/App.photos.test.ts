@@ -4419,7 +4419,7 @@ it.each([
       (screen.getByRole("searchbox", { name: "Search photos" }) as HTMLInputElement).value,
     ).toBe("");
     await screen.findByText("Person: Ada");
-    await waitFor(() => expect(document.title).toBe("Ada · Docbank"));
+    await waitFor(() => expect(document.title).toBe("Ada · Photos · Docbank"));
     await screen.findByRole("button", { name: `Select ${item.name}` });
     expect(screen.queryByRole("dialog", { name: /^Photo viewer,/ })).toBeNull();
     expect(screen.queryByRole("button", { name: `Select ${other.name}` })).toBeNull();
