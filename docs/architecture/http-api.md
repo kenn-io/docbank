@@ -2255,8 +2255,8 @@ before redisplay, the Albums index keeps its album list, and Documents snapshots
 stay valid.
 
 `GET /photos/assets/{asset_id}/previews/{generation_id}` returns complete
-verified JPEG bytes for an included asset's current display version, or for an
-assigned source grid version when `person_id` is supplied. An unavailable or
+verified JPEG bytes for an included asset's current display version, or for a
+source grid version when `person_id` or `face_id` is supplied. An unavailable or
 stale generation returns 404, missing retained bytes return
 `photo_preview_unavailable`, and failed byte verification returns
 `photo_preview_corrupt`. Success includes Content-Length, Content-Digest, the
@@ -2270,9 +2270,10 @@ list POST, timeline POST, `POST /photos/assets/flags`,
 `POST /photos/authored/prepare`, `POST /photos/authored/edit`,
 `POST /photos/authored/{receipt_id}/undo`,
 `POST /photos/authored/{file_id}/xmp`, preview GET with an optional
-`person_id`, `GET /photos/events`, hidden-state GET, interactive hidden POSTs,
-asset hide/unhide POSTs, `POST /photos/assets/{asset_id}/trash`,
-`POST /photos/rejects/preflight`, and `POST /photos/rejects/trash` with empty
+`person_id` or `face_id` but not both, `GET /photos/events`, hidden-state GET,
+interactive hidden POSTs, asset hide/unhide POSTs,
+`POST /photos/assets/{asset_id}/trash`, `POST /photos/rejects/preflight`, and
+`POST /photos/rejects/trash` with empty
 query strings. Reset requires the API key. Preview slot states are `missing`,
 `ready`, `unsupported`, and `failed`, and only ready results carry URLs. This
 route never generates a derivative.
@@ -2300,10 +2301,14 @@ on tile configuration.
 optional `hidden` (default false); hidden preparation requires an unlock and
 returns a preview slot. Every `grid` request requires either `person_id` or
 `face_id`, not both, while `fit` and `large` requests accept neither. Source
-preparation verifies live photo membership, an active person assignment on that
-version, and Hidden access before and after production. The byte route accepts
-the same `person_id` query parameter for a source grid generation and repeats
-those checks, returning source reads with `no-store`. Ordinary requests verify
+preparation verifies live photo membership and Hidden access before and after
+production. A `person_id` grant also requires an active person assignment on
+that version. A `face_id` grant requires that exact face on that version and
+needs no person assignment, so an unnamed face works. The returned slot URL
+carries the same `?person_id=...` or `?face_id=...` selector. The byte route
+accepts that same `person_id` or `face_id` query parameter for a source grid
+generation, repeats those checks, and returns source reads with `no-store`.
+Ordinary requests verify
 the current eligible display version before and after on-demand production
 under the mutation gate with a 30-second request limit. A version mismatch at
 admission returns 409 `photo_display_changed`, and a display replaced or
