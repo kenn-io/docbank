@@ -35,9 +35,10 @@ func (c PostgresCatalog) schemaConfig() pgschema.Config {
 	return pgschema.Config{Schema: c.Schema, SchemaOwner: c.SchemaOwner}
 }
 
-// SetupPostgres installs an empty vault catalog or validates an existing one.
+// SetupPostgres installs an empty vault catalog or upgrades a supported catalog.
 // The caller owns the pool, which must authenticate as catalog.SchemaOwner.
-// Runtime grants and restoration of the local blob root are separate steps.
+// Close the vault before upgrading and apply the current runtime grants before
+// reopening it.
 func SetupPostgres(ctx context.Context, owner *sql.DB, catalog PostgresCatalog) (uuid.UUID, error) {
 	if owner == nil {
 		return uuid.Nil(), errors.New("docbank PostgreSQL setup requires a schema-owner connection")

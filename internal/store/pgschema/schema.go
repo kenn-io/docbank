@@ -3,7 +3,6 @@ package pgschema
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	_ "embed"
 	"errors"
@@ -20,10 +19,6 @@ import (
 
 //go:embed schema.sql
 var schemaSQL string
-
-// Hash the template before schema-name substitution so vault names do not affect
-// compatibility. Retained deployments will start a numbered migration chain.
-var schemaFingerprint = fmt.Sprintf("%x", sha256.Sum256([]byte(schemaSQL)))
 
 // Config names an application's dedicated schema and its setup role. The
 // operator provisions roles and grants; this package never creates roles or
@@ -46,11 +41,18 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// Setup installs a fresh schema atomically or validates an existing one without
-// changing its identity or root. The pool must authenticate as Config.SchemaOwner. Callers
+// Setup installs a fresh schema or upgrades a supported schema atomically.
+// The pool must authenticate as Config.SchemaOwner. Callers
 // own the pool and deadline; no credentials are parsed, cached or logged here.
 // Existing schemas without a valid identity are refused, including empty ones.
 func Setup(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
+	if migrationLoadErr != nil {
+		return uuid.Nil(), migrationLoadErr
+	}
+	return setup(ctx, db, c, schemaSQL, migrations)
+}
+
+func setup(ctx context.Context, db *sql.DB, c Config, freshDDL string, chain []migration) (uuid.UUID, error) {
 	if err := c.Validate(); err != nil {
 		return uuid.Nil(), err
 	}
@@ -59,7 +61,7 @@ func Setup(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
 		return uuid.Nil(), err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `SET LOCAL search_path = pg_catalog`); err != nil {
+	if _, err := tx.ExecContext(ctx, `SET LOCAL search_path = pg_catalog, pg_temp`); err != nil {
 		return uuid.Nil(), err
 	}
 	if err := validateEncoding(ctx, tx); err != nil {
@@ -88,10 +90,12 @@ func Setup(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
 		if _, err := tx.ExecContext(ctx, `CREATE SCHEMA `+pgx.Identifier{c.Schema}.Sanitize()+` AUTHORIZATION `+pgx.Identifier{c.SchemaOwner}.Sanitize()); err != nil {
 			return uuid.Nil(), fmt.Errorf("create postgres metadata schema: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, strings.ReplaceAll(schemaSQL, "{{schema}}", pgx.Identifier{c.Schema}.Sanitize())); err != nil {
+		if _, err := tx.ExecContext(ctx, strings.ReplaceAll(freshDDL, "{{schema}}", pgx.Identifier{c.Schema}.Sanitize())); err != nil {
 			return uuid.Nil(), fmt.Errorf("install postgres metadata schema: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.vault_metadata(singleton, vault_uid, schema_fingerprint) VALUES (1,$1,$2)`, uuid.New(), schemaFingerprint); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.vault_metadata
+			(singleton, vault_uid, schema_version, schema_fingerprint) VALUES (1,$1,$2,$3)`,
+			uuid.New(), len(chain), chain[len(chain)-1].fingerprint); err != nil {
 			return uuid.Nil(), fmt.Errorf("initialize postgres vault identity: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.node_allocation(singleton, high_water) VALUES (1,1)`); err != nil {
@@ -128,20 +132,33 @@ func Setup(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
 	case owner != c.SchemaOwner:
 		return uuid.Nil(), errors.New("postgres metadata schema has a different owner")
 	}
-	id, err := validateIdentity(ctx, tx, c)
+	installed, err := readIdentity(ctx, tx, c)
 	if err != nil {
+		return uuid.Nil(), err
+	}
+	if err := checkMigrationState(installed.version, installed.fingerprint, chain); err != nil {
+		return uuid.Nil(), err
+	}
+	if err := applyMigrations(ctx, tx, c.Schema, installed, chain); err != nil {
 		return uuid.Nil(), err
 	}
 	if err := tx.Commit(); err != nil {
 		return uuid.Nil(), err
 	}
-	return id, nil
+	return installed.id, nil
 }
 
 // Validate reads an installed schema through a runtime role. It performs no
 // DDL, grants or repairs. The runtime may read the identity, but must neither
 // own the schema, assume its owner role, create objects nor change the identity.
 func Validate(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
+	if migrationLoadErr != nil {
+		return uuid.Nil(), migrationLoadErr
+	}
+	return validate(ctx, db, c, migrations)
+}
+
+func validate(ctx context.Context, db *sql.DB, c Config, chain []migration) (uuid.UUID, error) {
 	if err := c.Validate(); err != nil {
 		return uuid.Nil(), err
 	}
@@ -150,7 +167,7 @@ func Validate(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
 		return uuid.Nil(), err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `SET LOCAL search_path = pg_catalog`); err != nil {
+	if _, err := tx.ExecContext(ctx, `SET LOCAL search_path = pg_catalog, pg_temp`); err != nil {
 		return uuid.Nil(), err
 	}
 	if err := validateEncoding(ctx, tx); err != nil {
@@ -174,9 +191,15 @@ func Validate(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
 	if owner != c.SchemaOwner || canCreate || canAssumeOwner {
 		return uuid.Nil(), errors.New("postgres metadata requires a separate runtime role without schema ownership or CREATE")
 	}
-	id, err := validateIdentity(ctx, tx, c)
+	installed, err := readIdentity(ctx, tx, c)
 	if err != nil {
 		return uuid.Nil(), err
+	}
+	if err := checkMigrationState(installed.version, installed.fingerprint, chain); err != nil {
+		return uuid.Nil(), err
+	}
+	if installed.version != len(chain) {
+		return uuid.Nil(), fmt.Errorf("postgres metadata schema is at version %d; run setup as the schema owner to upgrade to version %d", installed.version, len(chain))
 	}
 	var canWrite bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_roles r
@@ -193,7 +216,7 @@ func Validate(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
 	if err := tx.Commit(); err != nil {
 		return uuid.Nil(), err
 	}
-	return id, nil
+	return installed.id, nil
 }
 
 func validateEncoding(ctx context.Context, tx *sql.Tx) error {
@@ -208,7 +231,13 @@ func validateEncoding(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
-func validateIdentity(ctx context.Context, tx *sql.Tx, c Config) (uuid.UUID, error) {
+type schemaIdentity struct {
+	id          uuid.UUID
+	version     int
+	fingerprint string
+}
+
+func readIdentity(ctx context.Context, tx *sql.Tx, c Config) (schemaIdentity, error) {
 	// Never execute a view or adopt a foreign table as the identity authority.
 	var owner, kind, persistence string
 	var relation int64
@@ -216,10 +245,10 @@ func validateIdentity(ctx context.Context, tx *sql.Tx, c Config) (uuid.UUID, err
 		FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
 		WHERE n.nspname=$1 AND c.relname='vault_metadata'`, c.Schema).Scan(&relation, &owner, &kind, &persistence)
 	if err != nil {
-		return uuid.Nil(), fmt.Errorf("read postgres vault identity table: %w", err)
+		return schemaIdentity{}, fmt.Errorf("read postgres vault identity table: %w", err)
 	}
 	if owner != c.SchemaOwner || kind != "r" || persistence != "p" {
-		return uuid.Nil(), errors.New("postgres vault identity must be a permanent table owned by the setup role")
+		return schemaIdentity{}, errors.New("postgres vault identity must be a permanent table owned by the setup role")
 	}
 	// Check the structural keys as well as row contents. A missing key cannot
 	// be repaired by runtime startup or hidden by a currently well-formed row.
@@ -227,45 +256,42 @@ func validateIdentity(ctx context.Context, tx *sql.Tx, c Config) (uuid.UUID, err
 	err = tx.QueryRowContext(ctx, `SELECT count(*) FROM pg_attribute WHERE attrelid=$1 AND attnum>0 AND NOT attisdropped
 		AND attnotnull AND ((attname='singleton' AND atttypid='int2'::regtype)
 		OR (attname='vault_uid' AND atttypid='uuid'::regtype)
+		OR (attname='schema_version' AND atttypid='int4'::regtype)
 		OR (attname='schema_fingerprint' AND atttypid='text'::regtype))`, relation).Scan(&columns)
 	if err != nil {
-		return uuid.Nil(), err
+		return schemaIdentity{}, err
 	}
 	err = tx.QueryRowContext(ctx, `SELECT count(*) FROM pg_constraint c
 		JOIN pg_attribute a ON a.attrelid=c.conrelid AND c.conkey=ARRAY[a.attnum]
 		WHERE c.conrelid=$1 AND c.convalidated AND NOT c.condeferrable
 		AND ((c.contype='p' AND a.attname='singleton') OR (c.contype='u' AND a.attname='vault_uid'))`, relation).Scan(&keys)
 	if err != nil {
-		return uuid.Nil(), err
+		return schemaIdentity{}, err
 	}
-	if columns != 3 || keys != 2 {
-		return uuid.Nil(), errors.New("postgres vault identity has an unsupported table layout; recreate this schema with the current build")
+	if columns != 4 || keys != 2 {
+		return schemaIdentity{}, errors.New("postgres vault identity has an unsupported table layout; recreate disposable development schemas or restore retained data from backup")
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT singleton, vault_uid, schema_fingerprint FROM `+pgx.Identifier{c.Schema}.Sanitize()+`.vault_metadata`)
+	rows, err := tx.QueryContext(ctx, `SELECT singleton, vault_uid, schema_version, schema_fingerprint FROM `+pgx.Identifier{c.Schema}.Sanitize()+`.vault_metadata`)
 	if err != nil {
-		return uuid.Nil(), fmt.Errorf("read postgres vault identity: %w", err)
+		return schemaIdentity{}, fmt.Errorf("read postgres vault identity: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	var id uuid.UUID
+	var installed schemaIdentity
 	var singleton, count int
-	var fingerprint string
 	for rows.Next() {
 		count++
 		if count > 1 {
-			return uuid.Nil(), errors.New("postgres metadata has multiple vault identities")
+			return schemaIdentity{}, errors.New("postgres metadata has multiple vault identities")
 		}
-		if err := rows.Scan(&singleton, &id, &fingerprint); err != nil {
-			return uuid.Nil(), err
+		if err := rows.Scan(&singleton, &installed.id, &installed.version, &installed.fingerprint); err != nil {
+			return schemaIdentity{}, err
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return uuid.Nil(), err
+		return schemaIdentity{}, err
 	}
-	if count != 1 || singleton != 1 || id == uuid.Nil() || id[6]>>4 != 4 || id[8]>>6 != 2 {
-		return uuid.Nil(), errors.New("postgres metadata has no valid vault identity")
+	if count != 1 || singleton != 1 || installed.id == uuid.Nil() || installed.id[6]>>4 != 4 || installed.id[8]>>6 != 2 {
+		return schemaIdentity{}, errors.New("postgres metadata has no valid vault identity")
 	}
-	if fingerprint != schemaFingerprint {
-		return uuid.Nil(), errors.New("postgres metadata schema fingerprint does not match this build; recreate this schema with the current build")
-	}
-	return id, nil
+	return installed, nil
 }
