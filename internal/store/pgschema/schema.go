@@ -46,16 +46,16 @@ func (c Config) Validate() error {
 // own the pool and deadline; no credentials are parsed, cached or logged here.
 // Existing schemas without a valid identity are refused, including empty ones.
 func Setup(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
-	return setup(ctx, db, c, schemaSQL, migrations, true)
+	return setup(ctx, db, c, migrations, true)
 }
 
 // Install creates a missing catalog or verifies an existing catalog at the
 // current version. The pool must authenticate as Config.SchemaOwner.
 func Install(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
-	return setup(ctx, db, c, schemaSQL, migrations, false)
+	return setup(ctx, db, c, migrations, false)
 }
 
-func setup(ctx context.Context, db *sql.DB, c Config, freshDDL string, chain []migration, upgrade bool) (uuid.UUID, error) {
+func setup(ctx context.Context, db *sql.DB, c Config, chain []migration, upgrade bool) (uuid.UUID, error) {
 	if migrationLoadErr != nil {
 		return uuid.Nil(), migrationLoadErr
 	}
@@ -96,7 +96,7 @@ func setup(ctx context.Context, db *sql.DB, c Config, freshDDL string, chain []m
 		if _, err := tx.ExecContext(ctx, `CREATE SCHEMA `+pgx.Identifier{c.Schema}.Sanitize()+` AUTHORIZATION `+pgx.Identifier{c.SchemaOwner}.Sanitize()); err != nil {
 			return uuid.Nil(), fmt.Errorf("create postgres metadata schema: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, strings.ReplaceAll(freshDDL, "{{schema}}", pgx.Identifier{c.Schema}.Sanitize())); err != nil {
+		if _, err := tx.ExecContext(ctx, strings.ReplaceAll(schemaSQL, "{{schema}}", pgx.Identifier{c.Schema}.Sanitize())); err != nil {
 			return uuid.Nil(), fmt.Errorf("install postgres metadata schema: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO `+pgx.Identifier{c.Schema}.Sanitize()+`.vault_metadata

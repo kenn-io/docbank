@@ -2,11 +2,13 @@ package pgschema
 
 import (
 	"database/sql"
+	_ "embed"
 	"fmt"
 	"strings"
 	"testing"
 	"testing/fstest"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/pgtest"
@@ -45,11 +47,11 @@ func checkOwnerMigration(t *testing.T, owner, runtime *sql.DB, cfg Config) {
 	broken := appendTestMigrations(t, update, fail)
 	_, err = validate(ctx, runtime, cfg, next)
 	require.ErrorContains(t, err, "run setup as the schema owner")
-	_, err = setup(ctx, runtime, cfg, schemaSQL, next, true)
+	_, err = setup(ctx, runtime, cfg, next, true)
 	require.ErrorContains(t, err, "requires the schema owner role")
-	_, err = setup(ctx, owner, cfg, schemaSQL, next, false)
+	_, err = setup(ctx, owner, cfg, next, false)
 	require.ErrorContains(t, err, "run setup as the schema owner")
-	_, err = setup(ctx, owner, cfg, schemaSQL, broken, true)
+	_, err = setup(ctx, owner, cfg, broken, true)
 	require.ErrorContains(t, err, "second migration failed after first was recorded")
 	var rolledBackVersion int
 	var rolledBackFingerprint string
@@ -66,10 +68,10 @@ func checkOwnerMigration(t *testing.T, owner, runtime *sql.DB, cfg Config) {
 		AND table_name='nodes' AND column_name='migration_probe')`).Scan(&columnExists))
 	require.False(t, columnExists, "failed migration rolled back its preceding DDL")
 
-	upgraded, err := setup(ctx, owner, cfg, schemaSQL, next, true)
+	upgraded, err := setup(ctx, owner, cfg, next, true)
 	require.NoError(t, err)
 	require.Equal(t, id, upgraded)
-	again, err := setup(ctx, owner, cfg, schemaSQL, next, true)
+	again, err := setup(ctx, owner, cfg, next, true)
 	require.NoError(t, err)
 	require.Equal(t, id, again)
 	got, err := validate(ctx, runtime, cfg, next)
@@ -119,11 +121,52 @@ func TestNumberedMigrationsMatchCanonicalSchema(t *testing.T) {
 	_, err := Setup(ctx, db, fresh)
 	require.NoError(t, err)
 	require.NotEmpty(t, migrations)
-	_, err = setup(ctx, db, numbered, migrations[0].ddl, migrations[:1], false)
+	schema := pgx.Identifier{numbered.Schema}.Sanitize()
+	versionOne := strings.NewReplacer("{{schema}}", schema, "{{fingerprint}}", migrations[0].fingerprint)
+	_, err = db.ExecContext(ctx, "CREATE SCHEMA "+schema+";\n"+versionOne.Replace(migrations[0].ddl+"\n"+versionOneSeeds))
 	require.NoError(t, err)
 	_, err = Setup(ctx, db, numbered)
 	require.NoError(t, err)
 	require.Equal(t, installedCatalog(t, db, fresh.Schema), installedCatalog(t, db, numbered.Schema))
+	require.Equal(t, installedSeedRows(t, db, fresh.Schema), installedSeedRows(t, db, numbered.Schema))
+}
+
+//go:embed testdata/version_1_seeds.sql
+var versionOneSeeds string
+
+func installedSeedRows(t *testing.T, db *sql.DB, schema string) map[string]string {
+	t.Helper()
+	// Ignore generated values, keeping every other column and row count.
+	tables := map[string][]string{
+		"vault_metadata":                 {"vault_uid"},
+		"node_allocation":                {},
+		"vault_change_head":              {"epoch"},
+		"nodes":                          {"created_at", "modified_at"},
+		"document_people_state":          {"updated_at"},
+		"processing_incarnations":        {"incarnation_id", "created_at"},
+		"current_processing_incarnation": {"incarnation_id"},
+		"blob_stores":                    {"store_id", "ownership_epoch", "created_at"},
+	}
+	result := make(map[string]string, len(tables))
+	for name, generated := range tables {
+		table := pgx.Identifier{schema, name}.Sanitize()
+		var rows string
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT jsonb_agg(data ORDER BY data)::text
+			FROM (SELECT to_jsonb(seed) - $1::text[] AS data FROM `+table+` AS seed) AS normalized`,
+			generated).Scan(&rows), "reading required seed rows in %s", table)
+		result[name] = rows
+	}
+
+	// The pointer has no foreign key, so check the relationship before
+	// discarding the generated incarnation ID.
+	pointer := pgx.Identifier{schema, "current_processing_incarnation"}.Sanitize()
+	incarnations := pgx.Identifier{schema, "processing_incarnations"}.Sanitize()
+	var linked bool
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT EXISTS (
+		SELECT 1 FROM `+pointer+` JOIN `+incarnations+` USING (incarnation_id) WHERE singleton=1
+	)`).Scan(&linked))
+	require.True(t, linked, "current processing incarnation exists in %s", schema)
+	return result
 }
 
 // Inspect installed objects so changes to SQL formatting and object creation

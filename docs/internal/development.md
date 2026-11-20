@@ -744,9 +744,9 @@ migration. Include changes to indexes, defaults, and incompatible seed
 values. Migration SQL runs inside the setup transaction. Keep at most one
 migration per PR. Once a migration reaches main or
 a retained catalog, fix it through a new forward migration. `make test-pg`
-installs both the canonical schema and the complete chain, then compares the
-installed catalog objects. SQLite layout and portable metadata versions have
-their own history.
+compares a catalog installed by current setup with one upgraded from the
+version 1 schema and seed rows. It checks the installed objects and required
+rows. SQLite layout and portable metadata versions have their own history.
 
 Back up and close the vault before running owner setup on a newer build.
 Apply the current runtime grants before reopening. Recover with a compatible
