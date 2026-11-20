@@ -1,5 +1,4 @@
 // Package pgschema owns PostgreSQL schema installation and runtime validation.
-// The public vault lifecycle still uses SQLite.
 package pgschema
 
 import (

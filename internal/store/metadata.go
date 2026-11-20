@@ -15,7 +15,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5"
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/document"
@@ -1024,8 +1023,8 @@ func (s *Store) importMetadata(ctx context.Context, r io.Reader, beforeCommit fu
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		postgres := s.postgresSchema != ""
 		if postgres {
-			if _, err := tx.ExecContext(ctx, `SET LOCAL search_path=`+pgx.Identifier{s.postgresSchema}.Sanitize()+`,pg_catalog`); err != nil {
-				return fmt.Errorf("selecting metadata import schema: %w", err)
+			if err := selectPostgresStorageSchema(ctx, tx, s.postgresSchema); err != nil {
+				return err
 			}
 		}
 		if err := requirePristineMetadataTarget(ctx, tx, postgres); err != nil {
@@ -1130,6 +1129,13 @@ var pristinePostgresMetadataTables = pristineMetadataTableSum(metadataCodecs, tr
 func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx, postgres bool) error {
 	tables := pristineMetadataTables
 	if postgres {
+		var bound bool
+		if err := tx.QueryRowContext(ctx, `SELECT primary_storage_bound FROM vault_metadata WHERE singleton=1`).Scan(&bound); err != nil {
+			return fmt.Errorf("checking postgres primary storage binding: %w", err)
+		}
+		if bound {
+			return ErrPostgresPrimaryBound
+		}
 		tables = pristinePostgresMetadataTables
 	}
 	var nodes, other, packs int64

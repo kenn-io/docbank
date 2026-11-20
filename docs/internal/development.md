@@ -384,7 +384,7 @@ Photo metadata edits and undo, XMP conflict settlement and sidecar publication
 also use shared operations for explicit asset selections. Quality scores, hidden-photo
 sessions and photo settings have native Store contracts as well.
 
-The Go embedding API can [restore and open a PostgreSQL vault](../embedding.md#restore-and-open-a-postgresql-vault).
+The Go embedding API can [initialize, restore and open a PostgreSQL vault](../embedding.md#use-a-postgresql-vault).
 The standalone daemon opens SQLite. Direct embedding-worker publication/recovery, photo
 descriptions and face detection have qualification below. Foreground direct-file
 and image embedding can publish a vector index before returning. Face embedding,
@@ -981,6 +981,14 @@ access, moves and creates audited files, walks the catalog, and verifies the
 content bytes. It closes and reopens the vault, then takes another backup and
 restores it into SQLite through the open vault.
 
+`InitializePostgres` uses the owner connection to bind a private root to a
+pristine catalog. The writer transaction records the committed binding in
+`vault_metadata.primary_storage_bound` and rotates the primary ownership epoch.
+Initialization and restore hold the local root lock across publication and
+commit. The public runtime opener checks both the binding and the filesystem
+marker. The binding is local deployment state and stays outside portable
+metadata exports. Restore refuses any catalog with a committed binding.
+
 #### Document export plans and jobs
 
 The native Store supports explicit members, current node IDs, chunked uploads
@@ -1569,7 +1577,7 @@ their `internal` packages are not importable shared libraries.
 | AgentsView [catalog adapter][av-pg-catalog] and [query dialect][av-dialect] | Shared filtering, pagination and result assembly; explicit backend SQL and typed scanning | Docbank is an authoritative vault, not a disposable mirror. Keep its existing `Store` and mutation helpers; no replica registry or second implementation of audit and publication |
 | AgentsView [pool opening][av-connect] and [hosted validation][av-hosted] | Configure every pooled connection, validate effective schema at opening, and account for connection reuse | Its tenant/RLS schema is a separate design, not Docbank's permission model. Do not copy its CHECK constraints, tenant tables or triggers |
 | [msgvault embedded archive][mv-archive] | pgx through `database/sql`; separate setup and validation-only opening; `current_schema()` check | Docbank serializes setup itself and requires a dedicated schema; it does not copy ambient-schema defaults or msgvault's migration ledger |
-| [Kata PostgreSQL operations][kata-operations] | `Schema`/`SchemaOwner` naming, owner/runtime role separation, transaction advisory lock | This internal API accepts a pool and has separate setup/validate calls; schema fingerprints reject stale disposable schemas; numbered migrations start before retained deployments, and a public vault is not exposed yet |
+| [Kata PostgreSQL operations][kata-operations] | `Schema`/`SchemaOwner` naming, owner/runtime role separation, transaction advisory lock | Embedded setup uses a caller-owned pool and runtime opening uses a separate login. Schema fingerprints reject stale disposable schemas. Numbered migrations start before retained deployments. |
 | [Kata numbered migrations][kata-migrations] and [sequence export][kata-sequences] | Canonical fresh DDL, immutable forward SQL, atomic version stamps, and preservation of allocated IDs through transfer | Version history belongs to Docbank; its audit format requires a transactional node counter rather than a native identity sequence |
 | AgentsView [behavior parity][av-parity] and [pool tests][av-pool-tests]; msgvault and Kata PostgreSQL lanes | Exercise real backends and their public operations, including errors, filtering and reused connections | Keep Docbank's canonical setup fixture, separate runtime role, PostgreSQL 16/18 lanes and both SQLite builds; no new fixture schema or per-test container |
 

@@ -2,13 +2,17 @@ package docbank
 
 import (
 	"context"
+	"database/sql"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"uuid"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/packstore"
 
@@ -16,6 +20,147 @@ import (
 	"go.kenn.io/docbank/internal/pgstoretest"
 	"go.kenn.io/docbank/internal/pgtest"
 )
+
+func TestInitializePostgres(t *testing.T) {
+	t.Parallel()
+	ownerDB, owner := pgtest.NewDatabase(t)
+	ctx := t.Context()
+	catalog := PostgresCatalog{Schema: "documents", SchemaOwner: owner}
+	root := filepath.Join(t.TempDir(), "vault")
+	id, err := InitializePostgres(ctx, ownerDB, catalog, root)
+	require.NoError(t, err)
+	runtime := pgstoretest.RuntimeConfig(t, ownerDB, catalog.schemaConfig())
+	vault, err := OpenPostgres(ctx, Config{Root: root}, catalog, runtime)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	require.Equal(t, id.String(), vault.ID())
+	require.NoFileExists(t, (home.Layout{Root: root}).DBPath())
+
+	repo, err := InitBackupRepository(filepath.Join(t.TempDir(), "backup"))
+	require.NoError(t, err)
+	snapshot, err := vault.CreateBackup(ctx, repo, BackupOptions{Jobs: 1})
+	require.NoError(t, err)
+	displaced := filepath.Join(t.TempDir(), "displaced")
+	_, err = repo.RestorePostgres(ctx, ownerDB, catalog, runtime, BackupRestoreOptions{Target: displaced, SnapshotID: snapshot.ID, Jobs: 1})
+	require.ErrorIs(t, err, ErrPostgresPrimaryBound)
+	require.NoDirExists(t, displaced)
+
+	racing := PostgresCatalog{Schema: "racing", SchemaOwner: owner}
+	racingRuntime := pgstoretest.RuntimeConfig(t, ownerDB, racing.schemaConfig())
+	racingRoot := filepath.Join(t.TempDir(), "initialized-during-restore")
+	var once sync.Once
+	var initErr error
+	var idWhileRestoring uuid.UUID
+	_, err = repo.RestorePostgres(ctx, ownerDB, racing, racingRuntime, BackupRestoreOptions{
+		Target: displaced, SnapshotID: snapshot.ID, Jobs: 1,
+		Progress: func(BackupProgress) {
+			once.Do(func() { idWhileRestoring, initErr = InitializePostgres(ctx, ownerDB, racing, racingRoot) })
+		},
+	})
+	require.NoError(t, initErr)
+	require.ErrorIs(t, err, ErrPostgresPrimaryBound)
+	require.NoDirExists(t, displaced)
+	initialized, err := OpenPostgres(ctx, Config{Root: racingRoot}, racing, racingRuntime)
+	require.NoError(t, err)
+	require.Equal(t, idWhileRestoring.String(), initialized.ID())
+	require.NoError(t, initialized.Close())
+
+	data := "first document"
+	created, err := vault.Create(ctx, "/first.txt", strings.NewReader(data), CreateOptions{Expected: contentIdentity([]byte(data))})
+	require.NoError(t, err)
+	require.NoError(t, vault.Close())
+	again, err := InitializePostgres(ctx, ownerDB, catalog, root)
+	require.NoError(t, err)
+	require.Equal(t, id, again)
+	_, err = InitializePostgres(ctx, ownerDB, catalog, displaced)
+	require.ErrorIs(t, err, ErrPostgresPrimaryBound)
+	require.NoDirExists(t, displaced)
+
+	reopened, err := OpenPostgres(ctx, Config{Root: root}, catalog, runtime)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reopened.Close()) })
+	checkEmbeddedContent(t, reopened, "/first.txt", created.Node.ID, data)
+}
+
+func TestInitializeReusedOwnerConnectionPostgres(t *testing.T) {
+	t.Parallel()
+	for _, table := range []string{"vault_metadata", "blob_stores"} {
+		t.Run(table, func(t *testing.T) {
+			t.Parallel()
+			ownerDB, owner := pgtest.NewDatabase(t)
+			ctx := t.Context()
+			catalog := PostgresCatalog{Schema: "documents", SchemaOwner: owner}
+			runtime := pgstoretest.RuntimeConfig(t, ownerDB, catalog.schemaConfig())
+			addOwnerTempTable(t, ownerDB, catalog, table)
+
+			root := filepath.Join(t.TempDir(), "vault")
+			id, err := InitializePostgres(ctx, ownerDB, catalog, root)
+			require.NoError(t, err)
+			vault, err := OpenPostgres(ctx, Config{Root: root}, catalog, runtime)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, vault.Close()) })
+			require.Equal(t, id.String(), vault.ID())
+		})
+	}
+}
+
+func addOwnerTempTable(t *testing.T, owner *sql.DB, catalog PostgresCatalog, table string) {
+	t.Helper()
+	// Pin the pool to the session that owns the temporary relation.
+	owner.SetMaxOpenConns(1)
+	_, err := owner.ExecContext(t.Context(), "CREATE TEMP TABLE "+pgx.Identifier{table}.Sanitize()+
+		" AS TABLE "+pgx.Identifier{catalog.Schema, table}.Sanitize())
+	require.NoError(t, err)
+}
+
+type abortInitialStorageCommit struct{ root string }
+
+func (tr abortInitialStorageCommit) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	if data.SQL == "commit" {
+		if _, err := os.Stat(tr.root); err == nil {
+			ctx, cancel := context.WithCancel(ctx)
+			cancel()
+			return ctx
+		}
+	}
+	return ctx
+}
+
+func (abortInitialStorageCommit) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+func TestInitializeInterruptedCommitPostgres(t *testing.T) {
+	t.Parallel()
+	ownerDB, owner := pgtest.NewDatabase(t)
+	ctx := t.Context()
+	catalog := PostgresCatalog{Schema: "documents", SchemaOwner: owner}
+	// Prepare the catalog in advance so only the binding transaction is faulted.
+	_, err := SetupPostgres(ctx, ownerDB, catalog)
+	require.NoError(t, err)
+	runtime := pgstoretest.RuntimeConfig(t, ownerDB, catalog.schemaConfig())
+	root := filepath.Join(t.TempDir(), "aborted")
+	ownerConn, err := pgx.ParseConfig(os.Getenv("DOCBANK_TEST_POSTGRES_DSN"))
+	require.NoError(t, err)
+	ownerConn.Database = runtime.Database
+	ownerConn.Tracer = abortInitialStorageCommit{root: root}
+	interrupted := stdlib.OpenDB(*ownerConn)
+	t.Cleanup(func() { require.NoError(t, interrupted.Close()) })
+	_, err = InitializePostgres(ctx, interrupted, catalog, root)
+	require.ErrorIs(t, err, context.Canceled)
+	require.DirExists(t, root)
+
+	aborted, err := OpenPostgres(ctx, Config{Root: root}, catalog, runtime)
+	require.ErrorIs(t, err, ErrPostgresPrimaryUnbound)
+	require.Nil(t, aborted)
+	retryRoot := filepath.Join(t.TempDir(), "retry")
+	_, err = InitializePostgres(ctx, ownerDB, catalog, retryRoot)
+	require.NoError(t, err)
+	aborted, err = OpenPostgres(ctx, Config{Root: root}, catalog, runtime)
+	require.ErrorIs(t, err, packstore.ErrStoreFenced)
+	require.Nil(t, aborted)
+	open, err := OpenPostgres(ctx, Config{Root: retryRoot}, catalog, runtime)
+	require.NoError(t, err)
+	require.NoError(t, open.Close())
+}
 
 func TestEmbeddedVaultLifecyclePostgres(t *testing.T) {
 	t.Parallel()
@@ -73,6 +218,8 @@ func TestEmbeddedVaultLifecyclePostgres(t *testing.T) {
 	require.Empty(t, refused)
 	require.NoDirExists(t, target)
 
+	addOwnerTempTable(t, setup, catalog, "vault_metadata")
+	addOwnerTempTable(t, setup, catalog, "blob_stores")
 	report, err := repository.RestorePostgres(ctx, setup, catalog, runtime,
 		BackupRestoreOptions{Target: target, SnapshotID: snapshot.ID, Jobs: 1})
 	require.NoError(t, err)

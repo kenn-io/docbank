@@ -31,6 +31,7 @@ type Store struct {
 	writeRevision          atomic.Uint64
 	postgresConfig         *pgx.ConnConfig // Pinned runtime configuration for independently owned read pools.
 	postgresSchema         string          // Empty for SQLite; PostgreSQL pools use this schema as their search path.
+	postgresPrimaryBound   bool
 	path                   string
 	vaultDir               string
 	rootID                 int64

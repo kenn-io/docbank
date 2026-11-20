@@ -24,6 +24,13 @@ type PostgresCatalog struct {
 	SchemaOwner string
 }
 
+var (
+	// ErrPostgresPrimaryBound means the catalog already owns another root.
+	ErrPostgresPrimaryBound = store.ErrPostgresPrimaryBound
+	// ErrPostgresPrimaryUnbound means the catalog has no committed storage root.
+	ErrPostgresPrimaryUnbound = store.ErrPostgresPrimaryUnbound
+)
+
 func (c PostgresCatalog) schemaConfig() pgschema.Config {
 	return pgschema.Config{Schema: c.Schema, SchemaOwner: c.SchemaOwner}
 }
@@ -38,7 +45,7 @@ func SetupPostgres(ctx context.Context, owner *sql.DB, catalog PostgresCatalog) 
 	return pgschema.Setup(ctx, owner, catalog.schemaConfig())
 }
 
-// OpenPostgres exclusively opens a restored vault root with the runtime role.
+// OpenPostgres exclusively opens an initialized or restored root with the runtime role.
 // The root must hold the matching primary ownership marker. Close releases the
 // pool and root lock. Run one owning process per catalog.
 func OpenPostgres(ctx context.Context, config Config, catalog PostgresCatalog, runtime *pgx.ConnConfig) (*Vault, error) {
@@ -52,7 +59,14 @@ func OpenPostgres(ctx context.Context, config Config, catalog PostgresCatalog, r
 	layout := home.Layout{Root: config.Root}
 	return openVaultWithCatalog(ctx, config, blobOptions, layout, layout.OpenExistingAndLockExclusiveNoCreate,
 		func(ctx context.Context) (*store.Store, error) {
-			return store.OpenPostgres(ctx, runtime, catalog.schemaConfig(), layout.Root)
+			metadata, err := store.OpenPostgres(ctx, runtime, catalog.schemaConfig(), layout.Root)
+			if err != nil {
+				return nil, err
+			}
+			if !metadata.PostgresPrimaryBound() {
+				return nil, errors.Join(ErrPostgresPrimaryUnbound, metadata.Close())
+			}
+			return metadata, nil
 		},
 	)
 }

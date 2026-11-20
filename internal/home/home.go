@@ -146,13 +146,8 @@ func containsFileIdentity(rootInfo os.FileInfo, dir string, allowMissing bool) (
 // Pre-creating the private database also makes SQLite's WAL and SHM siblings
 // inherit the vault's protection.
 func (l Layout) Ensure() error {
-	for _, dir := range []string{l.Root, l.BlobsDir(), l.BlobTmpDir(), l.EmailPDFSpoolDir(), l.LogsDir()} {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return fmt.Errorf("creating %s: %w", dir, err)
-		}
-		if err := enforceMode(dir, 0o700); err != nil {
-			return err
-		}
+	if err := l.EnsureDirectories(); err != nil {
+		return err
 	}
 	db, err := os.OpenFile(l.DBPath(), os.O_CREATE|os.O_RDONLY, 0o600)
 	if err != nil {
@@ -163,4 +158,17 @@ func (l Layout) Ensure() error {
 		return err
 	}
 	return secureOptionalConfig(filepath.Join(l.Root, "config.toml"))
+}
+
+// EnsureDirectories creates the owner-private vault and working directories.
+func (l Layout) EnsureDirectories() error {
+	for _, dir := range []string{l.Root, l.BlobsDir(), l.BlobTmpDir(), l.EmailPDFSpoolDir(), l.LogsDir()} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return fmt.Errorf("creating %s: %w", dir, err)
+		}
+		if err := enforceMode(dir, 0o700); err != nil {
+			return err
+		}
+	}
+	return nil
 }
