@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gofrs/flock"
 )
@@ -28,6 +29,13 @@ const shardChildEnv = "DOCBANK_TEST_SHARD_CHILD"
 
 // shardMarkerEnv carries the text a child writes after each test it runs.
 const shardMarkerEnv = "DOCBANK_TEST_SHARD_MARKER"
+
+// shardDeadlineEnv carries the package's -test.timeout deadline to children.
+const shardDeadlineEnv = "DOCBANK_TEST_SHARD_DEADLINE"
+
+// slotPollInterval is how often a worker retries its slot while it waits;
+// Lock cannot be canceled when the package deadline passes.
+const slotPollInterval = 10 * time.Millisecond
 
 // testLogHeader starts every test log; cmd/go reads it to key the test cache.
 const testLogHeader = "# test log\n"
@@ -54,6 +62,10 @@ const testLogHeader = "# test log\n"
 // Use it for a test whose subtests dominate the package, and list every
 // subtest that it starts.
 //
+// -test.timeout bounds the whole run, as in one process. A test still running
+// at the deadline panics in its child, which names it, before go test kills
+// the package.
+//
 // It runs the tests in this process instead when sharding cannot preserve the
 // run's meaning: listing, benchmarks, fuzzing, profiles, coverage, a -run
 // pattern that selects subtests, or fewer than two selected tests.
@@ -67,13 +79,26 @@ func RunShards(m *testing.M, splits ...Split) int {
 		}
 		return m.Run()
 	}
-	// TestMain has no caller context; the children end with -test.timeout.
+	// The parent never calls m.Run, so no -test.timeout timer runs here, and
+	// each m.Run in a child times only its own call. Without one deadline for
+	// the package, go test kills the parent a minute after -test.timeout and
+	// the hung test's name and output are lost.
+	timeout, err := time.ParseDuration(flagValue("test.timeout"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "reading -test.timeout: %v\n", err)
+		return 2
+	}
+	var deadline time.Time
+	if timeout > 0 {
+		deadline = time.Now().Add(timeout)
+	}
+	// TestMain has no caller context; the deadline bounds the children.
 	ctx := context.Background()
 	names, ok := shardableTests(ctx)
 	if !ok {
 		return m.Run()
 	}
-	return runShards(ctx, names, splits)
+	return runShards(ctx, names, splits, deadline)
 }
 
 // Split names a top-level test and subtests it starts. A subtest may name a
@@ -127,7 +152,7 @@ func flagValue(name string) string {
 	return ""
 }
 
-func runShards(ctx context.Context, names []string, splits []Split) int {
+func runShards(ctx context.Context, names []string, splits []Split, deadline time.Time) int {
 	subtests := map[string][]string{}
 	for _, split := range splits {
 		subtests[split.Test] = split.Subtests
@@ -168,7 +193,7 @@ func runShards(ctx context.Context, names []string, splits []Split) int {
 	var baseArgs []string
 	flag.Visit(func(f *flag.Flag) {
 		switch f.Name {
-		case "test.run", "test.testlogfile":
+		case "test.run", "test.testlogfile", "test.timeout":
 		case "test.parallel":
 			// -parallel bounds the tests that run at once in the package, as
 			// in one process: tests that hold a server connection or another
@@ -203,11 +228,14 @@ func runShards(ctx context.Context, names []string, splits []Split) int {
 	}
 	marker := rand.Text()
 	childEnv := append(os.Environ(), shardChildEnv+"=1", shardMarkerEnv+"="+marker)
+	if !deadline.IsZero() {
+		childEnv = append(childEnv, shardDeadlineEnv+"="+deadline.Format(time.RFC3339Nano))
+	}
 	if _, set := os.LookupEnv("GOMAXPROCS"); !set {
 		childEnv = append(childEnv, "GOMAXPROCS=1")
 	}
 	pool := &shardPool{executable: executable, baseArgs: baseArgs, env: childEnv, marker: marker, logDir: logDir,
-		failFast: flagValue("test.failfast") == "true"}
+		deadline: deadline, failFast: flagValue("test.failfast") == "true"}
 	queue := make(chan string, len(patterns))
 	for _, pattern := range patterns {
 		queue <- pattern
@@ -244,6 +272,7 @@ type shardPool struct {
 	env        []string
 	marker     string
 	logDir     string
+	deadline   time.Time
 	failFast   bool
 
 	mu      sync.Mutex
@@ -266,7 +295,7 @@ func (p *shardPool) work(ctx context.Context, slots []*flock.Flock, own int, que
 		if p.stopping() {
 			return
 		}
-		slot, err := acquireSlot(slots, own)
+		slot, err := acquireSlot(ctx, slots, own, p.deadline)
 		if err != nil {
 			p.finish(nil, fmt.Errorf("locking shard slot: %w", err))
 			return
@@ -295,8 +324,8 @@ func (p *shardPool) work(ctx context.Context, slots []*flock.Flock, own int, que
 }
 
 // acquireSlot locks the first free slot, starting at own, or waits for own
-// when every slot is busy.
-func acquireSlot(slots []*flock.Flock, own int) (*flock.Flock, error) {
+// when every slot is busy, until deadline when it is set.
+func acquireSlot(ctx context.Context, slots []*flock.Flock, own int, deadline time.Time) (*flock.Flock, error) {
 	for i := range slots {
 		slot := slots[(own+i)%len(slots)]
 		locked, err := slot.TryLock()
@@ -307,10 +336,19 @@ func acquireSlot(slots []*flock.Flock, own int) (*flock.Flock, error) {
 			return slot, nil
 		}
 	}
-	if err := slots[own].Lock(); err != nil {
-		return nil, fmt.Errorf("waiting for shard slot %s: %w", slots[own].Path(), err)
+	slot := slots[own]
+	if !deadline.IsZero() {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
 	}
-	return slots[own], nil
+	if _, err := slot.TryLockContext(ctx, slotPollInterval); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("waiting for shard slot %s: the package's -test.timeout passed", slot.Path())
+		}
+		return nil, fmt.Errorf("waiting for shard slot %s: %w", slot.Path(), err)
+	}
+	return slot, nil
 }
 
 func (p *shardPool) stopping() bool {
@@ -418,6 +456,15 @@ func serveShards(m *testing.M, marker string) int {
 		fmt.Fprintf(os.Stderr, "clearing %s: %v\n", shardMarkerEnv, err)
 		return 2
 	}
+	var deadline time.Time
+	if value := os.Getenv(shardDeadlineEnv); value != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, value)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "reading %s: %v\n", shardDeadlineEnv, err)
+			return 2
+		}
+		deadline = parsed
+	}
 	testLog := flagValue("test.testlogfile")
 	lines := bufio.NewScanner(os.Stdin)
 	for run := 0; lines.Scan(); run++ {
@@ -430,6 +477,14 @@ func serveShards(m *testing.M, marker string) int {
 			path := testLog + "." + strconv.Itoa(run)
 			if err := errors.Join(os.WriteFile(path, nil, 0o600), flag.Set("test.testlogfile", path)); err != nil {
 				fmt.Fprintf(os.Stderr, "starting test log: %v\n", err)
+				return 2
+			}
+		}
+		if !deadline.IsZero() {
+			// m.Run times each call from its start, so it gets only what is
+			// left of the package's time. A zero timeout would mean none.
+			if err := flag.Set("test.timeout", max(time.Until(deadline), time.Nanosecond).String()); err != nil {
+				fmt.Fprintf(os.Stderr, "setting test timeout: %v\n", err)
 				return 2
 			}
 		}

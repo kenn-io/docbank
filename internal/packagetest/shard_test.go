@@ -15,7 +15,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,6 +27,10 @@ const (
 	shardTestFailEnv   = "DOCBANK_SHARD_TEST_FAIL"
 	shardTestExitEnv   = "DOCBANK_SHARD_TEST_EXIT"
 	shardTestMeetEnv   = "DOCBANK_SHARD_TEST_MEET"
+	shardTestBlockEnv  = "DOCBANK_SHARD_TEST_BLOCK"
+	// shardTestLookupEnv prefixes a variable each test looks up under its own
+	// name, so the test log shows which tests' entries it kept.
+	shardTestLookupEnv = "DOCBANK_SHARD_TEST_LOOKUP_"
 )
 
 // recordShardRun records which process ran the calling test, and the
@@ -40,9 +46,14 @@ func recordShardRun(t *testing.T) {
 	// A helper process the test starts from this binary must run as a test
 	// binary, not wait for tests to serve.
 	require.Empty(t, os.Getenv(shardMarkerEnv))
-	name := strings.ReplaceAll(t.Name(), "/", ".") + "-" + strconv.Itoa(os.Getpid())
+	name := strings.ReplaceAll(t.Name(), "/", ".")
+	_ = os.Getenv(shardTestLookupEnv + name)
+	if os.Getenv(shardTestBlockEnv) == t.Name() {
+		<-t.Context().Done()
+	}
 	parallel := flag.Lookup("test.parallel").Value.String()
-	require.NoError(t, os.WriteFile(filepath.Join(os.Getenv(shardTestRecordEnv), name), []byte(parallel), 0o600))
+	record := filepath.Join(os.Getenv(shardTestRecordEnv), name+"-"+strconv.Itoa(os.Getpid()))
+	require.NoError(t, os.WriteFile(record, []byte(parallel), 0o600))
 	if t.Name() == "TestShardChildA" || t.Name() == "TestShardChildB" {
 		connection, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", os.Getenv(shardTestMeetEnv))
 		require.NoError(t, err)
@@ -60,6 +71,10 @@ func recordShardRun(t *testing.T) {
 func TestShardChildA(t *testing.T) { recordShardRun(t) }
 func TestShardChildB(t *testing.T) { recordShardRun(t) }
 func TestShardChildC(t *testing.T) { recordShardRun(t) }
+
+// TestShardChildBlock is not one of TestRunShards' tests; TestRunShardsTimeout
+// blocks it.
+func TestShardChildBlock(t *testing.T) { recordShardRun(t) }
 
 // BenchmarkShardChildA matches the tests' -test.run pattern, which runs
 // tests but never benchmarks.
@@ -100,12 +115,24 @@ func meetShardTests(t *testing.T) string {
 	return listener.Addr().String()
 }
 
+// shardParentCommand runs this binary as a RunShards parent with shard slots
+// of its own, so children of other packages or of a concurrent run of this
+// test cannot hold the slots its children need.
+func shardParentCommand(t *testing.T, args ...string) *exec.Cmd {
+	t.Helper()
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	command := exec.CommandContext(t.Context(), executable, args...)
+	tmp := t.TempDir()
+	// os.TempDir reads TMPDIR on Unix and TMP or TEMP on Windows.
+	command.Env = append(os.Environ(), shardTestParentEnv+"=1", "TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp)
+	return command
+}
+
 func TestRunShards(t *testing.T) {
 	if runtime.NumCPU() < 2 {
 		t.Skip("the child rendezvous requires two shard slots")
 	}
-	executable, err := os.Executable()
-	require.NoError(t, err)
 	wd, err := os.Getwd()
 	require.NoError(t, err)
 	for _, tc := range []struct {
@@ -114,28 +141,34 @@ func TestRunShards(t *testing.T) {
 		exit     string
 		output   string
 		children int
-		logged   int
 		// parallel is the run's -test.parallel value, 2 when unset.
 		parallel int
 	}{
-		{name: "success", children: 2, logged: 7},
+		{name: "success", children: 2},
 		// The run starts as many children as the machine's CPUs allow, up to
 		// one for each test, so their number varies.
-		{name: "divided parallel", parallel: 10, logged: 7},
-		{name: "failure", fail: "TestShardChildB", output: "--- FAIL: TestShardChildB", children: 2, logged: 7},
+		{name: "divided parallel", parallel: 10},
+		{name: "failure", fail: "TestShardChildB", output: "--- FAIL: TestShardChildB", children: 2},
 		// The split subtest runs first, so the child that exits during it
 		// later runs TestShardChildA or TestShardChildB in a new child. The
 		// exited child's run leaves nothing in the test log.
 		{name: "exit", exit: "TestShardChildSplit/one",
-			output: "test shard exited while running ^TestShardChildSplit$/^one$", children: 3, logged: 6},
+			output: "test shard exited while running ^TestShardChildSplit$/^one$", children: 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			parallel := cmp.Or(tc.parallel, 2)
 			records := t.TempDir()
 			testLog := filepath.Join(t.TempDir(), "testlog")
-			command := exec.CommandContext(t.Context(), executable,
-				"-test.run=^(?:Test|Benchmark)ShardChild(?:[ABC]|Split)$", "-test.parallel="+strconv.Itoa(parallel), "-test.v=true", "-test.testlogfile="+testLog)
-			command.Env = append(os.Environ(), shardTestParentEnv+"=1", shardTestRecordEnv+"="+records,
+			args := []string{"-test.run=^(?:Test|Benchmark)ShardChild(?:[ABC]|Split)$",
+				"-test.parallel=" + strconv.Itoa(parallel), "-test.v=true", "-test.testlogfile=" + testLog}
+			if deadline, ok := t.Deadline(); ok {
+				// When TestShardChildA and TestShardChildB do not run at once,
+				// the one waiting for the other times out in its child, which
+				// names it, well before this test's own deadline.
+				args = append(args, "-test.timeout="+(time.Until(deadline)/2).String())
+			}
+			command := shardParentCommand(t, args...)
+			command.Env = append(command.Env, shardTestRecordEnv+"="+records,
 				shardTestFailEnv+"="+tc.fail, shardTestExitEnv+"="+tc.exit, shardTestMeetEnv+"="+meetShardTests(t))
 			output, err := command.CombinedOutput()
 			if tc.output != "" {
@@ -179,6 +212,15 @@ func TestRunShards(t *testing.T) {
 				require.Positive(t, value)
 				require.LessOrEqual(t, value, parallel/2, childParallel)
 			}
+			// A child that exits early is replaced by one that runs after it,
+			// so only runs whose children all run at once divide -parallel.
+			if tc.exit == "" {
+				total := 0
+				for _, value := range childParallel {
+					total += value
+				}
+				require.LessOrEqual(t, total, parallel, childParallel)
+			}
 			require.NotContains(t, pids, strconv.Itoa(command.Process.Pid))
 
 			// go test keys its cache on one log: a single header, then each
@@ -189,9 +231,50 @@ func TestRunShards(t *testing.T) {
 			require.True(t, bytes.HasPrefix(data, []byte("# test log\n")), string(data))
 			require.Equal(t, 1, bytes.Count(data, []byte("# test log")), string(data))
 			require.Equal(t, 7, bytes.Count(data, []byte("chdir "+wd+"\n")), string(data))
-			require.Equal(t, tc.logged, bytes.Count(data, []byte("getenv "+shardTestRecordEnv+"\n")), string(data))
+			// Each test that finished left its entries once; the child that
+			// exited took the entries of its unfinished run with it.
+			for _, name := range []string{"TestShardChildA", "TestShardChildB", "TestShardChildC",
+				"TestShardChildSplit.one", "TestShardChildSplit.two", "TestShardChildSplit.group.inner",
+				"TestShardChildSplit.group.outer_inner"} {
+				want := 1
+				if strings.ReplaceAll(tc.exit, "/", ".") == name {
+					want = 0
+				}
+				require.Equal(t, want, bytes.Count(data, []byte("getenv "+shardTestLookupEnv+name+"\n")), "%s\n%s", name, data)
+			}
 			require.NotContains(t, string(data), shardLogFlushEnv)
 			require.True(t, bytes.HasSuffix(data, []byte("\n")), string(data))
 		})
 	}
+}
+
+// TestRunShardsTimeout checks that a test still running at the package's
+// -test.timeout fails in its child, and that the output names it.
+func TestRunShardsTimeout(t *testing.T) {
+	// The deadline passes before the children start, so each times out at
+	// once. A child that ignored the deadline would block forever.
+	command := shardParentCommand(t, "-test.run=^TestShardChild(?:Block|C)$", "-test.parallel=1", "-test.timeout=1ns")
+	command.Env = append(command.Env, shardTestRecordEnv+"="+t.TempDir(), shardTestBlockEnv+"=TestShardChildBlock")
+	output, err := command.CombinedOutput()
+	exitErr, ok := errors.AsType[*exec.ExitError](err)
+	require.True(t, ok, "%v\n%s", err, output)
+	require.Equal(t, 1, exitErr.ExitCode(), string(output))
+	require.Contains(t, string(output), "panic: test timed out")
+	require.Contains(t, string(output), "test shard exited while running ^TestShardChildBlock$")
+}
+
+func TestAcquireSlotDeadline(t *testing.T) {
+	dir := t.TempDir()
+	var slots []*flock.Flock
+	for i := range 2 {
+		path := filepath.Join(dir, strconv.Itoa(i))
+		holder := flock.New(path)
+		require.NoError(t, holder.Lock())
+		t.Cleanup(func() { _ = holder.Unlock() })
+		slots = append(slots, flock.New(path))
+	}
+	// Every slot is busy and the deadline has passed, so the wait must end
+	// at once with an error that names the timeout.
+	_, err := acquireSlot(t.Context(), slots, 0, time.Now())
+	require.ErrorContains(t, err, "the package's -test.timeout passed")
 }
