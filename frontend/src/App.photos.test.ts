@@ -2349,12 +2349,12 @@ it("re-pages Library on return with an unchanged hidden change ID", async () => 
   }
 });
 
-it("shows Album not found for an unknown album Map", async () => {
+it.each(["albums", "map"])("shows Album not found for an unknown %s", async (view) => {
   const album = photoAlbum();
   history.replaceState(
     null,
     "",
-    `/photos/map/${album.id}#web_session=synthetic&web_upload_secret=proof`,
+    `/photos/${view}/${album.id}#web_session=synthetic&web_upload_secret=proof`,
   );
   storage();
   const meta = document.createElement("meta");
@@ -2382,7 +2382,8 @@ it("shows Album not found for an unknown album Map", async () => {
   );
   render(App);
   await screen.findByText("Album not found");
-  expect(screen.queryByText("No located photos")).toBeNull();
+  await waitFor(() => expect(document.title).toBe("Album not found · Docbank"));
+  if (view === "map") expect(screen.queryByText("No located photos")).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "Back to albums" }));
   expect(location.pathname).toBe("/photos/albums");
 });
