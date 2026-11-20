@@ -178,6 +178,9 @@ func validatePostgresRestoreConnections(ctx context.Context, destination Postgre
 	if ownerID != metadata.VaultID() {
 		return errors.New("PostgreSQL restore owner and runtime connections must name the same vault catalog")
 	}
+	if metadata.PostgresPrimaryBound() {
+		return store.ErrPostgresPrimaryBound
+	}
 	return nil
 }
 

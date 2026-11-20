@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -50,8 +51,22 @@ func OpenPostgres(ctx context.Context, connection *pgx.ConnConfig, cfg pgschema.
 		return nil, fmt.Errorf("validating postgres metadata: %w", err)
 	}
 	s := &Store{db: db, writeDB: db, postgresSchema: cfg.Schema, postgresConfig: config.Copy(), vaultDir: vaultDir, providerEgressMu: waitlock.New(), photoHiddenSessions: make(map[string]time.Time), photoExportSlot: make(chan struct{}, 1)}
-	if err := db.QueryRowContext(ctx, `SELECT id,(SELECT vault_uid FROM vault_metadata),(SELECT store_id FROM blob_stores WHERE role='primary') FROM nodes WHERE parent_id IS NULL`).Scan(&s.rootID, &s.vaultID, &s.primaryStoreID); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT n.id,v.vault_uid,b.store_id,v.primary_storage_bound
+		FROM nodes n CROSS JOIN vault_metadata v CROSS JOIN blob_stores b
+		WHERE n.parent_id IS NULL AND v.singleton=1 AND b.role='primary'`).
+		Scan(&s.rootID, &s.vaultID, &s.primaryStoreID, &s.postgresPrimaryBound); err != nil {
 		return nil, fmt.Errorf("reading postgres vault roots: %w", err)
 	}
 	return s, nil
+}
+
+// PostgresPrimaryBound reports whether initialization or restore published
+// physical storage for this PostgreSQL catalog.
+func (s *Store) PostgresPrimaryBound() bool { return s.postgresPrimaryBound }
+
+func selectPostgresStorageSchema(ctx context.Context, tx *sql.Tx, schema string) error {
+	if _, err := tx.ExecContext(ctx, `SET LOCAL search_path=`+pgx.Identifier{schema}.Sanitize()+`,pg_catalog`); err != nil {
+		return fmt.Errorf("selecting postgres storage schema: %w", err)
+	}
+	return nil
 }

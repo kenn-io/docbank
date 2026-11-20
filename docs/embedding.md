@@ -1,7 +1,7 @@
 ---
 last_edited: 2026-11-19
 title: Embed in Go
-description: Run Docbank vaults inside a Go application with local SQLite or a restored PostgreSQL catalog.
+description: Run Docbank vaults inside a Go application with SQLite or PostgreSQL metadata.
 ---
 
 # Embed in Go
@@ -14,25 +14,35 @@ checks, storage rules, and exclusive vault lock as standalone Docbank.
 Use an embedded vault when the application itself should own document lifecycle.
 Use the HTTP API when independent processes need to share one standalone vault.
 
-## Restore and open a PostgreSQL vault
+## Use a PostgreSQL vault
 
 Use PostgreSQL 16 or 18 with UTF-8 encoding. For each vault, provision a
 dedicated schema owner and a separate runtime login. Give the process a private
 local directory for its vault files and run one owning process per vault
 catalog. The standalone daemon and `New` use SQLite.
 
-1. Call `SetupPostgres` with a caller-owned `*sql.DB` connected as the schema
-   owner and a `PostgresCatalog` with the schema and owner names. Apply the
-   [runtime grants](https://github.com/kenn-io/docbank/blob/main/docs/internal/development.md#postgresql-schema-lifecycle).
-2. Open the backup repository. Call `repository.RestorePostgres` with the
-   owner pool, the same catalog, and a `*pgx.ConnConfig` for the runtime login.
-   Pass the saved snapshot ID, a new target directory under an existing parent,
-   and any protected roots. The catalog must be pristine. The backup can come
-   from SQLite or PostgreSQL.
-3. Call `OpenPostgres` with `Config{Root: report.Target}`, the same catalog,
-   and the runtime login. It checks the restored primary ownership marker and
-   holds the root lock until `Close`. The vault can create portable backups
-   with `CreateBackup`.
+Use disposable PostgreSQL schemas during development. The first retained
+deployment requires a numbered migration baseline. See the
+[schema lifecycle and runtime grants](https://github.com/kenn-io/docbank/blob/main/docs/internal/development.md#postgresql-schema-lifecycle).
+
+For a fresh vault, call `InitializePostgres` with a caller-owned `*sql.DB`
+connected as the schema owner, a `PostgresCatalog` with the schema and owner
+names, and a new vault directory under an existing parent. It installs the
+catalog if needed and publishes a private root with the matching primary
+ownership marker. Apply the runtime grants. Repeating initialization on the
+same bound and closed root returns its existing vault ID.
+
+If initialization reports that it installed a directory before an error, keep
+the directory and retry at that path to verify the binding. If the catalog
+reports `ErrPostgresPrimaryUnbound`, use a fresh directory. A retry commits its
+own ownership epoch and keeps the earlier attempt fenced.
+
+For a restore, prepare a pristine catalog with `SetupPostgres`, apply the
+runtime grants, and call `repository.RestorePostgres` with the owner pool, the
+same catalog, and a `*pgx.ConnConfig` for the runtime login. Pass the saved
+snapshot ID, a new target directory, and any protected roots. The backup can
+come from SQLite or PostgreSQL. A catalog with a bound root is ineligible as a
+restore destination, including when the vault has no documents.
 
 On a restore error, a report with `CatalogCommitted` set identifies a committed
 restore. Close any owner of that root before retrying a failed index rebuild
@@ -40,9 +50,9 @@ with `RebuildPostgresRestore`. When the report has a target and an unconfirmed
 commit, keep that directory and follow the
 [ownership reconciliation procedure](architecture/backup.md#restoring-into-postgresql).
 
-This is the restored-vault lifecycle. PostgreSQL development schemas use a
-[schema fingerprint](https://github.com/kenn-io/docbank/blob/main/docs/internal/development.md#postgresql-schema-lifecycle)
-until the first retained deployment establishes the forward migration baseline.
+Call `OpenPostgres` with `Config{Root: vaultRoot}`, the same catalog, and the
+runtime login. It checks the catalog binding and the filesystem marker and holds
+the root lock until `Close`. Use `CreateBackup` to capture a portable snapshot.
 
 ## Run native MCP reads
 

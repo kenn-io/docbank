@@ -342,11 +342,12 @@ snapshot. Kit does not infer application liveness or reach into Docbank SQL.
 ## Restoring into PostgreSQL
 
 A PostgreSQL restore takes a pristine target schema and a new vault directory.
-The [embedding API](../embedding.md#restore-and-open-a-postgresql-vault) uses
+The [embedding API](../embedding.md#use-a-postgresql-vault) uses
 the schema owner for import and a separate runtime login for validation and
 rebuilding. Both connections must name the same vault. The existing backup reader first
 verifies the snapshot, its metadata, and the packed and loose files in a private
-directory. The staged SQLite catalog supplies the verified physical records.
+directory. The target catalog must have unbound primary storage, even if it
+contains no document metadata. The staged SQLite catalog supplies the verified physical records.
 The native import reads the original portable metadata stream.
 
 The owner imports the logical records and the verified primary storage catalog

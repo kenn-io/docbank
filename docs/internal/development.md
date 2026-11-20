@@ -384,7 +384,7 @@ Photo metadata edits and undo, XMP conflict settlement and sidecar publication
 also use shared operations for explicit asset selections. Quality scores, hidden-photo
 sessions and photo settings have native Store contracts as well.
 
-The Go embedding API can [restore and open a PostgreSQL vault](../embedding.md#restore-and-open-a-postgresql-vault).
+The Go embedding API can [initialize, restore and open a PostgreSQL vault](../embedding.md#use-a-postgresql-vault).
 The standalone daemon opens SQLite. Direct embedding-worker publication/recovery, photo
 descriptions and face detection have qualification below. Foreground direct-file
 and image embedding can publish a vector index before returning. Face embedding,
@@ -980,6 +980,14 @@ packed content into PostgreSQL, opens the owned blob root, checks exclusive
 access, moves and creates audited files, walks the catalog, and verifies the
 content bytes. It closes and reopens the vault, then takes another backup and
 restores it into SQLite through the open vault.
+
+`InitializePostgres` uses the owner connection to bind a private root to a
+pristine catalog. The writer transaction records the committed binding in
+`vault_metadata.primary_storage_bound` and rotates the primary ownership epoch.
+Initialization and restore hold the local root lock across publication and
+commit. The public runtime opener checks both the binding and the filesystem
+marker. The binding is local deployment state and stays outside portable
+metadata exports. Restore refuses any catalog with a committed binding.
 
 #### Document export plans and jobs
 
