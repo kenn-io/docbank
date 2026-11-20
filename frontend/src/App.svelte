@@ -3797,19 +3797,22 @@
       const parent = parentPath(reader.source.path);
       title = parent === "/" ? reader.source.name : `${reader.source.name} · ${parent}`;
     } else if (photoMode) {
-      const photoName = hiddenMode ? hiddenWorkspace?.photoName() : libraryWorkspace?.photoName();
+      const photoName = libraryWorkspace?.photoName();
       const photos = activePhotos();
       const person = photos?.personFilter;
-      if (missingPhotoAlbum) title = "Album not found";
+      if (hiddenMode) title = "Hidden";
+      else if (photoPath === "/photos/albums") title = "Albums";
+      else if (photoPath === "/photos/people") title = "People";
+      else if (missingPhotoAlbum) title = "Album not found";
+      else if (mapMode && (!tiles.tile_url || !photoValidated))
+        title = mapAlbumID && scopedAlbum ? `Map · ${scopedAlbum.name}` : "Map";
+      else if (!photoValidated) title = albumID ? (scopedAlbum?.name ?? "Album") : "Photos";
       else if (photos?.comparing) title = "Compare photos";
       else if (photoID || photos?.culling) title = photoName ?? "Photo";
       else if (mapMode) title = mapAlbumID && scopedAlbum ? `Map · ${scopedAlbum.name}` : "Map";
       else if (person && photos?.query.filters.person_ids?.includes(person.id))
         title = `${person.name} · Photos`;
-      else if (hiddenMode) title = "Hidden";
       else if (albumID) title = scopedAlbum?.name ?? "Album";
-      else if (photoPath === "/photos/albums") title = "Albums";
-      else if (photoPath === "/photos/people") title = "People";
       else title = "Photos";
     } else if (docsPage) title = docsPageTitles[docsPage];
     else if (activeQuery || queryBarOpen || snapshotActive) title = "Search";

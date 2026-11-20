@@ -11,6 +11,7 @@ import {
   storage,
 } from "./photo-test-fixtures.js";
 import { PhotoCull } from "./photoCull.svelte.js";
+import { photoCullStorage } from "./photoCullStorage.js";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import * as api from "./generated/docbank.js";
 
@@ -46,7 +47,7 @@ it("names a missing linked photo", async () => {
   history.replaceState(
     null,
     "",
-    "/photos#web_session=synthetic&web_upload_secret=proof&photo=photo-1",
+    "/photos#web_session=synthetic&web_upload_secret=proof&photo=00000000-0000-4000-8000-000000000099",
   );
   storage();
   vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
@@ -64,6 +65,25 @@ it("names a missing linked photo", async () => {
   await waitFor(() => expect(document.title).toBe("Photo · Docbank"));
 });
 
+it("keeps a locked hidden photo out of the tab title", async () => {
+  history.replaceState(
+    null,
+    "",
+    "/photos/hidden#web_session=synthetic&web_upload_secret=proof&photo=00000000-0000-4000-8000-000000000001",
+  );
+  storage();
+  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true });
+    return (
+      photoMetadataResponse(url, init) ??
+      Response.json({ items: [], nodes: [], tags: [], profiles: [] })
+    );
+  });
+  render(App);
+  await screen.findByLabelText("Passcode");
+  await waitFor(() => expect(document.title).toBe("Hidden · Docbank"));
+});
+
 it("names the current screen in the browser tab", async () => {
   history.replaceState(null, "", "/");
   storage();
@@ -72,7 +92,10 @@ it("names the current screen in the browser tab", async () => {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   const album = photoAlbum();
-  const rows = [photo(1), photo(2)];
+  const rows = [photo(1), photo(2)].map((row, i) => ({
+    ...row,
+    asset_id: `00000000-0000-4000-8000-00000000000${i + 1}`,
+  }));
   const personID = "00000000-0000-4000-8000-000000000001";
   vi.spyOn(api, "listPhotoFaces").mockResolvedValue({
     faces: [photoFace({ content_version_id: rows[0].content_version_id })],
@@ -81,14 +104,13 @@ it("names the current screen in the browser tab", async () => {
     ],
     people: [{ person_id: personID, display_name: "Ada", state: "curated" }],
   });
-  vi.spyOn(PhotoCull.prototype, "restore").mockResolvedValue(false);
   vi.spyOn(PhotoCull.prototype, "start").mockImplementation(async function (this: PhotoCull) {
     this.run = {
-      ids: ["photo-1", "photo-2"],
+      ids: rows.map((row) => row.asset_id),
       checkpoint: {
         runID: "run",
         revision: 0,
-        pass: ["photo-1", "photo-2"],
+        pass: rows.map((row) => row.asset_id),
         position: 0,
         visited: [],
         skipped: [],
@@ -97,6 +119,7 @@ it("names the current screen in the browser tab", async () => {
         autoAdvance: true,
       },
     };
+    await photoCullStorage("11111111-1111-4111-8111-111111111111").replace(this.run);
     return true;
   });
   const meta = document.createElement("meta");
@@ -273,15 +296,26 @@ it("names the current screen in the browser tab", async () => {
   await within(dialog).findByRole("heading", { name: "Pass complete" });
   await waitFor(() => expect(document.title).toBe("Pass complete · Docbank"));
   await fireEvent.click(within(dialog).getByRole("button", { name: "Back to photos" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Open Photo 1.jpg" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Ada" }));
+  await screen.findByText("Person: Ada");
+  await waitFor(() => expect(document.title).toBe("Ada · Photos · Docbank"));
+  await fireEvent.click(screen.getByRole("button", { name: "Albums" }));
+  await waitFor(() => expect(document.title).toBe("Albums · Docbank"));
+  await fireEvent.click(screen.getByRole("button", { name: "People" }));
+  await waitFor(() => expect(document.title).toBe("People · Docbank"));
+  await fireEvent.click(screen.getByRole("button", { name: "Library" }));
+  await screen.findByText("Person: Ada");
+  await waitFor(() => expect(document.title).toBe("Ada · Photos · Docbank"));
   await fireEvent.click(screen.getByRole("button", { name: "Map" }));
   await waitFor(() => expect(document.title).toBe("Map · Docbank"));
   await fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
   await waitFor(() => expect(document.title).toBe("Hidden · Docbank"));
   await fireEvent.click(await screen.findByRole("button", { name: "Open Photo 1.jpg" }));
-  await waitFor(() => expect(document.title).toBe("Photo 1.jpg · Docbank"));
+  await waitFor(() => expect(document.title).toBe("Hidden · Docbank"));
   await fireEvent.click(await screen.findByRole("button", { name: "Ada" }));
   await screen.findByText("Person: Ada");
-  await waitFor(() => expect(document.title).toBe("Ada · Photos · Docbank"));
+  await waitFor(() => expect(document.title).toBe("Hidden · Docbank"));
   await fireEvent.click(screen.getByRole("button", { name: "Library" }));
   await fireEvent.click(await screen.findByRole("button", { name: "Albums" }));
   await waitFor(() => expect(document.title).toBe("Albums · Docbank"));
@@ -296,6 +330,7 @@ it("names a saved tag view when its tag was deleted", async () => {
   const tagID = "33333333-3333-4333-8333-333333333333";
   const folder = { ...root, id: 2, parent_id: 1, name: "Archive", path: "/Archive" };
   let catalogReads = 0;
+  let assignmentReads = 0;
   let finishCatalog!: (response: Response) => void;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
@@ -316,13 +351,16 @@ it("names a saved tag view when its tag was deleted", async () => {
         offset: 0,
       });
     }
-    if (url.includes(`/tags/${tagID}/nodes?`))
+    if (url.includes(`/tags/${tagID}/nodes?`)) {
+      assignmentReads++;
+      if (assignmentReads > 1) return new Response(null, { status: 404 });
       return Response.json({
         items: [{ node: folder, path: folder.path }],
         total: 1,
         limit: 1000,
         offset: 0,
       });
+    }
     return Response.json({ items: [], total: 0, limit: 1000, offset: 0 });
   });
   render(App);
@@ -345,6 +383,8 @@ it("names a saved tag view when its tag was deleted", async () => {
   await fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
   await fireEvent.click(screen.getByRole("button", { name: "Back to previous directory" }));
   await screen.findByText("Documents tagged");
+  await waitFor(() => expect(assignmentReads).toBe(2));
+  await screen.findByText("HTTP 404");
   await waitFor(() => expect(document.title).toBe("Tag · Docbank"));
   finishCatalog(Response.json({ items: [], total: 0, limit: 1000, offset: 0 }));
   await waitFor(() => expect(document.title).toBe("All files · Docbank"));
