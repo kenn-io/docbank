@@ -280,6 +280,13 @@
     searchByMeaning: null,
     photoImport: null,
   };
+  const systemPanelKinds: Panel["kind"][] = [
+    "jobs",
+    "auditEvidence",
+    "backups",
+    "storage",
+    "searchByMeaning",
+  ];
 
   let webSession = $state("");
   let hasProductions = $state(false);
@@ -451,6 +458,17 @@
   );
   const albumScopeID = $derived(albumID || mapAlbumID);
   let photoAlbums = $state<PhotoAlbums>();
+  const scopedAlbum = $derived(photoAlbums?.items.find((item) => item.id === albumScopeID));
+  const missingPhotoAlbum = $derived(
+    Boolean(
+      albumScopeID &&
+      photoAlbums?.initialized &&
+      !photoAlbums.loading &&
+      !photoAlbums.busy &&
+      !photoAlbums.loadError &&
+      !scopedAlbum,
+    ),
+  );
   let peopleView = $state<People>();
   let albumPhotos = $state<Photos>();
   let mapPhotos = $state<Photos>();
@@ -3777,37 +3795,37 @@
     else if (reader) {
       const parent = parentPath(reader.source.path);
       title = parent === "/" ? reader.source.name : `${reader.source.name} · ${parent}`;
-    } else if (activePanel?.kind === "versions" && activePanel.fromLink)
+    } else if (activePanel?.kind === "versions" && activePanel.fromLink) {
+      const linked = activePanel.linked;
+      const parent = linked?.node.path ? parentPath(linked.node.path) : "/";
       title = nodeVersionError
         ? "Version unavailable"
-        : (activePanel.linked?.node.name ?? "Version");
-    else if (
-      activePanel &&
-      ["storage", "jobs", "backups", "auditEvidence", "searchByMeaning"].includes(activePanel.kind)
-    )
+        : linked
+          ? `${linked.node.name}${parent === "/" ? "" : ` · ${parent}`} · ${linked.version.id}`
+          : "Version";
+    } else if (activePanel && systemPanelKinds.includes(activePanel.kind))
       title = vault?.sectionLabel() ?? "System";
     else if (photoMode) {
-      const album = photoAlbums?.items.find((item) => item.id === albumScopeID);
-      const missingAlbum =
-        albumScopeID &&
-        photoAlbums?.initialized &&
-        !photoAlbums.loading &&
-        !photoAlbums.busy &&
-        !photoAlbums.loadError &&
-        !album;
       const photoName = hiddenMode ? hiddenWorkspace?.photoName() : libraryWorkspace?.photoName();
-      if (missingAlbum) title = "Album not found";
+      const photos = activePhotos();
+      const person = photos?.personFilter;
+      if (missingPhotoAlbum) title = "Album not found";
       else if (photoID && photoName) title = photoName;
-      else if (mapMode) title = mapAlbumID && album ? `Map · ${album.name}` : "Map";
+      else if (mapMode) title = mapAlbumID && scopedAlbum ? `Map · ${scopedAlbum.name}` : "Map";
+      else if (person && photos?.query.filters.person_ids?.includes(person.id)) title = person.name;
       else if (hiddenMode) title = "Hidden";
-      else if (albumID) title = album?.name ?? "Album";
+      else if (albumID) title = scopedAlbum?.name ?? "Album";
       else if (photoPath === "/photos/albums") title = "Albums";
       else if (photoPath === "/photos/people") title = "People";
       else title = "Photos";
     } else if (docsPage) title = docsPageTitles[docsPage];
     else if (activeQuery || queryBarOpen || snapshotActive) title = "Search";
     else if (tagBrowse) title = activeTag?.name ?? "Tag";
-    else title = breadcrumbs.at(-1)!.name;
+    else
+      title =
+        breadcrumbs.length > 2
+          ? `${breadcrumbs.at(-1)!.name} · ${parentPath(directory!.path!)}`
+          : breadcrumbs.at(-1)!.name;
     return `${title} · Docbank`;
   });
   $effect(() => {
@@ -4456,8 +4474,7 @@
                   onhidden={invalidateLibrary}
                   oninvalidate={invalidateLibrary}
                 />{/key}{/if}
-          {:else if mapMode}{#if mapAlbumID && photoAlbums?.initialized && !photoAlbums.loading && !photoAlbums.busy && !photoAlbums.loadError && !photoAlbums.items.some((album) => album.id === mapAlbumID)}<EmptyState
-                title="Album not found"
+          {:else if mapMode}{#if mapAlbumID && missingPhotoAlbum}<EmptyState title="Album not found"
                 ><Button onclick={() => navigatePhotos("/photos/albums")}>Back to albums</Button
                 ></EmptyState
               >
@@ -5475,7 +5492,7 @@
           onauthfailure={handleFailure}
         />
       {/if}
-      {#if ["jobs", "auditEvidence", "backups", "storage", "searchByMeaning"].includes(panel.kind)}
+      {#if systemPanelKinds.includes(panel.kind)}
         <VaultDrawer
           bind:this={vault}
           session={webSession}

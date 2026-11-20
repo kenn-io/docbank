@@ -29,6 +29,7 @@ it("names the current screen in the browser tab", async () => {
   });
   const folder = { ...root, id: 2, parent_id: 1, name: "Taxes", path: "/Taxes" };
   const archive = { ...root, id: 4, parent_id: 1, name: "Archive", path: "/Archive" };
+  const nested = { ...root, id: 7, parent_id: 4, name: "Taxes", path: "/Archive/Taxes" };
   const file = {
     ...root,
     id: 3,
@@ -62,11 +63,14 @@ it("names the current screen in the browser tab", async () => {
     if (url === "/api/v1/nodes/4/children?limit=1000&offset=0")
       return Response.json({
         directory: archive,
-        items: [{ ...file, id: 5, parent_id: 4 }],
-        total: 1,
+        items: [{ ...file, id: 5, parent_id: 4 }, nested],
+        total: 2,
         limit: 1000,
         offset: 0,
       });
+    if (url === "/api/v1/nodes/7") return Response.json(nested);
+    if (url === "/api/v1/nodes/7/children?limit=1000&offset=0")
+      return Response.json({ directory: nested, items: [], total: 0, limit: 1000, offset: 0 });
     if (url === "/api/v1/nodes/5")
       return Response.json({ ...file, id: 5, parent_id: 4, path: "/Archive/report.pdf" });
     if (url === "/api/v1/nodes/6")
@@ -108,6 +112,8 @@ it("names the current screen in the browser tab", async () => {
       name: "Close",
     }),
   );
+  await fireEvent.doubleClick(await screen.findByRole("cell", { name: "Taxes" }));
+  await waitFor(() => expect(document.title).toBe("Taxes · /Archive · Docbank"));
   await fireEvent.click(
     within(screen.getByRole("navigation", { name: "Docbank navigation" })).getByRole("button", {
       name: "All files",
