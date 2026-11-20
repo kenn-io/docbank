@@ -2349,12 +2349,12 @@ it("re-pages Library on return with an unchanged hidden change ID", async () => 
   }
 });
 
-it("shows Album not found for an unknown album Map", async () => {
+it.each(["albums", "map"])("shows Album not found for an unknown %s", async (view) => {
   const album = photoAlbum();
   history.replaceState(
     null,
     "",
-    `/photos/map/${album.id}#web_session=synthetic&web_upload_secret=proof`,
+    `/photos/${view}/${album.id}#web_session=synthetic&web_upload_secret=proof`,
   );
   storage();
   const meta = document.createElement("meta");
@@ -2382,6 +2382,7 @@ it("shows Album not found for an unknown album Map", async () => {
   );
   render(App);
   await screen.findByText("Album not found");
+  await waitFor(() => expect(document.title).toBe("Album not found · Docbank"));
   expect(screen.queryByText("No located photos")).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "Back to albums" }));
   expect(location.pathname).toBe("/photos/albums");
@@ -2490,6 +2491,9 @@ it.each(["album", "direct album", "Hidden", "existing gps_bounds"])(
       await fireEvent.click(screen.getByRole("button", { name: "Map" }));
     }
     await waitFor(() => expect(queries.some((request) => request.projection === "map")).toBe(true));
+    await waitFor(() =>
+      expect(document.title).toBe(libraryScope ? "Map · Docbank" : "Map · Trip · Docbank"),
+    );
     const request = queries.find((request) => request.projection === "map")!;
     expect(location.pathname).toBe(libraryScope ? "/photos/map" : mapPath);
     expect(location.search).toBe("?retained=library");
@@ -3385,6 +3389,7 @@ it("closes the viewer to the grid after refusing a typed photo hash", async () =
   render(App);
   await fireEvent.click(await screen.findByRole("button", { name: "Open Photo 1.jpg" }));
   const viewer = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  await waitFor(() => expect(document.title).toBe("Photo 1.jpg · Docbank"));
   const caption = await within(viewer).findByRole("textbox", { name: "Caption" });
   await waitFor(() => expect(caption.hasAttribute("disabled")).toBe(false));
   await fireEvent.input(caption, { target: { value: "Draft caption" } });
@@ -4020,6 +4025,7 @@ it("keeps a Hidden viewer's return point while a status failure refuses to close
   await fireEvent.click(await within(restored).findByRole("button", { name: "Clear edits" }));
   await fireEvent.keyDown(restored, { key: "ArrowRight" });
   await screen.findByRole("dialog", { name: "Photo viewer, Photo 2.jpg" });
+  await waitFor(() => expect(document.title).toBe("Photo 2.jpg · Docbank"));
 });
 
 it.each(["while open", "after a status failure"])(

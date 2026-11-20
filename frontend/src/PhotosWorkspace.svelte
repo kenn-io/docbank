@@ -935,6 +935,9 @@
         : direct
       : undefined,
   );
+  export function photoName() {
+    return current?.name;
+  }
   // The photo the metadata panel edits, shown by name above its fields.
   const inspected = $derived(
     photoID

@@ -3774,23 +3774,39 @@
   const tabTitle = $derived.by(() => {
     let title: string;
     if (!webSession) title = "Sign in";
-    else if (reader) title = reader.source.name;
+    else if (reader) {
+      const parent = parentPath(reader.source.path);
+      title = parent === "/" ? reader.source.name : `${reader.source.name} · ${parent}`;
+    } else if (activePanel?.kind === "versions" && activePanel.fromLink)
+      title = nodeVersionError
+        ? "Version unavailable"
+        : (activePanel.linked?.node.name ?? "Version");
     else if (
       activePanel &&
       ["storage", "jobs", "backups", "auditEvidence", "searchByMeaning"].includes(activePanel.kind)
     )
       title = vault?.sectionLabel() ?? "System";
     else if (photoMode) {
-      if (mapMode) title = "Map";
+      const album = photoAlbums?.items.find((item) => item.id === albumScopeID);
+      const missingAlbum =
+        albumScopeID &&
+        photoAlbums?.initialized &&
+        !photoAlbums.loading &&
+        !photoAlbums.busy &&
+        !photoAlbums.loadError &&
+        !album;
+      const photoName = hiddenMode ? hiddenWorkspace?.photoName() : libraryWorkspace?.photoName();
+      if (missingAlbum) title = "Album not found";
+      else if (photoID && photoName) title = photoName;
+      else if (mapMode) title = mapAlbumID && album ? `Map · ${album.name}` : "Map";
       else if (hiddenMode) title = "Hidden";
-      else if (albumID)
-        title = photoAlbums?.items.find((album) => album.id === albumID)?.name ?? "Album";
+      else if (albumID) title = album?.name ?? "Album";
       else if (photoPath === "/photos/albums") title = "Albums";
       else if (photoPath === "/photos/people") title = "People";
       else title = "Photos";
     } else if (docsPage) title = docsPageTitles[docsPage];
     else if (activeQuery || queryBarOpen || snapshotActive) title = "Search";
-    else if (tagBrowse) title = activeTag?.name ?? activeTagID;
+    else if (tagBrowse) title = activeTag?.name ?? "Tag";
     else title = breadcrumbs.at(-1)!.name;
     return `${title} · Docbank`;
   });

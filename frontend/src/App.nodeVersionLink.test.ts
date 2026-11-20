@@ -109,6 +109,7 @@ it.each([
     api((requestURL) => (requestURL === url ? response() : undefined));
     render(App);
     await waitFor(() => expect(within(screen.getByRole("dialog")).getByText(message)).toBeTruthy());
+    await waitFor(() => expect(document.title).toBe("Version unavailable · Docbank"));
     expect(screen.queryByRole("button", { name: "Download" })).toBeNull();
     expect(screen.queryByText(currentID)).toBeNull();
   },
@@ -127,6 +128,7 @@ it("keeps the resolved linked selection when root rows arrive after sign-in", as
   render(App);
   await signIn();
   await screen.findByText(oldID);
+  await waitFor(() => expect(document.title).toBe("example.txt · Docbank"));
   await waitFor(() => expect(release).toBeTypeOf("function"));
   await act(() =>
     release(
