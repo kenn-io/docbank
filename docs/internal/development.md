@@ -735,7 +735,9 @@ current version. Upgrade runs the contiguous `NNNNNN_description.up.sql`
 chain under the schema-owner setup lock and commits the SQL and version
 together. The fingerprint in `vault_metadata` identifies the names and exact
 bytes of all applied migrations. Runtime opening requires the current version
-and matching history. It performs validation only.
+and matching history. It performs validation only. Initialization and import
+can install a missing catalog and require the current version on an existing
+catalog. Run owner setup explicitly to upgrade.
 
 For a schema change, update the canonical SQL and add the next forward
 migration. Include changes to indexes, defaults, and incompatible seed
@@ -1046,8 +1048,9 @@ Logical metadata can move between PostgreSQL and SQLite without changing the
 format. Use `ImportMetadata` for a pristine SQLite Store. For PostgreSQL, use
 `store.ImportPostgresMetadata(ctx, ownerPool, cfg, reader)` with
 `pgschema.Config{Schema: "documents", SchemaOwner: "docbank_owner"}` and a pool
-connected as that schema owner. The internal import entry point runs `Setup`,
-refuses a nonpristine target, and uses the existing storage writer transaction.
+connected as that schema owner. The internal import entry point installs a
+missing catalog or checks that it is current. Import requires a pristine
+target and uses the storage writer transaction.
 It selects the schema through `SET LOCAL search_path`; the caller's pool stays
 open with its original session settings. Runtime credentials cannot perform
 setup or change the vault identity, and need no additional grants.

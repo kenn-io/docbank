@@ -20,7 +20,8 @@ import (
 // InitializePostgres installs an empty vault and its private filesystem root.
 // The caller owns the schema-owner pool. The root must be absent under an
 // existing parent, or already own the catalog. A repeated call for the same
-// bound root returns its current vault ID.
+// bound root returns its current vault ID. Existing catalogs must already be
+// at the current schema version. Use SetupPostgres explicitly to upgrade.
 func InitializePostgres(
 	ctx context.Context, owner *sql.DB, catalog PostgresCatalog, root string,
 ) (_ uuid.UUID, retErr error) {

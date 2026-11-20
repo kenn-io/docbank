@@ -56,12 +56,16 @@ func loadMigrations(files fs.FS) ([]migration, error) {
 	return chain, nil
 }
 
-func checkMigrationState(version int, fingerprint string, chain []migration) error {
+func checkMigrationState(installed schemaIdentity, chain []migration, requireCurrent bool) error {
+	version := installed.version
 	if version < 1 || version > len(chain) {
 		return fmt.Errorf("postgres metadata schema version %d is outside this build's supported range 1–%d", version, len(chain))
 	}
-	if fingerprint != chain[version-1].fingerprint {
+	if installed.fingerprint != chain[version-1].fingerprint {
 		return fmt.Errorf("postgres metadata migration history differs at version %d; use a matching build or restore a compatible backup", version)
+	}
+	if requireCurrent && version != len(chain) {
+		return fmt.Errorf("postgres metadata schema is at version %d; run setup as the schema owner to upgrade to version %d", version, len(chain))
 	}
 	return nil
 }

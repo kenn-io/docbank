@@ -29,7 +29,8 @@ connected as the schema owner, a `PostgresCatalog` with the schema and owner
 names, and a new vault directory under an existing parent. It installs the
 catalog if needed and publishes a private root with the matching primary
 ownership marker. Apply the runtime grants. Repeating initialization on the
-same bound and closed root returns its existing vault ID.
+same bound and closed root returns its existing vault ID. An existing catalog
+must already be at the current schema version.
 
 If initialization reports that it installed a directory before an error, keep
 the directory and retry at that path to verify the binding. If the catalog

@@ -46,13 +46,19 @@ func (c Config) Validate() error {
 // own the pool and deadline; no credentials are parsed, cached or logged here.
 // Existing schemas without a valid identity are refused, including empty ones.
 func Setup(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
+	return setup(ctx, db, c, schemaSQL, migrations, true)
+}
+
+// Install creates a missing catalog or verifies an existing catalog at the
+// current version. The pool must authenticate as Config.SchemaOwner.
+func Install(ctx context.Context, db *sql.DB, c Config) (uuid.UUID, error) {
+	return setup(ctx, db, c, schemaSQL, migrations, false)
+}
+
+func setup(ctx context.Context, db *sql.DB, c Config, freshDDL string, chain []migration, upgrade bool) (uuid.UUID, error) {
 	if migrationLoadErr != nil {
 		return uuid.Nil(), migrationLoadErr
 	}
-	return setup(ctx, db, c, schemaSQL, migrations)
-}
-
-func setup(ctx context.Context, db *sql.DB, c Config, freshDDL string, chain []migration) (uuid.UUID, error) {
 	if err := c.Validate(); err != nil {
 		return uuid.Nil(), err
 	}
@@ -136,11 +142,13 @@ func setup(ctx context.Context, db *sql.DB, c Config, freshDDL string, chain []m
 	if err != nil {
 		return uuid.Nil(), err
 	}
-	if err := checkMigrationState(installed.version, installed.fingerprint, chain); err != nil {
+	if err := checkMigrationState(installed, chain, !upgrade); err != nil {
 		return uuid.Nil(), err
 	}
-	if err := applyMigrations(ctx, tx, c.Schema, installed, chain); err != nil {
-		return uuid.Nil(), err
+	if upgrade {
+		if err := applyMigrations(ctx, tx, c.Schema, installed, chain); err != nil {
+			return uuid.Nil(), err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return uuid.Nil(), err
@@ -195,11 +203,8 @@ func validate(ctx context.Context, db *sql.DB, c Config, chain []migration) (uui
 	if err != nil {
 		return uuid.Nil(), err
 	}
-	if err := checkMigrationState(installed.version, installed.fingerprint, chain); err != nil {
+	if err := checkMigrationState(installed, chain, true); err != nil {
 		return uuid.Nil(), err
-	}
-	if installed.version != len(chain) {
-		return uuid.Nil(), fmt.Errorf("postgres metadata schema is at version %d; run setup as the schema owner to upgrade to version %d", installed.version, len(chain))
 	}
 	var canWrite bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_roles r

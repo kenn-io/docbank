@@ -23,15 +23,40 @@ func checkOwnerMigration(t *testing.T, owner, runtime *sql.DB, cfg Config) {
 		SELECT high_water,1,'keep me','dir',created_at,created_at FROM allocated CROSS JOIN documents.nodes WHERE parent_id IS NULL`)
 	require.NoError(t, err)
 
+	var originalVersion int
+	var originalFingerprint string
+	require.NoError(t, owner.QueryRowContext(ctx, `SELECT schema_version,schema_fingerprint
+		FROM documents.vault_metadata WHERE singleton=1`).Scan(&originalVersion, &originalFingerprint))
+
 	const update = `ALTER TABLE {{schema}}.nodes ADD COLUMN migration_probe text NOT NULL DEFAULT 'before upgrade';`
-	broken := appendTestMigration(t, update+" SELECT missing_migration_function();")
-	next := appendTestMigration(t, update)
+	const settle = `ALTER TABLE {{schema}}.nodes ALTER COLUMN migration_probe SET DEFAULT 'after upgrade';`
+	next := appendTestMigrations(t, update, settle)
+	// Fail only after observing the previous migration's DDL and history stamp.
+	// This distinguishes rollback of the whole upgrade from rollback of one batch.
+	fail := fmt.Sprintf(`DO $$
+		BEGIN
+			PERFORM migration_probe FROM {{schema}}.nodes WHERE id=2;
+			IF NOT EXISTS(SELECT 1 FROM {{schema}}.vault_metadata
+				WHERE singleton=1 AND schema_version=%d AND schema_fingerprint='%s') THEN
+				RAISE EXCEPTION 'preceding migration history is missing';
+			END IF;
+			RAISE EXCEPTION 'second migration failed after first was recorded';
+		END $$;`, originalVersion+1, next[originalVersion].fingerprint)
+	broken := appendTestMigrations(t, update, fail)
 	_, err = validate(ctx, runtime, cfg, next)
 	require.ErrorContains(t, err, "run setup as the schema owner")
-	_, err = setup(ctx, runtime, cfg, schemaSQL, next)
+	_, err = setup(ctx, runtime, cfg, schemaSQL, next, true)
 	require.ErrorContains(t, err, "requires the schema owner role")
-	_, err = setup(ctx, owner, cfg, schemaSQL, broken)
-	require.ErrorContains(t, err, "missing_migration_function")
+	_, err = setup(ctx, owner, cfg, schemaSQL, next, false)
+	require.ErrorContains(t, err, "run setup as the schema owner")
+	_, err = setup(ctx, owner, cfg, schemaSQL, broken, true)
+	require.ErrorContains(t, err, "second migration failed after first was recorded")
+	var rolledBackVersion int
+	var rolledBackFingerprint string
+	require.NoError(t, owner.QueryRowContext(ctx, `SELECT schema_version,schema_fingerprint
+		FROM documents.vault_metadata WHERE singleton=1`).Scan(&rolledBackVersion, &rolledBackFingerprint))
+	require.Equal(t, originalVersion, rolledBackVersion)
+	require.Equal(t, originalFingerprint, rolledBackFingerprint)
 	kept, err := Validate(ctx, runtime, cfg)
 	require.NoError(t, err)
 	require.Equal(t, id, kept)
@@ -41,10 +66,10 @@ func checkOwnerMigration(t *testing.T, owner, runtime *sql.DB, cfg Config) {
 		AND table_name='nodes' AND column_name='migration_probe')`).Scan(&columnExists))
 	require.False(t, columnExists, "failed migration rolled back its preceding DDL")
 
-	upgraded, err := setup(ctx, owner, cfg, schemaSQL, next)
+	upgraded, err := setup(ctx, owner, cfg, schemaSQL, next, true)
 	require.NoError(t, err)
 	require.Equal(t, id, upgraded)
-	again, err := setup(ctx, owner, cfg, schemaSQL, next)
+	again, err := setup(ctx, owner, cfg, schemaSQL, next, true)
 	require.NoError(t, err)
 	require.Equal(t, id, again)
 	got, err := validate(ctx, runtime, cfg, next)
@@ -71,13 +96,15 @@ func checkOwnerMigration(t *testing.T, owner, runtime *sql.DB, cfg Config) {
 	require.NoError(t, err)
 }
 
-func appendTestMigration(t *testing.T, ddl string) []migration {
+func appendTestMigrations(t *testing.T, statements ...string) []migration {
 	t.Helper()
 	files := fstest.MapFS{}
 	for _, entry := range migrations {
 		files["migrations/"+entry.name] = &fstest.MapFile{Data: []byte(entry.ddl)}
 	}
-	files[fmt.Sprintf("migrations/%06d_test_upgrade.up.sql", len(migrations)+1)] = &fstest.MapFile{Data: []byte(ddl)}
+	for i, ddl := range statements {
+		files[fmt.Sprintf("migrations/%06d_test_upgrade.up.sql", len(migrations)+i+1)] = &fstest.MapFile{Data: []byte(ddl)}
+	}
 	chain, err := loadMigrations(files)
 	require.NoError(t, err)
 	return chain
@@ -92,7 +119,7 @@ func TestNumberedMigrationsMatchCanonicalSchema(t *testing.T) {
 	_, err := Setup(ctx, db, fresh)
 	require.NoError(t, err)
 	require.NotEmpty(t, migrations)
-	_, err = setup(ctx, db, numbered, migrations[0].ddl, migrations[:1])
+	_, err = setup(ctx, db, numbered, migrations[0].ddl, migrations[:1], false)
 	require.NoError(t, err)
 	_, err = Setup(ctx, db, numbered)
 	require.NoError(t, err)
