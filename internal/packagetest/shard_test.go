@@ -248,6 +248,18 @@ func TestRunShards(t *testing.T) {
 	}
 }
 
+// TestRunShardsCPUList checks that -test.cpu runs each test once for each
+// listed CPU count. -test.parallel=1 would put every test in one child.
+func TestRunShardsCPUList(t *testing.T) {
+	command := shardParentCommand(t, "-test.run=^TestShardChild(?:C|Split)$", "-test.cpu=1,2",
+		"-test.parallel=1", "-test.v=true")
+	command.Env = append(command.Env, shardTestRecordEnv+"="+t.TempDir())
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
+	require.Equal(t, 2, strings.Count(string(output), "--- PASS: TestShardChildC ("), string(output))
+	require.Equal(t, 2, strings.Count(string(output), "--- PASS: TestShardChildSplit ("), string(output))
+}
+
 // TestRunShardsTimeout checks that a test still running at the package's
 // -test.timeout fails in its child, and that the output names it.
 func TestRunShardsTimeout(t *testing.T) {

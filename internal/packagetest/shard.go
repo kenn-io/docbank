@@ -109,8 +109,10 @@ type Split struct {
 }
 
 func shardableTests(ctx context.Context) ([]string, bool) {
+	// m.Run appends -test.cpu to its list of CPU counts on every call, so a
+	// child that runs several tests would repeat each later one more often.
 	for _, name := range []string{"test.list", "test.bench", "test.fuzz", "test.coverprofile", "test.cpuprofile",
-		"test.memprofile", "test.blockprofile", "test.mutexprofile", "test.trace", "test.gocoverdir"} {
+		"test.memprofile", "test.blockprofile", "test.mutexprofile", "test.trace", "test.gocoverdir", "test.cpu"} {
 		if f := flag.Lookup(name); f != nil && f.Value.String() != "" {
 			return nil, false
 		}
