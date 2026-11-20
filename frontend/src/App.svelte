@@ -3783,10 +3783,7 @@
   const tabTitle = $derived.by(() => {
     let title: string;
     if (!webSession) title = "Sign in";
-    else if (reader) {
-      const parent = parentPath(reader.source.path);
-      title = parent === "/" ? reader.source.name : `${reader.source.name} · ${parent}`;
-    } else if (activePanel?.kind === "versions" && activePanel.fromLink) {
+    else if (activePanel?.kind === "versions" && activePanel.fromLink) {
       const linked = activePanel.linked;
       const parent = linked?.node.path ? parentPath(linked.node.path) : "/";
       title = nodeVersionError
@@ -3796,7 +3793,10 @@
           : "Version";
     } else if (activePanel && systemPanelKinds.includes(activePanel.kind))
       title = vault?.sectionLabel() ?? "System";
-    else if (photoMode) {
+    else if (reader) {
+      const parent = parentPath(reader.source.path);
+      title = parent === "/" ? reader.source.name : `${reader.source.name} · ${parent}`;
+    } else if (photoMode) {
       const photoName = hiddenMode ? hiddenWorkspace?.photoName() : libraryWorkspace?.photoName();
       const photos = activePhotos();
       const person = photos?.personFilter;

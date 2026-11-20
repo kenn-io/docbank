@@ -115,6 +115,59 @@ it.each([
   },
 );
 
+it.each([false, true])(
+  "names a linked version over an open reader, failure=%s",
+  async (failure) => {
+    history.replaceState(null, "", `/#${credentials}`);
+    const other = {
+      ...fileNode,
+      id: 99,
+      name: "other.pdf",
+      path: "/other.pdf",
+      mime_type: "application/pdf",
+    };
+    let release!: (response: Response) => void;
+    api((url) => {
+      if (url.includes("/children"))
+        return Response.json({ directory: root, items: [other], total: 1, limit: 1000, offset: 0 });
+      if (url === "/api/v1/nodes/99") return Response.json(other);
+      if (url === `/api/v1/versions/${oldID}`)
+        return new Promise<Response>((resolve) => (release = resolve));
+      return undefined;
+    });
+    render(App);
+    await fireEvent.click(await screen.findByRole("cell", { name: "other.pdf" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Open" }));
+    const reader = await screen.findByRole("dialog", { name: "Read other.pdf" });
+    await waitFor(() => expect(document.title).toBe("other.pdf · Docbank"));
+    await act(() => {
+      location.hash = link();
+    });
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    await waitFor(() => expect(document.title).toBe("Version · Docbank"));
+    expect(reader.isConnected).toBe(true);
+    await act(() =>
+      release(
+        failure ? Response.json({ detail: "missing" }, { status: 404 }) : Response.json(oldVersion),
+      ),
+    );
+    await waitFor(() =>
+      expect(document.title).toBe(
+        failure ? "Version unavailable · Docbank" : `example.txt (${oldID}) · Docbank`,
+      ),
+    );
+    expect(reader.isConnected).toBe(true);
+    const close = failure
+      ? within(screen.getByRole("dialog", { name: "Linked content version" })).getByRole("button", {
+          name: "Close",
+        })
+      : screen.getByRole("button", { name: "Close version history" });
+    await fireEvent.click(close);
+    await waitFor(() => expect(document.title).toBe("other.pdf · Docbank"));
+    expect(reader.isConnected).toBe(true);
+  },
+);
+
 it("names a linked version with its document folder", async () => {
   history.replaceState(null, "", `/#${credentials}${link().slice(1)}`);
   api((url) =>
