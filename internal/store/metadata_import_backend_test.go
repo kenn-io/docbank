@@ -482,7 +482,10 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 			// accepts as pristine. Other tests import into empty databases.
 			setup, owner, login := newTemplateDatabase(t)
 			cfg := pgschema.Config{Schema: "documents", SchemaOwner: owner}
-			require.NoError(t, ImportPostgresMetadata(ctx, setup, cfg, bytes.NewReader(input.Bytes())))
+			release := pgtest.ReserveSchemaInstall(t)
+			err := ImportPostgresMetadata(ctx, setup, cfg, bytes.NewReader(input.Bytes()))
+			release()
+			require.NoError(t, err)
 			runtime := openPostgresStore(t, owner, login)
 			var output bytes.Buffer
 			require.NoError(t, runtime.ExportMetadata(ctx, &output))
