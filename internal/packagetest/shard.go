@@ -193,7 +193,10 @@ func runShards(ctx context.Context, names []string, splits []Split) int {
 		fmt.Fprintf(os.Stderr, "finding test binary: %v\n", err)
 		return 1
 	}
-	slotDir := filepath.Join(os.TempDir(), "docbank-test-shard-slots")
+	// The directory admits only its creator, so each user needs their own
+	// when several share a temporary directory such as /tmp. Windows reports
+	// -1 here, and its temporary directory is already per user.
+	slotDir := filepath.Join(os.TempDir(), "docbank-test-shard-slots-"+strconv.Itoa(os.Getuid()))
 	if err := os.MkdirAll(slotDir, 0o700); err != nil {
 		fmt.Fprintf(os.Stderr, "creating shard slots: %v\n", err)
 		return 1
