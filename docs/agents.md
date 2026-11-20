@@ -7,20 +7,20 @@ description: Why agents use Docbank, which interface to choose, and how it keeps
 # Docbank for agents
 
 Use Docbank to file, find, update, and verify documents through one authenticated
-API. The daemon owns the vault and checks each request. Agents use the same
-validation, revision checks, and maintenance rules as the CLI.
+API. The daemon owns the vault and checks every request, and agents follow the
+same validation, revision checks, and maintenance rules as the CLI.
 
 ## What the contract gives an agent
 
-- **Stable references:** a node ID keeps identifying the same document after a
-  rename or move. A SHA-256 hash identifies its content.
-- **Conflict detection:** send the revision you inspected with `If-Match`.
-  If another writer changed the node, the daemon returns HTTP 412.
-- **Content checks:** uploads declare their hash and size. Downloads provide
-  headers and a final digest trailer that the client must verify.
-- **Structured results:** use paginated listings, bounded search, problem
+- **Stable references.** A node ID still identifies the same document after a
+  rename or move, while a SHA-256 hash identifies its content.
+- **Conflict detection.** Send the revision you inspected in `If-Match`. If
+  another writer changed the node, the daemon returns HTTP 412.
+- **Content checks.** Uploads declare their hash and size, and downloads return
+  headers plus a final digest trailer that your client must verify.
+- **Structured results.** Use paginated listings, bounded search, problem
   codes, and progress records instead of parsing human output. NDJSON progress
-  sends one JSON record per line.
+  streams send one JSON record per line.
 
 ## Choose the right surface
 
@@ -32,30 +32,29 @@ validation, revision checks, and maintenance rules as the CLI.
 | OpenAPI | Client generation and capability discovery | `docbank openapi`, `/openapi.yaml` |
 | Markdown docs | Context retrieval without HTML scraping | Every public `/foo/` page is also published at `/foo.md` |
 
-Use [command discovery](cli-reference.md#find-a-command-by-task) without a vault or daemon.
+You can use [command discovery](cli-reference.md#find-a-command-by-task) without a vault or daemon.
 
-The [Agent integration guide](agents/integration.md) covers endpoint
-setup, authentication, upload and download proof, revision-aware mutations,
-backup progress, error handling, and a complete safe filing loop. The
-[HTTP API](architecture/http-api.md) page explains the design contract and
-non-goals.
+For endpoint setup, authentication, upload and download proof, revision-aware
+mutations, backup progress, error handling, and a complete safe filing loop,
+see the [Agent integration guide](agents/integration.md). To read the design
+contract and non-goals, see the [HTTP API](architecture/http-api.md) page.
 
 ## The mental model
 
 - **The daemon owns storage.** Never open `docbank.db`, rewrite pack files, or
   infer live content from the filesystem layout.
-- **IDs identify nodes; paths give their current location.** Keep the ID after
-  inspecting a node. Resolve the path again when the request depends on its
-  current location.
-- **Versions preserve prior content.** A file has a current version UUID,
-  SHA-256, and size. `put` adds a version. `revert` creates a new current version
-  from a prior one and leaves stored history intact.
-- **A download needs a final check.** Read through successful EOF and verify
-  the digest evidence before publishing the bytes.
-- **Deletion has stages.** Trash, trash empty, GC, and repack have different
-  effects. See [destructive maintenance](agents/integration.md#treat-destructive-maintenance-as-a-two-step-decision).
+- **IDs identify nodes, and paths show their current location.** Keep the ID
+  after you inspect a node, and resolve the path again whenever a request
+  depends on its current location.
+- **Versions preserve prior content.** Each file has a current version UUID,
+  SHA-256, and size. `put` adds a version, and `revert` creates a new current
+  version from a prior one while leaving stored history intact.
+- **Downloads need a final check.** Read through successful EOF and verify the
+  digest evidence before you publish the bytes.
+- **Deletion happens in stages.** Trash, trash empty, GC, and repack each have
+  different effects. See [destructive maintenance](agents/integration.md#treat-destructive-maintenance-as-a-two-step-decision).
 - **Storage moves change where Docbank may read content.** Review a preview,
-  execute its token, and follow the job ID. Inspect an uncertain result
+  execute its token, and follow the job ID. If a result is uncertain, inspect it
   before retrying the move. See [Multi-store storage](usage/storage.md).
 
 ## Common agent workflows
@@ -71,8 +70,8 @@ non-goals.
 ## Start integrating
 
 1. Connect Claude Code or Codex with `docbank agent setup`, or generate the current HTTP contract with `docbank openapi`.
-2. Configure a fixed loopback port and strong API key.
-3. Follow the [integration guide](agents/integration.md) through health,
+2. Configure a fixed loopback port and a strong API key.
+3. Walk through the [integration guide](agents/integration.md) for health checks,
    authentication, bounded reads, and a revision-aware filing loop.
-4. Use the running OpenAPI document for request and response fields.
-   Use structured problem codes to decide how to handle failures.
+4. Check the running OpenAPI document for request and response fields, and
+   branch on structured problem codes to handle failures.
