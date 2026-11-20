@@ -1287,6 +1287,11 @@ on. If your application relies on a heap limit,
 open its own SQLite connection before the first vault: once SQLite has
 initialized, Docbank leaves the setting alone.
 
+SQLite allows that setting to change only while no other thread uses SQLite.
+Until your first vault open returns, do not use SQLite through
+`github.com/mattn/go-sqlite3` on another goroutine. Open your own connection
+before that first vault, or after it opens.
+
 ## Ownership boundary
 
 Do not point a daemon and an embedded application at the same root. `New` holds

@@ -51,9 +51,6 @@ type Driver struct{}
 func (Driver) Name() string { return "mattn/go-sqlite3" }
 
 func (Driver) Open(path string, opts docsqlite.OpenOptions) (*sql.DB, error) {
-	if err := disableMemoryStatusOnce(); err != nil {
-		return nil, err
-	}
 	busy := opts.BusyTimeout
 	switch {
 	case busy == docsqlite.NoBusyWait:
@@ -85,6 +82,9 @@ func (Driver) Open(path string, opts docsqlite.OpenOptions) (*sql.DB, error) {
 		if sqlitetest.DisableSync.Load() {
 			query.Set("_synchronous", "OFF")
 		}
+	}
+	if err := disableMemoryStatusOnce(); err != nil {
+		return nil, err
 	}
 	return sql.Open(driverName, sqliteURI(path, query))
 }

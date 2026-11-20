@@ -32,7 +32,9 @@ var disableMemoryStatusOnce = sync.OnceValue(disableMemoryStatus)
 // memory statistics or heap limits. The setting is process-wide and also turns
 // off PRAGMA soft_heap_limit and hard_heap_limit enforcement, so it waits for
 // the first Docbank open. If the application already initialized SQLite,
-// sqlite3_config leaves its settings and connections alone.
+// sqlite3_config leaves its settings and connections alone. sqlite3_config is
+// not thread-safe, so the embedding guide tells applications not to use
+// SQLite on another goroutine during that first open.
 func disableMemoryStatus() error {
 	switch rc := C.docbank_disable_sqlite_memstatus(); rc {
 	case 0, sqliteMisuse:
