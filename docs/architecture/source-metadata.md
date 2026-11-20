@@ -6,9 +6,8 @@ description: How Docbank records a limited set of facts found inside original fi
 # Source metadata
 
 Docbank reads facts found inside original files, such as image dimensions,
-camera settings, and PDF properties. Before extracting this **source metadata**,
-Docbank verifies the original bytes and stores each result as immutable local
-evidence.
+camera settings, and PDF properties. It verifies the original bytes, extracts
+this **source metadata**, and stores each result as immutable local evidence.
 
 That evidence belongs to the content SHA-256. When you read a content version,
 Docbank returns the source metadata alongside the version's node and attachment
