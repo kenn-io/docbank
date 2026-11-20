@@ -1943,6 +1943,7 @@ var backendSuites = []backendSuite{
 	}},
 	{name: "email", postgres: "native operations", scope: "Native MIME inventories, body renditions, child documents, retention and relation reads; excludes plain-text extraction and recovery.", scenarios: []backendScenario{
 		{"EmailPublicationRollback", nil, checkEmailPublicationRollbackPostgres},
+		{"EmailPublicationBeginFailure", nil, checkEmailPublicationBeginFailurePostgres},
 		{"EmailBodyPublication", func(t *testing.T) { t.Helper(); checkEmailBodyPublication(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkEmailBodyPublication(t, newPostgresQueryStore) }},
 
 		{"EmailDocumentsProcessingReportsServingRenditionOutcomes", func(t *testing.T) {

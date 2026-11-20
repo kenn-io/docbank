@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/pgstoretest"
 	"go.kenn.io/docbank/internal/pgtest"
 	"go.kenn.io/docbank/internal/store"
@@ -168,11 +169,19 @@ func TestPhysicalRestorePublicationCollisionPostgres(t *testing.T) {
 	require.Equal(t, source.metadata.VaultID(), restored.VaultID())
 }
 
-type abortInstalledRestoreCommit struct{ target string }
+type abortInstalledRestoreCommit struct {
+	target  string
+	openErr error
+}
 
-func (tr abortInstalledRestoreCommit) TraceQueryStart(ctx context.Context, _ *pgx.Conn, query pgx.TraceQueryStartData) context.Context {
+func (tr *abortInstalledRestoreCommit) TraceQueryStart(ctx context.Context, _ *pgx.Conn, query pgx.TraceQueryStartData) context.Context {
 	if strings.EqualFold(query.SQL, "commit") {
 		if _, err := os.Stat(tr.target); err == nil {
+			lock, err := (home.Layout{Root: tr.target}).TryLockExclusive()
+			tr.openErr = err
+			if lock != nil {
+				_ = lock.Release()
+			}
 			cancelled, cancel := context.WithCancel(ctx)
 			cancel()
 			return cancelled
@@ -181,7 +190,8 @@ func (tr abortInstalledRestoreCommit) TraceQueryStart(ctx context.Context, _ *pg
 	return ctx
 }
 
-func (abortInstalledRestoreCommit) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+func (*abortInstalledRestoreCommit) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {
+}
 
 func TestPhysicalRestoreAbortedCommitPostgres(t *testing.T) {
 	t.Run("same snapshot", func(t *testing.T) { checkPhysicalRestoreAbortedCommit(t, false) })
@@ -213,7 +223,8 @@ func checkPhysicalRestoreAbortedCommit(t *testing.T, changeSnapshot bool) {
 		return nil
 	}))
 	require.NoError(t, conn.Close())
-	ownerConfig.Tracer = abortInstalledRestoreCommit{target: target}
+	tracer := &abortInstalledRestoreCommit{target: target}
+	ownerConfig.Tracer = tracer
 	writer := stdlib.OpenDB(*ownerConfig)
 	defer func() { require.NoError(t, writer.Close()) }()
 	result, err := backupapp.RestorePostgres(ctx, repo, "test-version", store.DefaultSQLiteDriver(),
@@ -221,6 +232,8 @@ func checkPhysicalRestoreAbortedCommit(t *testing.T, changeSnapshot bool) {
 	require.ErrorContains(t, err, "restore directory was installed")
 	require.ErrorIs(t, err, context.Canceled)
 	require.NotNil(t, result)
+	require.False(t, result.CatalogCommitted)
+	require.ErrorIs(t, tracer.openErr, home.ErrVaultLocked, "the installed root remains exclusively owned until commit")
 
 	restored, err := store.OpenPostgres(ctx, runtime, cfg, target)
 	require.NoError(t, err)
@@ -252,6 +265,7 @@ func checkPhysicalRestoreAbortedCommit(t *testing.T, changeSnapshot bool) {
 		backupapp.PostgresRestoreTarget{Owner: setup, Runtime: runtime, Schema: cfg},
 		backup.RestoreOptions{TargetDir: retry, SnapshotID: snapshot.SnapshotID})
 	require.NoError(t, err)
+	require.True(t, committed.CatalogCommitted)
 	require.Equal(t, result.VaultID, committed.VaultID)
 	require.Equal(t, snapshot.SnapshotID, committed.SnapshotID)
 	live, err := store.OpenPostgres(ctx, runtime, cfg, retry)
@@ -294,6 +308,7 @@ func TestPhysicalRestoreRetriesDerivedIndexesPostgres(t *testing.T) {
 	require.ErrorContains(t, err, "PostgreSQL restore committed; rebuilding projections")
 	require.ErrorContains(t, err, "permission denied for table document_event_state")
 	require.NotNil(t, result)
+	require.True(t, result.CatalogCommitted)
 	require.Equal(t, source.metadata.VaultID(), result.VaultID)
 
 	_, err = setup.ExecContext(ctx, `GRANT INSERT ON documents.document_event_state TO `+role)

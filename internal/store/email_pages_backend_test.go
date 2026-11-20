@@ -1,7 +1,9 @@
 package store
 
 import (
+	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -12,6 +14,40 @@ import (
 	"go.kenn.io/docbank/internal/pgtest"
 	"go.kenn.io/docbank/internal/store/pgschema"
 )
+
+func checkEmailPublicationBeginFailurePostgres(t *testing.T) {
+	t.Helper()
+	setup, owner := pgtest.NewDatabase(t)
+	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	ctx := t.Context()
+	f := newEmailFixture(t, s, "begin-failure.eml")
+	view, err := s.PublishEmailGeneration(ctx, f.publication)
+	require.NoError(t, err)
+	receipt, err := s.PublishEmailDocuments(ctx, attachmentRequest(t, s, view, "begin-failure"))
+	require.NoError(t, err)
+
+	var disconnected bool
+	var disconnectErr error
+	config := s.postgresConfig.Copy()
+	config.Tracer = renditionQueryStart(func(ctx context.Context, conn *pgx.Conn, query pgx.TraceQueryStartData) {
+		if !disconnected && strings.HasPrefix(query.SQL, "begin ") {
+			disconnectErr = setup.QueryRowContext(ctx, `SELECT pg_terminate_backend($1,5000)`, conn.PgConn().PID()).Scan(&disconnected)
+		}
+	})
+	s.writeDB = stdlib.OpenDB(*config)
+
+	err = s.RemoveEmailDocumentPublication(ctx, receipt.OperationID, receipt.RequestDigest)
+	require.NoError(t, disconnectErr)
+	require.True(t, disconnected)
+	require.ErrorIs(t, err, errBeginTx)
+	stored, err := s.EmailDocumentPublication(ctx, receipt.OperationID)
+	require.NoError(t, err)
+	require.Equal(t, receipt, stored)
+
+	require.NoError(t, s.RemoveEmailDocumentPublication(ctx, receipt.OperationID, receipt.RequestDigest))
+	_, err = s.EmailDocumentPublication(ctx, receipt.OperationID)
+	require.ErrorIs(t, err, ErrNotFound)
+}
 
 func checkEmailPublicationRollbackPostgres(t *testing.T) {
 	t.Helper()

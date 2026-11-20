@@ -473,6 +473,9 @@ func (s *Store) storageTx(ctx context.Context, counts bool, fn func(tx *sql.Tx) 
 }
 
 func (s *Store) withStorageTxRetryBegin(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	if s.postgresSchema != "" {
+		return s.withStorageTx(ctx, fn)
+	}
 	_, err := backoff.Retry(ctx, func() (struct{}, error) {
 		err := s.withStorageTx(ctx, fn)
 		if err != nil && (!errors.Is(err, errBeginTx) || !s.driver.IsBusy(err)) {

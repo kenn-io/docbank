@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-10-31
+last_edited: 2026-11-19
 title: Embed in Go
-description: Run one or more Docbank vaults inside a Go application, each with its own root, using CGO or pure-Go SQLite.
+description: Run Docbank vaults inside a Go application with local SQLite or a restored PostgreSQL catalog.
 ---
 
 # Embed in Go
@@ -13,6 +13,36 @@ checks, storage rules, and exclusive vault lock as standalone Docbank.
 
 Use an embedded vault when the application itself should own document lifecycle.
 Use the HTTP API when independent processes need to share one standalone vault.
+
+## Restore and open a PostgreSQL vault
+
+Use PostgreSQL 16 or 18 with UTF-8 encoding. For each vault, provision a
+dedicated schema owner and a separate runtime login. Give the process a private
+local directory for its vault files and run one owning process per vault
+catalog. The standalone daemon and `New` use SQLite.
+
+1. Call `SetupPostgres` with a caller-owned `*sql.DB` connected as the schema
+   owner and a `PostgresCatalog` with the schema and owner names. Apply the
+   [runtime grants](https://github.com/kenn-io/docbank/blob/main/docs/internal/development.md#postgresql-schema-lifecycle).
+2. Open the backup repository. Call `repository.RestorePostgres` with the
+   owner pool, the same catalog, and a `*pgx.ConnConfig` for the runtime login.
+   Pass the saved snapshot ID, a new target directory under an existing parent,
+   and any protected roots. The catalog must be pristine. The backup can come
+   from SQLite or PostgreSQL.
+3. Call `OpenPostgres` with `Config{Root: report.Target}`, the same catalog,
+   and the runtime login. It checks the restored primary ownership marker and
+   holds the root lock until `Close`. The vault can create portable backups
+   with `CreateBackup`.
+
+On a restore error, a report with `CatalogCommitted` set identifies a committed
+restore. Close any owner of that root before retrying a failed index rebuild
+with `RebuildPostgresRestore`. When the report has a target and an unconfirmed
+commit, keep that directory and follow the
+[ownership reconciliation procedure](architecture/backup.md#restoring-into-postgresql).
+
+This is the restored-vault lifecycle. PostgreSQL development schemas use a
+[schema fingerprint](https://github.com/kenn-io/docbank/blob/main/docs/internal/development.md#postgresql-schema-lifecycle)
+until the first retained deployment establishes the forward migration baseline.
 
 ## Run native MCP reads
 
@@ -985,7 +1015,7 @@ history and cannot take another vault's repository, which returns
 `BackupSnapshot.Coverage` records photo assets and files, distinct verified photo bytes, albums and members, hidden and trashed photos, checkout definitions and entries, and retained receipts. A nil pointer with an empty `BackupSnapshot.CoverageWarning` means the historical snapshot did not record coverage. Unsupported coverage yields a nil pointer and a version-specific warning while preserving the snapshot ID and base statistics for listing and cleanup. Total verified bytes remain in `BackupSnapshot.BlobBytes`. The trash count includes an asset when any managed file is trashed. `Coverage.Excluded` names omitted runtime state and rebuildable projections, including `photo_technical_metadata`. Restore recounts version-1 coverage before publication and rejects unsupported versions with `*UnsupportedBackupCoverageError`, whose `Version` names the recorded version. Verification checks manifest consistency and physical content, and reports unsupported coverage versions; it does not recount photo coverage. [Older readers require an upgrade](usage/backup.md#what-each-snapshot-contains) before restoring coverage-bearing snapshots. See [Backup coverage](usage/backup.md#what-each-snapshot-contains) for the complete exclusions and restore rules.
 
 Capture prevents content reclamation for the whole snapshot. Ordinary appends
-resume once Docbank fixes the SQLite view that the backup will use. Physical
+resume once Docbank pins the catalog view that the backup will use. Physical
 maintenance waits until Docbank publishes the manifest.
 
 To include your application's catalog in the same backup:
