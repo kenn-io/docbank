@@ -218,6 +218,18 @@ func (s *Store) bootstrapTx(ctx context.Context, incarnation *metadataProcessing
 			SELECT vault_uid, schema_version FROM vault_metadata WHERE singleton = 1`).Scan(
 			&s.vaultID, &schemaVersion,
 		); errors.Is(err, sql.ErrNoRows) {
+			// Only a new vault lacks an identity. Bootstrap commits the
+			// identity with the root node, so a vault that has nodes lost its
+			// identity row, and a new identity would make it look like a
+			// different vault.
+			var hasNodes bool
+			if idErr := tx.QueryRowContext(ctx,
+				`SELECT EXISTS(SELECT 1 FROM nodes)`).Scan(&hasNodes); idErr != nil {
+				return fmt.Errorf("checking for existing vault data: %w", idErr)
+			}
+			if hasNodes {
+				return errors.New("opening database: vault has data but no vault_metadata identity row; restore it from a backup")
+			}
 			vaultID, idErr := newUUIDv4()
 			if idErr != nil {
 				return fmt.Errorf("creating vault identity: %w", idErr)
