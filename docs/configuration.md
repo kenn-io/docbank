@@ -1156,9 +1156,10 @@ configuration keeps its existing vector space across upgrades. Legacy BGE-M3
 and Qwen3 profiles may require recomputation on their first policy change
 because their old records omit deployment revisions.
 
-The daemon runs retained embedding jobs for its configured OpenAI-compatible
-and Voyage runtimes. Other [provider packages](document-understanding.md) are
-available to Go applications, and the daemon cannot run them.
+The daemon runs retained embedding jobs for its configured OpenAI-compatible,
+Voyage, and `docbank-standard-embedding-bridge/v2` runtimes. Other
+[provider packages](document-understanding.md) are available to Go
+applications, and the daemon cannot run them.
 
 An embedding is a numeric representation used to compare document meaning. Each
 provider binding publishes its own results, and one provider's failure does not
