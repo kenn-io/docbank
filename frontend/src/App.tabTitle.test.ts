@@ -95,15 +95,26 @@ it("names the current screen in the browser tab", async () => {
   const rows = [photo(1), photo(2)].map((row, i) => ({
     ...row,
     asset_id: `00000000-0000-4000-8000-00000000000${i + 1}`,
+    content_version_id: `10000000-0000-4000-8000-00000000000${i + 1}`,
   }));
   const personID = "00000000-0000-4000-8000-000000000001";
-  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({
-    faces: [photoFace({ content_version_id: rows[0].content_version_id })],
-    assertions: [
-      photoPersonAssertion({ content_version_id: rows[0].content_version_id, person_id: personID }),
-    ],
-    people: [{ person_id: personID, display_name: "Ada", state: "curated" }],
-  });
+  vi.spyOn(api, "listPhotoFaces").mockImplementation(async (version) =>
+    version === rows[0].content_version_id
+      ? {
+          faces: [photoFace({ content_version_id: version })],
+          assertions: [photoPersonAssertion({ content_version_id: version, person_id: personID })],
+          people: [{ person_id: personID, display_name: "Ada", state: "curated" }],
+        }
+      : { faces: [], assertions: [], people: [] },
+  );
+  const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  const conceal = async (title: string) => {
+    visibility.mockReturnValue("hidden");
+    await fireEvent(document, new Event("visibilitychange"));
+    await waitFor(() => expect(document.title).toBe(title));
+    visibility.mockReturnValue("visible");
+    await fireEvent(document, new Event("visibilitychange"));
+  };
   vi.spyOn(PhotoCull.prototype, "start").mockImplementation(async function (this: PhotoCull) {
     this.run = {
       ids: rows.map((row) => row.asset_id),
@@ -156,6 +167,7 @@ it("names the current screen in the browser tab", async () => {
       });
     if (url.includes("/audit/status"))
       return Response.json({ vault_id: "11111111-1111-4111-8111-111111111111" });
+    if (url.endsWith("/photos/hidden/lock")) return Response.json({ configured: true });
     if (url.endsWith("/photos/hidden"))
       return Response.json({
         configured: true,
@@ -280,6 +292,8 @@ it("names the current screen in the browser tab", async () => {
     );
   await fireEvent.click(screen.getByRole("button", { name: "Compare" }));
   await waitFor(() => expect(document.title).toBe("Compare photos · Docbank"));
+  await conceal("Compare photos · Docbank");
+  await screen.findByRole("dialog", { name: "Compare photos" });
   await fireEvent.click(screen.getByRole("button", { name: "Exit compare" }));
   await waitFor(() => expect(document.title).toBe("Photos · Docbank"));
   const clear = screen.queryByRole("button", { name: "Clear selection" });
@@ -287,19 +301,27 @@ it("names the current screen in the browser tab", async () => {
   const cull = await screen.findByRole("button", { name: "Cull" });
   await waitFor(() => expect((cull as HTMLButtonElement).disabled).toBe(false));
   await fireEvent.click(cull);
-  const dialog = await screen.findByRole("dialog", { name: "Cull photos" });
+  let dialog = await screen.findByRole("dialog", { name: "Cull photos" });
   await within(dialog).findByText("Photo 1.jpg");
+  await waitFor(() => expect(document.title).toBe("Photo 1.jpg · Docbank"));
+  await conceal("Photo · Docbank");
+  dialog = await screen.findByRole("dialog", { name: "Cull photos" });
   await waitFor(() => expect(document.title).toBe("Photo 1.jpg · Docbank"));
   await fireEvent.click(within(dialog).getByRole("button", { name: "Next photo" }));
   await within(dialog).findByText("Photo 2.jpg");
   await fireEvent.click(within(dialog).getByRole("button", { name: "Next photo" }));
   await within(dialog).findByRole("heading", { name: "Pass complete" });
   await waitFor(() => expect(document.title).toBe("Pass complete · Docbank"));
+  await conceal("Pass complete · Docbank");
+  await screen.findByRole("heading", { name: "Pass complete" });
+  dialog = screen.getByRole("dialog", { name: "Cull photos" });
   await fireEvent.click(within(dialog).getByRole("button", { name: "Back to photos" }));
   await fireEvent.click(await screen.findByRole("button", { name: "Open Photo 1.jpg" }));
   await fireEvent.click(await screen.findByRole("button", { name: "Ada" }));
   await screen.findByText("Person: Ada");
   await waitFor(() => expect(document.title).toBe("Ada · Photos · Docbank"));
+  await conceal("Ada · Photos · Docbank");
+  await screen.findByText("Person: Ada");
   await fireEvent.click(screen.getByRole("button", { name: "Albums" }));
   await waitFor(() => expect(document.title).toBe("Albums · Docbank"));
   await fireEvent.click(screen.getByRole("button", { name: "People" }));
@@ -308,6 +330,7 @@ it("names the current screen in the browser tab", async () => {
   await screen.findByText("Person: Ada");
   await waitFor(() => expect(document.title).toBe("Ada · Photos · Docbank"));
   await fireEvent.click(screen.getByRole("button", { name: "Map" }));
+  await screen.findByRole("heading", { name: "Photos in view" });
   await waitFor(() => expect(document.title).toBe("Map · Docbank"));
   await fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
   await waitFor(() => expect(document.title).toBe("Hidden · Docbank"));
@@ -320,8 +343,10 @@ it("names the current screen in the browser tab", async () => {
   await fireEvent.click(await screen.findByRole("button", { name: "Albums" }));
   await waitFor(() => expect(document.title).toBe("Albums · Docbank"));
   await fireEvent.click(await screen.findByRole("link", { name: /Trip/ }));
+  await screen.findByRole("heading", { name: "Trip" });
   await waitFor(() => expect(document.title).toBe("Trip · Docbank"));
   await fireEvent.click(screen.getByRole("button", { name: "Map" }));
+  await screen.findByRole("heading", { name: "Photos in view" });
   await waitFor(() => expect(document.title).toBe("Map · Trip · Docbank"));
 });
 
