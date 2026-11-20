@@ -820,9 +820,21 @@ func restoreV48SourceState(ctx context.Context, source metadataQuerier, target *
 		return err
 	}
 	return target.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return replaceImportedTables(ctx, source, tx, []string{
+		if err := replaceImportedTables(ctx, source, tx, []string{
 			"vault_change_head", "vault_changes", "watch_source_absences", "vector_membership_epochs",
-		})
+		}); err != nil {
+			return err
+		}
+		// Portable metadata excludes derived uploads; the same vault retains their
+		// jobs and the explicit requests that can replace dismissed descriptions.
+		derivedJobs := `json_extract(execution_identity_json,'$.upload.input_kind')='derived_upload'`
+		if err := copyReleasedRows(ctx, source, tx, "rendition_jobs", derivedJobs); err != nil {
+			return err
+		}
+		if err := copyReleasedRows(ctx, source, tx, "rendition_job_waiters", `job_id IN (SELECT job_id FROM rendition_jobs WHERE `+derivedJobs+`)`); err != nil {
+			return err
+		}
+		return copyReleasedTable(ctx, source, tx, "photo_description_explicit_waiters")
 	})
 }
 

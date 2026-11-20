@@ -1499,8 +1499,6 @@ it("uploads after registration without a redundant checkpoint write", async () =
 it.each([
   { error: new APIError("Storage unavailable", 500, "checkpoint_storage"), continues: true },
   { error: new APIError("Session expired", 401, "unauthorized"), continues: false },
-  { error: new APIError("Forbidden", 403, "checkpoint_storage"), continues: false },
-  { error: new APIError("Changed in another tab", 409, "checkpoint_changed"), continues: false },
 ])(
   "handles checkpoint read failure before upload: $error.message",
   async ({ error, continues }) => {

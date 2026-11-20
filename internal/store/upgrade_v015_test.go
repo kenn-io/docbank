@@ -186,6 +186,62 @@ func TestUpgradeReleasedV0170KeepsLocalState(t *testing.T) {
 	}
 }
 
+func TestUpgradeReleasedV0170KeepsExplicitPhotoRefresh(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			ctx := t.Context()
+			path := filepath.Join(t.TempDir(), "docbank.db")
+			db, legacy := newReleasedFixtureStore(t, path, driver.driver, schemaV0170SQL, 48)
+			node := createReleasedFixtureFile(t, legacy, "photo.jpg", fakeHash("a1"), 8, "image/jpeg")
+			seedReleasedPhotoAsset(t, db, node.ID)
+			asset, err := legacy.PhotoAssetForNode(ctx, node.ID)
+			require.NoError(t, err)
+			proposal := putPhotoSuggestion(t, legacy, asset, document.PhotoDescription{Caption: "First description."})
+			_, err = legacy.RespondPhotoSuggestion(ctx, proposal.ID, dismissalOf(ctx, t, legacy, proposal))
+			require.NoError(t, err)
+			request := photoDescriptionJobRequest(t, legacy, node.CurrentVersionID, producerB, true)
+			grantRenditionJobConsent(t, legacy, request)
+			job, waiter, err := legacy.EnqueueRenditionJob(ctx, request)
+			require.NoError(t, err)
+			faceRequest := photoVisionJobRequest(t, legacy, node.CurrentVersionID, producerA, false, document.FaceDetectionProviderID)
+			grantRenditionJobConsent(t, legacy, faceRequest)
+			faceJob, faceWaiter, err := legacy.EnqueueRenditionJob(ctx, faceRequest)
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
+
+			s, err := Open(ctx, path, driver.driver)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, s.Close()) }()
+			var backup bytes.Buffer
+			require.NoError(t, s.ExportMetadata(ctx, &backup))
+			_, err = s.RenditionJobWaiterByID(ctx, waiter.ID)
+			require.NoError(t, err)
+			_, err = s.RenditionJobByID(ctx, faceJob.ID)
+			require.NoError(t, err)
+			_, err = s.RenditionJobWaiterByID(ctx, faceWaiter.ID)
+			require.NoError(t, err)
+			at := time.Now().UTC().Add(time.Minute)
+			claim, err := s.ClaimRenditionJob(ctx, job.ID, "description-worker", at, time.Hour)
+			require.NoError(t, err)
+			_, err = s.BeginRenditionProvider(ctx, claim, waiter.ID, at, renditionJobTestSnapshot(request))
+			require.NoError(t, err)
+			_, err = s.PublishPhotoDescription(ctx, claim, photoDescriptionResult("Refreshed description."), at)
+			require.NoError(t, err)
+			values := photoSuggestionValues(t, s, asset.ID)
+			require.Len(t, values, 1)
+			require.Equal(t, "Refreshed description.", values[0].Value.Caption)
+
+			restored := newTestStoreWithDriver(t, driver.driver)
+			require.NoError(t, restored.ImportMetadata(ctx, &backup))
+			_, err = restored.RenditionJobByID(ctx, job.ID)
+			require.ErrorIs(t, err, ErrNotFound)
+			_, err = restored.RenditionJobByID(ctx, faceJob.ID)
+			require.ErrorIs(t, err, ErrNotFound)
+		})
+	}
+}
+
 // seedV0150PendingWork records a photo, consent with a retrying rendition
 // job, a queued photo import, its cleanup record, and every pending deletion.
 func seedV0150PendingWork(t *testing.T, db *sql.DB, legacy *Store) (photoNodeID int64, jobID, operationID string) {
