@@ -291,11 +291,11 @@ func (s *QuerySnapshotService) RunSaved(
 	var run SavedQueryRun
 	write := func() error {
 		return s.store.withLogicalTx(prepared.ctx, func(tx *sql.Tx) error {
-			if err := validatePhotoSnapshotMembersTx(prepared.ctx, tx, frozen); err != nil {
+			if err := s.store.validatePhotoSnapshotMembersTx(prepared.ctx, tx, frozen); err != nil {
 				return err
 			}
 			var insertErr error
-			run, insertErr = insertSavedQueryRunTx(
+			run, insertErr = s.store.insertSavedQueryRunTx(
 				prepared.ctx, tx, id, expectedRevision, prepared.projection, prepared.page,
 			)
 			return insertErr
@@ -512,11 +512,11 @@ func (s *QuerySnapshotService) validatePhotoSnapshotPage(ctx context.Context, pa
 		members[i] = page.Rows[i].SnapshotMember
 	}
 	return s.store.withReadTx(ctx, func(tx *sql.Tx) error {
-		return validatePhotoSnapshotMembersTx(ctx, tx, members)
+		return s.store.validatePhotoSnapshotMembersTx(ctx, tx, members)
 	})
 }
 
-func validatePhotoSnapshotMembersTx(ctx context.Context, tx rowQuerier, members []SnapshotMember) error {
+func (s *Store) validatePhotoSnapshotMembersTx(ctx context.Context, tx rowQuerier, members []SnapshotMember) error {
 	if len(members) == 0 {
 		return nil
 	}
@@ -530,7 +530,7 @@ func validatePhotoSnapshotMembersTx(ctx context.Context, tx rowQuerier, members 
 	if err != nil {
 		return fmt.Errorf("encoding photo snapshot asset IDs: %w", err)
 	}
-	if err := photoSnapshotLibraryMembersTx(ctx, tx, assetIDsJSON, len(assetIDs)); err != nil {
+	if err := s.photoSnapshotLibraryMembersTx(ctx, tx, assetIDsJSON, len(assetIDs)); err != nil {
 		return err
 	}
 	nodeIDsJSON, err := json.Marshal(nodeIDs)
@@ -538,8 +538,8 @@ func validatePhotoSnapshotMembersTx(ctx context.Context, tx rowQuerier, members 
 		return fmt.Errorf("encoding photo snapshot node IDs: %w", err)
 	}
 	var eligible int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM json_each(?) frozen
-		JOIN nodes n ON n.id=frozen.value JOIN content_versions cv ON cv.version_id=n.current_version_id
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM (`+s.jsonArrayRowsSQL()+`) frozen
+		JOIN nodes n ON n.id=CAST(frozen.value AS BIGINT) JOIN content_versions cv ON cv.version_id=n.current_version_id
 		WHERE n.kind='file' AND n.trashed_at IS NULL
 		AND (NOT EXISTS (SELECT 1 FROM photo_files owner WHERE owner.node_id=n.id AND owner.asset_id IS NOT NULL)
 		OR `+photoBrowseEligibleMemberPredicate(false)+`)`, string(nodeIDsJSON)).Scan(&eligible); err != nil {
@@ -1031,14 +1031,17 @@ func (s *QuerySnapshotService) PhotoPage(ctx context.Context, owner, id, cursor 
 }
 
 func (s *Store) currentPhotoRowsTx(ctx context.Context, tx metadataQuerier, members []SnapshotMember, recipes map[string]string) ([]PhotoBrowseRow, error) {
-	if err := validatePhotoSnapshotMembersTx(ctx, tx, members); err != nil {
+	if err := s.validatePhotoSnapshotMembersTx(ctx, tx, members); err != nil {
 		return nil, err
 	}
 	encoded, err := json.Marshal(members)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT `+photoBrowseSelect+`,'',0 FROM `+photoBrowseDisplayFrom+` JOIN json_each(?) frozen ON json_extract(frozen.value,'$.asset_id')=a.asset_id WHERE `+photoBrowseLiveDisplay+` ORDER BY CAST(frozen.key AS INTEGER)`, string(encoded))
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
+	rows, err := tx.QueryContext(ctx, `SELECT `+photoBrowseSelect+`,'',0 FROM `+photoJoins(photoBrowseDisplayFrom, d.postgres)+
+		` JOIN (`+s.jsonArrayRowsSQL()+`) frozen ON `+d.text("frozen.value", "asset_id")+`=a.asset_id WHERE `+photoBrowseLiveDisplay+
+		` ORDER BY frozen.position`, string(encoded))
 	if err != nil {
 		return nil, err
 	}

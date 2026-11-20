@@ -83,6 +83,9 @@ func (Driver) Open(path string, opts docsqlite.OpenOptions) (*sql.DB, error) {
 			query.Set("_synchronous", "OFF")
 		}
 	}
+	if err := disableMemoryStatusOnce(); err != nil {
+		return nil, err
+	}
 	return sql.Open(driverName, sqliteURI(path, query))
 }
 

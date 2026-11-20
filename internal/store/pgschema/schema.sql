@@ -25,7 +25,9 @@ $$;
 CREATE TABLE {{schema}}.vault_metadata (
     singleton      SMALLINT PRIMARY KEY,
     vault_uid      UUID NOT NULL UNIQUE,
-    schema_fingerprint TEXT COLLATE "C" NOT NULL
+    schema_version INTEGER NOT NULL,
+    schema_fingerprint TEXT COLLATE "C" NOT NULL,
+    primary_storage_bound BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 -- Allocation is transactional: audit replay requires consecutive committed IDs.
@@ -78,6 +80,7 @@ CREATE TABLE {{schema}}.content_versions (
     blob_hash               TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blobs(hash) DEFERRABLE INITIALLY IMMEDIATE,
     size                    BIGINT NOT NULL,
     mime_type BYTEA,
+    query_mime_family       TEXT COLLATE "C",
     recorded_at             TEXT COLLATE "C" NOT NULL,
     node_revision           BIGINT NOT NULL,
     introduced_operation_id TEXT COLLATE "C" NOT NULL,
@@ -216,6 +219,7 @@ CREATE TABLE {{schema}}.source_metadata_generations (
     contract_version     TEXT COLLATE "C" NOT NULL,
     extractor_fingerprint TEXT COLLATE "C" NOT NULL,
     canonical_json       BYTEA NOT NULL,
+    pdf_query_facts      JSONB NOT NULL,
     checksum             TEXT COLLATE "C" NOT NULL,
     created_at           TEXT COLLATE "C" NOT NULL,
     UNIQUE (source_sha256, contract_version, extractor_fingerprint),

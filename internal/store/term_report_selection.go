@@ -29,16 +29,22 @@ func (s *Store) RefreshTermReportSelection(ctx context.Context, documents []repo
 	if err != nil {
 		return nil, err
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	rows, err := tx.QueryContext(ctx, `SELECT json_extract(j.value,'$.node_id'), COALESCE(n.name,''), COALESCE(n.kind,''), COALESCE(n.trashed_at,''), COALESCE(cv.version_id,''), COALESCE(cv.blob_hash,''), COALESCE(cv.recorded_at,''), COALESCE(old.recorded_at,'')
-		FROM json_each(?) j LEFT JOIN nodes n ON n.id=json_extract(j.value,'$.node_id')
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
+	items := `json_each($1) j`
+	if d.postgres {
+		items = `jsonb_array_elements(CAST($1 AS jsonb)) j(value)`
+	}
+	nodeID, versionID := d.number("j.value", "node_id"), d.text("j.value", "version_id")
+	rows, err := tx.QueryContext(ctx, `SELECT `+nodeID+`, COALESCE(n.name,''), COALESCE(n.kind,''), COALESCE(n.trashed_at,''), COALESCE(cv.version_id,''), COALESCE(cv.blob_hash,''), COALESCE(cv.recorded_at,''), COALESCE(old.recorded_at,'')
+		FROM `+items+` LEFT JOIN nodes n ON n.id=`+nodeID+`
 		LEFT JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=n.current_version_id
-		LEFT JOIN content_versions old ON old.node_id=n.id AND old.version_id=json_extract(j.value,'$.version_id')
-		ORDER BY json_extract(j.value,'$.node_id')`, string(encoded))
+		LEFT JOIN content_versions old ON old.node_id=n.id AND old.version_id=`+versionID+`
+		ORDER BY `+nodeID, string(encoded))
 	if err != nil {
 		return nil, err
 	}

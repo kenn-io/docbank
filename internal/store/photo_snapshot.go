@@ -17,10 +17,10 @@ func photoSnapshotPopulation(compiled CompiledQuery, generation string, coverage
 		statement, args, err := rankedPhotoStatement(compiled, generation, coverage, int(limit+1), true, suggestions)
 		return compiledQueryFragment{sql: statement, args: args}, err
 	}
-	key := photoBrowseMissingKey(compiled.Query.Sort.Field)
-	from := photoBrowseDisplayFrom
+	key := photoBrowseMissingKeyForBackend(compiled.Query.Sort.Field, compiled.postgres)
+	from := photoJoins(photoBrowseDisplayFrom, compiled.postgres)
 	if compiled.Query.Sort.Field == "added_time" {
-		from, key, _ = photoBrowseOrder("added_time")
+		from, key, _ = photoBrowseOrderForBackend("added_time", compiled.postgres)
 	}
 	if key == "" {
 		return compiledQueryFragment{}, ErrInvalidPhotoQuery
@@ -68,7 +68,7 @@ func (s *QuerySnapshotService) CreatePhotoAlbum(ctx context.Context, owner, snap
 	var out PhotoSet
 	write := func() error {
 		return s.store.withLogicalTx(ctx, func(tx *sql.Tx) error {
-			if err := photoSnapshotLibraryMembersTx(ctx, tx, encoded, len(ids)); err != nil {
+			if err := s.store.photoSnapshotLibraryMembersTx(ctx, tx, encoded, len(ids)); err != nil {
 				return err
 			}
 			var err error
@@ -102,9 +102,9 @@ func (s *QuerySnapshotService) CreatePhotoAlbum(ctx context.Context, owner, snap
 	return out, err
 }
 
-func photoSnapshotLibraryMembersTx(ctx context.Context, tx rowQuerier, encoded []byte, count int) error {
+func (s *Store) photoSnapshotLibraryMembersTx(ctx context.Context, tx rowQuerier, encoded []byte, count int) error {
 	var eligible int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM json_each(?) frozen JOIN photo_assets a ON a.asset_id=frozen.value `+strings.TrimPrefix(photoBrowseDisplayFrom, `photo_assets a`)+` WHERE `+photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(false), string(encoded)).Scan(&eligible); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM (`+s.jsonArrayRowsSQL()+`) frozen JOIN photo_assets a ON a.asset_id=frozen.value `+strings.TrimPrefix(photoJoins(photoBrowseDisplayFrom, s.postgresSchema != ""), `photo_assets a`)+` WHERE `+photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(false), string(encoded)).Scan(&eligible); err != nil {
 		return err
 	}
 	if eligible != count {

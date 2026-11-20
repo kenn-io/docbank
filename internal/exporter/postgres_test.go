@@ -12,16 +12,12 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/exporter"
 	"go.kenn.io/docbank/internal/pgstoretest"
-	"go.kenn.io/docbank/internal/pgtest"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func postgresArchiveWorkerFixture(t *testing.T, gate exporter.Gate) (*exporter.Worker, *store.Store, bundle.Job, string) {
 	t.Helper()
-	setup, owner := pgtest.NewDatabase(t)
-	cfg := pgschema.Config{Schema: "documents", SchemaOwner: owner}
-	connection := pgstoretest.RuntimeConfig(t, setup, cfg)
+	_, cfg, connection := pgstoretest.NewDatabase(t)
 	root := t.TempDir()
 	s, err := store.OpenPostgres(t.Context(), connection, cfg, root)
 	require.NoError(t, err)

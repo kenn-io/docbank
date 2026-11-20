@@ -72,7 +72,7 @@ func BenchmarkSavedQueryRunReceipt(b *testing.B) {
 						if err != nil {
 							b.Fatal(err)
 						}
-						run, err := insertSavedQueryRunTx(ctx, tx, definition.ID, definition.Revision, projection, page)
+						run, err := s.insertSavedQueryRunTx(ctx, tx, definition.ID, definition.Revision, projection, page)
 						rollbackErr := tx.Rollback()
 						if err != nil || rollbackErr != nil || run.PreviousRunID != head {
 							b.Fatalf("previous=%q err=%v rollback=%v", run.PreviousRunID, err, rollbackErr)

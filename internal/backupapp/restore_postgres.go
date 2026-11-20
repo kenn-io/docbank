@@ -24,9 +24,10 @@ import (
 
 // PostgresRestoreResult identifies the snapshot and the new local vault root.
 type PostgresRestoreResult struct {
-	SnapshotID string
-	VaultID    string
-	TargetDir  string
+	SnapshotID       string
+	VaultID          string
+	TargetDir        string
+	CatalogCommitted bool
 }
 
 // PostgresRestoreTarget separates the importer from the runtime role that
@@ -63,6 +64,17 @@ func RestorePostgres(
 		}
 		return nil, ErrRestoreTargetNotEmpty
 	}
+	ancestors, err := (home.Layout{Root: target}).TryLockExistingAncestors()
+	if errors.Is(err, home.ErrVaultLocked) {
+		return nil, fmt.Errorf("locking PostgreSQL restore target ancestors: %w", ErrRestoreTargetActive)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer func() { retErr = errors.Join(retErr, ancestors.Release()) }()
+	if err := validatePostgresRestoreConnections(ctx, destination, target); err != nil {
+		return nil, err
+	}
 	parent := filepath.Dir(target)
 	scratch, err := os.MkdirTemp(parent, ".docbank-pg-restore-")
 	if err != nil {
@@ -82,6 +94,13 @@ func RestorePostgres(
 	if err != nil {
 		return nil, err
 	}
+	// The directory inode and its vault lock move together. Hold ownership
+	// across publication and index rebuild so the new root cannot open early.
+	stagedLock, err := (home.Layout{Root: opts.TargetDir}).TryLockExclusive()
+	if err != nil {
+		return nil, fmt.Errorf("locking staged PostgreSQL vault: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, stagedLock.Release()) }()
 	size, err := logical.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return nil, err
@@ -138,10 +157,31 @@ func RestorePostgres(
 		}
 		return nil, fmt.Errorf("restoring PostgreSQL catalog: %w", err)
 	}
+	result.CatalogCommitted = true
 	if err := RebuildPostgresRestoreProjections(ctx, destination.Runtime, destination.Schema, target); err != nil {
 		return result, fmt.Errorf("PostgreSQL restore committed; rebuilding projections: %w", err)
 	}
 	return result, nil
+}
+
+func validatePostgresRestoreConnections(ctx context.Context, destination PostgresRestoreTarget, target string) (retErr error) {
+	metadata, err := store.OpenPostgres(ctx, destination.Runtime, destination.Schema, target)
+	if err != nil {
+		return fmt.Errorf("validating PostgreSQL restore runtime: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, metadata.Close()) }()
+	table := pgx.Identifier{destination.Schema.Schema, "vault_metadata"}.Sanitize()
+	var ownerID string
+	if err := destination.Owner.QueryRowContext(ctx, "SELECT vault_uid FROM "+table+" WHERE singleton=1").Scan(&ownerID); err != nil {
+		return fmt.Errorf("checking the PostgreSQL restore owner's vault: %w", err)
+	}
+	if ownerID != metadata.VaultID() {
+		return errors.New("PostgreSQL restore owner and runtime connections must name the same vault catalog")
+	}
+	if metadata.PostgresPrimaryBound() {
+		return store.ErrPostgresPrimaryBound
+	}
+	return nil
 }
 
 // RebuildPostgresRestoreProjections checks the committed restore's ownership

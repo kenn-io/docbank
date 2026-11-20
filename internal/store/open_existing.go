@@ -11,6 +11,8 @@ import (
 )
 
 // OpenExisting opens a checkpointed current database for identity, path and blob reads only.
+// The schema check writes a temporary database in scratchDir, or in the system
+// temporary directory when scratchDir is empty.
 func OpenExisting(ctx context.Context, path string, driver docsqlite.Driver, scratchDir string) (_ *Store, retErr error) {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {

@@ -269,7 +269,7 @@ it("aborts pending validation on close and unmount", async () => {
   );
   const { onclose, unmount } = open();
   await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
-  await fireEvent.keyDown(window, { key: "Escape" });
+  await fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
   expect(fetch.mock.calls[0][1]?.signal?.aborted).toBe(true);
   expect(onclose).toHaveBeenCalledOnce();
   unmount();

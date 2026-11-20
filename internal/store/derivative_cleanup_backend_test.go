@@ -3,12 +3,13 @@ package store
 import (
 	"testing"
 
+	"uuid"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/bundle"
-	"uuid"
 )
 
 func checkDerivativeCleanupPostgres(t *testing.T) {

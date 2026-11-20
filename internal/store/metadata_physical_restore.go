@@ -18,29 +18,19 @@ func RestorePostgresMetadata(
 	ctx context.Context, db *sql.DB, cfg pgschema.Config, input io.Reader, verified *Store,
 	publish func(context.Context, packstore.Ownership) error,
 ) error {
-	if _, err := pgschema.Setup(ctx, db, cfg); err != nil {
+	if _, err := pgschema.Install(ctx, db, cfg); err != nil {
 		return err
 	}
 	s := &Store{db: db, writeDB: db, postgresSchema: cfg.Schema}
-	return s.importMetadata(ctx, input, func(tx *sql.Tx, vaultID string) error {
-		// A rolled-back attempt can leave files on disk. Bind each attempt to
-		// an epoch that becomes authoritative only if this transaction commits.
-		epoch, err := newUUIDv4()
+	return s.importMetadata(ctx, input, func(tx *sql.Tx, _ string) error {
+		ownership, err := bindPostgresPrimaryTx(ctx, tx)
 		if err != nil {
 			return err
 		}
-		var storeID string
-		if err := tx.QueryRowContext(ctx, `UPDATE blob_stores SET ownership_epoch=$1
-			WHERE role='primary' RETURNING store_id`, epoch).Scan(&storeID); err != nil {
-			return fmt.Errorf("assigning restore ownership epoch: %w", err)
-		}
-		if err := s.restorePostgresStorage(ctx, tx, verified, storeID); err != nil {
+		if err := s.restorePostgresStorage(ctx, tx, verified, string(ownership.Store)); err != nil {
 			return err
 		}
-		return publish(ctx, packstore.Ownership{
-			Format: packstore.OwnershipFormatV1, Vault: vaultID,
-			Store: packstore.StoreID(storeID), Epoch: epoch,
-		})
+		return publish(ctx, ownership)
 	})
 }
 

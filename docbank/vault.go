@@ -239,6 +239,27 @@ func openVaultWithRootOpener(
 	blobOptions blob.Options,
 	layout home.Layout,
 	openRoot func() (*os.Root, *home.Lock, error),
+) (*Vault, error) {
+	return openVaultWithCatalog(ctx, config, blobOptions, layout, openRoot, func(ctx context.Context) (*store.Store, error) {
+		if err := backupapp.RecoverInterruptedPrimaryHandoff(ctx, layout.Root, config.SQLite); err != nil {
+			return nil, err
+		}
+		if err := layout.Ensure(); err != nil {
+			return nil, err
+		}
+		return store.Open(ctx, layout.DBPath(), config.SQLite)
+	})
+}
+
+// The catalog opener runs while the root lock is held. After it succeeds, the
+// Vault owns the catalog, blob storage, upload directory, and workers.
+func openVaultWithCatalog(
+	ctx context.Context,
+	config Config,
+	blobOptions blob.Options,
+	layout home.Layout,
+	openRoot func() (*os.Root, *home.Lock, error),
+	openCatalog func(context.Context) (*store.Store, error),
 ) (_ *Vault, retErr error) {
 	root, lock, err := openRoot()
 	if err != nil {
@@ -249,15 +270,7 @@ func openVaultWithRootOpener(
 			retErr = errors.Join(retErr, lock.Release(), root.Close())
 		}
 	}()
-	if err := backupapp.RecoverInterruptedPrimaryHandoff(
-		ctx, layout.Root, config.SQLite,
-	); err != nil {
-		return nil, err
-	}
-	if err := layout.Ensure(); err != nil {
-		return nil, err
-	}
-	metadata, err := store.Open(ctx, layout.DBPath(), config.SQLite)
+	metadata, err := openCatalog(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +302,13 @@ func openVaultWithRootOpener(
 		}
 	}
 	blobOptions.Registry = blob.NewRegistry(ctx, metadata.VaultID(), bindings, specs)
-	blobs, err := blob.NewWithOptions(store.NewPackCatalog(metadata), layout.BlobsDir(), blobOptions)
+	packCatalog := store.NewPackCatalog(metadata)
+	var blobs *blob.Store
+	if metadata.SQLiteDriver() == nil {
+		blobs, err = blob.NewExistingWithOptions(packCatalog, layout.BlobsDir(), blobOptions)
+	} else {
+		blobs, err = blob.NewWithOptions(packCatalog, layout.BlobsDir(), blobOptions)
+	}
 	if err != nil {
 		_ = blobOptions.Registry.Close()
 		return nil, err
@@ -509,12 +528,17 @@ func (v *Vault) Close() error {
 	return errors.Join(workerErr, v.blobs.Close(), v.metadata.Close(), v.spoolLock.Release(), v.lock.Release(), v.root.Close())
 }
 
-// SQLiteDriver reports the adapter selected for this vault.
+// SQLiteDriver reports the adapter selected for this vault. PostgreSQL vaults
+// return an empty string.
 func (v *Vault) SQLiteDriver() string {
 	if v == nil || v.metadata == nil {
 		return ""
 	}
-	return v.metadata.SQLiteDriver().Name()
+	driver := v.metadata.SQLiteDriver()
+	if driver == nil {
+		return ""
+	}
+	return driver.Name()
 }
 
 // ID reports the stable logical vault identity preserved by metadata export,

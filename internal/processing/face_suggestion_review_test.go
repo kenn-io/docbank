@@ -184,6 +184,9 @@ func faceSuggestionBatchFixtureWith(t *testing.T, open faceEmbeddingFixtureFacto
 	x.matchAll = true
 	x.worker.maxRows = 1000
 	x.worker.maxVectorBlobBytes = 8 << 20
+	// This fixture sends hundreds of faces in batches of eight. Allow time
+	// for their database validation under the race detector on slow runners.
+	x.worker.attemptLifetime = 3 * time.Minute
 	x.vectorForBox = func(box embedclient.FaceBox) []float32 {
 		values := make([]float32, 512)
 		values[int(math.Round(box.X*600))/2] = 1

@@ -330,16 +330,14 @@ release, from a breaking change to `feat` to `fix`.
   Logical PostgreSQL import uses the schema owner and a pristine target. Never
   grant runtime credentials identity writes for restore; verify physical bytes
   before publishing a restored vault.
-  PostgreSQL schemas remain disposable until the first deployment whose data
-  must survive upgrades. Until then, edit canonical DDL directly. Setup records
-  the embedded SQL's SHA-256 fingerprint; setup and runtime validation refuse a
-  missing or different fingerprint. Recreate disposable development schemas on
-  mismatch, never retained data. No manual version bump is required.
-  Before that first retained deployment, capture the current schema as migration
-  1 and add CI comparison of the canonical schema with the numbered forward chain.
-  After that cutoff every schema change, including indexes and defaults, needs a
-  migration. A port that changes only Go or queries needs none. This does not
-  change msgvault's or SQLite's existing history.
+  PostgreSQL retained history starts at numbered migration 1. Update the
+  canonical DDL and add one forward migration for each schema change, including
+  indexes and defaults. A port that changes only Go or queries needs none.
+  Never edit, rename, or remove a migration once it reaches main. CI compares
+  catalogs installed from canonical DDL and from the entire forward chain.
+  Setup applies pending migrations as the owner. Runtime requires the current
+  version and matching migration history. Recreate only disposable schemas
+  left by pre-baseline builds. This does not change SQLite's migration policy.
   The [PostgreSQL guide](docs/internal/development.md#postgresql-schema-lifecycle)
   owns the concrete contracts and intentional differences.
 - Register PostgreSQL operation tests in `internal/store/backend_contract_test.go`;

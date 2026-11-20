@@ -4,15 +4,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/jackc/pgx/v5/stdlib"
-	"go.kenn.io/docbank/document"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/stdlib"
+	"go.kenn.io/docbank/document"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func checkPhotoXMPPublication(t *testing.T, newStore func(*testing.T) *Store) {
@@ -138,8 +137,8 @@ func checkPhotoXMPConflictResolution(t *testing.T, newStore func(*testing.T) *St
 func checkPhotoEditRollbackPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	ctx := t.Context()
 	s, _, file := xmpSidecarPhoto(t, s)
 	importXMP(t, s, file.ID, PhotoAuthored{Rating: 3, Confirmed: PhotoConfirmedRating}, "Travel")

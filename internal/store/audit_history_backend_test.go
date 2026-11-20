@@ -11,8 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
+	"go.kenn.io/docbank/document"
 )
 
 func checkAuditHistoryPostgres(t *testing.T) {
@@ -160,8 +159,8 @@ func checkAuditHistorySnapshotPostgres(t *testing.T) {
 // a production import path or a replacement for full metadata validation.
 func newAuditHistoryPostgresFixture(t *testing.T) (*Store, *Store, func(), string, Node, Node) {
 	t.Helper()
-	setup, owner := pgtest.NewDatabase(t)
-	reader := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	reader := openPostgresStore(t, owner, login)
 	source := newTestStore(t)
 	require.NoError(t, reader.db.QueryRowContext(t.Context(), `SELECT vault_uid FROM vault_metadata`).Scan(&source.vaultID))
 	_, err := source.writeDB.ExecContext(t.Context(), `UPDATE vault_metadata SET vault_uid=$1`, source.vaultID)
@@ -263,6 +262,14 @@ func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables 
 		if searchable {
 			columns = append(columns, "search_text")
 		}
+		sourceMetadata := table == "source_metadata_generations"
+		if sourceMetadata {
+			columns = append(columns, "pdf_query_facts")
+		}
+		contentVersion := table == "content_versions"
+		if contentVersion {
+			columns = append(columns, "query_mime_family")
+		}
 		insert := "INSERT INTO " + table + "(" + strings.Join(columns, ",") + ")" + override + " VALUES(" + numberedPlaceholders(len(columns), 0) + ")"
 		for rows.Next() {
 			require.NoError(t, rows.Scan(destinations...))
@@ -276,6 +283,24 @@ func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables 
 			}
 
 			args := values
+			if contentVersion {
+				var mediaType *string
+				if raw := values[slices.Index(columns, "mime_type")]; raw != nil {
+					mimeBytes, ok := raw.([]byte)
+					require.True(t, ok)
+					mediaType = new(string(mimeBytes))
+				}
+				args = append(slices.Clone(values), postgresMIMEFamily(mediaType))
+			}
+			if sourceMetadata {
+				raw, ok := values[slices.Index(columns, "canonical_json")].([]byte)
+				require.True(t, ok)
+				metadata, _, err := document.DecodeSourceMetadataV1(raw)
+				require.NoError(t, err)
+				facts, err := encodePDFQueryFacts(metadata)
+				require.NoError(t, err)
+				args = append(slices.Clone(values), facts)
+			}
 			if searchable {
 				text := ""
 				if raw := values[slices.Index(columns, "text")]; raw != nil {

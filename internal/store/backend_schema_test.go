@@ -39,12 +39,15 @@ func checkBackendSchemaPostgres(t *testing.T) {
 	postgres := newPostgresQueryStore(t)
 	left := describeBackendSchema(t, sqlite)
 	right := describeBackendSchema(t, postgres)
-	// SQLite retains numbered released layouts; disposable PostgreSQL layouts
-	// identify the embedded SQL directly until retained deployments begin.
+	// The two backends track their own layout versions and migration history.
 	assert.Equal(t, backendColumn{Kind: "integer", Required: true}, left["vault_metadata"].Columns["schema_version"])
 	assert.Equal(t, backendColumn{Kind: "text", Required: true}, right["vault_metadata"].Columns["schema_fingerprint"])
+	assert.Equal(t, backendColumn{Kind: "integer", Required: true}, right["vault_metadata"].Columns["schema_version"])
+	assert.Equal(t, backendColumn{Kind: "boolean", Required: true}, right["vault_metadata"].Columns["primary_storage_bound"])
 	delete(left["vault_metadata"].Columns, "schema_version")
+	delete(right["vault_metadata"].Columns, "schema_version")
 	delete(right["vault_metadata"].Columns, "schema_fingerprint")
+	delete(right["vault_metadata"].Columns, "primary_storage_bound")
 	assert.Equal(t, backendColumn{Kind: "text", Required: true}, right["collection_snapshot_members"].Columns["source_collection_ids_json"])
 	delete(right["collection_snapshot_members"].Columns, "source_collection_ids_json")
 	assert.Equal(t, backendColumn{Kind: "text"}, right["photo_change_receipts"].Columns["face_version_id"])
@@ -70,6 +73,10 @@ func checkBackendSchemaPostgres(t *testing.T) {
 
 	assert.Equal(t, backendColumn{Kind: "text", Required: true}, right["media_input_artifacts"].Columns["input_binding_json"])
 	delete(right["media_input_artifacts"].Columns, "input_binding_json")
+	assert.Equal(t, backendColumn{Kind: "jsonb", Required: true}, right["source_metadata_generations"].Columns["pdf_query_facts"])
+	delete(right["source_metadata_generations"].Columns, "pdf_query_facts")
+	assert.Equal(t, backendColumn{Kind: "text"}, right["content_versions"].Columns["query_mime_family"])
+	delete(right["content_versions"].Columns, "query_mime_family")
 
 	for _, table := range []string{"extracted_text", "rendition_lexical_index"} {
 		assert.Equal(t, backendColumn{Kind: "text", Required: true}, right[table].Columns["search_text"])
@@ -236,8 +243,7 @@ func describeBackendColumns(t *testing.T, s *Store, table string) map[string]bac
 			column.Kind = "text"
 		case "blob", "bytea":
 			column.Kind = "bytes"
-		case "tsvector":
-			column.Kind = "tsvector"
+		case "tsvector", "jsonb", "boolean":
 		case "real", "double precision":
 			column.Kind = "real"
 		default:

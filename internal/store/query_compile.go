@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -53,6 +54,7 @@ type CompiledQuery struct {
 	Query        query.Query
 	Dependencies []query.Dependency
 
+	postgres          bool
 	photoHidden       bool
 	withoutSuggestion bool
 	predicate         compiledQueryFragment
@@ -72,6 +74,7 @@ func compileQuery(
 
 // Photos use display metadata for every member; document queries use each file's metadata.
 type queryCompiler struct {
+	postgres             bool
 	photoDisplayMetadata bool
 	photoMetadataSet     bool
 	photoMetadataDensity func(string) (bool, error)
@@ -87,6 +90,7 @@ func (c queryCompiler) compile(
 ) (CompiledQuery, error) {
 	c.safePeople, _ = ctx.Value(safeRoleSearchKey{}).(bool)
 	if r, ok := resolver.(queryResolver); ok {
+		c.postgres = r.postgres
 		if !c.photoDisplayMetadata {
 			state, err := effectiveDocumentEventState(ctx, r.q, DocumentEventsDeriverFingerprint)
 			if err != nil {
@@ -102,7 +106,7 @@ func (c queryCompiler) compile(
 	if err != nil {
 		return CompiledQuery{}, err
 	}
-	if r, ok := resolver.(queryResolver); ok && c.photoDisplayMetadata && c.photoMetadataSet {
+	if r, ok := resolver.(queryResolver); ok && !c.postgres && c.photoDisplayMetadata && c.photoMetadataSet {
 		c.photoMetadataDensity = func(value string) (bool, error) {
 			return r.photoMetadataHeadsFirst(ctx, value)
 		}
@@ -111,8 +115,12 @@ func (c queryCompiler) compile(
 	if err != nil {
 		return CompiledQuery{}, err
 	}
+	if c.postgres && c.photoDisplayMetadata && (resolved.Query.Sort.Field == "relevance" || len(predicate.lexical) != 0) {
+		return CompiledQuery{}, fmt.Errorf("%w: lexical photo queries require SQLite", ErrInvalidPhotoQuery)
+	}
 	compiled := CompiledQuery{
 		Query: resolved.Query, Dependencies: resolved.Dependencies,
+		postgres:          c.postgres,
 		photoHidden:       c.photoHidden,
 		predicate:         predicate,
 		positiveTextTerms: query.PositiveTextTerms(resolved),
@@ -143,12 +151,7 @@ func (c queryCompiler) compileResolvedQuery(resolved query.ResolvedQuery) (compi
 	var expression compiledQueryFragment
 	var err error
 	if resolved.Query.Syntax == "simple" {
-		fts := ftsQuery(resolved.Query.Text)
-		if fts == "" {
-			expression = trueCompiledFragment()
-		} else {
-			expression = c.compileLexicalPredicate(fts, true)
-		}
+		expression = c.compileSimpleLexicalPredicate(resolved.Query.Text)
 	} else {
 		expression, err = c.compileResolvedExpression(resolved.Expression, "")
 		if err != nil {
@@ -173,7 +176,7 @@ func (compiled CompiledQuery) Bind(generationID string) (string, []any, error) {
 			0, len(compiled.Query.Text), "compiled query requires matched population bindings",
 		)
 	}
-	return predicate.sql, predicate.args, nil
+	return bindCompiledRead(predicate.sql, compiled.postgres), predicate.args, nil
 }
 
 func (compiled CompiledQuery) bind(generationID string, profileFingerprint *string) (compiledQueryFragment, error) {
@@ -291,10 +294,11 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "scalar operands cannot use prefix matching")
 		}
 		return c.compileScalarPredicate(field, syntax.Value, syntax.Start, syntax.End)
-	case field == "":
-		return c.compileLexicalPredicate(quoteFTSOperand(syntax.Value, syntax.Prefix), true), nil
-	case field == compiledNameField:
-		return c.compileLexicalPredicate(quoteFTSOperand(syntax.Value, syntax.Prefix), false), nil
+	case field == "" || field == compiledNameField:
+		if c.postgres && !c.photoDisplayMetadata {
+			return postgresDocumentLexicalPredicate(postgresLiteralQuery(syntax.Value, syntax.Prefix), field == ""), nil
+		}
+		return c.compileLexicalPredicate(quoteFTSOperand(syntax.Value, syntax.Prefix), field == ""), nil
 	case field == "path":
 		if syntax.Prefix {
 			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "path operands cannot use prefix matching")
@@ -334,6 +338,13 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 		if len(names) == 0 {
 			return compiledQueryFragment{sql: `FALSE`}, nil
 		}
+		if c.postgres {
+			phrases := make([]compiledQueryFragment, 0, len(names))
+			for _, name := range names {
+				phrases = append(phrases, postgresLiteralQuery(name, false))
+			}
+			return postgresDocumentContentPredicate(joinCompiledFragments(phrases, ` || `)), nil
+		}
 		parts := make([]string, 0, len(names))
 		for _, name := range names {
 			parts = append(parts, quoteFTSOperand(name, false))
@@ -348,7 +359,7 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 		if expression.Dependency == nil {
 			return compiledQueryFragment{}, errors.New("resolved collection operand lacks a dependency")
 		}
-		return compileCollectionPredicate(expression.Dependency.ID), nil
+		return c.compileCollectionPredicate(expression.Dependency.ID), nil
 	case field == "saved":
 		if expression.Saved == nil {
 			return compiledQueryFragment{}, errors.New("resolved saved operand lacks its query")
@@ -366,6 +377,9 @@ func (c queryCompiler) compileNearExpression(expression *query.ResolvedExpressio
 	}
 	if len(expression.Children) != 2 {
 		return compiledQueryFragment{}, errors.New("resolved NEAR expression has invalid children")
+	}
+	if c.postgres && !c.photoDisplayMetadata {
+		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "NEAR queries require SQLite")
 	}
 	operands := make([]string, 2)
 	for index, child := range expression.Children {
@@ -399,7 +413,7 @@ func (c queryCompiler) compileSavedPredicate(expression *query.ResolvedExpressio
 			nested, {sql: photoBrowseEligibleMemberPredicate(c.photoHidden)},
 		}, ` AND `)
 	}
-	return collapsedSavedMembership(nested), nil
+	return collapsedSavedMembershipForBackend(nested, c.postgres), nil
 }
 
 // collapsedSavedMembership keeps SQL three-valued logic across the duplicate
@@ -407,8 +421,12 @@ func (c queryCompiler) compileSavedPredicate(expression *query.ResolvedExpressio
 // representative order: a row is false when a proven member precedes it, true
 // when it is a proven member with no unknown predecessor, and NULL otherwise.
 // Rows outside the candidates are proven absent.
-func collapsedSavedMembership(nested compiledQueryFragment) compiledQueryFragment {
+func collapsedSavedMembershipForBackend(nested compiledQueryFragment, postgres bool) compiledQueryFragment {
 	live := compiledLiveCurrentPredicate()
+	suffix := ""
+	if postgres {
+		suffix = "=1"
+	}
 	return compiledQueryFragment{
 		sql: `NULLIF(COALESCE((SELECT membership FROM (
 			SELECT node_id,content_version_id,CASE
@@ -424,14 +442,17 @@ func collapsedSavedMembership(nested compiledQueryFragment) compiledQueryFragmen
 				ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)
 		) saved_membership
 		WHERE saved_membership.node_id=n.id
-		  AND saved_membership.content_version_id=cv.version_id),0),2)`,
+		  AND saved_membership.content_version_id=cv.version_id),0),2)` + suffix,
 		args: nested.args, relations: nested.relations, lexical: nested.lexical,
 	}
 }
 
 func (c queryCompiler) compileScalarPredicate(field, value string, start, end int) (compiledQueryFragment, error) {
+	if c.postgres && c.photoDisplayMetadata && query.PDFFieldKind(field) != "" {
+		return compiledQueryFragment{}, compileExpressionError(start, end, "this filter is unavailable on PostgreSQL")
+	}
 	if query.PDFFieldKind(field) != "" {
-		return compilePDFPredicate(field, value, start, end)
+		return c.compilePDFPredicate(field, value, start, end)
 	}
 	if field == "person" {
 		return c.compilePersonPredicate(value), nil
@@ -453,11 +474,11 @@ func (c queryCompiler) compileScalarPredicate(field, value string, start, end in
 		}
 		switch field {
 		case "mime":
-			return compileMIMEPredicate(value), nil
+			return c.compileMIMEPredicate(value), nil
 		case "extension":
 			return compileExtensionPredicate(value), nil
 		default:
-			return compileMediaFamilyPredicate(value), nil
+			return c.compileMediaFamilyFilter([]string{value}), nil
 		}
 	case "modified_after", "modified_before":
 		key, err := query.TimestampKey(value)
@@ -509,8 +530,8 @@ func (c queryCompiler) compileQueryFilters(filters query.Filters, start, end int
 	parts := []compiledQueryFragment{photo, people,
 		compileValuePredicates(filters.Paths, compilePathPredicate),
 		negateCompiledFragment(compileValuePredicates(filters.ExcludePaths, compilePathPredicate)),
-		compileValuePredicates(filters.CollectionIDs, compileCollectionPredicate),
-		negateCompiledFragment(compileValuePredicates(filters.ExcludeCollectionIDs, compileCollectionPredicate)),
+		compileValuePredicates(filters.CollectionIDs, c.compileCollectionPredicate),
+		negateCompiledFragment(compileValuePredicates(filters.ExcludeCollectionIDs, c.compileCollectionPredicate)),
 		compileValuePredicates(filters.TagIDs, compileTagPredicate),
 		negateCompiledFragment(compileValuePredicates(filters.ExcludeTagIDs, compileTagPredicate)),
 	}
@@ -518,8 +539,8 @@ func (c queryCompiler) compileQueryFilters(filters query.Filters, start, end int
 		parts = append(parts, compiledQueryFragment{sql: `NOT EXISTS (SELECT 1 FROM node_tags nt WHERE nt.node_id=n.id)`})
 	}
 	parts = append(parts,
-		compileValuePredicates(filters.MediaFamilies, compileMediaFamilyPredicate),
-		compileValuePredicates(filters.MIMETypes, compileMIMEPredicate),
+		c.compileMediaFamilyFilter(filters.MediaFamilies),
+		compileValuePredicates(filters.MIMETypes, c.compileMIMEPredicate),
 		compileValuePredicates(filters.Extensions, compileExtensionPredicate),
 	)
 	for _, bound := range []struct{ field, value string }{
@@ -618,7 +639,7 @@ func compilePathPredicate(path string) compiledQueryFragment {
 			)
 			SELECT 1 FROM query_ancestry
 			WHERE parent_id IS NULL
-			  AND (path=? OR substr(path,1,length(?)+1)=? || '/')
+			  AND (path=? OR substr(path,1,length(CAST(? AS TEXT))+1)=? || '/')
 		)`,
 		args: []any{path, path, path},
 	}
@@ -631,20 +652,16 @@ func compileTagPredicate(id string) compiledQueryFragment {
 	}
 }
 
-func compileCollectionPredicate(id string) compiledQueryFragment {
+func (c queryCompiler) compileCollectionPredicate(id string) compiledQueryFragment {
 	return compiledQueryFragment{
-		sql: `EXISTS (WITH ` + CollectionMembershipCTE + `
+		sql: `EXISTS (WITH ` + collectionMembershipSQL(c.postgres) + `
 			SELECT 1 FROM collection_members cm WHERE cm.node_id=n.id AND cm.ingest_id=?)`,
 		args: []any{id},
 	}
 }
 
-func compileMIMEPredicate(value string) compiledQueryFragment {
-	return compiledQueryFragment{
-		sql: `lower(trim(CASE WHEN instr(cv.mime_type,';')=0 THEN cv.mime_type
-			ELSE substr(cv.mime_type,1,instr(cv.mime_type,';')-1) END))=?`,
-		args: []any{value},
-	}
+func (c queryCompiler) compileMIMEPredicate(value string) compiledQueryFragment {
+	return compiledQueryFragment{sql: mimeBaseSQL(c.postgres, "cv.mime_type") + "=?", args: []any{value}}
 }
 
 func compileExtensionPredicate(value string) compiledQueryFragment {
@@ -655,10 +672,45 @@ func compileExtensionPredicate(value string) compiledQueryFragment {
 	}
 }
 
-func compileMediaFamilyPredicate(value string) compiledQueryFragment {
-	return compiledQueryFragment{
-		sql: `docbank_query_media_family_v1(COALESCE(cv.mime_type,''),n.name)=?`, args: []any{value},
+var queryExtensionFamiliesJSON = mustCatalogJSON(query.ExtensionMediaFamilies())
+
+func (c queryCompiler) compileMediaFamilyFilter(values []string) compiledQueryFragment {
+	if len(values) == 0 {
+		return compiledQueryFragment{}
 	}
+	family := `docbank_query_media_family_v1(COALESCE(cv.mime_type,''),n.name)`
+	args := make([]any, 0, len(values)+1)
+	if c.postgres {
+		family = `COALESCE(cv.query_mime_family,jsonb_extract_path_text(CAST(? AS jsonb),lower(
+			substring(split_part(replace(n.name,chr(92),'/'),'/',-1) from '^.+[.]([^.]+)$') COLLATE "C")),'unknown')`
+		args = append(args, queryExtensionFamiliesJSON)
+	}
+	for _, value := range values {
+		args = append(args, value)
+	}
+	return compiledQueryFragment{
+		sql:  family + " IN (" + strings.TrimSuffix(strings.Repeat("?,", len(values)), ",") + ")",
+		args: args,
+	}
+}
+
+func (c queryCompiler) compileSimpleLexicalPredicate(text string) compiledQueryFragment {
+	if c.postgres && !c.photoDisplayMetadata {
+		words := strings.Fields(text)
+		if len(words) == 0 {
+			return trueCompiledFragment()
+		}
+		terms := make([]compiledQueryFragment, 0, len(words))
+		for _, word := range words {
+			terms = append(terms, postgresLiteralQuery(word, true))
+		}
+		return postgresDocumentLexicalPredicate(joinCompiledFragments(terms, ` && `), true)
+	}
+	fts := ftsQuery(text)
+	if fts == "" {
+		return trueCompiledFragment()
+	}
+	return c.compileLexicalPredicate(fts, true)
 }
 
 func (c queryCompiler) compileLexicalPredicate(fts string, includeContent bool) compiledQueryFragment {
@@ -745,7 +797,7 @@ func compiledLiveCurrentPredicate() compiledQueryFragment {
 }
 
 func trueCompiledFragment() compiledQueryFragment {
-	return compiledQueryFragment{sql: `1`}
+	return compiledQueryFragment{sql: `TRUE`}
 }
 
 func joinCompiledFragments(parts []compiledQueryFragment, operator string) compiledQueryFragment {

@@ -8,15 +8,13 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func checkVectorIndexPublicationRollbackPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	s, _, source := publishedVectorIndexFixture(t, newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner}))
+	setup, owner, login := newTemplateDatabase(t)
+	s, _, source := publishedVectorIndexFixture(t, openPostgresStore(t, owner, login))
 	now := time.Now().UTC()
 	first, found, err := s.ClaimVectorIndexBuild(t.Context(), source.VectorSpaceID, source.ManifestChecksum, "builder\\one\x00", now, time.Minute)
 	require.NoError(t, err)
@@ -95,8 +93,8 @@ func checkVectorIndexGenerationSnapshotPostgres(t *testing.T) {
 func checkVectorReaderInvalidationRollbackPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	s, record, source := publishedVectorIndexFixture(t, newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner}))
+	setup, owner, login := newTemplateDatabase(t)
+	s, record, source := publishedVectorIndexFixture(t, openPostgresStore(t, owner, login))
 	require.Equal(t, source.ManifestChecksum, memoVectorSourceChecksum(t, s, source.VectorSpaceID))
 	var role string
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT current_user`).Scan(&role))

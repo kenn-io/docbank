@@ -9,9 +9,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
-
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func checkoutForCommit(t *testing.T, s *Store) (PhotoCheckout, PhotoCheckoutEntry, Node) {
@@ -94,8 +91,8 @@ func checkPhotoCheckoutCommitAndRebind(t *testing.T, newStore func(*testing.T) *
 func checkPhotoCheckoutCommitRollbackPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	ctx := t.Context()
 	c, e, node := checkoutForCommit(t, s)
 	before, err := s.PhotoCheckoutEntries(ctx, c.ID)
@@ -189,8 +186,8 @@ func checkPhotoCheckoutObservationBatchesPostgres(t *testing.T) {
 func checkPhotoCheckoutAlbumSelectionPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	ctx := t.Context()
 	included := albumAsset(t, s, "included.jpg")
 	excluded := albumAsset(t, s, "excluded.jpg")
@@ -226,8 +223,8 @@ func checkPhotoCheckoutAlbumSelectionPostgres(t *testing.T) {
 func checkPhotoCheckoutPublicationRecoveryPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	ctx := t.Context()
 	asset := albumAsset(t, s, "copy.jpg")
 	node, err := s.NodeByID(ctx, asset.Files[0].NodeID)

@@ -20,6 +20,13 @@ import (
 	"go.kenn.io/docbank/internal/pgtest"
 )
 
+func setupFreshSchema(t *testing.T, db *sql.DB, cfg Config) (uuid.UUID, error) {
+	t.Helper()
+	release := pgtest.ReserveSchemaInstall(t)
+	defer release()
+	return Setup(t.Context(), db, cfg)
+}
+
 func TestSchemaRequiresUTF8(t *testing.T) {
 	t.Parallel()
 	admin, owner := pgtest.NewDatabase(t)
@@ -50,12 +57,15 @@ func TestSetupPreservesIdentity(t *testing.T) {
 	t.Parallel()
 	db, owner := pgtest.NewDatabase(t)
 	cfg := Config{Schema: "documents", SchemaOwner: owner}
-	id, err := Setup(t.Context(), db, cfg)
+	id, err := setupFreshSchema(t, db, cfg)
 	require.NoError(t, err)
 	require.NotEqual(t, uuid.Nil(), id)
+	var version int
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT schema_version FROM documents.vault_metadata`).Scan(&version))
+	require.Equal(t, len(migrations), version)
 	var installed string
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT schema_fingerprint FROM documents.vault_metadata`).Scan(&installed))
-	require.Equal(t, fmt.Sprintf("%x", sha256.Sum256([]byte(schemaSQL))), installed, "setup must identify the SQL this build embeds")
+	require.Equal(t, migrations[version-1].fingerprint, installed)
 	var rootID, childID int64
 	var rootCreated string
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT id,created_at FROM documents.nodes WHERE parent_id IS NULL`).Scan(&rootID, &rootCreated))
@@ -102,7 +112,7 @@ func TestSetupPreservesIdentity(t *testing.T) {
 	assert.Equal(t, id, stored)
 
 	// A separate schema is a separate vault, even within the same database.
-	other, err := Setup(t.Context(), db, Config{Schema: "other_documents", SchemaOwner: owner})
+	other, err := setupFreshSchema(t, db, Config{Schema: "other_documents", SchemaOwner: owner})
 	require.NoError(t, err)
 	assert.NotEqual(t, id, other)
 }
@@ -141,7 +151,7 @@ func TestRuntimeCannotChangeSchema(t *testing.T) {
 	setup := connect(owner, "fixture-owner-only", "")
 	runtime := connect(role, "fixture-runtime-only", "")
 	cfg := Config{Schema: "documents", SchemaOwner: owner}
-	id, err := Setup(t.Context(), setup, cfg)
+	id, err := setupFreshSchema(t, setup, cfg)
 	require.NoError(t, err)
 	_, err = admin.ExecContext(t.Context(), "GRANT USAGE ON SCHEMA documents TO "+quotedRole+"; GRANT SELECT ON documents.vault_metadata TO "+quotedRole)
 	require.NoError(t, err)
@@ -202,20 +212,23 @@ func TestRuntimeCannotChangeSchema(t *testing.T) {
 		_, err = Validate(t.Context(), selected, cfg)
 		require.ErrorContains(t, err, "requires a separate runtime role", "selecting a lesser role must not hide the login's privileges")
 	})
+	t.Run("owner upgrades a populated catalog", func(t *testing.T) {
+		checkOwnerMigration(t, setup, runtime, cfg)
+	})
 	t.Run("schema fingerprint mismatch", func(t *testing.T) {
 		var installedFingerprint string
 		require.NoError(t, admin.QueryRowContext(t.Context(), `SELECT schema_fingerprint FROM documents.vault_metadata`).Scan(&installedFingerprint))
 		// Both the setup and runtime entry points must refuse incompatible
 		// schemas without rewriting the fingerprint, identity or existing data.
-		checkRefused := func(t *testing.T) {
+		checkRefused := func(t *testing.T, message string) {
 			t.Helper()
 			var before, after sql.NullString
 			query := `SELECT to_jsonb(m)->>'schema_fingerprint' FROM documents.vault_metadata m`
 			require.NoError(t, admin.QueryRowContext(t.Context(), query).Scan(&before))
 			_, err := Setup(t.Context(), setup, cfg)
-			require.ErrorContains(t, err, "recreate this schema")
+			require.ErrorContains(t, err, message)
 			_, err = Validate(t.Context(), runtime, cfg)
-			require.ErrorContains(t, err, "recreate this schema")
+			require.ErrorContains(t, err, message)
 			require.NoError(t, admin.QueryRowContext(t.Context(), query).Scan(&after))
 			require.Equal(t, before, after)
 			var kept uuid.UUID
@@ -226,7 +239,7 @@ func TestRuntimeCannotChangeSchema(t *testing.T) {
 			t.Run(fmt.Sprintf("fingerprint %q", fingerprint), func(t *testing.T) {
 				_, err := admin.ExecContext(t.Context(), `UPDATE documents.vault_metadata SET schema_fingerprint=$1`, fingerprint)
 				require.NoError(t, err)
-				checkRefused(t)
+				checkRefused(t, "migration history differs")
 			})
 		}
 		_, err := admin.ExecContext(t.Context(), `UPDATE documents.vault_metadata SET schema_fingerprint=$1`, installedFingerprint)
@@ -234,10 +247,10 @@ func TestRuntimeCannotChangeSchema(t *testing.T) {
 		actual, err := Validate(t.Context(), runtime, cfg)
 		require.NoError(t, err)
 		require.Equal(t, id, actual)
-		t.Run("older integer version", func(t *testing.T) {
-			_, err := admin.ExecContext(t.Context(), `ALTER TABLE documents.vault_metadata DROP COLUMN schema_fingerprint, ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 4`)
+		t.Run("fingerprint-only development layout", func(t *testing.T) {
+			_, err := admin.ExecContext(t.Context(), `ALTER TABLE documents.vault_metadata DROP COLUMN schema_version`)
 			require.NoError(t, err)
-			checkRefused(t)
+			checkRefused(t, "unsupported table layout")
 		})
 	})
 }
@@ -248,7 +261,7 @@ func TestSetupRefusesUnownedOrInvalidState(t *testing.T) {
 		{"empty schema", `CREATE SCHEMA documents`},
 		{"unrelated schema", `CREATE SCHEMA documents; CREATE TABLE documents.kept(value text); INSERT INTO documents.kept VALUES('keep me')`},
 		{"wrong singleton", `UPDATE documents.vault_metadata SET singleton=2`},
-		{"multiple identities", `INSERT INTO documents.vault_metadata(singleton,vault_uid,schema_fingerprint) SELECT 2,'11111111-1111-4111-8111-111111111111',schema_fingerprint FROM documents.vault_metadata`},
+		{"multiple identities", `INSERT INTO documents.vault_metadata(singleton,vault_uid,schema_version,schema_fingerprint) SELECT 2,'11111111-1111-4111-8111-111111111111',schema_version,schema_fingerprint FROM documents.vault_metadata`},
 		{"missing identity", `DELETE FROM documents.vault_metadata`},
 		{"nil identity", `UPDATE documents.vault_metadata SET vault_uid='00000000-0000-0000-0000-000000000000'`},
 		{"wrong table shape", `ALTER TABLE documents.vault_metadata DROP CONSTRAINT vault_metadata_pkey`},
@@ -260,7 +273,7 @@ func TestSetupRefusesUnownedOrInvalidState(t *testing.T) {
 			db, owner := pgtest.NewDatabase(t)
 			cfg := Config{Schema: "documents", SchemaOwner: owner}
 			if tc.name != "empty schema" && tc.name != "unrelated schema" {
-				_, err := Setup(t.Context(), db, cfg)
+				_, err := setupFreshSchema(t, db, cfg)
 				require.NoError(t, err)
 			}
 			_, err := db.ExecContext(t.Context(), tc.prepare)
@@ -295,14 +308,14 @@ func TestSetupRollsBackFailedCommit(t *testing.T) {
 		CREATE EVENT TRIGGER install_failure ON ddl_command_end WHEN TAG IN ('CREATE TABLE')
 		EXECUTE FUNCTION public.install_commit_failure();`)
 	require.NoError(t, err)
-	_, err = Setup(t.Context(), db, Config{Schema: "documents", SchemaOwner: owner})
+	_, err = setupFreshSchema(t, db, Config{Schema: "documents", SchemaOwner: owner})
 	require.ErrorContains(t, err, "test deferred commit failure")
 	var exists bool
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname='documents')`).Scan(&exists))
 	assert.False(t, exists, "failed commit must not publish a schema or identity")
 	_, err = db.ExecContext(t.Context(), `DROP EVENT TRIGGER install_failure`)
 	require.NoError(t, err)
-	_, err = Setup(t.Context(), db, Config{Schema: "documents", SchemaOwner: owner})
+	_, err = setupFreshSchema(t, db, Config{Schema: "documents", SchemaOwner: owner})
 	require.NoError(t, err)
 }
 
@@ -313,11 +326,14 @@ func TestConcurrentSetup(t *testing.T) {
 	const count = 6
 	ids := make([]uuid.UUID, count)
 	errs := make([]error, count)
+	// The calls race for one schema; only the first installs it.
+	release := pgtest.ReserveSchemaInstall(t)
 	var wg sync.WaitGroup
 	for i := range count {
 		wg.Go(func() { ids[i], errs[i] = Setup(t.Context(), db, cfg) })
 	}
 	wg.Wait()
+	release()
 	for i := range count {
 		require.NoError(t, errs[i])
 		assert.Equal(t, ids[0], ids[i])
@@ -328,6 +344,8 @@ func TestSetupCancellationDoesNotPublish(t *testing.T) {
 	t.Parallel()
 	db, owner := pgtest.NewDatabase(t)
 	cfg := Config{Schema: "documents", SchemaOwner: owner}
+	release := pgtest.ReserveSchemaInstall(t)
+	defer release()
 	tx, err := db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })

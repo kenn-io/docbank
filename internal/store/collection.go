@@ -16,10 +16,14 @@ const CollectionMembershipCTE = `collection_members AS (` + collectionMembership
 const notEmbeddedCollectionKind = "NOT (LOWER(i.source_kind) LIKE 'embedded:%')"
 
 func collectionMembershipSQL(postgres bool) string {
+	return `collection_members AS (` + collectionMembershipSelectSQL(postgres) + `)`
+}
+
+func collectionMembershipSelectSQL(postgres bool) string {
 	if postgres {
-		return `collection_members AS (` + collectionMembershipPrefix + "NOT (" + (provenanceSQLDialect{postgres: true}).embedded("i.source_kind") + ")" + collectionMembershipSuffix + `)`
+		return collectionMembershipPrefix + "NOT (" + (provenanceSQLDialect{postgres: true}).embedded("i.source_kind") + ")" + collectionMembershipSuffix
 	}
-	return CollectionMembershipCTE
+	return collectionMembershipSelect
 }
 
 const collectionMembershipPrefix = `
@@ -36,10 +40,12 @@ const collectionMembershipSuffix = `
 
 const collectionMembershipSelect = collectionMembershipPrefix + notEmbeddedCollectionKind + collectionMembershipSuffix
 
-// matchedCollectionMembershipCTE consumes matched_members(node_id).
-const matchedCollectionMembershipCTE = `collection_members AS (` + collectionMembershipSelect + `
+// matchedCollectionMembershipSQL consumes matched_members(node_id).
+func matchedCollectionMembershipSQL(postgres bool) string {
+	return `collection_members AS (` + collectionMembershipSelectSQL(postgres) + `
       AND p.node_id IN (SELECT node_id FROM matched_members)
 )`
+}
 
 // Collection is one document-bearing operational ingest and its current
 // membership summary. LabelRevision advances independently of membership.

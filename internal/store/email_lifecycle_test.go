@@ -2,12 +2,13 @@ package store
 
 import (
 	"bytes"
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/emailmime"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/emailmime"
 )
 
 func checkEmailPurgeSharedGenerationAndPendingSuppression(t *testing.T, open func(*testing.T) *Store) {

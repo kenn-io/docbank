@@ -94,6 +94,13 @@ inside an active vault from racing publication. Daemon startup creates only the
 root needed for locking before it attempts the lock. It does not initialize the
 database, blob tree, logs, or configuration first.
 
+An embedded content reader takes the same exclusive hierarchy locks as an owner, so
+it conflicts with daemons, embedded vaults, restores, and other readers on
+overlapping trees. It never creates the vault root or `vault.lock`; when either
+is missing, the vault needs an owner first. The reader also refuses a registry
+inside the vault, because its lock files would change the tree it promises not
+to write.
+
 `TryLockExclusive` is **non-blocking**: a second `docbank daemon run` or restore
 against an overlapping vault tree fails immediately rather than hanging. This
 matches the daemon's role: waiting to acquire a lock another daemon holds for

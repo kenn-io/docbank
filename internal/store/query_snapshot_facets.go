@@ -138,7 +138,7 @@ func materializeSnapshotFacet(
 	if dimension != snapshotFacetDuplicates && reflect.DeepEqual(facetQuery.Filters, compiled.Query.Filters) {
 		return materializeSnapshotFacetFromRows(ctx, q, compiled.Query, dimension, snapshotRows, memberLimit)
 	}
-	facetCompiled, err := (queryCompiler{}).compile(ctx, facetQuery, queryResolver{q: q})
+	facetCompiled, err := (queryCompiler{}).compile(ctx, facetQuery, queryResolver{q: q, postgres: compiled.postgres})
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
@@ -146,7 +146,7 @@ func materializeSnapshotFacet(
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
-	statement, args, err := bindQueryPopulation(population, coverage, generationID)
+	statement, args, err := bindQueryPopulationForBackend(population, coverage, generationID, compiled.postgres)
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
@@ -154,14 +154,14 @@ func materializeSnapshotFacet(
 	ctes, join, key, label := "", "", `''`, `''`
 	switch dimension {
 	case "collections":
-		ctes = `, ` + CollectionMembershipCTE
+		ctes = `, ` + collectionMembershipSQL(compiled.postgres)
 		join = `LEFT JOIN collection_members cm ON cm.node_id=n.id LEFT JOIN collection_labels cl ON cl.ingest_id=cm.ingest_id`
 		key, label = `COALESCE(cm.ingest_id,'')`, `COALESCE(cl.label,cm.ingest_id,'')`
 	case snapshotFacetTags:
 		join = `LEFT JOIN node_tags nt ON nt.node_id=n.id LEFT JOIN tags t ON t.id=nt.tag_id`
 		key, label = `COALESCE(t.id,'')`, `COALESCE(t.name,'')`
 	case snapshotFacetTextCoverage:
-		ctes = `, coverage_members AS (SELECT node_id FROM matched_members), ` + processingCoverageCTE()
+		ctes = `, coverage_members AS (SELECT node_id FROM matched_members), ` + processingCoverageCTEForBackend(compiled.postgres)
 		join = `JOIN processing_coverage pc ON pc.node_id=n.id AND pc.version_id=cv.version_id`
 		key, label = `pc.state`, `pc.state`
 		args = append(args, coverage.ProfileFingerprint, generationID)
@@ -171,13 +171,14 @@ func materializeSnapshotFacet(
 	}
 	order := ""
 	if dimension != snapshotFacetDuplicates {
-		order = ` ORDER BY ` + identity + `,` + key
+		order = ` ORDER BY ` + identity + `,facet_key`
 	}
-	rows, err := q.QueryContext(ctx, `WITH matched_members AS (`+statement+`)`+ctes+`
-		SELECT `+identity+`,n.name,COALESCE(cv.mime_type,''),cv.size,n.modified_at,`+key+`,`+label+`
+	read := `WITH matched_members AS (` + statement + `)` + ctes + `
+		SELECT ` + identity + `,n.name,COALESCE(cv.mime_type,''),cv.size,n.modified_at,` + key + ` AS facet_key,` + label + `
 		FROM matched_members m JOIN nodes n ON n.id=m.node_id
 		JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=m.content_version_id
-		`+join+order, args...)
+		` + join + order
+	rows, err := q.QueryContext(ctx, bindCompiledRead(read, compiled.postgres), args...)
 	if err != nil {
 		return SnapshotFacet{}, fmt.Errorf("materializing %s facet: %w", dimension, err)
 	}
@@ -217,17 +218,17 @@ func materializeCaptureDayFacet(
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
-	statement, args, err := bindQueryPopulation(compiledQueryFragment{
-		sql: `SELECT COALESCE(pl.day,''),COUNT(*) FROM ` + photoBrowseScopeFrom +
+	statement, args, err := bindQueryPopulationForBackend(compiledQueryFragment{
+		sql: `SELECT COALESCE(pl.day,''),COUNT(*) FROM ` + photoJoins(photoBrowseScopeFrom, compiled.postgres) +
 			` LEFT JOIN photo_timeline pl ON pl.file_id=f.file_id` +
 			` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(false) + ` AND ` + match.sql +
 			` GROUP BY COALESCE(pl.day,'') ORDER BY COALESCE(pl.day,'') DESC`,
 		args: match.args, relations: match.relations,
-	}, coverage, generation)
+	}, coverage, generation, compiled.postgres)
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
-	rows, err := q.QueryContext(ctx, statement, args...)
+	rows, err := q.QueryContext(ctx, bindCompiledRead(statement, compiled.postgres), args...)
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
@@ -522,7 +523,7 @@ func fillSelectedSnapshotFacetLabels(
 		switch dimension {
 		case compiledSetField:
 			var name string
-			if err := q.QueryRowContext(ctx, `SELECT name FROM photo_sets WHERE set_id=?`, key).Scan(&name); err != nil {
+			if err := q.QueryRowContext(ctx, `SELECT name FROM photo_sets WHERE set_id=$1`, key).Scan(&name); err != nil {
 				if !errors.Is(err, sql.ErrNoRows) {
 					return err
 				}
@@ -531,13 +532,13 @@ func fillSelectedSnapshotFacetLabels(
 			labels[key] = name
 		case snapshotFacetTags:
 			var name string
-			if err := q.QueryRowContext(ctx, `SELECT name FROM tags WHERE id=?`, key).Scan(&name); err != nil {
+			if err := q.QueryRowContext(ctx, `SELECT name FROM tags WHERE id=$1`, key).Scan(&name); err != nil {
 				return fmt.Errorf("reading selected tag facet label: %w", err)
 			}
 			labels[key] = name
 		case "collections":
 			var value sql.NullString
-			if err := q.QueryRowContext(ctx, `SELECT label FROM collection_labels WHERE ingest_id=?`, key).Scan(&value); err != nil {
+			if err := q.QueryRowContext(ctx, `SELECT label FROM collection_labels WHERE ingest_id=$1`, key).Scan(&value); err != nil {
 				if !errors.Is(err, sql.ErrNoRows) {
 					return fmt.Errorf("reading selected collection facet label: %w", err)
 				}
@@ -626,7 +627,7 @@ func materializePhotoFacets(ctx context.Context, q metadataQuerier, compiled Com
 
 func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, dimensions []string, options snapshotMaterializeOptions) ([]SnapshotFacet, error) {
 	value := queryWithoutSnapshotFacet(compiled.Query, dimensions[0])
-	resolved, err := (queryCompiler{photoDisplayMetadata: true, photoMetadataSet: true, photoHidden: compiled.photoHidden}).compile(ctx, value, queryResolver{q: q})
+	resolved, err := (queryCompiler{photoDisplayMetadata: true, photoMetadataSet: true, photoHidden: compiled.photoHidden}).compile(ctx, value, queryResolver{q: q, postgres: compiled.postgres})
 	if err != nil {
 		return nil, err
 	}
@@ -644,20 +645,20 @@ func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compil
 			match = trueCompiledFragment()
 		}
 	}
-	from := photoBrowseScopeFrom
+	from := photoJoins(photoBrowseScopeFrom, compiled.postgres)
 	where := ` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(compiled.photoHidden)
 	prefix := ""
 	var args []any
 	if value.Text != "" || !reflect.DeepEqual(value.Filters, query.Filters{}) {
-		matched, bound, err := bindQueryPopulation(compiledQueryFragment{
+		matched, bound, err := bindQueryPopulationForBackend(compiledQueryFragment{
 			sql:  `SELECT a.asset_id FROM ` + from + where + ` AND ` + match.sql,
 			args: match.args, relations: match.relations,
-		}, coverage, generation)
+		}, coverage, generation, compiled.postgres)
 		if err != nil {
 			return nil, err
 		}
 		prefix, args = `WITH m AS MATERIALIZED (`+matched+`) `, bound
-		from = `m CROSS JOIN ` + photoBrowseScopeFrom
+		from = `m CROSS JOIN ` + from
 		where = ` WHERE a.asset_id=m.asset_id`
 	}
 	// Each leg groups only the requested values over its own one-to-one joins.
@@ -668,8 +669,16 @@ func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compil
 	}
 	var legs []string
 	var grouped []string
+	blank := `''`
+	if compiled.postgres {
+		blank = `CAST('' AS bytea)`
+	}
+	blankMetadata := strings.TrimSuffix(strings.Repeat(blank+",", 5), ",")
 	project := func(dimension, expression string) string {
 		if observations[dimension] == nil {
+			if dimension == compiledCameraField || dimension == compiledLensField || dimension == compiledLocationField {
+				return blank
+			}
 			return `''`
 		}
 		grouped = append(grouped, expression)
@@ -685,7 +694,7 @@ func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compil
 			legFrom += ` LEFT JOIN photo_timeline pl ON pl.file_id=f.file_id`
 		}
 		legs = append(legs, `SELECT 'decision' AS leg,`+year+` AS year,`+rating+` AS rating,`+flag+` AS flag,`+label+` AS label,
- '' AS camera_make,'' AS camera_model,'' AS lens_make,'' AS lens_model,'' AS location,'' AS set_id,'' AS set_name,
+ `+blankMetadata+`,'' AS set_id,'' AS set_name,
  0 AS missing,COUNT(*) AS members FROM `+legFrom+where+` GROUP BY `+strings.Join(grouped, ","))
 	}
 	grouped = nil
@@ -695,22 +704,22 @@ func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compil
 	lensModel := project(compiledLensField, `COALESCE(p.lens_model,'')`)
 	location := project(compiledLocationField, `COALESCE(p.location_label,'')`)
 	if len(grouped) > 0 {
-		legFrom := from + ` CROSS JOIN content_versions v ON v.version_id=n.current_version_id
+		legFrom := from + photoJoins(` CROSS JOIN content_versions v ON v.version_id=n.current_version_id
  LEFT JOIN source_metadata_heads h ON h.source_sha256=v.blob_hash
- LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id`
+ LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id`, compiled.postgres)
 		legs = append(legs, `SELECT 'metadata','','','','',`+cameraMake+` AS camera_make,`+cameraModel+` AS camera_model,
  `+lensMake+` AS lens_make,`+lensModel+` AS lens_model,`+location+` AS location,'','',0,COUNT(*)
  FROM `+legFrom+where+` GROUP BY `+strings.Join(grouped, ","))
 	}
 	if observations[compiledSetField] != nil {
 		const live = `EXISTS (SELECT 1 FROM photo_set_members sm JOIN photo_sets ps ON ps.set_id=sm.set_id AND ps.deleted_at IS NULL WHERE sm.asset_id=a.asset_id)`
-		legs = append(legs, `SELECT 'totals','','','','','','','','','','','',
+		legs = append(legs, `SELECT 'totals','','','','',`+blankMetadata+`,'','',
  COALESCE(SUM(CASE WHEN `+live+` THEN 0 ELSE 1 END),0) AS missing,COUNT(*) FROM `+from+where,
-			`SELECT 'set','','','','','','','','','',ps.set_id,ps.name,0,COUNT(*) FROM `+from+`
+			`SELECT 'set','','','','',`+blankMetadata+`,ps.set_id,ps.name,0,COUNT(*) FROM `+from+photoJoins(`
  CROSS JOIN photo_set_members sm ON sm.asset_id=a.asset_id
- CROSS JOIN photo_sets ps ON ps.set_id=sm.set_id AND ps.deleted_at IS NULL`+where+` GROUP BY ps.set_id,ps.name`)
+ CROSS JOIN photo_sets ps ON ps.set_id=sm.set_id AND ps.deleted_at IS NULL`, compiled.postgres)+where+` GROUP BY ps.set_id,ps.name`)
 	}
-	rows, err := q.QueryContext(ctx, prefix+strings.Join(legs, ` UNION ALL `), args...)
+	rows, err := q.QueryContext(ctx, bindCompiledRead(prefix+strings.Join(legs, ` UNION ALL `), compiled.postgres), args...)
 	if err != nil {
 		return nil, err
 	}

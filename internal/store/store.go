@@ -31,6 +31,7 @@ type Store struct {
 	writeRevision          atomic.Uint64
 	postgresConfig         *pgx.ConnConfig // Pinned runtime configuration for independently owned read pools.
 	postgresSchema         string          // Empty for SQLite; PostgreSQL pools use this schema as their search path.
+	postgresPrimaryBound   bool
 	path                   string
 	vaultDir               string
 	rootID                 int64
@@ -127,6 +128,7 @@ func openCurrentStore(
 	ctx context.Context,
 	path string, driver docsqlite.Driver, incarnation *metadataProcessingIncarnation,
 ) (*Store, error) {
+	createFromSchemaTemplate(ctx, path, driver)
 	db, err := driver.Open(path, docsqlite.OpenOptions{
 		Access: docsqlite.Create, TransactionMode: docsqlite.Deferred,
 	})
@@ -216,6 +218,18 @@ func (s *Store) bootstrapTx(ctx context.Context, incarnation *metadataProcessing
 			SELECT vault_uid, schema_version FROM vault_metadata WHERE singleton = 1`).Scan(
 			&s.vaultID, &schemaVersion,
 		); errors.Is(err, sql.ErrNoRows) {
+			// Only a new vault lacks an identity. Bootstrap commits the
+			// identity with the root node, so a vault that has nodes lost its
+			// identity row, and a new identity would make it look like a
+			// different vault.
+			var hasNodes bool
+			if idErr := tx.QueryRowContext(ctx,
+				`SELECT EXISTS(SELECT 1 FROM nodes)`).Scan(&hasNodes); idErr != nil {
+				return fmt.Errorf("checking for existing vault data: %w", idErr)
+			}
+			if hasNodes {
+				return errors.New("opening database: vault has data but no vault_metadata identity row; restore it from a backup")
+			}
 			vaultID, idErr := newUUIDv4()
 			if idErr != nil {
 				return fmt.Errorf("creating vault identity: %w", idErr)
@@ -473,6 +487,9 @@ func (s *Store) storageTx(ctx context.Context, counts bool, fn func(tx *sql.Tx) 
 }
 
 func (s *Store) withStorageTxRetryBegin(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	if s.postgresSchema != "" {
+		return s.withStorageTx(ctx, fn)
+	}
 	_, err := backoff.Retry(ctx, func() (struct{}, error) {
 		err := s.withStorageTx(ctx, fn)
 		if err != nil && (!errors.Is(err, errBeginTx) || !s.driver.IsBusy(err)) {

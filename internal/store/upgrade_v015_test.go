@@ -14,9 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"uuid"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"uuid"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/bundle"

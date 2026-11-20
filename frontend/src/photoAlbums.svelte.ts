@@ -8,6 +8,17 @@ export const photoDragType = "application/x-docbank-photos";
 
 export type PhotoAlbumItem = api.PhotoAlbum & Partial<api.PhotoAlbumSummary>;
 
+export function missingAlbum(albums: PhotoAlbums | undefined, albumID: string): boolean {
+  return Boolean(
+    albumID &&
+    albums?.initialized &&
+    !albums.loading &&
+    !albums.busy &&
+    !albums.loadError &&
+    !albums.items.some((album) => album.id === albumID),
+  );
+}
+
 async function readAlbum(response: Response, expectedID?: string): Promise<api.PhotoAlbum> {
   const album = await response.json();
   if (

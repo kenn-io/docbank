@@ -218,6 +218,7 @@ func (s *Store) materializeQuerySnapshot(
 func (s *Store) materializeNormalizedQuerySnapshot(
 	ctx context.Context, request SnapshotRequest, options snapshotMaterializeOptions,
 ) (SnapshotProjection, error) {
+	postgres := s.postgresSchema != ""
 	options = options.withDefaults()
 	options.PhotoRanking = request.PhotoRanking
 	pageSize, facets := request.PageSize, request.Facets
@@ -230,9 +231,12 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 
 	var projection SnapshotProjection
 	err = s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) error {
+		if postgres && request.PhotoRanking != nil {
+			return fmt.Errorf("%w: ranked photo snapshots require SQLite", ErrInvalidPhotoQuery)
+		}
 		value := request.Query
 		if options.SavedQuery != nil {
-			resolved, resolveErr := (queryResolver{q: q}).Resolve(
+			resolved, resolveErr := (queryResolver{q: q, postgres: postgres}).Resolve(
 				ctx, query.ReferenceSaved, options.SavedQuery.ID, true,
 			)
 			if resolveErr != nil {
@@ -254,7 +258,7 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 		}
 		options.Photos = request.Photos
 		compiler := queryCompiler{photoDisplayMetadata: request.FacetsOnly || options.Photos, photoMetadataSet: request.FacetsOnly}
-		compiled, err := compiler.compile(ctx, executionValue, queryResolver{q: q})
+		compiled, err := compiler.compile(ctx, executionValue, queryResolver{q: q, postgres: postgres})
 		if err != nil {
 			return err
 		}
@@ -374,7 +378,7 @@ func normalizeSnapshotPageSize(value int) (int, error) {
 
 func validateSnapshotCoverageProfile(ctx context.Context, q metadataQuerier, selection CoverageSelection) error {
 	var exists bool
-	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM processing_profiles WHERE profile_fingerprint=?)`, selection.ProfileFingerprint).Scan(&exists); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM processing_profiles WHERE profile_fingerprint=$1)`, selection.ProfileFingerprint).Scan(&exists); err != nil {
 		return err
 	}
 	if exists {
@@ -395,15 +399,19 @@ func materializeSnapshotRows(
 	var err error
 	if options.Photos {
 		var suggestions bool
-		if suggestions, err = photoSuggestionsExist(ctx, q); err == nil {
-			limit := options.MaxRows
-			if options.PhotoRanking != nil && options.PhotoRanking.ActualMode == query.ModeLexical {
-				limit = min(limit, 1000)
+		if !compiled.postgres {
+			suggestions, err = photoSuggestionsExist(ctx, q)
+			if err != nil {
+				return err
 			}
-			population, err = photoSnapshotPopulation(compiled, generationID, coverage, limit, suggestions)
-			if options.PhotoRanking != nil && (options.PhotoRanking.Members != nil || options.PhotoRanking.ActualMode != query.ModeLexical) {
-				population, err = rankedPhotoSnapshotPopulation(options.PhotoRanking)
-			}
+		}
+		limit := options.MaxRows
+		if options.PhotoRanking != nil && options.PhotoRanking.ActualMode == query.ModeLexical {
+			limit = min(limit, 1000)
+		}
+		population, err = photoSnapshotPopulation(compiled, generationID, coverage, limit, suggestions)
+		if options.PhotoRanking != nil && (options.PhotoRanking.Members != nil || options.PhotoRanking.ActualMode != query.ModeLexical) {
+			population, err = rankedPhotoSnapshotPopulation(options.PhotoRanking)
 		}
 	} else {
 		population, err = matchedPopulation(compiled, generationID, nil)
@@ -411,7 +419,7 @@ func materializeSnapshotRows(
 	if err != nil {
 		return err
 	}
-	statement, args, err := bindQueryPopulation(population, coverage, generationID)
+	statement, args, err := bindQueryPopulationForBackend(population, coverage, generationID, compiled.postgres)
 	if err != nil {
 		return err
 	}
@@ -423,20 +431,30 @@ func materializeSnapshotRows(
 	photoColumns := `'','',NULL`
 	photoOrder := ""
 	if options.Photos {
-		photoColumns = `m.asset_id,printf('%020d',m.photo_position),(SELECT f.flag FROM photo_files f JOIN photo_assets a ON a.display_file_id=f.file_id WHERE a.asset_id=m.asset_id)`
+		position := "printf('%020d',m.photo_position)"
+		if compiled.postgres {
+			position = "lpad(CAST(m.photo_position AS text),20,'0')"
+		}
+		photoColumns = `m.asset_id,` + position + `,(SELECT f.flag FROM photo_files f JOIN photo_assets a ON a.display_file_id=f.file_id WHERE a.asset_id=m.asset_id)`
 		photoOrder = ` ORDER BY m.photo_position`
 	}
 	coverageCTE, coverageJoin, coverageColumns := "", "", `'', '', ''`
 	if coverage.Configuration == "configured" {
-		coverageCTE = `, coverage_members AS (SELECT node_id FROM matched_members), ` + processingCoverageCTE()
+		coverageCTE = `, coverage_members AS (SELECT node_id FROM matched_members), ` + processingCoverageCTEForBackend(compiled.postgres)
 		coverageJoin = `LEFT JOIN processing_coverage pc ON pc.node_id=n.id AND pc.version_id=cv.version_id`
 		coverageColumns = `COALESCE(pc.state,''), COALESCE(pc.build_id,''), COALESCE(pc.attachment_id,'')`
 		args = append(args, coverage.ProfileFingerprint, generationID)
 	}
+	collections := "json_group_array(ingest_id ORDER BY ingest_id)"
+	tags := "json_group_array(json_object('id',id,'name',name,'revision',revision))"
+	if compiled.postgres {
+		collections = "CAST(json_agg(ingest_id ORDER BY ingest_id) AS text)"
+		tags = "CAST(json_agg(json_build_object('id',id,'name',name,'revision',revision) ORDER BY id) AS text)"
+	}
 	// Read scoped collections once: repeated references expand the photo
 	// population enough to exceed SQLite's subquery limit.
-	rows, err := q.QueryContext(ctx, `WITH RECURSIVE
-		matched_members AS MATERIALIZED (`+statement+`),
+	read := `WITH RECURSIVE
+		matched_members AS MATERIALIZED (` + statement + `),
 		parent_dirs AS (
 			SELECT DISTINCT n.parent_id FROM nodes n JOIN matched_members m ON m.node_id=n.id
 		), dir_paths(dir_id,id,parent_id,path) AS (
@@ -445,24 +463,25 @@ func materializeSnapshotRows(
 			SELECT p.dir_id,n.id,n.parent_id,
 				CASE WHEN n.name='' THEN '/'||p.path ELSE n.name||'/'||p.path END
 			FROM nodes n JOIN dir_paths p ON n.id=p.parent_id
-		), `+matchedCollectionMembershipCTE+`,
+		), ` + matchedCollectionMembershipSQL(compiled.postgres) + `,
 		row_collections AS (
-			SELECT node_id,json_group_array(ingest_id ORDER BY ingest_id) collection_ids,
+			SELECT node_id,` + collections + ` collection_ids,
 				MIN(ingest_id) display_collection_id
 			FROM collection_members GROUP BY node_id
-		)`+coverageCTE+`
+		)` + coverageCTE + `
 		SELECT n.id,cv.version_id,cv.blob_hash,cv.size,n.revision,n.name,dp.path||'/'||n.name,
 			COALESCE(cv.mime_type,''),n.modified_at,
-			COALESCE((SELECT json_group_array(json_object('id',id,'name',name,'revision',revision))
+			COALESCE((SELECT ` + tags + `
 				FROM (SELECT t.id,t.name,t.revision FROM node_tags nt JOIN tags t ON t.id=nt.tag_id
 					WHERE nt.node_id=n.id ORDER BY t.id)),'[]'),
 			COALESCE(rc.collection_ids,'[]'),COALESCE(rc.display_collection_id,''),l.label,
-			`+coverageColumns+`,`+photoColumns+`
+			` + coverageColumns + `,` + photoColumns + `
 		FROM matched_members m JOIN nodes n ON n.id=m.node_id
 		JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=m.content_version_id
 		LEFT JOIN row_collections rc ON rc.node_id=n.id
 		LEFT JOIN collection_labels l ON l.ingest_id=rc.display_collection_id
-		JOIN dir_paths dp ON dp.dir_id=n.parent_id AND dp.parent_id IS NULL `+coverageJoin+photoOrder, args...)
+		JOIN dir_paths dp ON dp.dir_id=n.parent_id AND dp.parent_id IS NULL ` + coverageJoin + photoOrder
+	rows, err := q.QueryContext(ctx, bindCompiledRead(read, compiled.postgres), args...)
 	if err != nil {
 		return fmt.Errorf("materializing query snapshot rows: %w", err)
 	}

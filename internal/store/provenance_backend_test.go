@@ -7,8 +7,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func checkProvenancePhotoEffectsPostgres(t *testing.T) {
@@ -23,8 +21,8 @@ func checkProvenancePhotoEffectsPostgres(t *testing.T) {
 	bindings, err := source.ProvenanceVersionBindings(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.Len(t, bindings, 1)
-	setup, owner := pgtest.NewDatabase(t)
-	target := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	target := openPostgresStore(t, owner, login)
 	tables := append(append([]string{}, postgresEnrollmentCatalogs...), "blob_locations", "blob_packs", "blob_pack_entries", "photo_source_claims", "photo_timeline", "document_event_dirty")
 	copyStoreCatalogFixture(t, source, setup, tables)
 	target.primaryStoreID = source.primaryStoreID
@@ -93,8 +91,8 @@ func checkProvenanceInvalidationPostgres(t *testing.T) {
 	require.NoError(t, err)
 	_, err = source.PublishDocumentPeople(ctx, documentPeoplePublicationForInput(t, input))
 	require.NoError(t, err)
-	setup, owner := pgtest.NewDatabase(t)
-	target := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	target := openPostgresStore(t, owner, login)
 	tables := append(append([]string{}, postgresEnrollmentCatalogs...), "blob_locations", "blob_packs", "blob_pack_entries",
 		"document_event_state", "document_event_generations", "document_event_heads", "document_events", "document_event_actors", "document_event_primaries", "document_event_dirty")
 	copyStoreCatalogFixture(t, source, setup, tables)
@@ -211,8 +209,8 @@ func checkProvenanceRequeuesPhotoExportPostgres(t *testing.T) {
 			source, asset, raw := xmpSidecarPhoto(t, newTestStore(t))
 			importXMP(t, source, raw.ID, PhotoAuthored{Rating: 3, Confirmed: PhotoConfirmedRating})
 			require.Empty(t, xmpTargets(t, source))
-			setup, owner := pgtest.NewDatabase(t)
-			target := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+			setup, owner, login := newTemplateDatabase(t)
+			target := openPostgresStore(t, owner, login)
 			tables := append(append([]string{}, postgresEnrollmentCatalogs...), "blob_locations", "blob_packs", "blob_pack_entries", "photo_source_claims", "photo_timeline")
 			copyStoreCatalogFixture(t, source, setup, tables)
 			target.primaryStoreID = source.primaryStoreID

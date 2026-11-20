@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-10-31
+last_edited: 2026-11-20
 title: Embed in Go
-description: Run one or more Docbank vaults inside a Go application, each with its own root, using CGO or pure-Go SQLite.
+description: Run Docbank vaults inside a Go application with SQLite or PostgreSQL metadata.
 ---
 
 # Embed in Go
@@ -13,6 +13,52 @@ checks, storage rules, and exclusive vault lock as standalone Docbank.
 
 Use an embedded vault when the application itself should own document lifecycle.
 Use the HTTP API when independent processes need to share one standalone vault.
+
+## Use a PostgreSQL vault
+
+Use PostgreSQL 16 or 18 with UTF-8 encoding. For each vault, provision a
+dedicated schema owner and a separate runtime login. Give the process a private
+local directory for its vault files and run one owning process per vault
+catalog. The standalone daemon and `New` use SQLite.
+
+Docbank's numbered PostgreSQL catalog starts at version 1. See the
+[schema lifecycle and runtime grants](https://github.com/kenn-io/docbank/blob/main/docs/internal/development.md#postgresql-schema-lifecycle).
+
+For a fresh vault, call `InitializePostgres` with a caller-owned `*sql.DB`
+connected as the schema owner, a `PostgresCatalog` with the schema and owner
+names, and a new vault directory under an existing parent. It installs the
+catalog if needed and publishes a private root with the matching primary
+ownership marker. Apply the runtime grants. Repeating initialization on the
+same bound and closed root returns its existing vault ID. An existing catalog
+must already be at the current schema version.
+
+If initialization reports that it installed a directory before an error, keep
+the directory and retry at that path to verify the binding. If the catalog
+reports `ErrPostgresPrimaryUnbound`, use a fresh directory. A retry commits its
+own ownership epoch and keeps the earlier attempt fenced.
+
+For a restore, prepare a pristine catalog with `SetupPostgres`, apply the
+runtime grants, and call `repository.RestorePostgres` with the owner pool, the
+same catalog, and a `*pgx.ConnConfig` for the runtime login. Pass the saved
+snapshot ID, a new target directory, and any protected roots. The backup can
+come from SQLite or PostgreSQL. A catalog with a bound root is ineligible as a
+restore destination, including when the vault has no documents.
+
+On a restore error, a report with `CatalogCommitted` set identifies a committed
+restore. Close any owner of that root before retrying a failed index rebuild
+with `RebuildPostgresRestore`. When the report has a target and an unconfirmed
+commit, keep that directory and follow the
+[ownership reconciliation procedure](architecture/backup.md#restoring-into-postgresql).
+
+Call `OpenPostgres` with `Config{Root: vaultRoot}`, the same catalog, and the
+runtime login. It checks the catalog binding and the filesystem marker and holds
+the root lock until `Close`. Use `CreateBackup` to capture a portable snapshot.
+
+Before upgrading, stop writes, capture and verify a portable backup, and
+close the vault.
+Call `SetupPostgres` with the new build and the owner connection, apply its
+runtime grants, then reopen. For data written by a fingerprint-only development
+build, restore a portable backup into a fresh numbered catalog.
 
 ## Run native MCP reads
 
@@ -752,23 +798,37 @@ defer content.Reader.Close()
 ```
 
 `reader.ID()` returns the vault identity. The reader holds the same exclusive
-hierarchy lock as an owner and returns `ErrVaultLocked` when the tree is busy.
-`ErrVaultNeedsOwner` means an owner must initialize, upgrade, or recover the
-vault first, including when SQLite sidecars or a restore handoff are present.
-Sidecars are checked before the schema, so a sidecar also takes precedence over a newer schema.
-Newer, unsupported, or unreadable schemas, invalid identity, wrong ownership markers,
-and non-regular database or handoff files retain their own errors. The existing
-`vault.lock` must be writable. The lock registry (`DOCBANK_LOCK_DIR` when set)
-must be writable and outside the vault; a registry inside it is a configuration
-error. Docbank creates the registry directory and its lock files as needed. When
-checking a current-schema database, Docbank creates a temporary
-`docbank-current-schema-*.db` file in the registry. The default registry is
-`.local/state/docbank/target-locks` in the account home. Docbank deletes the file
-before `OpenContentReader` returns, but a crash during the check can leave it
-there. SQLite may use temporary files of its own. Only the
-primary blob store is attached; content available only on a secondary store
-returns `ErrContentUnavailable`. Close every stream before closing the reader;
-reader close waits for all streams to close.
+hierarchy lock as an owner until `Close` returns. Close every stream first,
+because `Close` waits for open streams.
+
+`OpenContentReader` returns:
+
+- `ErrVaultLocked` when a daemon, embedded vault, restore, or another reader
+  holds an overlapping tree.
+- `ErrVaultNeedsOwner` when an owner must initialize, upgrade, or recover the
+  vault first. That covers a missing root, `vault.lock`, database, blob
+  directory, or blob ownership marker. It also covers an empty database, an
+  older schema, SQLite `-wal`, `-shm`, or `-journal` files, and a pending
+  restore handoff.
+- Other errors for a newer or unreadable schema, an invalid vault identity, a
+  mismatched blob ownership marker, or a database or handoff path that is not
+  a regular file.
+
+The reader changes nothing inside the vault. It writes in two places outside
+it:
+
+- The lock registry, `DOCBANK_LOCK_DIR` when set. The reader creates the
+  directory and its lock files as needed.
+- The system temporary directory. Checking the schema creates a
+  `docbank-current-schema-*.db` file there and deletes it before
+  `OpenContentReader` returns. A crash during the check can leave it behind.
+  SQLite may also write its own temporary files there, or in `SQLITE_TMPDIR`
+  when set.
+
+The reader refuses to open when the lock registry, the system temporary
+directory, or `SQLITE_TMPDIR` is inside the vault. The existing `vault.lock`
+must be writable. The reader attaches only the primary blob store, so content
+stored only on a secondary store returns `ErrContentUnavailable`.
 
 ## Identify a vault and verify reads
 
@@ -971,7 +1031,7 @@ history and cannot take another vault's repository, which returns
 `BackupSnapshot.Coverage` records photo assets and files, distinct verified photo bytes, albums and members, hidden and trashed photos, checkout definitions and entries, and retained receipts. A nil pointer with an empty `BackupSnapshot.CoverageWarning` means the historical snapshot did not record coverage. Unsupported coverage yields a nil pointer and a version-specific warning while preserving the snapshot ID and base statistics for listing and cleanup. Total verified bytes remain in `BackupSnapshot.BlobBytes`. The trash count includes an asset when any managed file is trashed. `Coverage.Excluded` names omitted runtime state and rebuildable projections, including `photo_technical_metadata`. Restore recounts version-1 coverage before publication and rejects unsupported versions with `*UnsupportedBackupCoverageError`, whose `Version` names the recorded version. Verification checks manifest consistency and physical content, and reports unsupported coverage versions; it does not recount photo coverage. [Older readers require an upgrade](usage/backup.md#what-each-snapshot-contains) before restoring coverage-bearing snapshots. See [Backup coverage](usage/backup.md#what-each-snapshot-contains) for the complete exclusions and restore rules.
 
 Capture prevents content reclamation for the whole snapshot. Ordinary appends
-resume once Docbank fixes the SQLite view that the backup will use. Physical
+resume once Docbank pins the catalog view that the backup will use. Physical
 maintenance waits until Docbank publishes the manifest.
 
 To include your application's catalog in the same backup:
@@ -1219,13 +1279,33 @@ then run directly on that driver's `database/sql` pool. Standalone backup and
 restore paths use the same adapter boundary rather than silently switching
 SQLite implementations.
 
+Docbank's adapters register their own `database/sql` drivers. Connection hooks
+your application registers with `modernc.org/sqlite`, such as those added with
+its package-level `RegisterConnectionHook`, do not run on vault connections.
+The same holds for a `ConnectHook` on your own `github.com/mattn/go-sqlite3`
+driver.
+
+In a CGO build, the first vault opened through the mattn adapter, the default
+there, turns off SQLite memory statistics for the whole process. That removes a
+global lock from every SQLite allocation. SQLite enforces
+`PRAGMA soft_heap_limit` and `hard_heap_limit` only while those statistics are
+on. If your application relies on a heap limit,
+open its own SQLite connection before the first vault: once SQLite has
+initialized, Docbank leaves the setting alone.
+
+SQLite allows that setting to change only while no other thread uses SQLite.
+Until your first vault open returns, do not use SQLite through
+`github.com/mattn/go-sqlite3` on another goroutine. Open your own connection
+before that first vault, or after it opens.
+
 ## Ownership boundary
 
 Do not point a daemon and an embedded application at the same root. `New` holds
 the same exclusive hierarchy lock as the daemon for the entire vault lifetime
 and fails if the requested root overlaps another active vault or restore target.
 
-`OpenContentReader` also holds this exclusive lock until `Close` returns. Close the reader after reading.
+[`OpenContentReader`](#read-an-existing-vault-without-owning-it) takes the
+same lock, so close the reader before a daemon or `New` opens that root.
 
 The standalone CLI remains daemon-first and never opens storage directly.
 Embedding is a distinct application ownership mode, not a second privileged path

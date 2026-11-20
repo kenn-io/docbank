@@ -11,8 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document/bundle"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func exportPlanFixture(t *testing.T, s *Store, owner string) bundle.Plan {
@@ -144,8 +142,8 @@ func checkExportFailedResolutionKeepsReservation(t *testing.T, open func(*testin
 func checkExportPlanRollbackPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	ctx := t.Context()
 	node, err := s.CreateFile(ctx, s.RootID(), "rollback.txt", fakeHash("e4"), 12, "text/plain")
 	require.NoError(t, err)
@@ -259,8 +257,8 @@ func checkExportEmailInspection(t *testing.T, open func(*testing.T) *Store) {
 func checkExportFinishRollbackPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	ctx := t.Context()
 	plan := exportPlanFixture(t, s, "owner")
 	job, err := s.QueueExportJob(ctx, "owner", bundle.JobRequest{OperationID: uuid.New().String(), PlanID: plan.ID, Fingerprint: plan.Fingerprint})

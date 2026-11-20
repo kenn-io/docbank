@@ -498,7 +498,9 @@ func TestLocalTextAutoSendsOnlyToOwnerEndpoint(t *testing.T) {
 func runLocalProcessingNoninteractive(t *testing.T, model string, args ...string) (string, kitdaemon.RuntimeRecord, string) {
 	t.Helper()
 	bin := buildDocbank(t)
-	t.Setenv("HOME", t.TempDir())
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	t.Setenv("DO_NOT_TRACK", "1")
 	root := t.TempDir()
 	t.Setenv("DOCBANK_HOME", root)
@@ -738,7 +740,9 @@ func TestLocalPlanPrintsScope(t *testing.T) {
 }
 
 func TestFaceStartupReusesSelectedModel(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	server := httptest.NewServer(localTextDiscoveryHandler(embedlocal.FaceModel))
 	defer server.Close()
 	dir, err := embedlocal.DefaultDir()

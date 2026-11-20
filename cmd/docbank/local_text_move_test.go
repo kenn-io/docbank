@@ -89,7 +89,9 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 		t.Run(variant.name, func(t *testing.T) {
 			binding := variant.binding
 			const name, credentialEnvironment = "archive", "DOCBANK_TEST_MOVE_KEY"
-			t.Setenv("HOME", t.TempDir())
+			homeDir := t.TempDir()
+			t.Setenv("HOME", homeDir)
+			t.Setenv("USERPROFILE", homeDir)
 			t.Setenv(credentialEnvironment, "synthetic-key")
 			t.Setenv("DOCBANK_HOME", t.TempDir())
 			var localDocuments atomic.Int64

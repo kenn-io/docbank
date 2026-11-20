@@ -11,11 +11,10 @@ import (
 
 func TestNoCreateLock(t *testing.T) {
 	l := Layout{Root: t.TempDir()}
-	root, lock, registry, err := l.OpenExistingAndLockExclusiveNoCreate()
+	root, lock, err := l.OpenExistingAndLockExclusiveNoCreate()
 	require.ErrorIs(t, err, ErrExistingVaultMissing)
 	require.Nil(t, root)
 	require.Nil(t, lock)
-	require.NotEmpty(t, registry)
 	_, err = os.Lstat(filepath.Join(l.Root, "vault.lock"))
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
@@ -27,11 +26,10 @@ func TestNoCreateRegistryInsideVault(t *testing.T) {
 		t.Setenv("DOCBANK_LOCK_DIR", registry)
 		before, err := os.Stat(root)
 		require.NoError(t, err)
-		opened, held, returnedRegistry, err := (Layout{Root: root}).OpenExistingAndLockExclusiveNoCreate()
+		opened, held, err := (Layout{Root: root}).OpenExistingAndLockExclusiveNoCreate()
 		require.ErrorIs(t, err, ErrRegistryInsideVault)
 		require.Nil(t, opened)
 		require.Nil(t, held)
-		require.Empty(t, returnedRegistry)
 		after, err := os.Stat(root)
 		require.NoError(t, err)
 		require.Equal(t, before.Mode(), after.Mode())
@@ -47,11 +45,10 @@ func TestNoCreateRegistryInsideVault(t *testing.T) {
 	t.Run("missing root", func(t *testing.T) {
 		root := filepath.Join(t.TempDir(), "vault")
 		t.Setenv("DOCBANK_LOCK_DIR", filepath.Join(root, "locks"))
-		opened, held, returnedRegistry, err := (Layout{Root: root}).OpenExistingAndLockExclusiveNoCreate()
+		opened, held, err := (Layout{Root: root}).OpenExistingAndLockExclusiveNoCreate()
 		require.ErrorIs(t, err, ErrRegistryInsideVault)
 		require.Nil(t, opened)
 		require.Nil(t, held)
-		require.Empty(t, returnedRegistry)
 		_, err = os.Lstat(root)
 		require.ErrorIs(t, err, os.ErrNotExist)
 	})
@@ -63,11 +60,8 @@ func TestNoCreateRegistryParent(t *testing.T) {
 	require.NoError(t, os.Mkdir(root, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "vault.lock"), nil, 0o600))
 	t.Setenv("DOCBANK_LOCK_DIR", parent)
-	opened, lock, registry, err := (Layout{Root: root}).OpenExistingAndLockExclusiveNoCreate()
+	opened, lock, err := (Layout{Root: root}).OpenExistingAndLockExclusiveNoCreate()
 	require.NoError(t, err)
-	canonical, err := CanonicalRoot(parent)
-	require.NoError(t, err)
-	require.Equal(t, canonical, registry)
 	require.NoError(t, lock.Release())
 	require.NoError(t, opened.Close())
 }
@@ -91,7 +85,7 @@ func TestNoCreateHierarchyConflicts(t *testing.T) {
 				owner := Layout{Root: pair[0]}
 				reader := Layout{Root: pair[1]}
 				if readerFirst {
-					root, lock, _, err := reader.OpenExistingAndLockExclusiveNoCreate()
+					root, lock, err := reader.OpenExistingAndLockExclusiveNoCreate()
 					require.NoError(t, err)
 					_, err = owner.TryLockExclusive()
 					require.ErrorIs(t, err, ErrVaultLocked)
@@ -100,7 +94,7 @@ func TestNoCreateHierarchyConflicts(t *testing.T) {
 				} else {
 					lock, err := owner.TryLockExclusive()
 					require.NoError(t, err)
-					_, _, _, err = reader.OpenExistingAndLockExclusiveNoCreate()
+					_, _, err = reader.OpenExistingAndLockExclusiveNoCreate()
 					require.ErrorIs(t, err, ErrVaultLocked)
 					require.NoError(t, lock.Release())
 				}
@@ -115,10 +109,9 @@ func TestNoCreateOwnershipTransitionConflict(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(layout.Root, "vault.lock"), nil, 0o600))
 	transition, err := layout.TryLockOwnershipTransition()
 	require.NoError(t, err)
-	root, lock, registry, err := layout.OpenExistingAndLockExclusiveNoCreate()
+	root, lock, err := layout.OpenExistingAndLockExclusiveNoCreate()
 	require.ErrorIs(t, err, ErrVaultLocked)
 	require.Nil(t, root)
 	require.Nil(t, lock)
-	require.NotEmpty(t, registry)
 	require.NoError(t, transition.Release())
 }

@@ -25,7 +25,9 @@ import (
 )
 
 func TestServeFaceSuggestionsFollowSetupAndRestart(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	t.Setenv("DO_NOT_TRACK", "1")
 	root := t.TempDir()
 	t.Setenv("DOCBANK_HOME", root)
@@ -70,7 +72,9 @@ func TestServeFaceSuggestionsFollowSetupAndRestart(t *testing.T) {
 	require.Equal(t, "running", list.Items[index].Status)
 }
 func TestServeFaceSuggestionsRegisteredAfterRestoreWithVectorHeads(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	t.Setenv("DO_NOT_TRACK", "1")
 	root := t.TempDir()
 	t.Setenv("DOCBANK_HOME", root)

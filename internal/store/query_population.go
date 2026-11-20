@@ -51,6 +51,12 @@ func selectCompiledPopulation(predicate compiledQueryFragment, collapseDuplicate
 func bindQueryPopulation(
 	population compiledQueryFragment, selection CoverageSelection, generationID string,
 ) (string, []any, error) {
+	return bindQueryPopulationForBackend(population, selection, generationID, false)
+}
+
+func bindQueryPopulationForBackend(
+	population compiledQueryFragment, selection CoverageSelection, generationID string, postgres bool,
+) (string, []any, error) {
 	var ctes []string
 	args := make([]any, 0, len(population.args)+2)
 	if population.relations&(compiledRelationCurrentContent|compiledRelationProcessingCoverage) != 0 {
@@ -66,7 +72,7 @@ func bindQueryPopulation(
 		}
 		ctes = append(ctes,
 			`coverage_members AS (SELECT node_id FROM current_content_members)`,
-			processingCoverageCTE(),
+			processingCoverageCTEForBackend(postgres),
 		)
 		args = append(args, normalized.ProfileFingerprint, generationID)
 	}

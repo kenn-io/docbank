@@ -32,6 +32,9 @@ type processErrorEnvelope struct {
 }
 
 func helpOnlyGroups() []*cobra.Command {
+	// Every process adds Cobra's completion group before running a command.
+	// Walk that same tree whether or not an earlier test ran the CLI.
+	configureCommandGroups(rootCmd)
 	var groups []*cobra.Command
 	var walk func(*cobra.Command)
 	walk = func(cmd *cobra.Command) {

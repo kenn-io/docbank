@@ -102,28 +102,28 @@ var ErrRegistryInsideVault = errors.New("DOCBANK_LOCK_DIR registry is inside vau
 // ErrExistingVaultMissing identifies a missing root or lock leaf.
 var ErrExistingVaultMissing = errors.New("existing vault root or lock is missing")
 
-// OpenExistingAndLockExclusiveNoCreate returns the validated registry used for locking.
-func (l Layout) OpenExistingAndLockExclusiveNoCreate() (*os.Root, *Lock, string, error) {
+// OpenExistingAndLockExclusiveNoCreate locks an existing vault without creating
+// its root or vault.lock. It refuses a lock registry inside the vault.
+func (l Layout) OpenExistingAndLockExclusiveNoCreate() (*os.Root, *Lock, error) {
 	registry, err := targetLockRegistryPath()
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, err
 	}
 	registry, err = CanonicalRoot(registry)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, err
 	}
 	inside, err := PathWithin(l.Root, registry)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, err
 	}
 	if inside {
-		return nil, nil, "", fmt.Errorf("%w: %s", ErrRegistryInsideVault, registry)
+		return nil, nil, fmt.Errorf("%w: %s", ErrRegistryInsideVault, registry)
 	}
 	if err := ensureTargetLockRegistryDir(registry); err != nil {
-		return nil, nil, "", err
+		return nil, nil, err
 	}
-	root, lock, err := l.lockExisting(false, registry)
-	return root, lock, registry, err
+	return l.lockExisting(false, registry)
 }
 
 func (l Layout) lockExisting(createLeaf bool, registry string) (*os.Root, *Lock, error) {

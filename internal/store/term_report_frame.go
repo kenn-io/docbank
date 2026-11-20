@@ -32,7 +32,7 @@ type termReportVersion struct {
 }
 
 // MaterializeTermReportFrame binds every term to one lexical generation and
-// one SQLite read snapshot. All current-version identities are captured before
+// one consistent read snapshot. All current-version identities are captured before
 // the read fence is released; later edits cannot alter its match bits.
 // textBudget owns native bytes only and can close after date extraction.
 func (s *Store) MaterializeTermReportFrame(
@@ -52,6 +52,7 @@ func (s *Store) MaterializeTermReportFrame(
 		return report.Frame{}, err
 	}
 	var frame report.Frame
+	postgres := s.postgresSchema != ""
 	err = s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) error {
 		if coverage.Configuration == "configured" {
 			if err := validateSnapshotCoverageProfile(ctx, q, coverage); err != nil {
@@ -64,11 +65,11 @@ func (s *Store) MaterializeTermReportFrame(
 			frame.GenerationKind = "rendition"
 			frame.GenerationID = generation.ID
 		}
-		witnesses, err := reportCollectionWitnesses(ctx, q, request, budget)
+		witnesses, err := reportCollectionWitnesses(ctx, q, request, budget, postgres)
 		if err != nil {
 			return err
 		}
-		versions, versionInfo, err := readTermReportMembers(ctx, q, request, witnesses, budget, &frame)
+		versions, versionInfo, err := readTermReportMembers(ctx, q, request, witnesses, budget, &frame, postgres)
 		if err != nil {
 			return err
 		}
@@ -96,7 +97,7 @@ func (s *Store) MaterializeTermReportFrame(
 			}
 			value := query.Query{V: 1, Text: term.Expression, Syntax: term.Syntax,
 				Mode: query.ModeLexical, Sort: query.Sort{Field: string(DocumentCatalogSortName), Direction: "asc"}}
-			compiled, err := compileQuery(ctx, value, queryResolver{q: q})
+			compiled, err := compileQuery(ctx, value, queryResolver{q: q, postgres: postgres})
 			if err != nil {
 				return fmt.Errorf("term %d: %w", term.Number, err)
 			}
@@ -109,11 +110,11 @@ func (s *Store) MaterializeTermReportFrame(
 			if err != nil {
 				return err
 			}
-			statement, args, err := bindQueryPopulation(population, coverage, generation.ID)
+			statement, args, err := bindQueryPopulationForBackend(population, coverage, generation.ID, postgres)
 			if err != nil {
 				return err
 			}
-			rows, err := q.QueryContext(ctx, `SELECT node_id,content_version_id FROM (`+statement+`) report_matches`, args...)
+			rows, err := q.QueryContext(ctx, `SELECT node_id,content_version_id FROM (`+bindCompiledRead(statement, postgres)+`) report_matches`, args...)
 			if err != nil {
 				return fmt.Errorf("term %d population: %w", term.Number, err)
 			}
@@ -144,7 +145,7 @@ func (s *Store) MaterializeTermReportFrame(
 				}
 			}
 			if generation.ID == "" {
-				if err := readTermReportNativeText(ctx, q, info, i, budget, textBudget, &frame); err != nil {
+				if err := readTermReportNativeText(ctx, q, info, i, budget, textBudget, &frame, postgres); err != nil {
 					return fmt.Errorf("document %d native text: %w", info.identity.NodeID, err)
 				}
 			} else {
@@ -153,7 +154,7 @@ func (s *Store) MaterializeTermReportFrame(
 				}
 			}
 		}
-		if err := readTermReportFamilies(ctx, q, budget, &frame); err != nil {
+		if err := readTermReportFamilies(ctx, q, budget, &frame, postgres); err != nil {
 			return err
 		}
 		return nil
@@ -164,7 +165,7 @@ func (s *Store) MaterializeTermReportFrame(
 	return frame, nil
 }
 
-func reportCollectionWitnesses(ctx context.Context, q metadataQuerier, request report.Request, budget report.Budget) (map[int64][]report.CollectionWitness, error) {
+func reportCollectionWitnesses(ctx context.Context, q metadataQuerier, request report.Request, budget report.Budget, postgres bool) (map[int64][]report.CollectionWitness, error) {
 	result := make(map[int64][]report.CollectionWitness)
 	if len(request.CollectionIDs) == 0 {
 		return result, nil
@@ -173,9 +174,11 @@ func reportCollectionWitnesses(ctx context.Context, q metadataQuerier, request r
 	if err != nil {
 		return nil, err
 	}
+	ids := (metadataJSONDialect{postgres}).arrayValues("$1")
+	d := provenanceSQLDialect{postgres: postgres}
 	var found int
 	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM ingests
-		WHERE source_kind NOT LIKE 'embedded:%' AND id IN (SELECT value FROM json_each(?))`,
+		WHERE NOT (`+d.embedded("source_kind")+`) AND id IN (SELECT value FROM `+ids+`)`,
 		string(collectionIDs)).Scan(&found); err != nil {
 		return nil, err
 	}
@@ -185,8 +188,8 @@ func reportCollectionWitnesses(ctx context.Context, q metadataQuerier, request r
 	rows, err := q.QueryContext(ctx, `SELECT p.ingest_id,p.node_id,p.identity,p.original_path,
 		COALESCE(p.original_mtime,''),COALESCE(p.supersedes,'')
 		FROM provenance p JOIN ingests i ON i.id=p.ingest_id JOIN nodes n ON n.id=p.node_id
-		WHERE i.source_kind NOT LIKE 'embedded:%' AND n.kind='file' AND n.trashed_at IS NULL
-		AND p.ingest_id IN (SELECT value FROM json_each(?))
+		WHERE NOT (`+d.embedded("i.source_kind")+`) AND n.kind='file' AND n.trashed_at IS NULL
+		AND p.ingest_id IN (SELECT value FROM `+ids+`)
 		AND NOT EXISTS (SELECT 1 FROM provenance later WHERE later.supersedes=p.identity)
 		ORDER BY p.node_id,p.ingest_id,p.identity`, string(collectionIDs))
 	if err != nil {
@@ -222,7 +225,7 @@ func reportCollectionWitnesses(ctx context.Context, q metadataQuerier, request r
 }
 
 func readTermReportMembers(ctx context.Context, q metadataQuerier, request report.Request,
-	witnesses map[int64][]report.CollectionWitness, budget report.Budget, frame *report.Frame,
+	witnesses map[int64][]report.CollectionWitness, budget report.Budget, frame *report.Frame, postgres bool,
 ) (map[int64]int, []termReportVersion, error) {
 	index := make(map[int64]int)
 	versions := make([]termReportVersion, 0)
@@ -243,7 +246,7 @@ func readTermReportMembers(ctx context.Context, q metadataQuerier, request repor
 		if err != nil {
 			return nil, nil, err
 		}
-		scope = ` AND n.id IN (SELECT value FROM json_each(?))`
+		scope = ` AND n.id IN (SELECT CAST(value AS BIGINT) FROM ` + (metadataJSONDialect{postgres}).arrayValues("$1") + `)`
 		args = append(args, string(encoded))
 	}
 	rows, err := q.QueryContext(ctx, `SELECT n.id,cv.version_id,cv.blob_hash,cv.size,COALESCE(cv.mime_type,''),
@@ -342,13 +345,13 @@ func (s *Store) readTermReportDateAuthority(ctx context.Context, q metadataQueri
 }
 
 func readTermReportNativeText(ctx context.Context, q metadataQuerier, info termReportVersion,
-	index int, budget, textBudget report.Budget, frame *report.Frame,
+	index int, budget, textBudget report.Budget, frame *report.Frame, postgres bool,
 ) error {
 	var extractionID, textBytes int64
 	var extractor, status string
-	err := q.QueryRowContext(ctx, `SELECT e.id,e.extractor,e.status,COALESCE(length(CAST(e.text AS BLOB)),0)
+	err := q.QueryRowContext(ctx, `SELECT e.id,e.extractor,e.status,COALESCE(`+documentCatalogByteLength(postgres, "e.text")+`,0)
 		FROM text_searchable_versions sv JOIN extracted_text e
-		ON e.blob_hash=? WHERE sv.version_id=?
+		ON e.blob_hash=$1 WHERE sv.version_id=$2
 		ORDER BY e.status='ok' DESC,e.extracted_at DESC,e.extractor DESC LIMIT 1`,
 		info.identity.SHA256, info.identity.VersionID).Scan(&extractionID, &extractor, &status, &textBytes)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -374,7 +377,7 @@ func readTermReportNativeText(ctx context.Context, q metadataQuerier, info termR
 	// The enclosing read snapshot keeps this row fixed between the size check
 	// and payload read. Reserve before asking the driver to allocate the text.
 	var text string
-	if err := q.QueryRowContext(ctx, `SELECT text FROM extracted_text WHERE id=?`, extractionID).Scan(&text); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT text FROM extracted_text WHERE id=$1`, extractionID).Scan(&text); err != nil {
 		return err
 	}
 	bytes := []byte(text)
@@ -410,9 +413,9 @@ func readTermReportRendition(ctx context.Context, q metadataQuerier, info termRe
 		JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
 			AND a.content_version_id=h.content_version_id AND a.profile_fingerprint=h.profile_fingerprint
 		JOIN rendition_builds b ON b.build_id=a.build_id AND b.vault_uid=a.vault_uid
-		JOIN rendition_lexical_generation_builds gb ON gb.build_id=b.build_id AND gb.generation_id=?
-		JOIN rendition_artifacts x ON x.build_id=b.build_id AND x.role=?
-		WHERE h.content_version_id=? AND h.profile_fingerprint=?
+		JOIN rendition_lexical_generation_builds gb ON gb.build_id=b.build_id AND gb.generation_id=$1
+		JOIN rendition_artifacts x ON x.build_id=b.build_id AND x.role=$2
+		WHERE h.content_version_id=$3 AND h.profile_fingerprint=$4
 		ORDER BY x.artifact_id LIMIT 1`, generationID, catalogArtifactSanitizedMarkdown,
 		info.identity.VersionID, coverage.ProfileFingerprint).Scan(
 		&binding.AttachmentID, &binding.BuildID, &sourceHash, &markdownHash,

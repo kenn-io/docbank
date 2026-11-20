@@ -349,8 +349,8 @@ remaining implementation work in Kata rather than adding task lists to this guid
 
 ### PostgreSQL schema lifecycle
 
-`internal/store/pgschema` owns canonical PostgreSQL catalogs for internal
-store qualification. Initial and additional audit enrollment work through the
+`internal/store/pgschema` owns canonical PostgreSQL catalog setup and validation.
+Initial and additional audit enrollment work through the
 native preview and commit methods, including complete retained-metadata
 validation. Native directory/file creation, content confirmation, replacement,
 revert, and rename/move also work, including audited mutations and the required
@@ -384,14 +384,15 @@ Photo metadata edits and undo, XMP conflict settlement and sidecar publication
 also use shared operations for explicit asset selections. Quality scores, hidden-photo
 sessions and photo settings have native Store contracts as well.
 
-A public PostgreSQL-backed vault is not available yet: daemon and embedded
-operations still open SQLite. Direct embedding-worker publication/recovery, photo
+The Go embedding API can [initialize, restore and open a PostgreSQL vault](../embedding.md#use-a-postgresql-vault).
+The standalone daemon opens SQLite. Direct embedding-worker publication/recovery, photo
 descriptions and face detection have qualification below. Foreground direct-file
 and image embedding can publish a vector index before returning. Face embedding,
 index-backed people ranking and suggestion rebuilding use shared worker and
 Store operations. Remote recording references, manual file import, acquisition
 consent, exact transcript reads and selected-recording search have shared
-scenarios below. Photo query compilation remains unqualified.
+scenarios below. Structured photo browsing and selection also use the native
+Store.
 Native multi-store catalog operations are qualified below; deployment adapters
 remain separate from public PostgreSQL vault opening. Paged tree walks, native
 file and folder imports, and stored-original ZIP workers have the filesystem
@@ -404,7 +405,8 @@ schema, and runs `pgschema.Validate` before loading vault roots. It creates no
 schema and performs no repair. The returned Store owns its pool; `Close` releases
 it. Setup and logical restore keep their separate owner credentials. The Store
 contract suite and native backup tests use this opener through the same
-`pgstoretest.RuntimeConfig` grant fixture. Public Vault opening stays separate.
+`pgstoretest.RuntimeConfig` grant fixture. Embedded opening uses the same
+runtime validation while holding the local root lock.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
 and uses the explicit `Schema` setting. The database must use `UTF8` encoding;
@@ -572,6 +574,8 @@ GRANT INSERT, DELETE ON documents.node_tags TO docbank_runtime;
 GRANT INSERT ON documents.batch_tag_receipts TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(name, description, payload, fingerprint, revision, updated_at, photo_scope)
     ON documents.saved_queries TO docbank_runtime;
+GRANT INSERT ON documents.saved_query_runs TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.term_report_history TO docbank_runtime;
 GRANT UPDATE(binding_epoch) ON documents.document_people_state TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(display_name, display_name_folded, state, revision,
     updated_at, key_face_id) ON documents.persons TO docbank_runtime;
@@ -726,37 +730,31 @@ role, directly or indirectly. This ownership check is separate from object
 privileges: an owner can revoke its own write privileges and still retain the
 authority to alter objects or grant those privileges again.
 
-PostgreSQL schemas are disposable until the first deployment whose data must
-survive upgrades. An ordinary Docbank release does not establish that boundary:
-the public vault lifecycle still opens only SQLite. Edit
-`internal/store/pgschema/schema.sql` directly; no manual version bump or migration
-is needed during this period. The build hashes the exact embedded SQL template
-with SHA-256 once at package initialization, before substituting the vault schema
-name. `Setup` records this fingerprint in `vault_metadata` in the installation
-transaction. Both `Setup` and runtime `Validate` reject a missing or different
-fingerprint with a "recreate this schema" error; neither repairs it. Any SQL-file
-change, including comments or formatting, changes the fingerprint. Existing
-development schemas with the older integer version are also refused. Recreate
-only disposable development schemas with the current build, never retained data.
-Go-written seed rows in `Setup` are outside the fingerprint; an incompatible seed
-change must also change the SQL template so existing development schemas are refused.
+PostgreSQL retained history starts at version 1,
+`internal/store/pgschema/migrations/000001_initial_schema.up.sql`.
+Fresh setup installs `internal/store/pgschema/schema.sql` and records the
+current version. Upgrade runs the contiguous `NNNNNN_description.up.sql`
+chain under the schema-owner setup lock and commits the SQL and version
+together. The fingerprint in `vault_metadata` identifies the names and exact
+bytes of all applied migrations. Runtime opening requires the current version
+and matching history. It performs validation only. Initialization and import
+can install a missing catalog and require the current version on an existing
+catalog. Run owner setup explicitly to upgrade.
 
-Before the first retained deployment, establish the current schema as migration
-1 (`000001_initial_schema.up.sql`) and add a CI check that installs the numbered
-chain and compares it with the canonical schema. This is the PostgreSQL upgrade
-floor, independent of SQLite layout versions and JSONL format versions. From
-that cutoff onward, every change to the schema needs a numbered
-`NNNNNN_description.up.sql` transition, including indexes or defaults added while
-porting an operation. A port that changes only Go or queries needs none. Keep at
-most one new migration per PR; revise it while it remains branch-only and has
-been applied only to disposable databases.
+For a schema change, update the canonical SQL and add the next forward
+migration. Include changes to indexes, defaults, and incompatible seed
+values. Migration SQL runs inside the setup transaction. Keep at most one
+migration per PR. Once a migration reaches main or
+a retained catalog, fix it through a new forward migration. `make test-pg`
+compares a catalog installed by current setup with one upgraded from the
+version 1 schema and seed rows. It checks the installed objects and required
+rows. SQLite layout and portable metadata versions have their own history.
 
-Keep one complete forward chain, and commit each transition and its version
-together under the setup lock. Runtime startup never migrates. Once a migration
-reaches main or a deployed database it is immutable; fix forward. Recovery uses
-a pre-upgrade backup and compatible binary, not down migrations. This discipline
-does not change SQLite's JSONL cutover policy. The migration chain and its CI
-comparison must land before retained PostgreSQL deployments are supported.
+Back up and close the vault before running owner setup on a newer build.
+Apply the current runtime grants before reopening. Recover with a compatible
+backup and binary. For fingerprint-only development builds, recreate
+disposable catalogs. Preserve any data you need in a portable backup from the
+matching build and restore it into a fresh numbered catalog.
 
 Do not add SQL `CHECK` constraints. Value validation belongs in Go and must be
 shared by writes, imports, restores and audits. Primary keys, foreign keys,
@@ -963,6 +961,30 @@ The existing claim fencing and archive format are shared with SQLite. Rendering,
 query-selected populations and public vault opening are outside these worker
 contracts.
 
+#### Batch moves and embedded vault lifecycle
+
+Batch moves resolve sources against the starting tree and destinations against
+the final tree. The two backends can swap occupied names, move into a directory
+that is itself moving, and return receipts in request order. Node changes,
+the change stream and audit records commit together. PostgreSQL refreshes XMP
+export work from the final coordinates, including the original and new siblings
+of a moved sidecar. SQLite keeps its existing triggers.
+
+`make test-pg` runs `TestEmbeddedVaultLifecyclePostgres` through `SetupPostgres`,
+`BackupRepository.RestorePostgres`, and `OpenPostgres`. The scenario restores a SQLite backup with
+packed content into PostgreSQL, opens the owned blob root, checks exclusive
+access, moves and creates audited files, walks the catalog, and verifies the
+content bytes. It closes and reopens the vault, then takes another backup and
+restores it into SQLite through the open vault.
+
+`InitializePostgres` uses the owner connection to bind a private root to a
+pristine catalog. The writer transaction records the committed binding in
+`vault_metadata.primary_storage_bound` and rotates the primary ownership epoch.
+Initialization and restore hold the local root lock across publication and
+commit. The public runtime opener checks both the binding and the filesystem
+marker. The binding is local deployment state and stays outside portable
+metadata exports. Restore refuses any catalog with a committed binding.
+
 #### Document export plans and jobs
 
 The native Store supports explicit members, current node IDs, chunked uploads
@@ -1028,8 +1050,9 @@ Logical metadata can move between PostgreSQL and SQLite without changing the
 format. Use `ImportMetadata` for a pristine SQLite Store. For PostgreSQL, use
 `store.ImportPostgresMetadata(ctx, ownerPool, cfg, reader)` with
 `pgschema.Config{Schema: "documents", SchemaOwner: "docbank_owner"}` and a pool
-connected as that schema owner. The internal import entry point runs `Setup`,
-refuses a nonpristine target, and uses the existing storage writer transaction.
+connected as that schema owner. The internal import entry point installs a
+missing catalog or checks that it is current. Import requires a pristine
+target and uses the storage writer transaction.
 It selects the schema through `SET LOCAL search_path`; the caller's pool stays
 open with its original session settings. Runtime credentials cannot perform
 setup or change the vault identity, and need no additional grants.
@@ -1060,8 +1083,8 @@ Email-PDF and supplied-media service scenarios use the production runtimes with
 injected renderers/providers. All scenarios run the real worker, Store and
 consent records against managed blob files.
 
-`make test-pg` runs `TestProcessingWorkersPostgres` after the Store and backup
-lanes on both PostgreSQL versions. The SQLite entry points call the same shared
+`make test-pg` runs `TestProcessingWorkersPostgres` alongside the Store and
+backup lanes on both PostgreSQL versions. The SQLite entry points call the same shared
 scenarios and keep their existing parallelism. The named scenarios define the
 qualified coverage; other database-backed scenarios and checks that validate
 inputs without querying the database keep their existing SQLite/unit entry points.
@@ -1163,8 +1186,7 @@ SQLite keeps its released membership triggers and receives no additional
 maintenance queries. The shared reader scenarios cover native original/chunk
 and image membership changes, leases, cleanup, warm-cache reuse and snapshots.
 Face members are covered by the processing suite through native face publication,
-index reconstruction and ranked people selection. Photo query compilation
-remains unqualified on PostgreSQL.
+index reconstruction and ranked people selection.
 Public PostgreSQL vault opening remains separate.
 
 #### Face embeddings and matching
@@ -1280,9 +1302,95 @@ including concurrent publication, empty and replaced content, truncation and
 text coverage. PostgreSQL plan checks use populated tables without disabling
 sequential scans. The processing suite runs hybrid retrieval with a real
 embedding publication and vector index. The remote recording suite above covers
-selected transcript retrieval. Photo query compilation, PDF fact filters and
+selected transcript retrieval. The PDF fact contract below covers filter-only,
+filename and document-body search. Photo retrieval and
 selected image-interpretation search have separate qualification boundaries.
 Public PostgreSQL vault opening remains separate.
+
+#### Structured photo browsing and selection
+
+The `photo-browse` suite exercises native photo pages on SQLite and PostgreSQL.
+A page reads its count, matching live display files, facet groups, previews and
+quality from one snapshot. Continuation cursors keep the first total and seek
+within live order. PostgreSQL compares byte-stored camera, lens and location
+values without decoding them as text. Media-type sort keys use the same
+character limit and NUL boundary as SQLite.
+
+Burst pages keep connected groups together and recheck the cursor's grouping
+boundary. The same population selects album members, exact photo export
+members and reject candidates. Moving rejects rechecks flags, member revisions
+and XMP sidecar settlement under writer admission.
+
+SQLite retains the indexed join order for browsing, burst probes and XMP
+receipts. PostgreSQL uses its normal join planner. This suite covers structured
+filters and orders, including media family for live asset members. Lexical and
+semantic photo retrieval and PDF facts have separate qualification boundaries.
+The structured photo workspace suite below covers frozen membership.
+
+#### Frozen photo workspaces and saved runs
+
+The `photo-snapshots` suite exercises structured photo workspaces on SQLite and
+PostgreSQL. A snapshot freezes membership, order, version and display evidence.
+Reading current display rows preserves that order and checks that each requested
+member is still in the Library. Creating an album from the snapshot keeps the
+frozen order.
+
+A saved run rechecks the definition, its dependencies and every frozen photo
+inside writer admission before it inserts a receipt. The receipt records the
+previous committed run and the change in membership. Runtime access to receipts
+is append-only. The calendar's capture-day facet uses the same photo membership
+and excludes photos outside the Library. Ranked photo workspaces have a separate
+qualification boundary.
+
+#### Document query snapshots
+
+The Store freezes document query results and their facets in one read snapshot
+on SQLite and PostgreSQL. The rows include the exact versions, tags,
+operational collections and processing coverage visible at that point. A facet
+recomputes its population when its own root filter is selected. Nested saved
+queries keep their filters. The duplicates facet counts matching documents with
+peers anywhere in the current vault.
+
+The `document-snapshots` contracts cover these rows, saved-run comparison
+receipts, structured selection, filename and body terms, phrase and prefix
+matching, and people-role filters and facets. Text search reads either indexed
+extractions or the current rendition generation. People filters keep
+incomplete attribution distinct from a known absence. NEAR uses SQLite.
+
+Media-family filters use the current version's declared MIME type. A missing or
+generic declaration falls back to the live filename. A malformed declaration
+counts as unknown. PostgreSQL saves the shared Go classifier's MIME decision
+with each version and uses the shared extension catalog for fallback. Renaming
+a file updates fallback results immediately. Logical restore rebuilds the MIME
+decision from the original bytes, and exports retain their existing format.
+
+#### PDF fact filters
+
+Document snapshots, saved runs and lexical search filter on recorded PDF facts
+for the current original. Count bounds compare integers, permission names match
+exactly, and a boolean comparison requires a recorded value. A missing fact
+fails a positive comparison and can match its negation.
+
+PostgreSQL derives the search fields when it publishes validated source evidence
+and when it restores a catalog. Permissions use hex-encoded bytes for exact
+matching, including zero bytes. The projection stays with its immutable source
+generation. A query reads it through the active metadata head for the current
+version. Retained source evidence, its checksum and the export format keep their
+original bytes. SQLite continues to read the facts from validated source evidence.
+
+#### Term reports
+
+Both Store backends capture term matches, exact document versions and date
+evidence in a single read snapshot. A report scoped to a collection records
+its source evidence and excludes supplied evidence marked as embedded
+regardless of prefix casing. Attachment families follow current parent and
+child versions in both directions, including through a parent outside the
+selection. The frozen report keeps its evidence when documents change.
+
+The report worker can prepare reports from retained native text and selected
+renditions. Selection refresh reads current identities and paths together.
+The runtime role inserts history receipts and deletes those outside the latest
+100. Catalog export and import preserve the reusable requests and receipts.
 
 #### Backup capture and physical recovery
 
@@ -1308,8 +1416,8 @@ derived indexes through the runtime role. The
 [backup architecture](../architecture/backup.md#restoring-into-postgresql)
 describes the directory and schema publication boundary and retry rules.
 
-`make test-pg` runs the backup application scenarios after the Store lane on both
-PostgreSQL versions. The shared scenarios verify loose and packed byte readback,
+`make test-pg` runs the backup application scenarios alongside the Store lane on
+both PostgreSQL versions. The shared scenarios verify loose and packed byte readback,
 photo state after source loss, and complete audited incremental history. The
 PostgreSQL source-loss scenario removes both the schema and source files before
 restoring. The ordinary SQLite suite runs the same recovery scenarios.
@@ -1441,8 +1549,7 @@ their next insertion position without relaxing the runtime identity column.
 
 This is logical recovery. Before publishing a restored vault, restore and verify
 all blob bytes and physical pack authority separately. A metadata stream alone
-cannot recover those bytes. Filesystem backup/restore and public PostgreSQL
-vault opening remain separate boundaries.
+cannot recover those bytes. See the [physical restore contract](../architecture/backup.md#restoring-into-postgresql).
 
 The `metadata-export` and `metadata-import` contracts cover pinned snapshots,
 native audited transfer, retained-catalog round trips, backup blob selection,
@@ -1450,8 +1557,7 @@ failed streams and destinations, late database failures, runtime refusal and
 fresh processing consent. PostgreSQL imports are read through the runtime role
 and exported back through the existing SQLite importer. Retained fixtures
 qualify the transfer, not their producers. Runtime SELECT grants cover export;
-import uses the separate schema-owner credentials. The schema fingerprint
-changes with deferrable references; recreate stale disposable test schemas.
+import uses the separate schema-owner credentials.
 
 #### PostgreSQL reference implementations
 
@@ -1467,7 +1573,7 @@ their `internal` packages are not importable shared libraries.
 | AgentsView [catalog adapter][av-pg-catalog] and [query dialect][av-dialect] | Shared filtering, pagination and result assembly; explicit backend SQL and typed scanning | Docbank is an authoritative vault, not a disposable mirror. Keep its existing `Store` and mutation helpers; no replica registry or second implementation of audit and publication |
 | AgentsView [pool opening][av-connect] and [hosted validation][av-hosted] | Configure every pooled connection, validate effective schema at opening, and account for connection reuse | Its tenant/RLS schema is a separate design, not Docbank's permission model. Do not copy its CHECK constraints, tenant tables or triggers |
 | [msgvault embedded archive][mv-archive] | pgx through `database/sql`; separate setup and validation-only opening; `current_schema()` check | Docbank serializes setup itself and requires a dedicated schema; it does not copy ambient-schema defaults or msgvault's migration ledger |
-| [Kata PostgreSQL operations][kata-operations] | `Schema`/`SchemaOwner` naming, owner/runtime role separation, transaction advisory lock | This internal API accepts a pool and has separate setup/validate calls; schema fingerprints reject stale disposable schemas; numbered migrations start before retained deployments, and a public vault is not exposed yet |
+| [Kata PostgreSQL operations][kata-operations] | `Schema`/`SchemaOwner` naming, owner/runtime role separation, transaction advisory lock | Embedded setup uses a caller-owned pool and migrates numbered schemas. Runtime opening uses a separate login and validates the installed migration history. |
 | [Kata numbered migrations][kata-migrations] and [sequence export][kata-sequences] | Canonical fresh DDL, immutable forward SQL, atomic version stamps, and preservation of allocated IDs through transfer | Version history belongs to Docbank; its audit format requires a transactional node counter rather than a native identity sequence |
 | AgentsView [behavior parity][av-parity] and [pool tests][av-pool-tests]; msgvault and Kata PostgreSQL lanes | Exercise real backends and their public operations, including errors, filtering and reused connections | Keep Docbank's canonical setup fixture, separate runtime role, PostgreSQL 16/18 lanes and both SQLite builds; no new fixture schema or per-test container |
 
@@ -1938,9 +2044,9 @@ The existing receipt lookup expressions keep their engine-specific indexes.
 The `photo-edit` contracts exercise native writes, stale plans, both conflict
 choices, generated sidecars, undo, audit history, queue invalidation and rollback.
 Face and description records also participate in metadata preparation; their
-native processing lifecycle is covered by the `photo-analysis` suite below. Query-based selections,
-`SkipUnavailable`, best-shot/representative choices, hidden-session management,
-photo review, and public PostgreSQL vault opening remain unqualified.
+native processing lifecycle is covered by the `photo-analysis` suite below.
+The `photo-browse` suite covers structured selection for albums, exports and
+reject moves. This authored-edit contract covers explicit targets.
 The processing worker's XML encoding and filesystem publication still run through
 the SQLite vault; this qualification covers their Store calls.
 
@@ -2173,10 +2279,10 @@ sort. PostgreSQL uses ordinary joins and the same membership access indexes;
 its runtime role can insert albums, update their mutable properties, and insert
 or delete members. It cannot update member identities or timestamps in place.
 
-This qualifies explicit-ID Store operations. Search-selected populations,
-`SkipUnavailable` selection, browse pages and albums created from frozen query
-snapshots remain within the search and delivery qualification boundaries. The
-public PostgreSQL vault lifecycle is still unavailable.
+The `photo-browse` suite also covers album membership selected by structured
+queries. The `photo-snapshots` suite covers albums created from a frozen
+structured query. Lexical selection and `SkipUnavailable` have separate
+qualification boundaries.
 
 #### Photo checkouts
 
@@ -2629,8 +2735,7 @@ schema can enroll its root without a copied fixture.
 
 Copying supporting catalogs qualifies their validation, not their producers.
 The [operation inventory](#backend-support-and-drift-checks) identifies native
-writes and their catalog-maintenance coverage. Public PostgreSQL opening,
-Photo query compilation remains unqualified. Logical metadata transfer
+writes and their catalog-maintenance coverage. Logical metadata transfer
 uses the internal import/export entry points described above.
 
 For PostgreSQL tests, start a disposable server, never an operator database:
@@ -2661,11 +2766,30 @@ the test administrator needs database, role and event-trigger creation for the
 rollback fixtures. These are test privileges, not runtime requirements.
 `internal/pgtest` owns database creation and cleanup for both the schema and
 node and content-history query tests. `make test-pg` requires the DSN, bypasses
-cached test results, and runs these groups under the race detector. It limits
-parallel tests to four: each schema installation locks hundreds of catalog
-objects, so CPU-count concurrency can exhaust the default server lock table.
-The Store suite has an eight-minute timeout for the full contract inventory
-at that concurrency; the schema lifecycle suite has a separate three-minute limit.
+cached test results, and runs these groups under the race detector. It runs up
+to three packages at a time and limits parallel tests within each package to
+leave room for reader, setup and cleanup connections on the default
+100-connection server. The processing package runs on its own so that its
+long face and media scenarios can use the runner and database without competing
+with Store tests.
+
+Store tests do not install the schema themselves. `internal/pgstoretest`
+installs it once per package run in a template database, and each test gets a
+file copy of that template. Shard processes of the same run find the template
+by a name the first process passes them in the environment. At most two
+schema installations run at once, in all test processes together: one holds
+about 2,400 locks until it commits, and the default server lock table has room
+for about 6,400. The template's runtime login uses one SCRAM iteration, because
+the tests open thousands of connections and its password is a public constant.
+
+A test's database is dropped after the test by a background goroutine.
+PostgreSQL makes every `DROP DATABASE` wait for a checkpoint, so tests that
+dropped their own databases waited for each other. Each package's `TestMain`
+passes the exit code through `pgtest.Finish`, which waits for the drops and
+fails the run if one fails. Packages that use the template call
+`pgstoretest.Finish` instead, which also drops the template in the process
+that named it. The Store suite has a ten-minute timeout; the schema lifecycle suite has
+a separate three-minute limit.
 Without that variable, ordinary `make test` skips PostgreSQL tests.
 A supplied but invalid connection fails rather than skipping.
 
@@ -2772,6 +2896,29 @@ working tree should let a new contributor understand the current system without
 replaying them. Keep work, ordering, blockers, and acceptance state outside
 the design documentation; these pages carry resulting capability and durable
 rationale.
+
+### Test run time
+
+`make test` and `make test-pg` run `go test` through
+`scripts/with-test-tmpdir.sh`. On Linux it points `TMPDIR` at a private
+directory under the memory-backed `/dev/shm`, because tests sync many small
+files and a disk makes each sync wait. The tests still make every sync. The
+directory stays the same between runs, so `go test` can reuse cached results.
+The wrapper also names a new directory in `DOCBANK_TEST_WASM_CACHE_DIR`. The
+`TestMain` of each package whose tests render PDFs calls
+`pdfiumtest.ShareCompiledCode`: the first test process compiles PDFium there
+under a file lock, and the other processes load the compiled code. Add the
+call to a package whose tests start rendering PDFs. The CLI tests share one built
+`docbank` binary the same way.
+
+A package whose tests cannot call `t.Parallel`, because they change
+environment variables, the working directory or other process-wide state,
+calls `packagetest.RunShards` from `TestMain`. It runs the top-level tests
+in several child processes of the test binary, one test at a time in each,
+and relays each test's output whole. A `Split` lets the children share the
+subtests of a test that dominates its package. Add a package to it when its
+serial tests set the length of the suite. A `-run` pattern that selects
+subtests, coverage, profiles and benchmarks run in one process.
 
 ### Timing checks
 

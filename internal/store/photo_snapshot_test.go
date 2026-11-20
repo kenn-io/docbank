@@ -63,11 +63,11 @@ func TestPhotoSnapshotOrderAndFlagsMatchBrowse(t *testing.T) {
 	}
 }
 
-func TestPhotoSnapshotPageChecksRequestedMembershipAndPreservesFrozenRows(t *testing.T) {
-	t.Parallel()
+func checkPhotoSnapshotPageChecksRequestedMembershipAndPreservesFrozenRows(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	for _, mutation := range []string{"excluded", "moved node to hidden asset", "benign edits"} {
 		t.Run(mutation, func(t *testing.T) {
-			s := newTestStore(t)
+			s := open(t)
 			original := authoredPair(t, s)
 			assetIDs := make([]string, 51)
 			assetIDs[0] = original.ID
@@ -159,12 +159,12 @@ func TestPhotoSnapshotPageChecksRequestedMembershipAndPreservesFrozenRows(t *tes
 	}
 }
 
-func TestPhotoSnapshotRunRejectsMemberLeavingLibrary(t *testing.T) {
-	t.Parallel()
+func checkPhotoSnapshotRunRejectsMemberLeavingLibrary(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	for name, leaving := range map[string]int{"first page": 0, "beyond first page": 50} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			s := newTestStore(t)
+			s := open(t)
 			assets := make([]PhotoAsset, 51)
 			for i := range assets {
 				assets[i] = albumAsset(t, s, fmt.Sprintf("photo-%02d.jpg", i))
@@ -417,4 +417,71 @@ func TestPhotoSnapshotSuggestionBadgesKeepRankOrderAndCountTowardSizeLimit(t *te
 			}
 		})
 	}
+}
+
+func checkStructuredPhotoWorkspace(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	ctx := t.Context()
+	first := browsePhotoNode(t, s, "alpha.jpg", browseHash("workspace-alpha"), "image/jpeg")
+	second := browsePhotoNode(t, s, "beta.jpg", browseHash("workspace-beta"), "image/jpeg")
+	firstAsset, err := s.PhotoAssetForNode(ctx, first.ID)
+	require.NoError(t, err)
+	secondAsset, err := s.PhotoAssetForNode(ctx, second.ID)
+	require.NoError(t, err)
+	// Freeze the photos in reverse asset-ID order, regardless of the generated IDs.
+	direction := "asc"
+	if firstAsset.ID < secondAsset.ID {
+		first, second = second, first
+		firstAsset, secondAsset = secondAsset, firstAsset
+		direction = "desc"
+	}
+	stamp := "2024-02-29T12:00:00Z"
+	browsePhotoMetadata(t, s, first, "workspace-capture", photoMetadataField(
+		"created", "image.exif", "DateTimeOriginal", photoTimestamp(stamp, stamp, document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneUTC, "")))
+	calendar, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{FacetsOnly: true, Query: snapshotTestQuery(t, "{}"), Facets: []string{"capture_day"}})
+	require.NoError(t, err)
+	require.Equal(t, map[string]int64{"2024-02-29": 1}, facetCounts(facetByDimension(t, calendar, "capture_day")))
+	tag, err := s.CreateTag(ctx, "On Review")
+	require.NoError(t, err)
+	_, err = s.AssignTag(ctx, tag.ID, first.ID, first.Revision)
+	require.NoError(t, err)
+	definition, err := s.CreateSavedQuery(ctx, "Review photos", "", SavedQueryKindQuery, fmt.Appendf(nil, `{"sort":{"field":"name","direction":%q}}`, direction))
+	require.NoError(t, err)
+	service := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	run, frozen, err := service.RunSaved(ctx, "owner", definition.ID, definition.Revision, SnapshotRequest{Photos: true}, nil)
+	require.NoError(t, err)
+	require.Equal(t, frozen.MemberHash, run.MemberHash)
+	require.Len(t, frozen.Rows, 2)
+	require.Equal(t, []int64{first.ID, second.ID}, []int64{frozen.Rows[0].NodeID, frozen.Rows[1].NodeID})
+	require.Equal(t, "/"+first.Name, frozen.Rows[0].Path)
+	require.Len(t, frozen.Rows[0].Tags, 1)
+	require.Equal(t, tag.ID, frozen.Rows[0].Tags[0].ID)
+
+	asset, err := s.PhotoAssetForNode(ctx, first.ID)
+	require.NoError(t, err)
+	display := asset.Files[0]
+	_, err = editPhotoAuthored(ctx, s, []PhotoAuthoredTarget{{FileID: display.ID, Revision: display.Revision, Patch: PhotoAuthoredPatch{Flag: new("pick")}}})
+	require.NoError(t, err)
+	page, err := service.CurrentPhotoPage(ctx, frozen, PhotoBrowseRequest{})
+	require.NoError(t, err)
+	require.Equal(t, []string{firstAsset.ID, secondAsset.ID}, rowIDs(page.Items))
+	require.Equal(t, "pick", page.Items[0].Flag)
+	require.Empty(t, *frozen.Rows[0].Flag)
+
+	album, err := service.CreatePhotoAlbum(ctx, "owner", frozen.SnapshotID, frozen.MemberHash, "Frozen review", nil)
+	require.NoError(t, err)
+	added := browsePhotoPage(t, s, fmt.Sprintf(`{"filters":{"set_ids":[%q]},"sort":{"field":"added_time","direction":"desc"}}`, album.ID))
+	require.Equal(t, rowIDs(page.Items), rowIDs(added.Items))
+	asset, err = s.PhotoAssetForNode(ctx, first.ID)
+	require.NoError(t, err)
+	_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	_, err = service.CurrentPhotoPage(ctx, frozen, PhotoBrowseRequest{})
+	require.ErrorIs(t, err, ErrPhotoSnapshotMemberNotInLibrary)
+	next, _, err := service.RunSaved(ctx, "owner", definition.ID, definition.Revision, SnapshotRequest{Photos: true}, nil)
+	require.NoError(t, err)
+	require.Equal(t, run.RunID, next.PreviousRunID)
+	require.EqualValues(t, -1, next.Comparison.TotalDelta)
 }

@@ -8,5 +8,5 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	os.Exit(packagetest.RunWithLockRegistry(m))
+	os.Exit(packagetest.RunShardsWithLockRegistry(m))
 }

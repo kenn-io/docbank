@@ -13,7 +13,7 @@ import (
 // The caller owns the pool. Blob bytes and physical pack authority must be
 // restored and verified separately before the destination can be published.
 func ImportPostgresMetadata(ctx context.Context, db *sql.DB, cfg pgschema.Config, input io.Reader) error {
-	if _, err := pgschema.Setup(ctx, db, cfg); err != nil {
+	if _, err := pgschema.Install(ctx, db, cfg); err != nil {
 		return err
 	}
 	s := &Store{db: db, writeDB: db, postgresSchema: cfg.Schema}

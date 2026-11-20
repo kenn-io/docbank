@@ -19,14 +19,14 @@ func savedQueryRunCount(t *testing.T, s *Store, id string, photos bool) int {
 	t.Helper()
 	var count int
 	require.NoError(t, s.db.QueryRowContext(t.Context(),
-		`SELECT COUNT(*) FROM saved_query_runs WHERE saved_query_id=? AND photos=?`, id, photos,
+		`SELECT COUNT(*) FROM saved_query_runs WHERE saved_query_id=$1 AND photos=$2`, id, boolInt(photos),
 	).Scan(&count))
 	return count
 }
 
 func persistedSavedQueryRun(t *testing.T, s *Store, id string) SavedQueryRun {
 	t.Helper()
-	run, err := scanSavedQueryRun(s.db.QueryRowContext(t.Context(), savedQueryRunSelect+` WHERE run_id=?`, id))
+	run, err := scanSavedQueryRun(s.db.QueryRowContext(t.Context(), savedQueryRunSelect+` WHERE run_id=$1`, id))
 	require.NoError(t, err)
 	return run
 }
@@ -43,20 +43,20 @@ func TestSavedQueryRunRechecksPreserveResolverErrors(t *testing.T) {
 
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = insertSavedQueryRunTx(canceled, tx, definition.ID, definition.Revision, SnapshotProjection{}, SnapshotPage{})
+	_, err = s.insertSavedQueryRunTx(canceled, tx, definition.ID, definition.Revision, SnapshotProjection{}, SnapshotPage{})
 	require.ErrorIs(t, err, context.Canceled)
-	require.ErrorIs(t, recheckSavedQueryRunDependencies(canceled, tx, dependencies), context.Canceled)
+	require.ErrorIs(t, s.recheckSavedQueryRunDependencies(canceled, tx, dependencies), context.Canceled)
 
 	_, err = tx.ExecContext(t.Context(), `DELETE FROM saved_queries WHERE id=?`, definition.ID)
 	require.NoError(t, err)
-	_, err = insertSavedQueryRunTx(t.Context(), tx, definition.ID, definition.Revision, SnapshotProjection{}, SnapshotPage{})
+	_, err = s.insertSavedQueryRunTx(t.Context(), tx, definition.ID, definition.Revision, SnapshotProjection{}, SnapshotPage{})
 	require.ErrorIs(t, err, ErrStaleRevision)
-	require.ErrorIs(t, recheckSavedQueryRunDependencies(t.Context(), tx, dependencies), ErrStaleRevision)
+	require.ErrorIs(t, s.recheckSavedQueryRunDependencies(t.Context(), tx, dependencies), ErrStaleRevision)
 
 	require.NoError(t, tx.Rollback())
-	_, err = insertSavedQueryRunTx(t.Context(), tx, definition.ID, definition.Revision, SnapshotProjection{}, SnapshotPage{})
+	_, err = s.insertSavedQueryRunTx(t.Context(), tx, definition.ID, definition.Revision, SnapshotProjection{}, SnapshotPage{})
 	require.ErrorIs(t, err, sql.ErrTxDone)
-	require.ErrorIs(t, recheckSavedQueryRunDependencies(t.Context(), tx, dependencies), sql.ErrTxDone)
+	require.ErrorIs(t, s.recheckSavedQueryRunDependencies(t.Context(), tx, dependencies), sql.ErrTxDone)
 }
 
 func TestSavedQueryRunMaterializesBeforeEnteringMutationGate(t *testing.T) {

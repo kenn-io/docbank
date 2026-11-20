@@ -84,6 +84,12 @@ func annotateMatchedRoles(ctx context.Context, q metadataQuerier, compiled Compi
 	if len(rows) == 0 {
 		return nil
 	}
+	idsSQL := `json_each(?) AS items`
+	nodeID := "items.value"
+	if compiled.postgres {
+		idsSQL = (metadataJSONDialect{postgres: true}).arrayValues("?")
+		nodeID = "CAST(items.value AS BIGINT)"
+	}
 	roots := make(map[int64][]int)
 	if !compiled.Query.Filters.CollapseDuplicates {
 		for i, row := range rows {
@@ -109,18 +115,18 @@ func annotateMatchedRoles(ctx context.Context, q metadataQuerier, compiled Compi
 			return err
 		}
 		population := compiledQueryFragment{sql: `SELECT root.id,n.id
- FROM json_each(?) ids JOIN nodes root ON root.id=ids.value
+ FROM ` + idsSQL + ` JOIN nodes root ON root.id=` + nodeID + `
  JOIN content_versions rootcv ON rootcv.version_id=root.current_version_id
  JOIN content_versions cv ON cv.blob_hash=rootcv.blob_hash
  JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
  JOIN (` + members.sql + `) matched ON matched.node_id=n.id AND matched.content_version_id=cv.version_id
  WHERE 1=1`, args: append([]any{string(encoded)}, members.args...), relations: members.relations}
-		statement, args, err := bindQueryPopulation(population, coverage, generation)
+		statement, args, err := bindQueryPopulationForBackend(population, coverage, generation, compiled.postgres)
 		if err != nil {
 			return err
 		}
 		err = func() (err error) {
-			found, err := q.QueryContext(ctx, statement, args...)
+			found, err := q.QueryContext(ctx, bindCompiledRead(statement, compiled.postgres), args...)
 			if err != nil {
 				return fmt.Errorf("loading matched role members: %w", err)
 			}
@@ -152,7 +158,19 @@ func annotateMatchedRoles(ctx context.Context, q metadataQuerier, compiled Compi
 		return err
 	}
 	args := []any{string(encoded), document.PersonResolverFingerprint(), compiled.eventState.InputEpoch, compiled.eventState.ContractVersion, compiled.eventState.DeriverFingerprint}
-	found, err := q.QueryContext(ctx, `SELECT n.id,person.value,json_extract(e.value,'$.role') FROM json_each(?) ids JOIN nodes n ON n.id=ids.value JOIN content_versions cv ON cv.version_id=n.current_version_id JOIN json_each((SELECT json_group_array(json_object('person_id',edge.person_id,'role',edge.role)) FROM `+currentDocumentPersonEdgesSQL("cv.version_id", compiled.safePeople)+` edge)) e LEFT JOIN person_aliases pa ON pa.surviving_person_id=json_extract(e.value,'$.person_id') JOIN json_each(json_array(json_extract(e.value,'$.person_id'),COALESCE(pa.retired_person_id,json_extract(e.value,'$.person_id')))) person`, args...)
+	edges := currentDocumentPersonEdgesSQL("cv.version_id", compiled.safePeople)
+	documentRows := ` FROM ` + idsSQL + ` JOIN nodes n ON n.id=` + nodeID + ` JOIN content_versions cv ON cv.version_id=n.current_version_id `
+	read := `SELECT n.id,person.value,json_extract(e.value,'$.role')` + documentRows +
+		`JOIN json_each((SELECT json_group_array(json_object('person_id',edge.person_id,'role',edge.role)) FROM ` + edges + ` edge)) e
+		 LEFT JOIN person_aliases pa ON pa.surviving_person_id=json_extract(e.value,'$.person_id')
+		 JOIN json_each(json_array(json_extract(e.value,'$.person_id'),COALESCE(pa.retired_person_id,json_extract(e.value,'$.person_id')))) person`
+	if compiled.postgres {
+		read = `SELECT n.id,person.id,e.role` + documentRows +
+			`JOIN LATERAL ` + edges + ` e ON TRUE
+			 LEFT JOIN person_aliases pa ON pa.surviving_person_id=e.person_id
+			 CROSS JOIN LATERAL (VALUES (e.person_id),(COALESCE(pa.retired_person_id,e.person_id))) person(id)`
+	}
+	found, err := q.QueryContext(ctx, bindCompiledRead(read, compiled.postgres), args...)
 	if err != nil {
 		return fmt.Errorf("loading matched roles: %w", err)
 	}
@@ -190,12 +208,12 @@ func annotateMatchedRoles(ctx context.Context, q metadataQuerier, compiled Compi
 		if err != nil {
 			return err
 		}
-		selection := compiledQueryFragment{sql: `SELECT n.id FROM json_each(?) ids JOIN nodes n ON n.id=ids.value JOIN content_versions cv ON cv.version_id=n.current_version_id WHERE ` + predicate.sql, args: append([]any{string(encoded)}, predicate.args...), relations: predicate.relations}
-		statement, args, err := bindQueryPopulation(selection, coverage, generation)
+		selection := compiledQueryFragment{sql: `SELECT n.id` + documentRows + ` WHERE ` + predicate.sql, args: append([]any{string(encoded)}, predicate.args...), relations: predicate.relations}
+		statement, args, err := bindQueryPopulationForBackend(selection, coverage, generation, compiled.postgres)
 		if err != nil {
 			return err
 		}
-		found, err := q.QueryContext(ctx, statement, args...)
+		found, err := q.QueryContext(ctx, bindCompiledRead(statement, compiled.postgres), args...)
 		if err != nil {
 			return err
 		}
@@ -228,7 +246,7 @@ func annotateMatchedRoles(ctx context.Context, q metadataQuerier, compiled Compi
 // materializePersonRoleFacet counts each current version once per visible person.
 func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, memberLimit int64) (SnapshotFacet, error) {
 	value := queryWithoutSnapshotFacet(compiled.Query, "person_role")
-	scoped, err := (queryCompiler{}).compile(ctx, value, queryResolver{q: q})
+	scoped, err := (queryCompiler{}).compile(ctx, value, queryResolver{q: q, postgres: compiled.postgres})
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
@@ -236,22 +254,28 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
-	statement, args, err := bindQueryPopulation(population, coverage, generation)
+	statement, args, err := bindQueryPopulationForBackend(population, coverage, generation, compiled.postgres)
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
 	args = append(args, document.PersonResolverFingerprint(), scoped.eventState.InputEpoch, scoped.eventState.ContractVersion, scoped.eventState.DeriverFingerprint, document.PersonResolverFingerprint(), scoped.eventState.InputEpoch, scoped.eventState.ContractVersion, scoped.eventState.DeriverFingerprint)
+	edges := currentDocumentPersonEdgesSQL("m.content_version_id", true)
+	join := `LEFT JOIN json_each((SELECT json_group_array(json_object('person_id',edge.person_id,'role',edge.role)) FROM ` + edges + ` edge)) e`
+	person, role := `json_extract(e.value,'$.person_id')`, `json_extract(e.value,'$.role')`
+	if compiled.postgres {
+		join = `LEFT JOIN LATERAL ` + edges + ` e ON TRUE`
+		person, role = "e.person_id", "e.role"
+	}
 	statementSQL := `WITH matched_members AS (` + statement + `)
- SELECT m.node_id,COALESCE(p.person_id,''),COALESCE(p.display_name,''),COALESCE(json_extract(e.value,'$.role'),''),EXISTS(SELECT 1 FROM ` + freshPeopleHeadSQL("m.content_version_id") + `)
- FROM matched_members m JOIN nodes n ON n.id=m.node_id
- LEFT JOIN json_each((SELECT json_group_array(json_object('person_id',edge.person_id,'role',edge.role)) FROM ` + currentDocumentPersonEdgesSQL("m.content_version_id", true) + ` edge)) e
- LEFT JOIN persons p ON p.person_id=json_extract(e.value,'$.person_id') AND p.state<>'retired'
- ORDER BY m.node_id,p.person_id,json_extract(e.value,'$.role')`
+ SELECT m.node_id,COALESCE(p.person_id,''),COALESCE(p.display_name,''),COALESCE(` + role + `,''),EXISTS(SELECT 1 FROM ` + freshPeopleHeadSQL("m.content_version_id") + `)
+ FROM matched_members m JOIN nodes n ON n.id=m.node_id ` + join + `
+ LEFT JOIN persons p ON p.person_id=` + person + ` AND p.state<>'retired'
+ ORDER BY m.node_id,p.person_id,` + role
 	selectedValues, selectedRoles, err := selectedPersonFacetValues(ctx, q, compiled.Query.Filters.People)
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
-	rows, err := q.QueryContext(ctx, statementSQL, args...)
+	rows, err := q.QueryContext(ctx, bindCompiledRead(statementSQL, compiled.postgres), args...)
 	if err != nil {
 		return SnapshotFacet{}, fmt.Errorf("materializing people facet: %w", err)
 	}

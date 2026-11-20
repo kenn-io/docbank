@@ -8,13 +8,15 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/pgtest"
+	"go.kenn.io/docbank/internal/store/pgschema"
 	"go.kenn.io/docbank/report"
 )
 
-func TestTermReportHistoryRetainsReusableRequestAcrossMetadataRoundTrip(t *testing.T) {
-	t.Parallel()
+func checkTermReportHistoryRetainsReusableRequestAcrossMetadataRoundTrip(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	ctx := t.Context()
-	s := newTestStore(t)
+	s := open(t)
 	now := time.Date(2026, 9, 20, 15, 30, 0, 0, time.UTC)
 	request := report.Request{Version: 1, AllDocuments: true, Timezone: "UTC", CoverageMode: "strict",
 		Terms: []report.Term{{Number: 1, Expression: "alpha", Syntax: "simple",
@@ -55,8 +57,7 @@ func TestTermReportHistoryRetainsReusableRequestAcrossMetadataRoundTrip(t *testi
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &exported))
 	require.Contains(t, exported.String(), `"type":"term_report_history"`)
-	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+	restored := restoreTermReportHistory(t, s.postgresSchema != "", exported.Bytes())
 	restoredPage, err := restored.ListTermReportHistory(ctx, 0, 50)
 	require.NoError(t, err)
 	require.Equal(t, page, restoredPage)
@@ -77,10 +78,10 @@ func TestTermReportHistoryRetainsReusableRequestAcrossMetadataRoundTrip(t *testi
 	}
 }
 
-func TestTermReportHistoryBoundsRetentionAcrossRestore(t *testing.T) {
-	t.Parallel()
+func checkTermReportHistoryBoundsRetentionAcrossRestore(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	ctx := t.Context()
-	s := newTestStore(t)
+	s := open(t)
 	request := report.Request{Version: 1, AllDocuments: true, Timezone: "UTC", CoverageMode: "strict",
 		Terms: []report.Term{{Number: 1, Expression: "synthetic", Syntax: "simple",
 			Dates: report.DateRange{Start: "2024-01-01", End: "2026-12-31"}}}}
@@ -105,8 +106,7 @@ func TestTermReportHistoryBoundsRetentionAcrossRestore(t *testing.T) {
 	// The bounded request and receipt list is portable metadata.
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &exported))
-	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+	restored := restoreTermReportHistory(t, s.postgresSchema != "", exported.Bytes())
 	restoredPage, err := restored.ListTermReportHistory(ctx, 0, 50)
 	require.NoError(t, err)
 	require.Equal(t, page, restoredPage)
@@ -144,4 +144,21 @@ func TestTermReportHistoryAcceptsMaximumValidTermText(t *testing.T) {
 	page, err = s.ListTermReportHistory(t.Context(), 1, 2)
 	require.NoError(t, err)
 	require.Equal(t, []TermReportHistory{item}, page.Items)
+}
+
+func restoreTermReportHistory(t *testing.T, postgres bool, exported []byte) *Store {
+	t.Helper()
+	ctx := t.Context()
+	if postgres {
+		setup, owner := pgtest.NewDatabase(t)
+		cfg := pgschema.Config{Schema: "reports", SchemaOwner: owner}
+		release := pgtest.ReserveSchemaInstall(t)
+		err := ImportPostgresMetadata(ctx, setup, cfg, bytes.NewReader(exported))
+		release()
+		require.NoError(t, err)
+		return newPostgresSchemaStore(t, setup, cfg)
+	}
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported)))
+	return restored
 }

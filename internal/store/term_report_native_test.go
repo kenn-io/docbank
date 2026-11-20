@@ -40,7 +40,7 @@ func TestTermReportNativeTextRejectsBeforeLoading(t *testing.T) { //nolint:paral
 			runtime.ReadMemStats(&before)
 			err = s.withLexicalGenerationRead(t.Context(), func(q metadataQuerier, _ LexicalGeneration) error {
 				return readTermReportNativeText(t.Context(), q, termReportVersion{identity: identity}, 0,
-					budget, textBudget, &frame)
+					budget, textBudget, &frame, s.postgresSchema != "")
 			})
 			runtime.ReadMemStats(&after)
 			require.ErrorIs(t, err, tc.wantErr)
@@ -53,9 +53,9 @@ func TestTermReportNativeTextRejectsBeforeLoading(t *testing.T) { //nolint:paral
 	}
 }
 
-func TestTermReportNativeTextBindsSelectedRow(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkTermReportNativeTextBindsSelectedRow(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	const text = "dated 2024-05-06 café"
 	hash := testSHA256([]byte(text))
 	node, err := s.CreateFile(t.Context(), s.RootID(), "native.txt", hash, int64(len(text)), "text/plain")
@@ -76,7 +76,7 @@ func TestTermReportNativeTextBindsSelectedRow(t *testing.T) {
 	defer func() { _ = textBudget.Close() }()
 	require.NoError(t, s.withLexicalGenerationRead(t.Context(), func(q metadataQuerier, _ LexicalGeneration) error {
 		return readTermReportNativeText(t.Context(), q, termReportVersion{identity: identity}, 0,
-			budget, textBudget, &frame)
+			budget, textBudget, &frame, s.postgresSchema != "")
 	}))
 	require.Len(t, frame.Texts, 1)
 	require.Equal(t, "selected", frame.Texts[0].Native.ExtractorID)

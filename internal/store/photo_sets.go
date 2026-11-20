@@ -477,7 +477,7 @@ func (s *Store) photoSetQueryIDs(ctx context.Context, tx *sql.Tx, selection Phot
 	if err != nil {
 		return nil, err
 	}
-	compiled, err := (queryCompiler{photoDisplayMetadata: true, photoHidden: selection.Hidden}).compile(ctx, *selection.Query, queryResolver{q: tx})
+	compiled, err := (queryCompiler{photoDisplayMetadata: true, photoHidden: selection.Hidden}).compile(ctx, *selection.Query, queryResolver{q: tx, postgres: s.postgresSchema != ""})
 	if err != nil {
 		return nil, err
 	}
@@ -489,7 +489,7 @@ func (s *Store) photoSetQueryIDs(ctx context.Context, tx *sql.Tx, selection Phot
 	if err != nil {
 		return nil, err
 	}
-	selectionSQL := `SELECT a.asset_id FROM ` + photoBrowseDisplayFrom + ` WHERE ` + scope.where() + ` ORDER BY a.asset_id`
+	selectionSQL := `SELECT a.asset_id FROM ` + photoJoins(photoBrowseDisplayFrom, compiled.postgres) + ` WHERE ` + scope.where() + ` ORDER BY a.asset_id`
 	if selection.Limit > 0 {
 		selectionSQL += fmt.Sprintf(" LIMIT %d", selection.Limit+1)
 	}

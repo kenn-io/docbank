@@ -8,8 +8,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func checkPhotoReviewRepresentatives(t *testing.T, newStore func(*testing.T) *Store) {
@@ -136,8 +134,8 @@ func checkPhotoReviewRollbackPostgres(t *testing.T) {
 	for _, operation := range []string{"current", "best-shots", "representative", "undo"} {
 		t.Run(operation, func(t *testing.T) {
 			t.Parallel()
-			setup, owner := pgtest.NewDatabase(t)
-			s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+			setup, owner, login := newTemplateDatabase(t)
+			s := openPostgresStore(t, owner, login)
 			ctx := t.Context()
 			ids := burstPhotos(t, s, 2)
 			if operation == "best-shots" {
@@ -211,8 +209,8 @@ func checkPhotoReviewSnapshotPostgres(t *testing.T) {
 func checkPhotoReviewRetainedVectorsPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	source := newTestStore(t)
 	source.vaultID = s.vaultID
 	_, err := source.writeDB.ExecContext(t.Context(), `UPDATE vault_metadata SET vault_uid=$1`, source.vaultID)

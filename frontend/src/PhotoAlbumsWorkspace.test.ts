@@ -201,7 +201,7 @@ it.each(["delete", "duplicate", "rename"] as const)(
       expect((screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(
         true,
       );
-      await fireEvent.keyDown(window, { key: "Escape" });
+      await fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
       expect(screen.getByRole("dialog")).toBeTruthy();
     }
     finish(albumResponse({ detail: "Album changed", code: "stale_revision" }, 412));

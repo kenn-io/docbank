@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"runtime"
+	"runtime/debug"
 	"runtime/metrics"
 	"sync/atomic"
 	"testing"
@@ -46,20 +47,27 @@ func TestNativeEngineRSSMonitorCause(t *testing.T) {
 }
 
 func TestNativeEnginePageDeadline(t *testing.T) {
-	recipe := defaultRecipe()
-	recipe.PageTimeoutSeconds = 1
-	engine, err := newPDFium(recipe, func(context.Context) (uint64, error) { return 512, nil })
-	require.NoError(t, err)
-	defer func() { require.NoError(t, engine.Close()) }()
-	entered := false
-	err = engine.withInstanceContext(t.Context(), func(ctx context.Context, _ pdfium.Pdfium) error {
-		entered = true
-		<-ctx.Done()
-		return ctx.Err()
+	// The deadline also covers compiling PDFium, which takes over a second when
+	// no earlier test in the process compiled it. In the bubble, the clock
+	// advances only while the page waits.
+	synctest.Test(t, func(t *testing.T) {
+		recipe := defaultRecipe()
+		recipe.PageTimeoutSeconds = 1
+		engine, err := newPDFium(recipe, func(context.Context) (uint64, error) { return 512, nil })
+		require.NoError(t, err)
+		defer func() { require.NoError(t, engine.Close()) }()
+		entered := false
+		start := time.Now()
+		err = engine.withInstanceContext(t.Context(), func(ctx context.Context, _ pdfium.Pdfium) error {
+			entered = true
+			<-ctx.Done()
+			return ctx.Err()
+		})
+		require.True(t, entered)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.Equal(t, time.Second, time.Since(start))
+		require.NoError(t, t.Context().Err())
 	})
-	require.True(t, entered)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	require.NoError(t, t.Context().Err())
 }
 
 func TestRSSAdmissionFreesMemoryBeforeRefusing(t *testing.T) {
@@ -84,6 +92,10 @@ func TestRSSAdmissionFreesMemoryBeforeRefusing(t *testing.T) {
 // against the next job. macOS keeps returned pages in resident_size, so a
 // worker that read that value refused every job after one large page.
 func TestRSSAdmissionIgnoresMemoryReturnedToOS(t *testing.T) {
+	// Memory an earlier test in the process freed stays resident until the
+	// runtime returns it, and new allocations would reuse it without growing
+	// the reading.
+	debug.FreeOSMemory()
 	baseline, err := readProcessRSS(t.Context())
 	require.NoError(t, err)
 	const garbage = 256 << 20

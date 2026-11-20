@@ -7,18 +7,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/pgstoretest"
-	"go.kenn.io/docbank/internal/pgtest"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func mailboxPostgresFixture(t *testing.T) *Service {
 	t.Helper()
 	dir, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
-	setup, owner := pgtest.NewDatabase(t)
-	cfg := pgschema.Config{Schema: "documents", SchemaOwner: owner}
-	runtime := pgstoretest.RuntimeConfig(t, setup, cfg)
+	_, cfg, runtime := pgstoretest.NewDatabase(t)
 	s, err := store.OpenPostgres(t.Context(), runtime, cfg, dir)
 	require.NoError(t, err)
 	return mailboxFixtureWithStore(t, s, dir)

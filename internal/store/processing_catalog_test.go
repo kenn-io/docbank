@@ -825,13 +825,18 @@ func seedRenditionCatalogVersions(tb testing.TB, s *Store) []string {
 	require.NoError(tb, err)
 	second, err := s.CreateFile(tb.Context(), s.RootID(), "synthetic-source-b.pdf", catalogSourceHash, 20, "application/pdf")
 	require.NoError(tb, err)
+	seedRenditionCatalogArtifactBlobs(tb, s)
+	return []string{first.CurrentVersionID, second.CurrentVersionID}
+}
+
+func seedRenditionCatalogArtifactBlobs(tb testing.TB, s *Store) {
+	tb.Helper()
 	require.NoError(tb, s.withStorageTx(tb.Context(), func(tx *sql.Tx) error {
 		if err := s.EnsureBlobTx(tb.Context(), tx, catalogEvidenceBlobHash, int64(len(catalogBlobContents[catalogEvidenceBlobHash]))); err != nil {
 			return err
 		}
 		return s.EnsureBlobTx(tb.Context(), tx, catalogMarkdownBlobHash, int64(len(catalogBlobContents[catalogMarkdownBlobHash])))
 	}))
-	return []string{first.CurrentVersionID, second.CurrentVersionID}
 }
 
 func catalogProcessingProfile(tb testing.TB, withEmbedding bool) ProcessingProfileRecord {

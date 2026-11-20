@@ -52,6 +52,9 @@
     { value: "auditEvidence", label: "Protected folders" },
     { value: "searchByMeaning", label: "Search by meaning" },
   ];
+  export function sectionLabel() {
+    return options.find((option) => option.value === tab)?.label ?? "System";
+  }
   setContext(drawerNavigation, {
     tabs,
     get switched() {

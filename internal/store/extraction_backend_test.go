@@ -5,9 +5,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
-
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func checkTextPublicationPostgres(t *testing.T) {
@@ -64,8 +61,8 @@ func checkTextPublicationRollbackPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
 	ctx := t.Context()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	oldHash := seedLegacyMigrationRow(t, s, "published.txt", "81", ExtractionResult{Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "already published"})
 	initial, err := s.MigrateLegacyPlainText(ctx)
 	require.NoError(t, err)

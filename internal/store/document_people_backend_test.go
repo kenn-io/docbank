@@ -6,8 +6,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func checkDocumentPeopleAuthorityInputs(t *testing.T, newStore func(*testing.T) *Store) {
@@ -136,8 +134,8 @@ func checkDocumentPeopleRollbackPostgres(t *testing.T) {
 	for _, operation := range []string{"provision", "publish", "rebuild"} {
 		t.Run(operation, func(t *testing.T) {
 			t.Parallel()
-			setup, owner := pgtest.NewDatabase(t)
-			s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+			setup, owner, login := newTemplateDatabase(t)
+			s := openPostgresStore(t, owner, login)
 			ctx := t.Context()
 			version := seedDocumentPeopleEvent(t, s, "rollback.txt", "a1", nil)
 			var publication DocumentPeoplePublication

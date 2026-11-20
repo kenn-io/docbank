@@ -3,9 +3,10 @@ package store
 import (
 	"testing"
 
+	"uuid"
+
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/bundle"
-	"uuid"
 )
 
 func checkExportPreviewUsesFrozenReceiptsAndOwner(t *testing.T, open func(*testing.T) *Store) {

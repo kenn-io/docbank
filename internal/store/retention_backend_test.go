@@ -2,11 +2,10 @@ package store
 
 import (
 	"database/sql"
-	"github.com/jackc/pgx/v5"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/stretchr/testify/require"
 )
@@ -51,8 +50,8 @@ func checkRetentionCleanupPostgres(t *testing.T) {
 // PostgreSQL executes the cleanup through its runtime role and canonical DDL.
 func copyRetentionStore(t *testing.T, source *Store) (*Store, *sql.DB) {
 	t.Helper()
-	setup, owner := pgtest.NewDatabase(t)
-	target := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	target := openPostgresStore(t, owner, login)
 	_, err := setup.ExecContext(t.Context(), `UPDATE documents.vault_metadata SET vault_uid=$1`, source.vaultID)
 	require.NoError(t, err)
 	target.vaultID = source.vaultID

@@ -341,10 +341,13 @@ snapshot. Kit does not infer application liveness or reach into Docbank SQL.
 
 ## Restoring into PostgreSQL
 
-An internal PostgreSQL restore takes a pristine target schema and a new vault
-directory. The schema owner runs the restore. The existing backup reader first
+A PostgreSQL restore takes a pristine target schema and a new vault directory.
+The [embedding API](../embedding.md#use-a-postgresql-vault) uses
+the schema owner for import and a separate runtime login for validation and
+rebuilding. Both connections must name the same vault. The existing backup reader first
 verifies the snapshot, its metadata, and the packed and loose files in a private
-directory. The staged SQLite catalog supplies the verified physical records.
+directory. The target catalog must have unbound primary storage, even if it
+contains no document metadata. The staged SQLite catalog supplies the verified physical records.
 The native import reads the original portable metadata stream.
 
 The owner imports the logical records and the verified primary storage catalog
@@ -364,8 +367,9 @@ gets a new epoch, so files left by an aborted attempt remain fenced even
 after a retry commits from the same snapshot. The restore only removes its
 private scratch space.
 
-After commit, the runtime role opens the restored catalog against the matching
+The restore holds the exclusive vault lock across directory installation,
+catalog commit, and projection rebuilding. After commit, the runtime role opens the restored catalog against the matching
 blob marker and rebuilds document events, person attribution, lexical search,
-and vector indexes from retained evidence. A failed rebuild returns the committed
-restore location with an error. Retry the rebuild with exclusive ownership of the
-same vault root. The rebuild uses local evidence and needs no provider credentials.
+and vector indexes from retained evidence. On a failed rebuild, the report
+includes the committed restore location. `RebuildPostgresRestore` takes exclusive
+ownership of that root and retries from local evidence without provider credentials.

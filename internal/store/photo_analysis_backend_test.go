@@ -11,8 +11,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func faceDetectionResult(t *testing.T, faces ...document.FaceObservation) *document.RenditionResult {
@@ -85,8 +83,8 @@ func checkPhotoAnalysisPublicationRollbackPostgres(t *testing.T) {
 	t.Parallel()
 	for _, detection := range []bool{false, true} {
 		t.Run(strconv.FormatBool(detection), func(t *testing.T) {
-			setup, owner := pgtest.NewDatabase(t)
-			s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+			setup, owner, login := newTemplateDatabase(t)
+			s := openPostgresStore(t, owner, login)
 			ctx := t.Context()
 			asset := albumAsset(t, s, "publish.jpg")
 			node := requireNodeByID(t, s, asset.Files[0].NodeID)
@@ -132,8 +130,8 @@ func checkPhotoAnalysisPublicationRollbackPostgres(t *testing.T) {
 func checkPhotoSuggestionResponseRollbackPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	ctx := t.Context()
 	asset := albumAsset(t, s, "respond.jpg")
 	proposal := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "Harbor", Tags: []string{"Coast"}})

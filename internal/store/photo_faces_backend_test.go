@@ -6,16 +6,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func checkPhotoFaceMetadataPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
 	ctx := t.Context()
-	setup, owner := pgtest.NewDatabase(t)
-	destination := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	destination := openPostgresStore(t, owner, login)
 	fixture := newFaceDetectionTestFixture(t)
 	require.NoError(t, fixture.scan("b1", document.FaceObservation{
 		Box:  document.FaceBox{X: .1, Y: .1, Width: .2, Height: .2},

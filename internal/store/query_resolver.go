@@ -13,7 +13,10 @@ import (
 
 // queryResolver uses the caller's read view. Snapshot execution must pass its
 // own transaction here rather than resolving against a second connection.
-type queryResolver struct{ q rowQuerier }
+type queryResolver struct {
+	q        rowQuerier
+	postgres bool
+}
 
 func (r queryResolver) photoMetadataHeadsFirst(ctx context.Context, value string) (bool, error) {
 	var dense bool
@@ -60,10 +63,10 @@ func (r queryResolver) Resolve(
 	case query.ReferencePerson:
 		ref.Dependency.Kind = kind
 		if byID {
-			err = r.q.QueryRowContext(ctx, `SELECT person_id,revision FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?) AND state<>'retired'`, value, value).Scan(&ref.Dependency.ID, &ref.Dependency.Revision)
+			err = r.q.QueryRowContext(ctx, `SELECT person_id,revision FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=$1),$2) AND state<>'retired'`, value, value).Scan(&ref.Dependency.ID, &ref.Dependency.Revision)
 		} else {
 			var count int
-			err = r.q.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(MIN(person_id),''),COALESCE(MIN(revision),0) FROM persons WHERE display_name_folded=? AND state<>'retired'`, value).Scan(&count, &ref.Dependency.ID, &ref.Dependency.Revision)
+			err = r.q.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(MIN(person_id),''),COALESCE(MIN(revision),0) FROM persons WHERE display_name_folded=$1 AND state<>'retired'`, storedString(r.postgres, value)).Scan(&count, &ref.Dependency.ID, &ref.Dependency.Revision)
 			if err == nil && count == 0 {
 				err = query.ErrUnknownReference
 			}
@@ -72,9 +75,9 @@ func (r queryResolver) Resolve(
 			}
 		}
 	case query.ReferenceTag:
-		selector := "name=?"
+		selector := "name=$1"
 		if byID {
-			selector = "id=?"
+			selector = "id=$1"
 		}
 		ref.Dependency.Kind = kind
 		err = r.q.QueryRowContext(ctx, `SELECT id, revision FROM tags WHERE `+selector, value).
@@ -82,11 +85,11 @@ func (r queryResolver) Resolve(
 	case query.ReferenceCollection:
 		id := value
 		if !byID {
-			err = r.q.QueryRowContext(ctx, `SELECT ingest_id FROM collection_labels WHERE label=?`, value).Scan(&id)
+			err = r.q.QueryRowContext(ctx, `SELECT ingest_id FROM collection_labels WHERE label=$1`, value).Scan(&id)
 		}
 		if err == nil {
 			var label CollectionLabel
-			label, _, err = collectionLabelTx(ctx, r.q, id, false)
+			label, _, err = collectionLabelTx(ctx, r.q, id, r.postgres)
 			ref.Dependency = query.Dependency{Kind: kind, ID: id, Revision: label.Revision}
 		}
 	case query.ReferenceSaved:
@@ -104,13 +107,13 @@ func (r queryResolver) Resolve(
 }
 
 func (r queryResolver) saved(ctx context.Context, value string, byID bool) (query.Reference, error) {
-	selector := "name=?"
+	selector := "name=$1"
 	if byID {
-		selector = "id=?"
+		selector = "id=$1"
 	}
 	record, err := scanSavedQuery(r.q.QueryRowContext(ctx, `
 		SELECT id,name,description,kind,payload,fingerprint,revision,created_at,updated_at
-		FROM saved_queries WHERE `+selector+` AND kind=?`, value, SavedQueryKindQuery))
+		FROM saved_queries WHERE `+selector+` AND kind=$2`, value, SavedQueryKindQuery))
 	if err != nil {
 		return query.Reference{}, err
 	}
@@ -136,7 +139,7 @@ var _ query.Resolver = queryResolver{}
 // personMentionNames includes aliases and names absorbed by the current person.
 func (r queryResolver) personMentionNames(ctx context.Context, id string) ([]string, error) {
 	var name string
-	if err := r.q.QueryRowContext(ctx, `SELECT display_name FROM persons WHERE person_id=?`, id).Scan(&name); err != nil {
+	if err := r.q.QueryRowContext(ctx, `SELECT display_name FROM persons WHERE person_id=$1`, id).Scan(&name); err != nil {
 		return nil, err
 	}
 	var names []string
@@ -147,7 +150,12 @@ func (r queryResolver) personMentionNames(ctx context.Context, id string) ([]str
 	if !ok {
 		return nil, errors.New("person aliases require a rows querier")
 	}
-	rows, err := q.QueryContext(ctx, `SELECT i.value_display FROM person_identities i WHERE i.person_id=? AND i.kind='name_alias' UNION SELECT m.absorbed_display_name FROM person_merges m JOIN person_aliases a ON a.retired_person_id=m.absorbed_person_id WHERE a.surviving_person_id=? ORDER BY 1`, id, id)
+	alias := storedStringSQL(r.postgres, "i.value_display")
+	rows, err := q.QueryContext(ctx, `SELECT `+alias+` FROM person_identities i
+		WHERE i.person_id=$1 AND i.kind='name_alias'
+		UNION SELECT m.absorbed_display_name FROM person_merges m
+		JOIN person_aliases a ON a.retired_person_id=m.absorbed_person_id
+		WHERE a.surviving_person_id=$2 ORDER BY 1`, id, id)
 	if err != nil {
 		return nil, err
 	}

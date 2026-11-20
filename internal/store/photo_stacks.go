@@ -412,10 +412,7 @@ func (s *Store) photoStackFrames(ctx context.Context, q metadataQuerier, ids []s
 
 func (s *Store) readPhotoStackFrames(ctx context.Context, q metadataQuerier, ids []string, hidden bool, fingerprint string) (map[string]photoStackFrame, error) {
 	frames := make(map[string]photoStackFrame, len(ids))
-	from := photoBrowseDisplayFrom
-	if s.postgresSchema != "" {
-		from = strings.ReplaceAll(from, "CROSS JOIN", "JOIN")
-	}
+	from := photoJoins(photoBrowseDisplayFrom, s.postgresSchema != "")
 	err := queryInChunks(ctx, q, `SELECT `+photoStackFrameColumns+`,COALESCE(mg.extractor_fingerprint,'') FROM `+from+` WHERE `+photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(hidden)+` AND a.asset_id IN (`, ids, func(rows *sql.Rows) error {
 		var frame photoStackFrame
 		var actual string
@@ -770,14 +767,16 @@ type photoStackComponent struct {
 // usually finishes a burst in one direction.
 const photoStackProbeGaps = 8
 
-const photoStackProbeFrom = `photo_timeline pl INDEXED BY photo_timeline_folder
+func photoStackProbeFrom(postgres bool) string {
+	return photoJoins(`photo_timeline pl`+photoIndexHint("photo_timeline_folder", postgres)+`
  CROSS JOIN photo_files f ON f.file_id=pl.file_id
  CROSS JOIN photo_assets a ON a.asset_id=f.asset_id AND a.display_file_id=f.file_id
  CROSS JOIN nodes n ON n.id=f.node_id
  CROSS JOIN content_versions v ON v.version_id=n.current_version_id
  LEFT JOIN source_metadata_heads h ON h.source_sha256=v.blob_hash
  LEFT JOIN source_metadata_generations mg ON mg.generation_id=h.generation_id
- LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id`
+ LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id`, postgres)
+}
 
 func newPhotoStackPager(ctx context.Context, q metadataQuerier, scope photoBrowseScope, gap int, descending bool, fingerprint string, vectors *photoStackVectorReader) (*photoStackPager, error) {
 	preparer, ok := q.(interface {
@@ -795,7 +794,7 @@ func newPhotoStackPager(ctx context.Context, q metadataQuerier, scope photoBrows
 		`pl.sort_key<=? AND pl.sort_key>=? AND (pl.sort_key<? OR a.asset_id<?) ORDER BY pl.sort_key DESC,a.asset_id DESC LIMIT ?`,
 		`pl.sort_key>=? AND pl.sort_key<=? AND (pl.sort_key>? OR a.asset_id>?) ORDER BY pl.sort_key ASC,a.asset_id ASC LIMIT ?`,
 	} {
-		statement, args, err := scope.bind(`SELECT a.asset_id,pl.sort_key,` + photoStackFileCount + `,COALESCE(mg.extractor_fingerprint,'')` + ` FROM ` + photoStackProbeFrom + scope.queue + ` WHERE ` + scope.where() + ` AND a.kind='photo' AND pl.folder_key=? AND COALESCE(p.camera_make_folded,'')=? AND COALESCE(p.camera_model_folded,'')=? AND CASE WHEN ?='' OR COALESCE(mg.extractor_fingerprint,'')=? THEN COALESCE(p.body_serial_number,'') ELSE '' END=? AND ` + bounds)
+		statement, args, err := scope.bind(`SELECT a.asset_id,pl.sort_key,` + photoStackFileCount + `,COALESCE(mg.extractor_fingerprint,'')` + ` FROM ` + photoStackProbeFrom(scope.postgres) + scope.queue + ` WHERE ` + scope.where() + ` AND a.kind='photo' AND pl.folder_key=? AND COALESCE(p.camera_make_folded,'')=? AND COALESCE(p.camera_model_folded,'')=? AND CASE WHEN CAST(? AS TEXT)='' OR COALESCE(mg.extractor_fingerprint,'')=? THEN COALESCE(p.body_serial_number,'') ELSE '' END=? AND ` + bounds)
 		if err == nil {
 			pager.args = args
 			pager.probes[i], err = preparer.PrepareContext(ctx, statement) //nolint:sqlclosecheck // Close releases both probes when the page ends.
@@ -831,7 +830,7 @@ func (p *photoStackPager) probe(ctx context.Context, current photoStackFrame, wi
 	if forward {
 		direction = 1
 	}
-	args := append(slices.Clone(p.args), current.Folder, current.CameraMake, current.CameraModel, p.fingerprint, p.fingerprint, current.BodySerialNumber, current.SortKey, window, current.SortKey, current.AssetID, MaxPhotoStackFrames+1)
+	args := append(slices.Clone(p.args), current.Folder, storedString(p.scope.postgres, current.CameraMake), storedString(p.scope.postgres, current.CameraModel), p.fingerprint, p.fingerprint, storedString(p.scope.postgres, current.BodySerialNumber), current.SortKey, window, current.SortKey, current.AssetID, MaxPhotoStackFrames+1)
 	rows, err := p.probes[direction].QueryContext(ctx, args...)
 	if err != nil {
 		return nil, err
@@ -1148,7 +1147,7 @@ func (p *photoStackPager) fill(ctx context.Context, page *PhotoBrowsePage, group
 		return err
 	}
 	for chunk := range slices.Chunk(unread, photoSelectionChunkSize) {
-		statement, args, err := p.scope.bind(`SELECT `+photoBrowseSelect+`,pl.sort_key,0 FROM `+photoBrowseDisplayFrom+p.scope.queue+` WHERE `+p.scope.where()+` AND a.asset_id IN (`+placeholders(len(chunk))+`)`, anyArgs(chunk)...)
+		statement, args, err := p.scope.bind(`SELECT `+photoBrowseSelect+`,pl.sort_key,0 FROM `+photoJoins(photoBrowseDisplayFrom, p.scope.postgres)+p.scope.queue+` WHERE `+p.scope.where()+` AND a.asset_id IN (`+placeholders(len(chunk))+`)`, anyArgs(chunk)...)
 		if err != nil {
 			return err
 		}
@@ -1197,7 +1196,7 @@ func (p *photoStackPager) frontier(ctx context.Context, boundary *PhotoBrowsePos
 	if !boundary.Missing {
 		low, _ := photoStackReach(boundary.Key, p.reach, false)
 		high, _ := photoStackReach(boundary.Key, p.reach, true)
-		from, _, _ := photoBrowseOrder("capture_time")
+		from, _, _ := photoBrowseOrderForBackend("capture_time", p.scope.postgres)
 		statement, args, err := p.scope.bind(`SELECT a.asset_id,pl.folder_key,pl.sort_key,`+photoStackCameraColumns+`,`+photoStackFileCount+`,COALESCE(mg.extractor_fingerprint,'') FROM `+from+p.scope.queue+` WHERE `+p.scope.where()+` AND a.kind='photo' AND pl.folder_key IS NOT NULL AND pl.sort_key>=? AND pl.sort_key<=?`, low, high)
 		if err != nil {
 			return "", err

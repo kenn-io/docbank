@@ -9,8 +9,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func checkPhotoSetReceiptsAndOrdering(t *testing.T, newStore func(*testing.T) *Store) {
@@ -170,8 +168,8 @@ func checkPhotoSetRollbackPostgres(t *testing.T) {
 	for _, operation := range []string{"create", "update", "add", "remove", "duplicate", "delete"} {
 		t.Run(operation, func(t *testing.T) {
 			t.Parallel()
-			setup, owner := pgtest.NewDatabase(t)
-			s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+			setup, owner, login := newTemplateDatabase(t)
+			s := openPostgresStore(t, owner, login)
 			ctx := t.Context()
 			first := albumAsset(t, s, "first.jpg")
 			second := albumAsset(t, s, "second.jpg")

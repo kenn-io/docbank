@@ -10,8 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/pgtest"
-	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
 func checkImageEmbeddingPublicationPostgres(t *testing.T) {
@@ -32,8 +30,8 @@ func checkEmbeddingPublicationPostgres(t *testing.T) {
 	t.Helper()
 	for _, name := range []string{"optional", "chunk"} {
 		t.Run(name, func(t *testing.T) {
-			setup, owner := pgtest.NewDatabase(t)
-			s, version, profile, attachment := seedEmbeddingCatalog(t, newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner}))
+			setup, owner, login := newTemplateDatabase(t)
+			s, version, profile, attachment := seedEmbeddingCatalog(t, openPostgresStore(t, owner, login))
 			ctx := t.Context()
 			binding := workerProfileEmbeddingBinding(t, profile, name)
 			if binding.InputKind == document.EmbeddingInputOriginalFile {

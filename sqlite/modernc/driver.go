@@ -1,4 +1,8 @@
 // Package modernc adapts modernc.org/sqlite to Docbank without CGO.
+//
+// Driver opens connections through a private modernc.org/sqlite Driver, so
+// hooks and functions registered with modernc's package-level functions, such
+// as RegisterConnectionHook, do not run on Docbank's connections.
 package modernc
 
 import (
@@ -18,8 +22,13 @@ import (
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
+const driverName = "docbank-modernc-sqlite-v1"
+
 func init() {
-	modernsqlite.MustRegisterFunction("docbank_person_name_starts_with_word_v1", &modernsqlite.FunctionImpl{
+	// A private Driver keeps Docbank's SQL functions off connections other
+	// code opens through modernc's process-wide "sqlite" registration.
+	inner := &modernsqlite.Driver{}
+	mustRegister(inner.RegisterFunction("docbank_person_name_starts_with_word_v1", &modernsqlite.FunctionImpl{
 		NArgs: 2, Deterministic: true,
 		// Length-aware text arguments preserve NUL; this predicate retains no input.
 		VolatileArgs: true,
@@ -31,8 +40,8 @@ func init() {
 			}
 			return query.PersonNameStartsWithWord(name, prefix), nil
 		},
-	})
-	modernsqlite.MustRegisterDeterministicScalarFunction("docbank_query_media_family_v1", 2,
+	}))
+	mustRegister(inner.RegisterDeterministicScalarFunction("docbank_query_media_family_v1", 2,
 		func(_ *modernsqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
 			mediaType, mimeOK := args[0].(string)
 			filename, nameOK := args[1].(string)
@@ -40,8 +49,8 @@ func init() {
 				return nil, errors.New("media family requires text MIME type and filename")
 			}
 			return query.ClassifyMedia(mediaType, filename), nil
-		})
-	modernsqlite.MustRegisterDeterministicScalarFunction("docbank_photo_folder_v1", 3,
+		}))
+	mustRegister(inner.RegisterDeterministicScalarFunction("docbank_photo_folder_v1", 3,
 		func(_ *modernsqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
 			kind, kindOK := args[0].(string)
 			desc, descOK := args[1].(string)
@@ -53,8 +62,8 @@ func init() {
 				return key, nil
 			}
 			return nil, nil //nolint:nilnil // SQL NULL marks a photo with no folder.
-		})
-	modernsqlite.MustRegisterDeterministicScalarFunction("docbank_source_metadata_json_v1", 3,
+		}))
+	mustRegister(inner.RegisterDeterministicScalarFunction("docbank_source_metadata_json_v1", 3,
 		func(_ *modernsqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
 			var encoded []byte
 			switch value := args[0].(type) {
@@ -66,7 +75,14 @@ func init() {
 			contract, _ := args[1].(string)
 			checksum, _ := args[2].(string)
 			return docsqlite.SourceMetadataJSON(encoded, contract, checksum), nil
-		})
+		}))
+	sql.Register(driverName, cachingDriver{inner: inner})
+}
+
+func mustRegister(err error) {
+	if err != nil {
+		panic(err)
+	}
 }
 
 const (
@@ -112,7 +128,7 @@ func (Driver) Open(path string, opts docsqlite.OpenOptions) (*sql.DB, error) {
 			query.Add("_pragma", "synchronous(OFF)")
 		}
 	}
-	return sql.Open("sqlite", sqliteURI(path, query))
+	return sql.Open(driverName, sqliteURI(path, query))
 }
 
 func sqliteURI(path string, query url.Values) string {

@@ -86,7 +86,7 @@
   import { People } from "./people.svelte.js";
   import UserIcon from "@lucide/svelte/icons/user";
   import PhotoAlbumsIndex from "./PhotoAlbumsIndex.svelte";
-  import { PhotoAlbums, photoDragType } from "./photoAlbums.svelte.js";
+  import { PhotoAlbums, missingAlbum, photoDragType } from "./photoAlbums.svelte.js";
   import StarIcon from "@lucide/svelte/icons/star";
   import TargetIcon from "@lucide/svelte/icons/target";
   import { localPreferenceStorage } from "./browser-storage.js";
@@ -280,6 +280,13 @@
     searchByMeaning: null,
     photoImport: null,
   };
+  const systemPanelKinds: Panel["kind"][] = [
+    "jobs",
+    "auditEvidence",
+    "backups",
+    "storage",
+    "searchByMeaning",
+  ];
 
   let webSession = $state("");
   let hasProductions = $state(false);
@@ -451,6 +458,8 @@
   );
   const albumScopeID = $derived(albumID || mapAlbumID);
   let photoAlbums = $state<PhotoAlbums>();
+  const scopedAlbum = $derived(photoAlbums?.items.find((item) => item.id === albumScopeID));
+  const missingPhotoAlbum = $derived(missingAlbum(photoAlbums, albumScopeID));
   let peopleView = $state<People>();
   let albumPhotos = $state<Photos>();
   let mapPhotos = $state<Photos>();
@@ -505,6 +514,12 @@
     event.returnValue = "";
   }
   type DocsPage = "searches" | "productions" | "imports" | "trash";
+  const docsPageTitles: Record<DocsPage, string> = {
+    searches: "Searches",
+    productions: "Productions",
+    imports: "Imports",
+    trash: "Trash",
+  };
   function pageAt(path: string): DocsPage | null {
     return path === "/searches" ||
       path === "/productions" ||
@@ -1200,6 +1215,7 @@
   let auditError = $state("");
 
   let activePanel = $state<Panel | null>(null);
+  let vault = $state<VaultDrawer>();
   let exportHasJob = $state(false);
   let exportInput = $state<ExportInput | null>(null);
   let exportNotice = $state("");
@@ -3764,6 +3780,53 @@
       ...parts.map((name, index) => ({ name, path: `/${parts.slice(0, index + 1).join("/")}` })),
     ];
   });
+  const tabTitle = $derived.by(() => {
+    let title: string;
+    if (!webSession) title = "Sign in";
+    else if (activePanel?.kind === "versions" && activePanel.fromLink) {
+      const linked = activePanel.linked;
+      const parent = linked?.node.path ? parentPath(linked.node.path) : "/";
+      title = nodeVersionError
+        ? "Version unavailable"
+        : linked
+          ? `${linked.node.name} (${linked.version.id})${parent === "/" ? "" : ` · ${parent}`}`
+          : "Version";
+    } else if (activePanel && systemPanelKinds.includes(activePanel.kind))
+      title = vault?.sectionLabel() ?? "System";
+    else if (reader) {
+      const parent = parentPath(reader.source.path);
+      title = parent === "/" ? reader.source.name : `${reader.source.name} · ${parent}`;
+    } else if (photoMode) {
+      const photoName = libraryWorkspace?.photoName();
+      const photos = activePhotos();
+      const person = photos?.personFilter;
+      if (hiddenMode) title = "Hidden";
+      else if (photoPath === "/photos/albums") title = "Albums";
+      else if (photoPath === "/photos/people") title = "People";
+      else if (missingPhotoAlbum) title = "Album not found";
+      else if (mapMode && (!tiles.tile_url || !photoValidated))
+        title = photoValidated && mapAlbumID && scopedAlbum ? `Map · ${scopedAlbum.name}` : "Map";
+      else if (photos?.comparing) title = "Compare photos";
+      else if (photos?.culling && photos.cull?.complete) title = "Pass complete";
+      else if (photoID || photos?.culling) title = (photoValidated && photoName) || "Photo";
+      else if (mapMode) title = mapAlbumID && scopedAlbum ? `Map · ${scopedAlbum.name}` : "Map";
+      else if (person && photos?.query.filters.person_ids?.includes(person.id))
+        title = photoValidated ? `${person.name} · Photos` : "Person photos";
+      else if (albumID) title = (photoValidated && scopedAlbum?.name) || "Album";
+      else title = "Photos";
+    } else if (docsPage) title = docsPageTitles[docsPage];
+    else if (activeQuery || queryBarOpen || snapshotActive) title = "Search";
+    else if (tagBrowse) title = activeTag?.name ?? "Tag";
+    else
+      title =
+        breadcrumbs.length > 2
+          ? `${breadcrumbs.at(-1)!.name} · ${parentPath(directory!.path!)}`
+          : breadcrumbs.at(-1)!.name;
+    return `${title} · Docbank`;
+  });
+  $effect(() => {
+    document.title = tabTitle;
+  });
 
   // Deep paths keep the first folder and the last two; the middle folds into a menu.
   const crumbItems = $derived<
@@ -4407,12 +4470,12 @@
                   onhidden={invalidateLibrary}
                   oninvalidate={invalidateLibrary}
                 />{/key}{/if}
-          {:else if mapMode}{#if mapAlbumID && photoAlbums?.initialized && !photoAlbums.loading && !photoAlbums.busy && !photoAlbums.loadError && !photoAlbums.items.some((album) => album.id === mapAlbumID)}<EmptyState
-                title="Album not found"
+          {:else if mapMode}{#if mapAlbumID && missingPhotoAlbum}<EmptyState title="Album not found"
                 ><Button onclick={() => navigatePhotos("/photos/albums")}>Back to albums</Button
                 ></EmptyState
               >
             {:else if !tiles.tile_url}<PhotosWorkspace
+                bind:this={libraryWorkspace}
                 onperson={openPersonPhotos}
                 {vaultID}
                 onhelp={openShortcutHelp}
@@ -4496,15 +4559,7 @@
           </div>{:else}<div class="photo-access-loading"><Spinner /></div>
         {/if}
       {:else if docsPage}
-        <ToolPage
-          title={docsPage === "searches"
-            ? "Searches"
-            : docsPage === "productions"
-              ? "Productions"
-              : docsPage === "imports"
-                ? "Imports"
-                : "Trash"}
-        >
+        <ToolPage title={docsPageTitles[docsPage]}>
           {#if docsPage === "searches"}
             {@render savedQueries(false, () => {})}
             <TermReportDrawer
@@ -5434,8 +5489,9 @@
           onauthfailure={handleFailure}
         />
       {/if}
-      {#if ["jobs", "auditEvidence", "backups", "storage", "searchByMeaning"].includes(panel.kind)}
+      {#if systemPanelKinds.includes(panel.kind)}
         <VaultDrawer
+          bind:this={vault}
           session={webSession}
           initialTab={panel.kind}
           searchByMeaning={localText}

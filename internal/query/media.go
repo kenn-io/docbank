@@ -1,6 +1,7 @@
 package query
 
 import (
+	"maps"
 	"strings"
 
 	"go.kenn.io/docbank/document"
@@ -26,6 +27,18 @@ func init() {
 // A valid concrete MIME type takes precedence; filename is consulted only when
 // the MIME type is missing or the generic application/octet-stream value.
 func ClassifyMedia(mediaType, filename string) string {
+	if family := MediaFamilyForDeclaration(mediaType); family != "" {
+		return family
+	}
+	if family, ok := queryFamilyByExtension[FilenameExtension(filename)]; ok {
+		return family
+	}
+	return "unknown"
+}
+
+// MediaFamilyForDeclaration classifies a MIME declaration without a name. An
+// empty result allows filename fallback. A malformed declaration is unknown.
+func MediaFamilyForDeclaration(mediaType string) string {
 	trimmed := trimASCIIWhitespace(mediaType)
 	if trimmed != "" {
 		essence, ok := parseConcreteMediaType(trimmed)
@@ -45,10 +58,12 @@ func ClassifyMedia(mediaType, filename string) string {
 			return "unknown"
 		}
 	}
-	if family, ok := queryFamilyByExtension[FilenameExtension(filename)]; ok {
-		return family
-	}
-	return "unknown"
+	return ""
+}
+
+// ExtensionMediaFamilies returns the catalog's filename fallback mapping.
+func ExtensionMediaFamilies() map[string]string {
+	return maps.Clone(queryFamilyByExtension)
 }
 
 // NormalizeMediaType returns the lowercase concrete MIME essence used by
