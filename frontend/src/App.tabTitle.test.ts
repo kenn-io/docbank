@@ -2,7 +2,19 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { root } from "./version-test-fixtures.js";
-import { photoMetadataResponse, storage } from "./photo-test-fixtures.js";
+import {
+  photo,
+  photoAlbum,
+  photoFace,
+  photoPersonAssertion,
+  photoMetadataResponse,
+  storage,
+} from "./photo-test-fixtures.js";
+import { PhotoCull } from "./photoCull.svelte.js";
+import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
+import * as api from "./generated/docbank.js";
+
+vi.mock("./PhotoMap.svelte", () => ({ default: () => ({}) }));
 
 beforeEach(() => {
   vi.stubGlobal(
@@ -23,6 +35,7 @@ afterEach(() => {
   cleanup();
   localStorage.clear();
   sessionStorage.clear();
+  document.querySelectorAll('meta[name="docbank-map-tiles"]').forEach((meta) => meta.remove());
   history.replaceState(null, "", "/");
   Reflect.deleteProperty(Element.prototype, "scrollIntoView");
   vi.unstubAllGlobals();
@@ -52,7 +65,49 @@ it("names a missing linked photo", async () => {
 });
 
 it("names the current screen in the browser tab", async () => {
-  history.replaceState(null, "", "/#web_session=synthetic&web_upload_secret=proof");
+  history.replaceState(null, "", "/");
+  storage();
+  vi.stubGlobal("indexedDB", new IDBFactory());
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const album = photoAlbum();
+  const rows = [photo(1), photo(2)];
+  const personID = "00000000-0000-4000-8000-000000000001";
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({
+    faces: [photoFace({ content_version_id: rows[0].content_version_id })],
+    assertions: [
+      photoPersonAssertion({ content_version_id: rows[0].content_version_id, person_id: personID }),
+    ],
+    people: [{ person_id: personID, display_name: "Ada", state: "curated" }],
+  });
+  vi.spyOn(PhotoCull.prototype, "restore").mockResolvedValue(false);
+  vi.spyOn(PhotoCull.prototype, "start").mockImplementation(async function (this: PhotoCull) {
+    this.run = {
+      ids: ["photo-1", "photo-2"],
+      checkpoint: {
+        runID: "run",
+        revision: 0,
+        pass: ["photo-1", "photo-2"],
+        position: 0,
+        visited: [],
+        skipped: [],
+        unavailable: [],
+        scope: "all",
+        autoAdvance: true,
+      },
+    };
+    return true;
+  });
+  const meta = document.createElement("meta");
+  meta.name = "docbank-map-tiles";
+  meta.content = JSON.stringify({
+    tile_url: "/api/daemon/web-map-tiles/{z}/{x}/{y}",
+    host: "tiles.example.org",
+    attribution: "Example",
+    max_zoom: 19,
+  });
+  document.head.append(meta);
   const folder = { ...root, id: 2, parent_id: 1, name: "Taxes", path: "/Taxes" };
   const archive = { ...root, id: 4, parent_id: 1, name: "Archive", path: "/Archive" };
   const nested = { ...root, id: 7, parent_id: 4, name: "Taxes", path: "/Archive/Taxes" };
@@ -68,8 +123,31 @@ it("names the current screen in the browser tab", async () => {
     current_version_id: "00000000-0000-4000-8000-000000000001",
     blob_hash: "a".repeat(64),
   };
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
+    if (url === "/api/daemon/web-auth") return Response.json({ enabled: true });
+    if (url === "/api/daemon/web-auth/login")
+      return Response.json({
+        enabled: true,
+        session: { token: "signed-in", upload_secret: "proof" },
+      });
+    if (url.includes("/audit/status"))
+      return Response.json({ vault_id: "11111111-1111-4111-8111-111111111111" });
+    if (url.endsWith("/photos/hidden"))
+      return Response.json({
+        configured: true,
+        expires_at: "2099-01-01T00:00:00Z",
+        expires_in: 300,
+      });
+    if (url.endsWith("/photos/albums")) return Response.json([album]);
+    if (url.endsWith("/photos/assets/query")) {
+      const request = JSON.parse(String(init?.body));
+      const ids: string[] | undefined = request.query.filters?.asset_ids;
+      const items = ids ? rows.filter((row) => ids.includes(row.asset_id)) : rows;
+      return Response.json({ items, map_items: [], total: items.length, facets: [] });
+    }
+    const metadata = photoMetadataResponse(url, init as RequestInit);
+    if (metadata) return metadata;
     if (url.startsWith("/api/v1/search?"))
       return Response.json({ hits: [], limit: 1000, truncated: false });
     if (url === "/api/v1/path?path=%2F") return Response.json(root);
@@ -107,9 +185,14 @@ it("names the current screen in the browser tab", async () => {
         name: "Sample.pdf",
         path: "/Sample.pdf",
       });
-    return Response.json({ items: [], total: 0, limit: 1000, offset: 0 });
+    return new Response(null, { status: 404 });
   });
   render(App);
+  await waitFor(() => expect(document.title).toBe("Sign in · Docbank"));
+  await fireEvent.input(await screen.findByLabelText("API key"), {
+    target: { value: "synthetic-key" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
   await screen.findByRole("cell", { name: "Taxes" });
   await waitFor(() => expect(document.title).toBe("All files · Docbank"));
   await fireEvent.doubleClick(screen.getByRole("cell", { name: "Taxes" }));
@@ -165,8 +248,47 @@ it("names the current screen in the browser tab", async () => {
   await waitFor(() => expect(document.title).toBe("Backups · Docbank"));
   await fireEvent.click(screen.getByRole("button", { name: "Close System" }));
   await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Open Photo 1.jpg" }));
+  await waitFor(() => expect(document.title).toBe("Photo 1.jpg · Docbank"));
+  await fireEvent.click(screen.getByRole("button", { name: "Close photo viewer" }));
+  for (const id of [1, 2])
+    await fireEvent.click(
+      await screen.findByRole("checkbox", { name: `Select photo Photo ${id}.jpg` }),
+    );
+  await fireEvent.click(screen.getByRole("button", { name: "Compare" }));
+  await waitFor(() => expect(document.title).toBe("Compare photos · Docbank"));
+  await fireEvent.click(screen.getByRole("button", { name: "Exit compare" }));
+  await waitFor(() => expect(document.title).toBe("Photos · Docbank"));
+  const clear = screen.queryByRole("button", { name: "Clear selection" });
+  if (clear) await fireEvent.click(clear);
+  const cull = await screen.findByRole("button", { name: "Cull" });
+  await waitFor(() => expect((cull as HTMLButtonElement).disabled).toBe(false));
+  await fireEvent.click(cull);
+  const dialog = await screen.findByRole("dialog", { name: "Cull photos" });
+  await within(dialog).findByText("Photo 1.jpg");
+  await waitFor(() => expect(document.title).toBe("Photo 1.jpg · Docbank"));
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Next photo" }));
+  await within(dialog).findByText("Photo 2.jpg");
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Next photo" }));
+  await within(dialog).findByRole("heading", { name: "Pass complete" });
+  await waitFor(() => expect(document.title).toBe("Pass complete · Docbank"));
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Back to photos" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Map" }));
+  await waitFor(() => expect(document.title).toBe("Map · Docbank"));
+  await fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
+  await waitFor(() => expect(document.title).toBe("Hidden · Docbank"));
+  await fireEvent.click(await screen.findByRole("button", { name: "Open Photo 1.jpg" }));
+  await waitFor(() => expect(document.title).toBe("Photo 1.jpg · Docbank"));
+  await fireEvent.click(await screen.findByRole("button", { name: "Ada" }));
+  await screen.findByText("Person: Ada");
+  await waitFor(() => expect(document.title).toBe("Ada · Photos · Docbank"));
+  await fireEvent.click(screen.getByRole("button", { name: "Library" }));
   await fireEvent.click(await screen.findByRole("button", { name: "Albums" }));
   await waitFor(() => expect(document.title).toBe("Albums · Docbank"));
+  await fireEvent.click(await screen.findByRole("link", { name: /Trip/ }));
+  await waitFor(() => expect(document.title).toBe("Trip · Docbank"));
+  await fireEvent.click(screen.getByRole("button", { name: "Map" }));
+  await waitFor(() => expect(document.title).toBe("Map · Trip · Docbank"));
 });
 
 it("names a saved tag view when its tag was deleted", async () => {
@@ -189,7 +311,7 @@ it("names a saved tag view when its tag was deleted", async () => {
       return Response.json({
         items:
           catalogReads === 1 ? [{ id: tagID, name: "Tax", revision: 1, assignment_count: 1 }] : [],
-        total: 0,
+        total: catalogReads === 1 ? 1 : 0,
         limit: 1000,
         offset: 0,
       });

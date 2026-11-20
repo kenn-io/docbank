@@ -188,7 +188,6 @@ it("keeps the resolved linked selection when root rows arrive after sign-in", as
       : undefined,
   );
   render(App);
-  await waitFor(() => expect(document.title).toBe("Sign in · Docbank"));
   await signIn();
   await screen.findByText(oldID);
   await waitFor(() => expect(release).toBeTypeOf("function"));
