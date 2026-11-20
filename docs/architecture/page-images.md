@@ -6,57 +6,60 @@ description: Page geometry and local page rendering for one document version, wi
 
 # Verified page images
 
-The page API returns physical geometry and verified PNG images for the document
-version that a request names. Importing a file does not automatically render
-it. This API is separate from text extraction and visual previews.
+The page API returns physical geometry and verified PNG images for the exact
+document version you request. Importing a file does not render it
+automatically, and this API is separate from text extraction and visual
+previews.
 
-PDF frames use the effective MediaBox, CropBox, and quarter-turn rotation. Boxes
-are integer 1/10,000 points. Visible width and height are integer 1/10,000
-inches. A rational transform maps source coordinates to a top-left origin, x
-right and y down. Finite PDF coordinates are rounded half away from zero.
-Invalid crops, non-default UserUnit, and unsupported precision fail. Page
-dimensions are never guessed from a filename or a default paper size.
+PDF frames use the effective MediaBox, CropBox, and quarter-turn rotation, with
+boxes stored as integer 1/10,000 points and visible width and height as integer
+1/10,000 inches. A rational transform maps source coordinates to a top-left
+origin with x going right and y going down. Docbank rounds finite PDF
+coordinates half away from zero. Invalid crops, non-default UserUnit values, and
+unsupported precision fail, and Docbank never guesses page dimensions from a
+filename or a default paper size.
 
 Native redaction admission compares page boxes at PDFium's binary32 precision.
-For each stored point/10,000 coordinate `q`, it computes
-`p = round(float32(q / 10000) * 10000)`, with ties away from zero. It requires
-`abs(p - q) <= 1` and the observed coordinate to round to exactly `p`. This is
-an exact projection check, not a tolerance for any neighboring coordinate.
-The original frame, its digest and its mask transform remain unchanged.
-Coordinates whose projection moves farther are refused, even on a small crop.
+For each stored point/10,000 coordinate `q`, Docbank computes
+`p = round(float32(q / 10000) * 10000)` with ties away from zero, and requires
+`abs(p - q) <= 1` with the observed coordinate rounding to exactly `p`. That
+check is an exact projection check rather than a tolerance for neighboring
+coordinates. The original frame, its digest, and its mask transform stay
+unchanged, and coordinates whose projection moves farther are refused even on a
+small crop.
 
-Source widths and heights are rounded forward from points into the frame's
-inch/10,000 units. This preserves dimensions such as a 168pt crop that becomes
-23333 units, rather than rejecting it after converting that rounded value back
-to points. Saved and freshly written PDFs retain their separate output checks.
-Previously admitted boxes stay admitted: the nearest binary32 value to
-`q / 10000` is at least as close as the previously accepted engine value, so
-both quantize to `q`. The former .001pt dimension tolerance lies inside the
-.0036pt half-unit boundary of forward rounding.
+Docbank rounds source widths and heights forward from points into the frame's
+inch/10,000 units. Doing so preserves dimensions such as a 168pt crop that
+becomes 23333 units, instead of rejecting it after converting that rounded
+value back to points. Saved and freshly written PDFs keep their separate output
+checks. Previously admitted boxes stay admitted because the nearest binary32
+value to `q / 10000` is at least as close as the previously accepted engine
+value, so both quantize to `q`. The former .001pt dimension tolerance also lies
+inside the .0036pt half-unit boundary of forward rounding.
 
-Still PNGs need one CRC-valid, metre-based pHYs chunk before image data, with
+Still PNGs need one CRC-valid, metre-based pHYs chunk before image data with
 equal nonzero horizontal and vertical density. Animation, EXIF orientation,
-missing density, and unequal density are unsupported. PNG rendering retains the
-original bytes. Omit DPI or use zero for native density. A different requested
-DPI is rejected. Actual numeric DPI is `pixels_per_metre * 127 / 5000`.
+missing density, and unequal density are unsupported. PNG rendering keeps the
+original bytes. To request native density, omit DPI or pass zero. Any other
+requested DPI is rejected. Actual numeric DPI is `pixels_per_metre * 127 / 5000`.
 PDF requests default to 144 DPI and accept 1–1200 DPI within pixel limits.
 
 ## Configure the optional runtime
 
 Rendering requires Linux amd64 and three pinned compiled executables: the
-repository-owned inspector, Poppler's `pdftoppm`, and util-linux `prlimit`.
-Other platforms, missing executables, and failed qualification leave rendering
-unavailable without disabling other Docbank features. Retained frames and
-images remain readable without a renderer.
+repository-owned inspector, Poppler's `pdftoppm`, and util-linux `prlimit`. On
+other platforms, or when executables are missing or fail qualification,
+rendering stays unavailable without disabling other Docbank features. Retained
+frames and images remain readable even without a renderer.
 
-Build the inspector from the same source revision as Docbank:
+First, build the inspector from the same source revision as Docbank:
 
 ```sh
 go build -tags fts5 -o bin/ ./document/pagerender/cmd/docbank-page-inspect
 ```
 
-Install all three at immutable regular-file paths, resolve symlinks, calculate
-their SHA-256 digests, and configure `config.toml`:
+Next, install all three executables at immutable regular-file paths, resolve
+symlinks, calculate their SHA-256 digests, and configure `config.toml`:
 
 ```toml
 [page_runtime]
@@ -75,32 +78,35 @@ path = "/opt/docbank/page-runtime/prlimit"
 sha256 = "<64 lowercase hexadecimal characters>"
 ```
 
-The digests are placeholders, not runnable defaults. Recipes record executable
-digests and observed versions. The operator manages shared libraries, fonts,
-and color resources. Requalify the deployment and change `deployment_identity`
-whenever they change. The identity is an operator declaration. Docbank does not
-independently verify the resource content, and the runtime is not a hermetic
-bundle. Different output for a retained exact recipe is a conflict, never an
+Those digests are placeholders rather than runnable defaults. Recipes record
+executable digests and observed versions, while you manage shared libraries,
+fonts, and color resources on the host. Whenever those host resources change,
+requalify the deployment and update `deployment_identity`. That identity is an
+operator declaration. Docbank does not independently verify the resource
+content, and the runtime is not a hermetic bundle. If a retained exact recipe
+produces different output, Docbank treats it as a conflict rather than an
 overwrite.
 
-Both PDF inspection and rendering run under pre-exec address-space limits:
+Both PDF inspection and rendering run under pre-exec address-space limits of
 2 GiB for the Go inspector, including Go's virtual-memory reservation, and
-512 MiB for Poppler. Each phase has 60 seconds. Each job has ten minutes.
-These are process resource limits, not filesystem or network sandboxing.
+512 MiB for Poppler. Each phase has a 60-second limit and each job has a
+ten-minute limit. These are process resource limits, not filesystem or network
+sandboxing.
 
-Requests are bounded to 16 explicit pages, documents to 1,000 pages, and source
-bytes to 64 MiB. Output is limited to 40 million decoded pixels, 16,384 pixels
-per axis, 32 MiB per PNG, and 256 MiB per job. Geometry output has a 16 MiB
-cap. Diagnostics have a 64 KiB cap. One worker executes jobs, with at most 64
-queued or running. Full decoding, dimensions, size, and SHA-256 are verified.
-PDF output may differ by one pixel per axis from the rounded frame at supported
-DPI. The receipt records the actual dimensions. PNG dimensions must match exactly.
-Successful process exit alone does not establish success.
+Requests can name up to 16 explicit pages, documents can have up to 1,000
+pages, and source files can be up to 64 MiB. Output is limited to 40 million
+decoded pixels, 16,384 pixels per axis, 32 MiB per PNG, and 256 MiB per job,
+with geometry output capped at 16 MiB and diagnostics capped at 64 KiB. A
+single worker runs jobs, with at most 64 queued or running at once. Docbank
+verifies full decoding, dimensions, size, and SHA-256 on every result. A
+successful process exit alone does not establish success. PDF output may differ
+by one pixel per axis from the rounded frame at supported DPI, and the receipt
+records the actual dimensions. PNG dimensions must match exactly.
 
 ## API and retained authority
 
-Every request selects a node revision and exact source version, SHA-256, and
-size. No operation falls back to the current head.
+Every request names a node revision along with the exact source version,
+SHA-256, and size. No operation falls back to the current head.
 
 | Operation | Endpoint |
 |-----------|----------|
@@ -110,60 +116,64 @@ size. No operation falls back to the current head.
 | Cancel an exact job | `POST /api/v1/pages/jobs/{id}/cancel` |
 | Read PNG bytes bound to source, page, frame, recipe and image hashes | `GET /api/v1/pages/image` |
 
-The OpenAPI document describes request fields. Inventory returns complete
-frame/count authority separately from available images and their actual recipes.
-A completed job covers its requested pages, not necessarily the whole document.
-Requests for identical work already queued, running, or completed return that
-job. Reusing the retained job's operation UUID returns its original result.
-Submit a new UUID to retry failed or canceled work. Inventory rejects more than
-16,000 retained image receipts in one response.
+The OpenAPI document describes the request fields. Inventory returns complete
+frame and count authority separately from available images and their actual
+recipes, and it rejects responses with more than 16,000 retained image
+receipts. A completed job covers its requested pages, not necessarily the whole
+document. If you request identical work that is already queued, running, or
+completed, Docbank returns that job, and reusing a retained job's operation
+UUID returns its original result. To retry failed or canceled work, submit a
+new UUID.
 
 Frames, recipes, and receipts are immutable. Cancellation, source revision
-changes, and obsolete claims block later publication. Cancellation lets the
-current render finish but blocks its publication. Restart requeues unfinished
-jobs with fresh claims. Partial images remain usable and participate in backup,
-restore verification, and garbage-collection reachability.
+changes, and obsolete claims all block later publication. When you cancel a
+job, the current render finishes, and Docbank blocks its publication. Restart
+requeues unfinished jobs with fresh claims. Partial images remain usable and
+participate in backup, restore verification, and garbage-collection
+reachability.
 
-Page authority remains with its exact content version and is removed when that
-version is removed. Attachment/build derivative purge does not purge page
-images. There is no separate page-purge API. The PyMuPDF text bridge is
+Page authority stays with its exact content version and is removed when that
+version is removed. Attachment or build derivative purge does not purge page
+images, and there is no separate page-purge API. The PyMuPDF text bridge is
 unchanged.
 
 ## Native-PDF preparation
 
 `POST /api/v1/redaction/prepare` inspects one exact retained PDF selected by
-node ID, node revision and source version/hash/size. API keys and browser
-sessions are admitted. The CLI entry point is
+node ID, node revision, and source version, hash, and size. Both API keys and
+browser sessions are admitted, and the CLI entry point is
 [`redaction prepare`](../usage/document-processing.md#prepare-a-native-pdf).
-This read creates no jobs, attachments, stored maps or output PDFs.
+This read creates no jobs, attachments, stored maps, or output PDFs.
 
 The processing service reads the live file and its node-owned version in one
-snapshot. Historical versions are allowed. It checks the node revision before
+snapshot, including historical versions. It checks the node revision before
 comparing the immutable hash and size, then copies and verifies the entire
 original under the shared physical-authority gate. Logical replacement or trash
-after admission does not revoke that snapshot. The gate is released before
-inspection, so maintenance does not wait for rendering.
+after admission does not revoke that snapshot. The service releases the gate
+before inspection, so maintenance does not wait for rendering.
 
 The configured page runtime inspects the private bytes once. Native PDFium
-inspection consumes that complete result, rechecking its source identity,
-frames, parser identity and font domains. It does not launch a second
-classifier. The original bytes and temporary engine resources are released
-before the service gives up its preparation slot.
+inspection consumes that complete result and rechecks its source identity,
+frames, parser identity, and font domains without launching a second
+classifier. The service releases the original bytes and temporary engine
+resources before giving up its preparation slot.
 
-The response contract is `native-pdf-preparation/v1`: `selection`, ordered
-`frames`, `evidence`, `evidence_sha256` and `map`. The evidence contract is
-`native-pdf-evidence/v1`, containing the source, page-runtime fingerprint,
-qualified renderer digest and native page observations. Observation bounds are
-PDF point/10000; map boxes use top-left inch/10000 and name their frame digest.
-Text spans count UTF-8 bytes. Text is neither normalized nor trimmed, and page
-boundaries add no separators. Semantic `units` is empty.
+The response uses the `native-pdf-preparation/v1` contract and contains
+`selection`, ordered `frames`, `evidence`, `evidence_sha256`, and `map`. The
+evidence uses `native-pdf-evidence/v1`, which holds the source, page-runtime
+fingerprint, qualified renderer digest, and native page observations.
+Observation bounds are in PDF point/10000, while map boxes use top-left
+inch/10000 and name their frame digest. Text spans count UTF-8 bytes. Text is
+neither normalized nor trimmed, page boundaries add no separators, and semantic
+`units` is empty.
 
-The map's evidence digest binds this native evidence record. Existing `Align`
-callers continue to bind normalized evidence instead. Mask admission
-must accept the complete preparation envelope and check its evidence contract;
-a bare `aligned-text/v1` map cannot identify the meaning of that digest. The
-service and client check source, frame, evidence and map bindings. Client checks
-establish response consistency, not independent verification of source pixels.
+The map's evidence digest binds this native evidence record, while existing
+`Align` callers continue to bind normalized evidence instead. Mask admission
+must accept the complete preparation envelope and check its evidence contract,
+and a bare `aligned-text/v1` map cannot identify the meaning of that digest.
+Both the service and client check source, frame, evidence, and map bindings.
+Client checks establish response consistency rather than independent
+verification of source pixels.
 
 The opt-in MCP preparation tool binds the exact vault, live node and retained
 version before calling the same daemon endpoint on its own connection. It
@@ -171,129 +181,138 @@ rebuilds the map from the returned observations before saving the private
 envelope. MCP replies contain the saved identity and bounded page summaries.
 The full map and source text stay in the local file for the existing resolver.
 
-Preparation shares one slot with resolve and render, with no queue. Shutdown cancels admitted
-work and waits for cleanup. Limits are 8 KiB requests, 64 MiB originals, the
-entire 1–16-page PDF, 8 MiB retained evidence, a 15 MiB result and a 16 MiB client
-wire read. A refusal returns no partial result. The ordinary 60-second request
-deadline and qualified renderer's 300 DPI, 512 MiB WASM and 1 GiB process-RSS
-limits apply. Evidence size is not a peak-memory bound.
+Preparation shares a single slot with resolve and render, with no queue.
+Shutdown cancels admitted work and waits for cleanup. The limits are an 8 KiB
+request, a 64 MiB original, a 1–16-page PDF prepared in full, 8 MiB of retained
+evidence, a 15 MiB result, and a 16 MiB client wire read.
+A refusal returns no partial result. The ordinary 60-second request deadline and
+the qualified renderer's 300 DPI, 512 MiB WASM, and 1 GiB process-RSS limits
+also apply. Evidence size is not a peak-memory bound.
 
 RSS refusals preserve a typed cause with observed and allowed byte counts in
-daemon diagnostics. On macOS the ceiling measures the process's physical
-footprint. macOS keeps memory the Go runtime has returned in resident size, so
-that value would not fall after the worker frees memory before refusing a job.
-A live request receives 503 `redaction_preparation_memory`; an internal
-deadline receives 503 `redaction_preparation_worker_timeout`.
-Only the original request context selects 408 cancellation or 504 timeout.
-A stopped service or missing runtime returns 503 unavailable; a second request
-returns 503 busy. Limit and unsupported-source refusals are 422, stale selection
-is 409, and missing or trashed selection is 404. Corrupt originals or invalid
-inspector output return 500 integrity; other worker failures return 500 failed.
+daemon diagnostics. On macOS, the ceiling measures the process's physical
+footprint. macOS keeps memory that the Go runtime has returned in resident size,
+so that value would not fall after the worker frees memory before refusing a
+job. A live request receives 503
+`redaction_preparation_memory`, and an internal deadline receives 503
+`redaction_preparation_worker_timeout`. Only the original request context
+selects 408 cancellation or 504 timeout. A stopped service or missing runtime
+returns 503 unavailable, and a second request returns 503 busy. Limit and
+unsupported-source refusals return 422, stale selection returns 409, and
+missing or trashed selection returns 404. Corrupt originals or invalid inspector
+output return 500 integrity, and other worker failures return 500 failed.
 
-`TestNativePDFRedactionCLI` qualifies import, preparation, review and render
+`TestNativePDFRedactionCLI` qualifies import, preparation, review, and render
 through the real CLI and daemon. It independently checks extracted text, black
-mask pixels and unchanged retained pixels in the saved PDF. The qualification
-also covers historical versions after metadata changes, multiple pages, explicit
-expansion and both gap kinds. `TestPDFRedactionSourcePreparation` separately
-qualifies normalized evidence, including fractional-position Courier text.
+mask pixels, and unchanged retained pixels in the saved PDF, and it also covers
+historical versions after metadata changes, multiple pages, explicit expansion,
+and both gap kinds. `TestPDFRedactionSourcePreparation` separately qualifies
+normalized evidence, including fractional-position Courier text.
 
 ### Native-PDF mask execution
 
-The resolve and plain render routes admit a live file's exact retained
-version, hash and size. They do not require the observed node revision.
-Preparation still checks its own requested revision. The preparation and review
-digests use typed projections that exclude revisions; observed/admitted revisions
-remain informational. Both operations derive the map again from the complete
-evidence envelope and repeat native inspection of freshly captured source bytes.
-Any evidence or frame difference refuses the operation before output.
+The resolve and plain render routes admit a live file's exact retained version,
+hash, and size without requiring the observed node revision. Preparation still
+checks its own requested revision. The preparation and review digests use typed
+projections that exclude revisions, and observed and admitted revisions stay
+informational. Both operations derive the map again from the complete evidence
+envelope and repeat native inspection on freshly captured source bytes. Any
+evidence or frame difference refuses the operation before output.
 
-Masks contain only a UUIDv4 ID and an explicit text, rectangle or page selector.
-Text ranges use UTF-8 byte offsets. Resolution uses the qualified recipe and
-fixed redact action, with no additional labels or reasons. Complete expansion
-proposals travel in the problem's `redaction` field. The entire problem is capped
-at 16 MiB; a larger proposal returns `redaction_limit` with narrower-selection
-advice, never a truncated selector. Requests are capped at 17 MiB and reviews
-at 15 MiB (16 MiB on the client wire).
+Masks contain only a UUIDv4 ID and an explicit text, rectangle, or page
+selector, with text ranges expressed as UTF-8 byte offsets. Resolution uses the
+qualified recipe and a fixed redact action, with no additional labels or
+reasons. Complete expansion proposals travel in the problem's `redaction`
+field. The entire problem is capped at 16 MiB, and a larger proposal returns
+`redaction_limit` with advice to narrow the selection instead of truncating a
+selector. Requests are capped at 17 MiB and reviews at 15 MiB, or 16 MiB on the
+client wire.
 
 Render rechecks the reviewed hash, renders all pages, burns masks, writes a
-fresh PDF and verifies it with independent artifact iterators before packaging.
-The renderer closes before verification takes the shared WASM lease. Sanitized
-text is bounded at 1 MiB per page. The ZIP has three stored entries in order:
-`redacted.pdf`, `redacted.txt`, `receipt.json`, with no source filenames or
-optional contents. The client checks inventory, CRCs, hashes, review bindings
-and reconstructed sanitized text before atomic local publication. Numbered delivery also runs the saved-PDF verifier before publication. Neither
-path claims to authenticate source pixels independently.
+fresh PDF, and verifies it with independent artifact iterators before
+packaging. The renderer closes before verification takes the shared WASM lease.
+Sanitized text is capped at 1 MiB per page. The ZIP holds three stored entries
+in order, `redacted.pdf`, `redacted.txt`, and `receipt.json`, with no source
+filenames or optional contents. Before atomic local publication, the client
+checks inventory, CRCs, hashes, review bindings, and reconstructed sanitized
+text. Numbered delivery also runs the saved-PDF verifier before publication.
+Neither path claims to authenticate source pixels independently.
 
 `redaction verify` validates the preparation and masks, rebuilds the review,
-then captures the local ZIP into one private temporary file while hashing it.
-The archive checker admits a positive size no larger than 544 MiB before parsing
+and captures the local ZIP into one private temporary file while hashing it.
+The archive checker admits a positive size of at most 544 MiB before parsing
 and returns the validated PDF as a bounded section of that snapshot. All checks
-and the reported digest use the same captured bytes. Comparing source-file
-metadata between passes could not establish that consistency. The cost is up
-to 544 MiB of temporary storage, or RAM on a memory-backed temporary directory.
-The snapshot is closed and removed before success is reported. The download
-path retains its digest computed during transfer.
+and the reported digest use those same captured bytes. Comparing source-file
+metadata between passes could not establish that consistency. This
+capture costs up to 544 MiB of temporary storage, or RAM on a memory-backed
+temporary directory. Docbank closes and removes the snapshot before reporting
+success. The download path keeps the digest it computed during transfer.
 
-Saved-PDF verification takes its masks, runs and geometry from the reconstructed
-review. It parses the complete fresh-writer grammar, checks exact searchable
-text and placement, and requires opaque black pixels throughout every reviewed
-mask. Embedded PDFium renders tiles which must match the stored RGB rows.
-The bounded PDF section goes directly to PDFium; there is no extracted PDF,
-PNG spool or `VerifyFresh` freezing copy. The command needs neither source
-authority nor a configured page runtime. Its ten-minute deadline includes a
-60-second limit per page; the qualified 512 MiB WASM and 1 GiB process RSS limits
-also apply. RSS refusals remain resource failures, not tampering claims.
+Saved-PDF verification takes its masks, runs, and geometry from the
+reconstructed review. It parses the complete fresh-writer grammar, checks exact
+searchable text and placement, and requires opaque black pixels throughout
+every reviewed mask. Embedded PDFium renders tiles that must match the stored
+RGB rows. The bounded PDF section goes directly to PDFium without an extracted
+PDF, PNG spool, or `VerifyFresh` freezing copy. The command needs neither
+source authority nor a configured page runtime. Its ten-minute deadline
+includes a 60-second limit per page, and the qualified 512 MiB WASM and 1 GiB
+process RSS limits also apply. RSS refusals remain resource failures rather
+than tampering claims.
 
-Each saved image must contain exactly one zlib stream with the exact RGB byte
-count, valid checksum and complete end-of-stream. Preset dictionaries and any
-bytes after the trailer within the declared stream length are refused. A
-buffered byte reader preserves the inflater's exact boundary, including buffered
-trailing bytes. Valid differences in DEFLATE encoding are accepted so that saved
-files do not depend on the verifying Go toolchain's encoder. This does not
-eliminate hidden variation in compression choices. Render-time `VerifyFresh`
-keeps its separate byte-exact comparison against independently staged PNG rows.
+Each saved image must hold exactly one zlib stream with the exact RGB byte
+count, a valid checksum, and a complete end-of-stream. Docbank refuses preset
+dictionaries and any bytes after the trailer within the declared stream length.
+A buffered byte reader keeps the inflater's exact boundary, including buffered
+trailing bytes. Valid differences in DEFLATE encoding are
+accepted so that saved files do not depend on the verifying Go toolchain's
+encoder. That allowance does not eliminate hidden variation in compression
+choices. Render-time `VerifyFresh` keeps its separate byte-exact comparison
+against independently staged PNG rows.
 
-Font storage is selected by the qualified review recipe before parsing the PDF.
-Writer v2 requires the original raw font object; v3 requires `FlateDecode`, with
-an exact decoded length and the same pinned font SHA-256. A v3 font stream is
-limited to 10 MiB, contains exactly one zlib stream, and must have no preset
-dictionary or trailing bytes. Valid alternate compression settings are accepted;
-verification does not depend on a particular Go encoder. A raw v3 font or a
-compressed v2 font is an integrity failure. Supported historical writers are
-listed in `internal/pdfproduction/dependencies.json`.
+The qualified review recipe selects font storage before Docbank parses the PDF.
+Writer v2 requires the original raw font object, while v3 requires
+`FlateDecode` with an exact decoded length and the same pinned font SHA-256. A
+v3 font stream is limited to 10 MiB, contains exactly one zlib stream, and must
+have no preset dictionary or trailing bytes. Valid alternate compression
+settings are accepted, and verification does not depend on a particular Go
+encoder. A raw v3 font or a compressed v2 font is an integrity failure. You can
+find the list of supported historical writers in
+`internal/pdfproduction/dependencies.json`.
 
-New resolve calls use v3. Existing v2 deliveries remain fully verifiable; v2
-rendering is reserved for allocations already created with that recipe. A new
-reservation or plain render from a v2 review returns `redaction_review_changed`
-(exit 4), with advice to resolve again. Reservation replay precedes this check,
-so pending v2 allocations keep their review digest and labels.
-Client and service admission reconstruct the request's review digest against the
-two qualified native recipes. Allocation admission also checks the rebuilt
-numbered recipe against the ledger before capture. No failed PDF check is retried
-under another format. The writer retains one immutable compressed-font buffer
-per process; request cancellation and memory refusals are not cached.
+New resolve calls use v3. Existing v2 deliveries remain fully verifiable, and
+v2 rendering is reserved for allocations already created with that recipe. A
+new reservation or plain render from a v2 review returns
+`redaction_review_changed` with exit 4 and advice to resolve again. Reservation
+replay runs before this check, so pending v2 allocations keep their review
+digest and labels. Client and service admission reconstruct the request's
+review digest against the two qualified native recipes, and allocation
+admission also checks the rebuilt numbered recipe against the ledger before
+capture. No failed PDF check is retried under another format. The writer keeps
+one immutable compressed-font buffer per process, and request cancellation and
+memory refusals are not cached.
 
-The offline result remains the checked receipt plus the whole-ZIP size and SHA-256.
-It establishes reviewed mask and text agreement, but cannot establish that
-unmasked image content matches the source or authenticate the producer. Detecting
-substitution outside the checked masks requires an independently retained archive
-digest. See the
+The offline result remains the checked receipt plus the whole-ZIP size and
+SHA-256. It establishes reviewed mask and text agreement, but it cannot
+establish that unmasked image content matches the source or authenticate the
+producer. Detecting substitution outside the checked masks requires an
+independently retained archive digest. See the
 [saved-archive workflow](../usage/document-processing.md#check-and-retain-a-saved-archive)
 for retention and recovery.
 
-Prepare, resolve, new numbered reservations and render share one shutdown-accounted
-operation slot. A busy
-refusal names its holder. The shared capture gate protects original bytes only
-until capture finishes. The slot remains held through verified ZIP delivery and
-cleanup. Render has a ten-minute context deadline and actual socket deadlines;
-a stalled upload or download cannot retain the slot indefinitely. Resolve uses
-the ordinary 60-second request deadline. A failed transfer after headers aborts
-the stream instead of appending a JSON error to a ZIP.
+Prepare, resolve, new numbered reservations, and render share one
+shutdown-accounted operation slot, and a busy refusal names its holder. The
+shared capture gate protects original bytes only until capture finishes, while
+the slot stays held through verified ZIP delivery and cleanup. Render has a
+ten-minute context deadline and actual socket deadlines, and a stalled upload
+or download cannot retain the slot indefinitely. Resolve uses the ordinary
+60-second request deadline. If a transfer fails after headers are sent, Docbank
+aborts the stream instead of appending a JSON error to a ZIP.
 
 All large copies live in one private directory under the service spool, passed
-explicitly to source staging, the PDF writer and verification. No operation
-changes `TMPDIR`. Component caps are 1 GiB total PNGs, 512 MiB PDF (including
-its private writer/verification copy), 256 KiB receipt and 544 MiB ZIP.
+explicitly to source staging, the PDF writer, and verification. No operation
+changes `TMPDIR`. Component caps are 1 GiB for total PNGs, 512 MiB for the PDF
+including its private writer and verification copy, 256 KiB for the receipt,
+and 544 MiB for the ZIP.
 
 | Phase | Maximum simultaneous file payload |
 |---|---|
@@ -301,34 +320,35 @@ its private writer/verification copy), 256 KiB receipt and 544 MiB ZIP.
 | Writing or verification | 2,048 MiB: PNGs, endpoint PDF and one private PDF copy |
 | Packaging | 1,072.25 MiB + 16 bytes: PDF, ZIP, optional text and receipt |
 
-Source copies are removed before writing, writer copies before verification,
-and verification copies and PNGs before packaging. Cleanup failure stops phase
-advancement. These bounds fit a conservative 2.125 GiB operation reservation;
-filesystem overhead and unrelated spool users require additional space. A tmpfs
-spool consumes memory outside the renderer's process-RSS measurement. Normal
-completion, cancellation and refusal remove the operation directory. Startup
-recovery removes directories left by a hard kill while holding the processing
-spool lock, before loose blob cleanup. There is no resume or global spool-quota
-mechanism.
+Docbank removes source copies before writing, writer copies before
+verification, and verification copies and PNGs before packaging. A cleanup
+failure stops phase advancement. These bounds fit a conservative 2.125 GiB
+operation reservation, though filesystem overhead and unrelated spool users
+require additional space. A tmpfs spool consumes memory outside the renderer's
+process-RSS measurement. Normal completion, cancellation, and refusal all
+remove the operation directory. Startup recovery removes directories left by a
+hard kill while holding the processing spool lock, before loose blob cleanup.
+There is no resume or global spool-quota mechanism.
 
 The receipt records the admitted version, informational revision, all review
-bindings, qualified recipe, page count and PDF/text sizes and digests. Local
-paths and publication state belong only to CLI output. Plain rendering creates no
-job or retained output. Numbered rendering retains the verified PDF as described below. Request cancellation/timeout map from the request's own
-context; memory refusal is `redaction_memory`, inner deadline is
-`redaction_worker_timeout`, and unexplained worker cancellation is a failure.
-Expected 503 refusals are logged at informational level; 500 failures retain
-their diagnostic cause.
+bindings, qualified recipe, page count, and PDF and text sizes and digests.
+Local paths and publication state appear only in CLI output. Plain rendering
+creates no job or retained output, whereas numbered rendering retains the
+verified PDF as described below. Request cancellation and timeout map from the
+request's own context. Memory refusal returns `redaction_memory`, an inner
+deadline returns `redaction_worker_timeout`, and unexplained worker
+cancellation is a failure. Expected 503 refusals are logged at informational
+level, and 500 failures retain their diagnostic cause.
 
 ### Temporary browser redaction previews
 
-Browser review uses the native capture, resolve, render, burn, write and
-`VerifyFreshWithRecipe` pipeline. Preview creation retains the verified PNGs
-while plain and numbered rendering still delete them before packaging. It
-publishes only after the ZIP is complete and the standalone PDF is closed and
-removed. There is no second render for display or download.
+Browser review uses the native capture, resolve, render, burn, write, and
+`VerifyFreshWithRecipe` pipeline. Preview creation keeps the verified PNGs,
+while plain and numbered rendering still delete them before packaging. Docbank
+publishes a preview only after the ZIP is complete and the standalone PDF is
+closed and removed. There is no second render for display or download.
 
-Authenticated preview routes are under `/api/v1/redaction/previews`:
+Authenticated preview routes live under `/api/v1/redaction/previews`:
 
 | Request | Result |
 |---|---|
@@ -341,34 +361,38 @@ Authenticated preview routes are under `/api/v1/redaction/previews`:
 | `DELETE /previews/{id}` | Retire this owner's preview. |
 | `DELETE /previews` | Cancel this owner's in-flight creation and preview transfers; retire its ready preview. Other owners and browser-session resources are unchanged. |
 
-The random 48-hex ID is never authority by itself. Unknown, expired, retired and
-other-owner previews return 410 `redaction_preview_unavailable`. Confirmation
-mismatch is 409 `redaction_review_changed`; an occupied cache is 503
-`redaction_preview_busy`. Browser admission covers prepare, resolve, these preview
-operations, and the separate reservation/publication routes. Query parameters are
-refused. The generic ZIP render remains API-key-only.
+The random 48-hex ID is never authority on its own. Unknown, expired, retired,
+and other-owner previews return 410 `redaction_preview_unavailable`. A
+confirmation mismatch returns 409 `redaction_review_changed`, and an occupied
+cache returns 503 `redaction_preview_busy`. Browser admission covers prepare,
+resolve, these preview operations, and the separate reservation and publication
+routes. Query parameters are refused. The generic ZIP render stays
+API-key-only.
 
-One mutex protects a global building, ready or retired entry awaiting readers or
-cleanup. Ready publication is fenced against session revocation. It releases the native-PDF
-slot and retains the operation directory for a fixed 30-minute lifetime. Every
-admitted reader owns a file handle and pins the directory; discard and expiry
-refuse new readers but let admitted reads finish. Revocation and service stop
-cancel creation and active readers, including blocked socket writes. Unused
-tickets hold no pin or copy. Cleanup failure retains the directory and capacity,
-including after failed creation. Once a retired preview's creation and readers
-finish, it releases its lifecycle registration even if deletion fails, so shutdown
-can drain. Explicit owner-scoped discard returns cleanup errors so the editor can
-retry; logout and shutdown cleanup log failures.
-Startup spool recovery removes abandoned `native-pdf-*` directories.
+One mutex protects a global building, ready, or retired entry awaiting readers
+or cleanup. Ready publication is fenced against session revocation. It releases
+the native-PDF slot and keeps the operation directory for a fixed 30-minute
+lifetime. Every admitted reader owns a file handle and pins the directory.
+Discard and expiry refuse new readers while letting admitted reads finish, and
+revocation and service stop cancel creation and active readers, including
+blocked socket writes. Unused tickets hold no pin or copy. Cleanup failure
+keeps the directory and capacity, including after failed creation. Once a
+retired preview's creation and readers finish, it releases its lifecycle
+registration even if deletion fails, so shutdown can drain. Explicit
+owner-scoped discard returns cleanup errors so the editor can retry, while
+logout and shutdown cleanup log failures. Startup spool recovery removes
+abandoned `native-pdf-*` directories.
 
-Prepare and resolve retain finite 60-second body/request deadlines. Preview
+Prepare and resolve keep finite 60-second body and request deadlines. Preview
 creation has a finite 60-second body deadline, cleared after decoding, and a
-ten-minute work deadline. Binary delivery uses a ten-minute deadline, including
-socket writes. All responses are private and non-cacheable. The shared browser
-transport treats prepare, resolve and preview creation as read operations.
+ten-minute work deadline. Binary delivery uses a ten-minute deadline that
+includes socket writes. All responses are private and non-cacheable. The shared
+browser transport treats prepare, resolve, and preview creation as read
+operations.
 
 Preview storage stays under the same private spool directory and operation
-ceiling. PNGs are capped at 128 MiB each and 1 GiB total; the ZIP at 544 MiB.
+ceiling. PNGs are capped at 128 MiB each and 1 GiB total, and the ZIP is capped
+at 544 MiB.
 
 | Phase | Maximum simultaneous file payload |
 |---|---|
@@ -377,340 +401,356 @@ ceiling. PNGs are capped at 128 MiB each and 1 GiB total; the ZIP at 544 MiB.
 | Packaging | 2,080 MiB plus bounded text/receipt: PNGs, PDF and ZIP |
 | Ready | 1,568 MiB: PNGs and ZIP only |
 
-One ready preview plus another native operation may use about 3.7 GiB. A ready
+One ready preview plus another native operation can use about 3.7 GiB. A ready
 recipient package adds up to 512 MiB, bringing the combined bound to about
-4.2 GiB. These are file-payload bounds, not a global disk quota; tmpfs space is outside process
-RSS accounting. Preview handles, masks and reviews are not persisted to SQLite.
-The browser keeps the original's verified bytes in one EmbedPDF reader during
-reading and review. Original downloads use the latest observed node revision.
-Metadata changes retry unfinished downloads without replacing verified bytes.
-Original pixels are an unchecked browser rendering. Page
-count, boxes, intrinsic rotation and dimensions must match preparation before
-marking is enabled. Box matching uses the same bounded binary32 projection as
-native admission. The browser and server use different pinned PDFium builds;
-a disagreement disables marking rather than substituting browser geometry. Crop-relative rectangles are transformed through the
-preparation's rational affine transform; all four corners are rounded outward
-into physical mask coordinates. Coverage and expansion overlays never enter the
-library's pending-redaction list. Docbank owns committed masks and never invokes
-the library's Apply/Commit operation.
+4.2 GiB. These are file-payload bounds rather than a global disk quota, and
+tmpfs space is outside process RSS accounting. Preview handles, masks, and
+reviews are not persisted to SQLite. The browser keeps the original's verified
+bytes in one EmbedPDF reader during reading and review. Original downloads use
+the latest observed node revision, and metadata changes retry unfinished
+downloads without replacing verified bytes. Original pixels are an unchecked
+browser rendering. Page count, boxes, intrinsic rotation, and dimensions must
+match preparation before marking is enabled, with box matching using the same
+bounded binary32 projection as native admission. The browser and server use
+different pinned PDFium builds, and a disagreement disables marking instead of
+substituting browser geometry. Crop-relative rectangles are transformed through
+the preparation's rational affine transform, with all four corners rounded
+outward into physical mask coordinates. Coverage and expansion overlays never
+enter the library's pending-redaction list. Docbank owns committed masks and
+never invokes the library's Apply or Commit operation.
 
-The pinned viewer extension reports actual base/tile image decoding and provides
-an inert layer inside the existing page transform. Drawing requires the current
-page's displayed images to have decoded. Image events cancel unfinished marks
-only when their document and page become unavailable; neighboring pages do not
-interrupt drawing. Generation-scoped callbacks cannot revive a retired render.
-Print/export commands stay disabled during review, as do the library's redaction
-commands. The same worker and original bytes survive mode changes.
-Returning to reading restores its zoom mode, including Fit width and Automatic,
-so the page continues to fit when the window resizes. Keyboard arrow movement
-accounts for viewing rotation before updating physical mask coordinates.
+The pinned viewer extension reports actual base and tile image decoding and
+provides an inert layer inside the existing page transform. Drawing requires
+the current page's displayed images to have decoded. Image events cancel
+unfinished marks only when their document and page become unavailable, and
+neighboring pages do not interrupt drawing. Generation-scoped callbacks cannot
+revive a retired render. Print and export commands stay disabled during review,
+along with the library's redaction commands. The same worker and original bytes
+survive mode changes. Returning to reading restores its zoom mode, including
+Fit width and Automatic, so the page continues to fit when the window resizes.
+Keyboard arrow movement accounts for viewing rotation before updating physical
+mask coordinates.
 
-Completed one-page text selections use exact run contexts, prefixes and suffixes
-from the reader's permission-checked text API. Each full context must occur once
-in both complete page extracts. Matching uses literal Unicode, never browser
-glyph coordinates or indexes as native offsets. Native UTF-8 spans must contain
-whole server atoms. The resolver derives their physical masks; the browser draws
-the same native atom boxes. Exact selected whitespace can join adjacent spans;
-reversed native order leaves separate selectors grouped only in the editor.
-Ambiguity and disagreement refuse the entire addition, with rectangle/page
-marking still available.
+Completed one-page text selections use exact run contexts, prefixes, and
+suffixes from the reader's permission-checked text API. Each full context must
+occur once in both complete page extracts. Matching uses literal Unicode, never
+browser glyph coordinates or indexes as native offsets. Native UTF-8 spans must
+contain whole server atoms. The resolver derives their physical masks, and the
+browser draws the same native atom boxes. Exact selected whitespace can join
+adjacent spans, while reversed native order leaves separate selectors grouped
+only in the editor. Ambiguity and disagreement refuse the entire addition, with
+rectangle and page marking still available.
 
-Selection work is bounded to one page, 32 contexts/spans, 4,096 browser glyph
-positions, 64 KiB of context/separator text and 1 MiB per page extract. There is
-one extraction task; generation, document, map, range and decoded-page checks
-prevent stale results from becoming masks. Page/zoom/rotation changes, selected
-page readiness loss, mode changes and disposal cancel transient selections.
-Text selectors consume mask slots but no input boxes. On explicit approval of a
-multi-span expansion, the browser constructs a rectangle selector from the
-server's checked `expanded_boxes`. It retains whitespace between glyphs and
-uses the shared 1,024-box budget. No normalization or geometry fallback is used
-when matching selections.
+Selection work is bounded to one page, 32 contexts or spans, 4,096 browser
+glyph positions, 64 KiB of context or separator text, and 1 MiB per page
+extract. There is one extraction task, and generation, document, map, range,
+and decoded-page checks prevent stale results from becoming masks. Page, zoom,
+and rotation changes, selected page readiness loss, mode changes, and disposal
+cancel transient selections. Text selectors consume mask slots but no input
+boxes. When you explicitly approve a multi-span expansion, the browser
+constructs a rectangle selector from the server's checked `expanded_boxes`,
+keeping whitespace between glyphs and using the shared 1,024-box budget. No
+normalization or geometry fallback is used when matching selections.
 
-Redacted keeps one server PNG URL, verifies its length/hash and header before
-decode, and binds its frame to preparation. These are the images checked against
-the delivered PDF. Text is compared with the resolved runs.
-The editor closes on pagehide and requests owner-scoped preview cancellation,
-including when creation has not returned a handle. It does not revoke the
-browser session or cancel unrelated exports and imports. A cached page returns
-with the editor closed. Lost cleanup messages rely on expiry.
-Canceled or ambiguous creation uses a fresh request to the owner-scoped discard
-route. The editor preserves masks and requires acknowledged cleanup before
-another creation attempt; a failed cleanup can be retried separately.
-The browser retains a preview handle until the server reports it unavailable or
-acknowledges discard; its wall clock does not establish expiry. Preparing and
-creating output revalidate the live source. Metadata-only changes
-keep the original reader and masks; a changed version blocks new output.
+Redacted keeps one server PNG URL, verifies its length, hash, and header before
+decode, and binds its frame to preparation. These are the images checked
+against the delivered PDF. Text is compared with the resolved runs. The editor
+closes on pagehide and requests owner-scoped preview cancellation, including
+when creation has not returned a handle, without revoking the browser session
+or canceling unrelated exports and imports. A cached page returns with the
+editor closed, and lost cleanup messages rely on expiry. Canceled or ambiguous
+creation uses a fresh request to the owner-scoped discard route. The editor
+preserves masks and requires acknowledged cleanup before another creation
+attempt, and a failed cleanup can be retried separately. The browser keeps a
+preview handle until the server reports it unavailable or acknowledges discard,
+and its wall clock does not establish expiry. Preparing and creating output
+revalidate the live source. Metadata-only changes keep the original reader and
+masks, while a changed version blocks new output.
 
 ### Retained numbered native PDFs
 
-Browser publication uses `POST /api/v1/redaction/publications`, with the reviewed
-preparation, masks, review digest and required numbered allocation ID. It owns
-the shared native slot for at most ten minutes and calls the same admission,
-snapshot capture, render and first-winner publication pipeline as CLI rendering.
-It returns the existing export detail without packaging a ZIP or retaining page
-images. Body reads have a finite 60-second deadline, cleared before publication.
-Completed retries use the first verified retained PDF without a page runtime.
-Cleanup failure after commit is logged without reporting a failed publication.
+Browser publication uses `POST /api/v1/redaction/publications` with the
+reviewed preparation, masks, review digest, and required numbered allocation
+ID. It owns the shared native slot for at most ten minutes and calls the same
+admission, snapshot capture, render, and first-winner publication pipeline as
+CLI rendering. It returns the existing export detail without packaging a ZIP or
+retaining page images. Body reads have a finite 60-second deadline that clears
+before publication. Completed retries use the first verified retained PDF
+without a page runtime. Cleanup failure after commit is logged without
+reporting a failed publication.
 
-Standalone MCP exposes `publish_numbered_pdf` with `--allow-package-writes`.
-Reservation and permanent original-retention consent stay on operator surfaces.
-The tool reads the three private review files and checks the expected review
-digest before daemon access. Its checked daemon client bounds and validates the
-publication receipt against the requested allocation and review. It makes one
-POST; an uncertain reply requires an explicit identical replay or artifact read.
-Each publication uses a separate ownership-proven daemon connection, leaving
-the shared connection available for reads and concurrent busy responses.
-Standalone calls rediscover the daemon before publication so retries survive a
-daemon restart. Supplied connections stay pinned to their original daemon.
-MCP performs no rendering or PDF staging for publication. Independent checking
-and local delivery use the existing reviewed `export_bates_file` path, with its
-own process-wide verifier gate. HTTP MCP retains its two-minute request limit.
+Standalone MCP exposes `publish_numbered_pdf` with `--allow-package-writes`,
+while reservation and permanent original-retention consent stay on operator
+surfaces. The tool reads the three private review files and checks the
+expected review digest before daemon access. Its checked daemon client bounds
+and validates the publication receipt against the requested allocation and
+review. It makes one POST, and an uncertain reply requires an explicit
+identical replay or artifact read. Each publication uses a separate
+ownership-proven daemon connection, leaving the shared connection available for
+reads and concurrent busy responses. Standalone calls rediscover the daemon
+before publication so retries survive a daemon restart, while supplied
+connections stay pinned to their original daemon. MCP performs no rendering or
+PDF staging for publication. Independent checking and local delivery use the
+existing reviewed `export_bates_file` path with its own process-wide verifier
+gate. HTTP MCP keeps its two-minute request limit.
 
 `GET /api/v1/bates/namespaces/{id}` reads the namespace and its advisory
-`next_sequence` together. The cursor is separate from immutable namespace objects
-embedded in recipes and receipts. It includes reserved and skipped numbers; it
-is not a global free-range guarantee. A missing or invalid cursor fails rather
-than defaulting to one. An exhausted cursor is `10^padding`. This read makes no
-snapshot, reservation or native operation and returns `private, no-store`.
+`next_sequence` together. The cursor is separate from immutable namespace
+objects embedded in recipes and receipts. It includes reserved and skipped
+numbers, and it is not a global free-range guarantee. A missing or invalid
+cursor fails rather than defaulting to one. An exhausted cursor is
+`10^padding`. This read makes no snapshot, reservation, or native operation and
+returns `private, no-store`.
 
 Browser gates allow only the exact namespace-detail GET and named reservation
-and publication POSTs without query parameters. Frozen numbering inputs and their
-controller live independently of temporary previews. Expiry removes preview
-assets but does not abort publication or change the confirmed start. The existing
-preview storage allowance remains in force alongside publication staging. There
-is no retained browser draft or implicit storage of private review files.
+and publication POSTs without query parameters. Frozen numbering inputs and
+their controller live independently of temporary previews. Expiry removes
+preview assets without aborting publication or changing the confirmed start.
+The existing preview storage allowance stays in force alongside publication
+staging. There is no retained browser draft or implicit storage of private
+review files.
 
 A numbered delivery uses the existing reservation ledger and a real sealed
-collection snapshot. The snapshot's sole member and occurrence name the original
-version, hash, size and source pages; `UnstampedSHA256` remains the original's
-hash. No synthetic authority or schema migration is needed. The metadata-only
-`native-pdf-numbered/v1` recipe binds the vault, immutable source selection,
-preparation, decisions and review digests, qualified renderer, namespace, explicit
-start, pages, footer policy and indefinite original retention. Revisions are
-informational and excluded from this identity.
+collection snapshot. The snapshot's sole member and occurrence name the
+original version, hash, size, and source pages, and `UnstampedSHA256` remains
+the original's hash. No synthetic authority or schema migration is needed. The
+metadata-only `native-pdf-numbered/v1` recipe binds the vault, immutable source
+selection, preparation, decisions and review digests, qualified renderer,
+namespace, explicit start, pages, footer policy, and indefinite original
+retention. Revisions are informational and excluded from this identity.
 
-`POST /api/v1/redaction/reservations` requires literal
-`retain_original: true`. New requests validate the review, namespace range and
-footer fit before taking permanent authority. After fresh inspection, one store
-transaction checks for an existing operation, seals the snapshot, reserves the
-range and advances the namespace cursor. Replay looks up namespace and start,
-then compares the recipe and full request digest, including the original
-snapshot ID. The lookup is repeated inside the transaction. A failed transaction
-retains neither snapshot nor range; a lost reply can be replayed without the
-source being live or the page runtime being configured. Reservation requests
-use the 17 MiB redaction body bound and 60-second deadline; receipts are bounded
-at 64 KiB on the client.
+`POST /api/v1/redaction/reservations` requires literal `retain_original: true`.
+New requests validate the review, namespace range, and footer fit before taking
+permanent authority. After fresh inspection, one store transaction checks for
+an existing operation, seals the snapshot, reserves the range, and advances the
+namespace cursor. Replay looks up the namespace and start, then compares the
+recipe and full request digest, including the original snapshot ID, and repeats
+the lookup inside the transaction. A failed transaction retains neither
+snapshot nor range, and a lost reply can be replayed without the source being
+live or the page runtime being configured. Reservation requests use the 17 MiB
+redaction body bound and 60-second deadline, and receipts are bounded at 64 KiB
+on the client.
 
-An uncommitted render with `allocation_id` loads the sealed snapshot member under
-`CaptureContext`. It checks the member, native representation and page inventory
-against the recipe, review and ledger, then reads the exact original through a
-verified blob stream. It never uses live-node admission or falls back to current
-content. Plain rendering keeps its live-file rule. Both paths share everything
-after capture: fresh inspection, review comparison, rendering, mask burning,
-optional endorsement, fresh writing and full verification.
+An uncommitted render with `allocation_id` loads the sealed snapshot member
+under `CaptureContext`. It checks the member, native representation, and page
+inventory against the recipe, review, and ledger, then reads the exact original
+through a verified blob stream. It never uses live-node admission or falls back
+to current content, while plain rendering keeps its live-file rule. Both paths
+share everything after capture: fresh inspection, review comparison, rendering,
+mask burning, optional endorsement, fresh writing, and full verification.
 
-Numbering adds a 5,000-unit strip below the source frame. Its black, 10-point
-label sits in a fixed inset box using the qualified font. The output-frame
-digest binds the source frame and strip. Masks stay in source coordinates.
-`VerifyFresh` checks layout and pixels against the staged artifacts. The exact
-verified handle and digest feed both retained blob publication and ZIP packaging;
-publication precedes transmission. The first artifact for an allocation wins.
-Failed renders leave their ranges reserved; completed retries use the retained
-PDF and regenerate the label-free sidecar and receipt without source inspection.
-They still acquire the shared slot. Reading a retained PDF or replaying a
-reservation receipt does not acquire it.
+Numbering adds a 5,000-unit strip below the source frame, with a black,
+10-point label sitting in a fixed inset box using the qualified font. The
+output-frame digest binds the source frame and strip, and masks stay in source
+coordinates. `VerifyFresh` checks layout and pixels against the staged
+artifacts. The exact verified handle and digest feed both retained blob
+publication and ZIP packaging, and publication precedes transmission. The first
+artifact for an allocation wins. Failed renders leave their ranges reserved,
+while completed retries use the retained PDF and regenerate the label-free
+sidecar and receipt without source inspection. Completed retries still acquire
+the shared slot, whereas reading a retained PDF or replaying a reservation
+receipt does not.
 
-The export detail includes the checked recipe, allocation, namespace and page
+The export detail includes the checked recipe, allocation, namespace, and page
 receipts. Both download clients dispatch once on the recipe contract. Ordinary
-Bates output keeps `VerifyStamped` when its recorded engine matches the installed
-engine; otherwise it uses recorded-byte recovery. Numbered output without review inputs checks
-recorded size/hash and numbering metadata and returns
-`recorded_bytes_and_numbers`. It does not parse the PDF or claim to recheck masks
-or rendered labels. With all three review inputs, `VerifySaved` derives source
-masks and runs from the review and output layout and endorsements from the bound
-reservation. It checks exact footer text and placement, and compares visible
-glyphs with independently painted expected labels. Inside each number box,
-grayscale samples may differ by at most 16 on the 0–255 scale, without positional
-tolerance or averaging. Background outside the boxes must be exactly white.
-This allows small antialiasing differences without accepting different numbers.
-Source-area masks still require opaque black. It returns `masks_text_and_numbers`.
-Any failure ends that check, without downgrade.
-Recorded-recipe checks use the closed shape, canonical digest and retained
-bindings, independently of installed dependency versions. Current-engine
-qualification runs before creation, rendering or full verification; an engine
-mismatch is a verifier-version refusal, not an integrity claim. Presentation
-geometry is derived from the recorded footer without loading the installed font.
+Bates output keeps `VerifyStamped` when its recorded engine matches the
+installed engine, and otherwise uses recorded-byte recovery. Numbered output
+without review inputs checks recorded size, hash, and numbering metadata and
+returns `recorded_bytes_and_numbers`. It does not parse the PDF or claim to
+recheck masks or rendered labels. With all three review inputs, `VerifySaved`
+derives source masks and runs from the review and output layout and
+endorsements from the bound reservation. It checks exact footer text and
+placement, and compares visible glyphs with independently painted expected
+labels. Inside each number box, grayscale samples may differ by at most 16 on
+the 0–255 scale without positional tolerance or averaging, while background
+outside the boxes must be exactly white. This allows small antialiasing
+differences without accepting different numbers. Source-area masks still
+require opaque black. It returns `masks_text_and_numbers`, and any failure ends
+that check without downgrade. Recorded-recipe checks use the closed shape,
+canonical digest, and retained bindings, independently of installed dependency
+versions. Current-engine qualification runs before creation, rendering, or full
+verification, and an engine mismatch is a verifier-version refusal rather than
+an integrity claim. Presentation geometry is derived from the recorded footer
+without loading the installed font.
 
-The offline ZIP verifier derives the same expectations from its checked receipt.
-The receipt is not cryptographic proof of issuance, and neither scope proves
-unmasked pixels match the original.
+The offline ZIP verifier derives the same expectations from its checked
+receipt. The receipt is not cryptographic proof of issuance, and neither scope
+proves that unmasked pixels match the original.
 
 ### Browser recipient packages
 
 `POST /api/v1/redaction/recipient-packages` takes one completed allocation and
-its preparation, masks and review digest. It checks the retained recipe and
+its preparation, masks, and review digest. It checks the retained recipe and
 allocation against the review, pins the PDF and label-free text descriptors,
 and copies the verified retained blob under capture. `VerifySaved` checks that
-same handle against the reviewed plan and numbered presentation. The recipient
-writer and finished-archive checker then enforce the ordinary recipient-package
-contract. This path does not inspect or render the source, create a snapshot,
-reserve numbers, or publish a new artifact. It works without the page runtime.
-Unsupported verifier versions are refused before packaging.
+same handle against the reviewed plan and numbered presentation, and the
+recipient writer and finished-archive checker then enforce the ordinary
+recipient-package contract. This path does not inspect or render the source,
+create a snapshot, reserve numbers, or publish a new artifact, and it works
+without the page runtime. Unsupported verifier versions are refused before
+packaging.
 
-The POST has a 17 MiB body limit and a finite 60-second upload deadline, cleared
-after strict decoding. Building and delivery each have a ten-minute deadline.
-The response is at most 256 KiB and contains the checked receipt and an existing
-one-use web-download ticket. Browser code checks its single document against the
-completed delivery and independently hashes the approved UTF-8 text. ZIP bytes
-stream through the browser's download path, rather than a JavaScript buffer.
-The build POST is counted as a read by the browser transport. API-key clients
-can use the same build, release and ticket endpoints; CLI users can package
-multiple completed deliveries with `redaction package`.
+The POST has a 17 MiB body limit and a finite 60-second upload deadline that
+clears after strict decoding. Building and delivery each have a ten-minute
+deadline. The response is at most 256 KiB and contains the checked receipt and
+an existing one-use web-download ticket. Browser code checks its single
+document against the completed delivery and independently hashes the approved
+UTF-8 text. ZIP bytes stream through the browser's download path rather than a
+JavaScript buffer. The browser transport counts the build POST as a read.
+API-key clients can use the same build, release, and ticket endpoints, and CLI
+users can package multiple completed deliveries with `redaction package`.
 
 A separate, global one-entry store owns the package directory and verified ZIP
-handle. The native-operation slot is released when building finishes; the entry
-expires after two minutes if unused. An admitted transfer pins that handle and
-cancels expiry, with request, owner and service cancellation interrupting blocked
-socket writes. Only the ZIP remains when ready. `DELETE` on the build path
-cancels this owner's build or transfer, waits for it to stop, then removes its
-files. It answers 204 only after removal. Removal failure, or the 60-second
-request deadline expiring first, is reported as an error, and the browser keeps
-a release-retry state. Logout and shutdown revoke without waiting. Lost or
-ambiguous POST responses use a fresh owner-scoped DELETE before another attempt.
-There is no admission fence for a POST that has not reached the service yet;
-the single entry and expiry bound that race. Closing the review releases only
-its package, without revoking the browser session.
+handle. The native-operation slot is released when building finishes, and the
+entry expires after two minutes if unused. An admitted transfer pins that
+handle and cancels expiry, with request, owner, and service cancellation
+interrupting blocked socket writes. Only the ZIP remains when ready. `DELETE`
+on the build path cancels this owner's build or transfer, waits for it to stop,
+and removes its files, answering 204 only after removal. A removal failure, or
+the 60-second request deadline expiring first, is reported as an error, and the
+browser keeps a release-retry state. Logout and shutdown revoke without
+waiting. Lost or ambiguous POST responses use a fresh owner-scoped DELETE
+before another attempt. There is no admission fence for a POST that has not
+reached the service yet, and the single entry and expiry bound that race.
+Closing the review releases only its package without revoking the browser
+session.
 
-As with previews, deletion failure retains files and capacity for retry. A
+As with previews, deletion failure keeps files and capacity for retry. A
 retired entry releases lifecycle registration once creation and readers finish,
 independently of deletion success, so shutdown drains. Startup spool recovery
-removes abandoned `native-pdf-*` directories. A failed build can retain both its
-512 MiB PDF and 512 MiB ZIP, rather than only the ready ZIP. Together with a ready
-preview and a new native operation, this is at most 4,768 MiB of file payload.
-If preview cleanup also failed at its 2,176 MiB ceiling, the conservative combined
-bound is 5,376 MiB. These bounds are not a global disk quota; tmpfs storage is
-outside the RSS limit.
+removes abandoned `native-pdf-*` directories. A failed build can keep both its
+512 MiB PDF and 512 MiB ZIP instead of only the ready ZIP. Together with a
+ready preview and a new native operation, that reaches at most 4,768 MiB of
+file payload. If preview cleanup also failed at its 2,176 MiB ceiling, the
+conservative combined bound is 5,376 MiB. These bounds are not a global disk
+quota, and tmpfs storage is outside the RSS limit.
 
-The retained object is the PDF, not the ZIP or review inputs. Backup and restore
-retain its artifact records, number lookup and snapshot source. The original
-remains retained indefinitely, including after trash empty and GC; this slice
-has no snapshot release or range-void path. Each fresh PDF embeds the full
-qualified font. New reviews use writer v3, which stores that font with PDF's
-`FlateDecode` filter: about 6 MB per sparse document instead of 9.6 MB. Image-heavy
-files save the same approximately 3.62 MB of font storage, not a fixed percentage.
-The decoded font identity and glyph coverage are unchanged. See the
+The retained object is the PDF rather than the ZIP or review inputs. Backup and
+restore retain its artifact records, number lookup, and snapshot source. The
+original stays retained indefinitely, including after trash empty and GC, and
+this slice has no snapshot release or range-void path. Each fresh PDF embeds
+the full qualified font. New reviews use writer v3, which stores that font with
+PDF's `FlateDecode` filter, using about 6 MB per sparse document instead of
+9.6 MB. Image-heavy files save the same approximately 3.62 MB of font storage
+rather than a fixed percentage. The decoded font identity and glyph coverage
+are unchanged. See the
 [numbered-delivery guide](../usage/document-processing.md#deliver-one-reviewed-pdf-with-bates-numbers)
-for consent, retries and the distinct verification claims.
+for consent, retries, and the distinct verification claims.
 
 ### Native coverage limits
 
 Resolution requires complete gap coverage across the entire document. Every
-ordered gap must be fully masked, even away from a selected rectangle. An
+ordered gap must be fully masked, even away from a selected rectangle, and an
 unordered gap requires masks covering its whole page. Any uncovered gap rejects
 the resolve with `mapping_incomplete` before rendering.
 
 ### Recognizing blank standard-font spaces
 
 With the configured Linux amd64 page runtime, native inspection can establish
-that whitespace in a qualified Courier, Times or Helvetica program paints
-nothing. This avoids false gaps from a neighboring letter's boundary pixels.
-It primarily helps programmatic PDFs such as fpdf and ReportLab output;
-Word, LaTeX and browser PDFs commonly use other programs or composite encodings.
+that whitespace in a qualified Courier, Times, or Helvetica program paints
+nothing. That avoids false gaps from a neighboring letter's boundary pixels. It
+primarily helps programmatic PDFs such as fpdf and ReportLab output, whereas
+Word, LaTeX, and browser PDFs commonly use other programs or composite
+encodings.
 
 The proof has two parts:
 
 1. The resource-limited inspector checks every font in the page's effective
-   inherited resources, including unused fonts and ExtGState font entries.
-   All must be simple Type1, MMType1 or TrueType fonts. It reads these facts
-   before pdfcpu validation can repair font dictionaries. Type3, composite/CID,
-   unknown or malformed fonts cannot establish this fact.
+   inherited resources, including unused fonts and ExtGState font entries,
+   before pdfcpu validation can repair font dictionaries. Every font must be a
+   simple Type1, MMType1, or TrueType font. Type3, composite or CID, unknown,
+   or malformed fonts cannot establish this fact.
 2. Inside the qualified PDFium runtime, each source text object's actual font
    program must equal one of twelve qualified standard programs byte for byte.
    The inspector enumerates all 256 raw codes between checked anchors on a
    scratch text page, then renders every whitespace-mapped code alone onto a
    transparent bitmap. Both scratch pages have explicit full-page crop boxes
    and checked effective bounds, so inherited source crops cannot hide probe
-   ink. Any nonzero alpha is ink. A single inked alias makes that object's
-   whitespace unproven, even if the alias is unused on the page.
+   ink. Any nonzero alpha counts as ink, and a single inked alias leaves that
+   object's whitespace unproven even if the alias is unused on the page.
 
-The child returns `docbank-page-inspect/v2`, `parser_identity: pdfcpu/v0.16.4`
-and one required `simple_fonts_only` boolean per page. Native inspection accepts
-these facts only for the exact staged source identity and ordered frames.
-Rebuild an older inspector and update its configured executable SHA-256 pin;
-there is no v1 compatibility path. The changed inspector identity also changes
-page-image recipe fingerprints. Font facts are transient and do not change
-stored frames, redaction formats or the PDFium asset and recipe.
+The child returns `docbank-page-inspect/v2`, `parser_identity: pdfcpu/v0.16.4`,
+and one required `simple_fonts_only` boolean per page. Native inspection
+accepts these facts only for the exact staged source identity and ordered
+frames. Rebuild any older inspector and update its configured executable
+SHA-256 pin. There is no v1 compatibility path. The changed inspector identity
+also changes page-image recipe fingerprints. Font facts are transient and do
+not change stored frames, redaction formats, or the PDFium asset and recipe.
 
-pdfcpu supplies only the code-domain fact. PDFium supplies the actual program,
-Unicode mappings and painted glyphs. The remaining assumption is that both
-parsers agree which fonts the page can select and whether they are simple.
-Program equality alone is insufficient: a CID font can use the same program
-bytes as a standard font while accepting more than 256 codes.
+pdfcpu supplies only the code-domain fact, while PDFium supplies the actual
+program, Unicode mappings, and painted glyphs. The remaining assumption is that
+both parsers agree on which fonts the page can select and whether they are
+simple. Program equality alone is not enough, because a CID font can use the
+same program bytes as a standard font while accepting more than 256 codes.
 
 Every glyph in the twelve accepted programs is qualified at the scratch
-geometry: 72-point type at (72,144) on a 288-point square page, rendered at
+geometry of 72-point type at (72,144) on a 288-point square page, rendered at
 300 DPI to a 1,200-square transparent bitmap. The complete inventory and
 requalification command live in `internal/pdfproduction/testdata/README.md`.
-The 2,792 nonempty outlines must paint ink; the 24 empty glyphs must not.
+All 2,792 nonempty outlines must paint ink, and all 24 empty glyphs must not.
 This finite-raster proof does not extend to arbitrary fonts.
 
-Each page admits at most 256 batches, 8,192 observations per batch and 2,048
-isolated renders. Missing anchors, uncertain attribution and exhausted work
-limits leave whitespace to the existing pixel decision. There is no elapsed-time
-proof budget that changes the map with machine load. Program acceptance is
-limited to 64 KiB, after the bounded WASM instance retrieves the program. The
-existing hard runtime deadline and memory limits still apply. Proofs are not
-cached across source objects: equal program bytes and Unicode tables can hide
-different glyph encodings. Scratch pages are deleted before the existing
-source-page visibility checks; the source bytes are never rewritten.
+Each page admits at most 256 batches, 8,192 observations per batch, and 2,048
+isolated renders. Missing anchors, uncertain attribution, and exhausted work
+limits leave whitespace to the existing pixel decision. There is no
+elapsed-time proof budget that changes the map with machine load. Program
+acceptance is limited to 64 KiB after the bounded WASM instance retrieves the
+program, and the existing hard runtime deadline and memory limits still apply.
+Proofs are not cached across source objects, because equal program bytes and
+Unicode tables can hide different glyph encodings. Scratch pages are deleted
+before the existing source-page visibility checks, and the source bytes are
+never rewritten.
 
 ### Remaining refusals
 
 The existing library alignment path uses the pixel decision without a usable
-configured runtime. Native preparation requires that runtime. With an
-unclassified page or unsupported program, either path uses the pixel decision. Classifier
-failure does not create a new blanket refusal. Caller cancellation and PDFium
-errors still end inspection. Only complete proofs skip the whitespace pixel
-check; all earlier hidden-text, ActualText, crop, generated-character, nested
-object and annotation refusals remain.
+configured runtime, while native preparation requires that runtime. With an
+unclassified page or unsupported program, either path uses the pixel decision.
+Classifier failure does not create a new blanket refusal, though caller
+cancellation and PDFium errors still end inspection. Only complete proofs skip
+the whitespace pixel check, and all earlier hidden-text, ActualText, crop,
+generated-character, nested object, and annotation refusals remain.
 
 The pixel path samples the outward-rounded whitespace box without an extra
-border. It can still include neighboring ink in Courier, Times and Helvetica
-text. Ordinary glyph checks and ambiguity accounting retain their one-pixel
-border. Sampling never rounds inward to discard boundary pixels, which could
-miss small visible glyphs falsely mapped to whitespace. A proof that observes
-an inked whitespace alias adds an ordered `unproven_whitespace` gap, even if
-that alias is unused on the source page. Every gap still needs complete masking.
+border, and it can still include neighboring ink in Courier, Times, and
+Helvetica text. Ordinary glyph checks and ambiguity accounting keep their
+one-pixel border. Sampling never rounds inward to discard boundary pixels,
+which could miss small visible glyphs falsely mapped to whitespace. A proof
+that observes an inked whitespace alias adds an ordered `unproven_whitespace`
+gap, even if that alias is unused on the source page. Every gap still needs
+complete masking.
 
 Preparation is an inspection step. It does not apply masks, approve a review,
-retain redaction outputs, or provide restart recovery or numbering.
-The saved-PDF qualification uses an upstream PDFium reader only in tests.
+retain redaction outputs, or provide restart recovery or numbering. The
+saved-PDF qualification uses an upstream PDFium reader only in tests.
 
 ### Recipient packages of completed deliveries
 
 The CLI `redaction package` command and opted-in MCP `export_recipient_package`
-share selection, preflight and assembly in `internal/recipientpackage`. They read
-completed numbered artifacts through the existing daemon API and fully verify
-each against its supplied review. Neither path captures source content or starts
-a render. All recorded metadata and local
-reviews are admitted before the first content request, including the size and
-SHA-256 of each review's sanitized text. Assembly re-reads each review and compares
-its pinned digest before calling the checked downloader. Both the writer and the
-final package check require the text to match its preflight identity.
-Only one staged PDF exists at a time, and the checked handle supplies the ZIP. MCP uses
-an independently acquired daemon connection and shares the reviewed-PDF process
-gate through final stage cleanup. A package can hold that gate for 30 minutes;
-other full checks fail busy while ordinary reads remain available. Private-input
-errors retain CLI diagnostics but are sanitized at the MCP boundary. Both callers
-use `filepublish` for private staging and atomic publication; the MCP adapter
-reports cleanup failure after publication without turning it into a failed save.
+share selection, preflight, and assembly in `internal/recipientpackage`. They
+read completed numbered artifacts through the existing daemon API and fully
+verify each one against its supplied review. Neither path captures source
+content or starts a render. All recorded metadata and local reviews are
+admitted before the first content request, including the size and SHA-256 of
+each review's sanitized text. Assembly re-reads each review and compares its
+pinned digest before calling the checked downloader, and both the writer and
+the final package check require the text to match its preflight identity. Only
+one staged PDF exists at a time, and the checked handle supplies the ZIP. MCP
+uses an independently acquired daemon connection and shares the reviewed-PDF
+process gate through final stage cleanup. A package can hold that gate for
+30 minutes, during which other full checks fail busy while ordinary reads
+remain available. Private-input errors keep CLI diagnostics and are sanitized
+at the MCP boundary. Both callers use `filepublish` for private staging and
+atomic publication, and the MCP adapter reports cleanup failure after
+publication without turning it into a failed save.
 
 The `native-pdf-recipient-package/v1` receipt binds public delivery identities,
-labels, review digests and file hashes. The ZIP uses stored entries with fixed DOS
-dates, no extra fields or comments, PDF/text pairs followed by DAT, OPT and the two
-root JSON files. Before atomic no-replace publication, an independent checker
-reads every entry through CRC and SHA-256 verification, parses DAT and OPT, applies
-the mapping and compares the resulting correspondence with admitted documents.
-No database rows or new API routes are needed. The existing importer owns received
-label authority. [The operator guide](../usage/document-processing.md#package-completed-numbered-pdfs-for-a-recipient)
-owns limits, staging, recovery and recipient instructions.
+labels, review digests, and file hashes. The ZIP uses stored entries with fixed
+DOS dates, no extra fields or comments, PDF and text pairs followed by DAT,
+OPT, and the two root JSON files. Before atomic no-replace publication, an
+independent checker reads every entry through CRC and SHA-256 verification,
+parses DAT and OPT, applies the mapping, and compares the resulting
+correspondence with admitted documents. No database rows or new API routes are
+needed, and the existing importer owns received label authority.
+[The operator guide](../usage/document-processing.md#package-completed-numbered-pdfs-for-a-recipient)
+owns limits, staging, recovery, and recipient instructions.
