@@ -21,7 +21,9 @@ import (
 )
 
 func TestLocalTextSetupPreservesAudioCeiling(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	t.Setenv("DOCBANK_TEST_DOCLING_KEY", daemonASRProviderKey)
 	provider := newDaemonDoclingServer(t)
 	local := httptest.NewServer(localTextDiscoveryHandler(embedlocal.TextModel))
