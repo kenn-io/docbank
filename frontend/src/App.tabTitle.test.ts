@@ -142,3 +142,74 @@ it("names the current screen in the browser tab", async () => {
   await fireEvent.click(await screen.findByRole("button", { name: "Albums" }));
   await waitFor(() => expect(document.title).toBe("Albums · Docbank"));
 });
+
+it("names a saved tag view when its tag was deleted", async () => {
+  history.replaceState(null, "", "/#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+  const tagID = "33333333-3333-4333-8333-333333333333";
+  const folder = { ...root, id: 2, parent_id: 1, name: "Archive", path: "/Archive" };
+  let catalogReads = 0;
+  let finishCatalog!: (response: Response) => void;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url === "/api/v1/path?path=%2F") return Response.json(root);
+    if (url.includes("/nodes/1/children?"))
+      return Response.json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
+    if (url.includes("/nodes/2/children?"))
+      return Response.json({ directory: folder, items: [], total: 0, limit: 1000, offset: 0 });
+    if (url === "/api/v1/nodes/2") return Response.json(folder);
+    if (url === "/api/v1/tags?limit=1000&offset=0") {
+      catalogReads++;
+      if (catalogReads === 3) return new Promise<Response>((resolve) => (finishCatalog = resolve));
+      return Response.json({
+        items:
+          catalogReads === 1 ? [{ id: tagID, name: "Tax", revision: 1, assignment_count: 1 }] : [],
+        total: 0,
+        limit: 1000,
+        offset: 0,
+      });
+    }
+    if (url.includes(`/tags/${tagID}/nodes?`))
+      return Response.json({
+        items: [{ node: folder, path: folder.path }],
+        total: 1,
+        limit: 1000,
+        offset: 0,
+      });
+    return Response.json({ items: [], total: 0, limit: 1000, offset: 0 });
+  });
+  render(App);
+  await screen.findByText("No documents yet");
+  await fireEvent.click(
+    screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+  );
+  await fireEvent.click(await screen.findByRole("option", { name: "Tax (1)" }));
+  await waitFor(() => expect(document.title).toBe("Tax · Docbank"));
+  await fireEvent.doubleClick(await screen.findByRole("cell", { name: "/Archive" }));
+  await screen.findByText("Empty folder");
+  await fireEvent.click(screen.getByRole("combobox", { name: "Browse or filter by tag: Tax" }));
+  await fireEvent.click(screen.getByRole("option", { name: "All tags" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+  await waitFor(() => expect(catalogReads).toBe(2));
+  await fireEvent.click(
+    screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+  );
+  await waitFor(() => expect(screen.queryByRole("option", { name: "Tax (1)" })).toBeNull());
+  await fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+  await fireEvent.click(screen.getByRole("button", { name: "Back to previous directory" }));
+  await screen.findByText("Documents tagged");
+  await waitFor(() => expect(document.title).toBe("Tag · Docbank"));
+  finishCatalog(Response.json({ items: [], total: 0, limit: 1000, offset: 0 }));
+  await waitFor(() => expect(document.title).toBe("All files · Docbank"));
+});
