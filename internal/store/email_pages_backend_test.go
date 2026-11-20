@@ -15,8 +15,8 @@ import (
 
 func checkEmailPublicationBeginFailurePostgres(t *testing.T) {
 	t.Helper()
-	setup, owner := pgtest.NewDatabase(t)
-	s := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	setup, owner, login := newTemplateDatabase(t)
+	s := openPostgresStore(t, owner, login)
 	ctx := t.Context()
 	f := newEmailFixture(t, s, "begin-failure.eml")
 	view, err := s.PublishEmailGeneration(ctx, f.publication)
