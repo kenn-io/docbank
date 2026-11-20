@@ -94,9 +94,13 @@ func InitializePostgres(
 func postgresRootBackend(layout home.Layout) (*packstore.FilesystemBackend, error) {
 	physical, err := packstore.NewLayout(layout.BlobsDir(), packstore.LayoutOptions{Staging: packstore.StagingSameDirectory})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("resolving PostgreSQL vault blob layout: %w", err)
 	}
-	return packstore.NewFilesystemBackend(physical, packstore.FilesystemBackendOptions{Limits: blob.StorageLimits()})
+	backend, err := packstore.NewFilesystemBackend(physical, packstore.FilesystemBackendOptions{Limits: blob.StorageLimits()})
+	if err != nil {
+		return nil, fmt.Errorf("opening PostgreSQL primary storage: %w", err)
+	}
+	return backend, nil
 }
 
 func checkInitializedPostgresRoot(ctx context.Context, layout home.Layout, expected packstore.Ownership) (retErr error) {
