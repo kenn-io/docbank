@@ -151,7 +151,7 @@ func closedMIMERefinement(
 			return "image/x-nikon-nef"
 		}
 	case ".epub":
-		if descendantOf(detected, mimetype.Lookup("application/zip")) {
+		if detected.Is("application/zip") {
 			return "application/epub+zip"
 		}
 	case ".mka":

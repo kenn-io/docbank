@@ -2762,10 +2762,12 @@ the test administrator needs database, role and event-trigger creation for the
 rollback fixtures. These are test privileges, not runtime requirements.
 `internal/pgtest` owns database creation and cleanup for both the schema and
 node and content-history query tests. `make test-pg` requires the DSN, bypasses
-cached test results, and runs these groups under the race detector. It runs
-the packages at once, because each spends most of its time waiting on the
-server. Their `-parallel` values together keep the open connections below the
-server's default limit of 100.
+cached test results, and runs these groups under the race detector. It runs up
+to three packages at a time and limits parallel tests within each package to
+leave room for reader, setup and cleanup connections on the default
+100-connection server. The processing package runs on its own so that its
+long face and media scenarios can use the runner and database without competing
+with Store tests.
 
 Store tests do not install the schema themselves. `internal/pgstoretest`
 installs it once per package run in a template database, and each test gets a

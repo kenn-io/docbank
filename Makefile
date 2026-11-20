@@ -88,23 +88,24 @@ test:
 backend-coverage:
 	go test -v -tags "$(BUILD_TAGS)" ./internal/store -run '^$$' -args -backend-coverage
 
-# The PostgreSQL packages run at once: each spends most of its time waiting on
-# the server, which has spare capacity. Their -parallel values together keep
-# the open connections under the server's default limit of 100.
-PG_STEPS := pgschema store backup embedded ingest checkout exporter mailbox processing
+# Limit package and test parallelism to leave PostgreSQL connections for
+# readers, schema setup, and database cleanup. Processing has its own phase
+# because its long worker scenarios compete with Store for CPU and database I/O.
+PG_STEPS := pgschema store backup embedded ingest checkout exporter mailbox
 
 test-pg:
 	@test -n "$${DOCBANK_TEST_POSTGRES_DSN:-}" || (echo 'Set DOCBANK_TEST_POSTGRES_DSN to a disposable PostgreSQL test server' >&2; exit 1)
-	@$(MAKE) --no-print-directory -j $(words $(PG_STEPS)) $(if $(filter output-sync,$(.FEATURES)),--output-sync=target) $(addprefix test-pg-,$(PG_STEPS))
+	@$(MAKE) --no-print-directory -j 3 $(if $(filter output-sync,$(.FEATURES)),--output-sync=target) $(addprefix test-pg-,$(PG_STEPS))
+	@$(MAKE) --no-print-directory test-pg-processing
 
-.PHONY: $(addprefix test-pg-,$(PG_STEPS))
+.PHONY: $(addprefix test-pg-,$(PG_STEPS)) test-pg-processing
 test-pg-pgschema:
 	$(call gotestsum,$(PG_SUITE)-pgschema,./internal/store/pgschema) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)"
 # The full Store contract suite includes photo edits and XMP synchronization.
 # It creates a database for each of about a thousand tests and takes about
 # five and a half minutes on PostgreSQL 18 in CI, so allow nearly twice that.
 test-pg-store:
-	$(call gotestsum,$(PG_SUITE)-store,./internal/store) -race -parallel 16 -count=1 -timeout 10m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
+	$(call gotestsum,$(PG_SUITE)-store,./internal/store) -race -parallel 12 -count=1 -timeout 10m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
 test-pg-backup:
 	$(call gotestsum,$(PG_SUITE)-backup,./internal/backupapp) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
 test-pg-embedded:
@@ -117,13 +118,12 @@ test-pg-exporter:
 	$(call gotestsum,$(PG_SUITE)-exporter,./internal/exporter) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
 test-pg-mailbox:
 	$(call gotestsum,$(PG_SUITE)-mailbox,./internal/mailbox) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
-# Processing reached 176 seconds in CI under the old three-minute guard.
-# Keep room for shared worker scenarios and slower runners. The pattern ends
-# in "/", so packagetest.RunShards runs the tests in one process. Split over
-# processes, each one loads the place-name gazetteer under the race detector
-# with one CPU, and the package took twice as long.
+# Allow time for the large face and media search scenarios on slower runners.
+# The trailing "/" keeps the tests in one process. Separate shard processes
+# each load the place-name gazetteer under the race detector with one CPU,
+# which doubled the package runtime.
 test-pg-processing:
-	$(call gotestsum,$(PG_SUITE)-processing,./internal/processing) -race -parallel 12 -count=1 -timeout 5m -tags "$(BUILD_TAGS)" -run 'Postgres$$/'
+	$(call gotestsum,$(PG_SUITE)-processing,./internal/processing) -race -parallel 4 -count=1 -timeout 8m -tags "$(BUILD_TAGS)" -run 'Postgres$$/'
 
 test-v:
 	scripts/with-test-tmpdir.sh go test -timeout 20m -tags "$(BUILD_TAGS)" -v ./...

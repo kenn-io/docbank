@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -377,6 +378,32 @@ func TestDetectMimeUsesClosedSuffixRefinements(t *testing.T) {
 			})
 			require.Equal(t, tc.want, got)
 			require.Equal(t, tc.wantCalls, called)
+		})
+	}
+}
+
+func TestDetectMimePreservesRecognizedZIPContainersWithEPUBSuffix(t *testing.T) {
+	const ods = "application/vnd.oasis.opendocument.spreadsheet"
+	const docx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	type member struct{ name, content string }
+	for _, tc := range []struct {
+		name, want string
+		members    []member
+	}{
+		{"spreadsheet", ods, []member{{"mimetype", ods}, {"content.xml", "<spreadsheet/>"}}},
+		{"document", docx, []member{{"[Content_Types].xml", "<Types/>"}, {"word/document.xml", "<document/>"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var content bytes.Buffer
+			archive := zip.NewWriter(&content)
+			for _, entry := range tc.members {
+				file, err := archive.CreateHeader(&zip.FileHeader{Name: entry.name, Method: zip.Store})
+				require.NoError(t, err)
+				_, err = io.WriteString(file, entry.content)
+				require.NoError(t, err)
+			}
+			require.NoError(t, archive.Close())
+			require.Equal(t, tc.want, DetectMIME(tc.name+".epub", content.Bytes()))
 		})
 	}
 }
