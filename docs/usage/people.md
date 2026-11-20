@@ -97,13 +97,13 @@ In **Photos → People**, **Suggestions** shows likely matches and groups of
 similar unnamed faces. Open a card to review its crops:
 
 - For a named group, choose **Not X** on the sheet to reject the group and close
-  the sheet. Reopen a named group to confirm its remaining faces. Rejecting a
-  named group keeps that exact group rejected.
+  the sheet. Rejecting a named group keeps that exact group rejected.
 - For an unnamed group, choose an existing person or type a new name. Choose
   **Skip** to leave an unnamed face out of this review, or **Dismiss** to keep
   that exact group rejected while its faces remain available for later matches.
 - On an individual face, choose **Not X** to keep that face from being suggested
-  for the same person again.
+  for the same person again. Rejecting that face closes the sheet. Reopen the
+  named group to confirm its remaining faces.
 
 Your decisions survive backup and restore.
 

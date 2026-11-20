@@ -29,8 +29,8 @@ parsing indentation.
 
 Each file or folder has a stable node ID. Its path can change when you
 reorganize the tree, while `id:42` continues to select the same entry. Commands
-that target an existing node accept either a path or `id:N`, except
-`document restore`, which accepts only `id:N`:
+that target an existing node accept a path or `id:N`, except `document restore`,
+which requires a node ID such as `id:N` and does not accept a path:
 
 ```bash
 docbank document cat id:42
