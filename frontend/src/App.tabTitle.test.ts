@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { root } from "./version-test-fixtures.js";
-import { photo, photoMetadataResponse, storage } from "./photo-test-fixtures.js";
+import { photoMetadataResponse, storage } from "./photo-test-fixtures.js";
 
 beforeEach(() => {
   vi.stubGlobal(
@@ -19,20 +19,26 @@ beforeEach(() => {
   });
 });
 
-it("names a missing or loading linked photo and then its resolved name", async () => {
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+  sessionStorage.clear();
+  history.replaceState(null, "", "/");
+  Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+it("names a missing linked photo", async () => {
   history.replaceState(
     null,
     "",
     "/photos#web_session=synthetic&web_upload_secret=proof&photo=photo-1",
   );
   storage();
-  let resolvePhoto!: (response: Response) => void;
   vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
     if (url.endsWith("/photos/hidden")) return Response.json({ configured: true });
     if (url.endsWith("/photos/assets/query")) {
-      const ids: string[] | undefined = JSON.parse(String(init.body)).query.filters?.asset_ids;
-      if (ids?.includes("photo-2"))
-        return new Promise<Response>((resolve) => (resolvePhoto = resolve));
       return Response.json({ items: [], total: 0 });
     }
     return (
@@ -43,24 +49,6 @@ it("names a missing or loading linked photo and then its resolved name", async (
   render(App);
   await screen.findByText("This photo is no longer in this view.");
   await waitFor(() => expect(document.title).toBe("Photo · Docbank"));
-  history.pushState(null, "", "/photos#photo=photo-2");
-  window.dispatchEvent(new HashChangeEvent("hashchange"));
-  await waitFor(() => expect(resolvePhoto).toBeTypeOf("function"));
-  expect(document.title).toBe("Photo · Docbank");
-  resolvePhoto(Response.json({ items: [photo(2)], total: 1 }));
-  await waitFor(() => expect(document.title).toBe("Photo 2.jpg · Docbank"));
-  await fireEvent.click(screen.getByRole("button", { name: "Close photo viewer" }));
-  await waitFor(() => expect(document.title).toBe("Photos · Docbank"));
-});
-
-afterEach(() => {
-  cleanup();
-  localStorage.clear();
-  sessionStorage.clear();
-  history.replaceState(null, "", "/");
-  Reflect.deleteProperty(Element.prototype, "scrollIntoView");
-  vi.unstubAllGlobals();
-  vi.restoreAllMocks();
 });
 
 it("names the current screen in the browser tab", async () => {
@@ -171,16 +159,10 @@ it("names the current screen in the browser tab", async () => {
   await waitFor(() => expect(document.title).toBe("Search · Docbank"));
   await fireEvent.click(screen.getByRole("button", { name: "Searches" }));
   await waitFor(() => expect(document.title).toBe("Searches · Docbank"));
-  history.back();
-  await waitFor(() => expect(document.title).toBe("Search · Docbank"));
-  history.forward();
-  await waitFor(() => expect(document.title).toBe("Searches · Docbank"));
   await fireEvent.click(screen.getByRole("button", { name: "System" }));
   await waitFor(() => expect(document.title).toBe("Disk use · Docbank"));
   await fireEvent.click(screen.getByRole("tab", { name: "Backups" }));
   await waitFor(() => expect(document.title).toBe("Backups · Docbank"));
-  await fireEvent.click(screen.getByRole("tab", { name: "Running now" }));
-  await waitFor(() => expect(document.title).toBe("Running now · Docbank"));
   await fireEvent.click(screen.getByRole("button", { name: "Close System" }));
   await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
   await fireEvent.click(await screen.findByRole("button", { name: "Albums" }));

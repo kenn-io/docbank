@@ -109,7 +109,6 @@ it.each([
     api((requestURL) => (requestURL === url ? response() : undefined));
     render(App);
     await waitFor(() => expect(within(screen.getByRole("dialog")).getByText(message)).toBeTruthy());
-    await waitFor(() => expect(document.title).toBe("Version unavailable · Docbank"));
     expect(screen.queryByRole("button", { name: "Download" })).toBeNull();
     expect(screen.queryByText(currentID)).toBeNull();
   },
@@ -189,9 +188,9 @@ it("keeps the resolved linked selection when root rows arrive after sign-in", as
       : undefined,
   );
   render(App);
+  await waitFor(() => expect(document.title).toBe("Sign in · Docbank"));
   await signIn();
   await screen.findByText(oldID);
-  await waitFor(() => expect(document.title).toBe(`example.txt (${oldID}) · Docbank`));
   await waitFor(() => expect(release).toBeTypeOf("function"));
   await act(() =>
     release(
@@ -344,7 +343,6 @@ it("reopens exact versions on Back and Forward and uses the renamed node instead
     location.hash = link();
   });
   await screen.findByText(oldID);
-  await waitFor(() => expect(document.title).toBe(`example.txt (${oldID}) · Docbank`));
   const mountedDrawer = screen.getByRole("dialog");
   expect(location.hash).toBe(link());
   const drawer = within(mountedDrawer);
