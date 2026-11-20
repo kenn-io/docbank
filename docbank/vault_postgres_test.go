@@ -27,7 +27,9 @@ func TestInitializePostgres(t *testing.T) {
 	ctx := t.Context()
 	catalog := PostgresCatalog{Schema: "documents", SchemaOwner: owner}
 	root := filepath.Join(t.TempDir(), "vault")
+	release := pgtest.ReserveSchemaInstall(t)
 	id, err := InitializePostgres(ctx, ownerDB, catalog, root)
+	release()
 	require.NoError(t, err)
 	runtime := pgstoretest.RuntimeConfig(t, ownerDB, catalog.schemaConfig())
 	vault, err := OpenPostgres(ctx, Config{Root: root}, catalog, runtime)
@@ -134,7 +136,9 @@ func TestInitializeInterruptedCommitPostgres(t *testing.T) {
 	ctx := t.Context()
 	catalog := PostgresCatalog{Schema: "documents", SchemaOwner: owner}
 	// Prepare the catalog in advance so only the binding transaction is faulted.
+	release := pgtest.ReserveSchemaInstall(t)
 	_, err := SetupPostgres(ctx, ownerDB, catalog)
+	release()
 	require.NoError(t, err)
 	runtime := pgstoretest.RuntimeConfig(t, ownerDB, catalog.schemaConfig())
 	root := filepath.Join(t.TempDir(), "aborted")
@@ -192,7 +196,9 @@ func TestEmbeddedVaultLifecyclePostgres(t *testing.T) {
 	snapshot, err := source.CreateBackup(ctx, repository, BackupOptions{Jobs: 1})
 	require.NoError(t, err)
 	catalog := PostgresCatalog{Schema: "documents", SchemaOwner: owner}
+	release := pgtest.ReserveSchemaInstall(t)
 	_, err = SetupPostgres(ctx, setup, catalog)
+	release()
 	require.NoError(t, err)
 	runtime := pgstoretest.RuntimeConfig(t, setup, catalog.schemaConfig())
 	target := filepath.Join(t.TempDir(), "restored")
@@ -220,8 +226,10 @@ func TestEmbeddedVaultLifecyclePostgres(t *testing.T) {
 
 	addOwnerTempTable(t, setup, catalog, "vault_metadata")
 	addOwnerTempTable(t, setup, catalog, "blob_stores")
+	release = pgtest.ReserveSchemaInstall(t)
 	report, err := repository.RestorePostgres(ctx, setup, catalog, runtime,
 		BackupRestoreOptions{Target: target, SnapshotID: snapshot.ID, Jobs: 1})
+	release()
 	require.NoError(t, err)
 	require.Equal(t, PostgresRestoreReport{
 		CatalogCommitted: true, SnapshotID: snapshot.ID, VaultID: source.ID(), Target: target,

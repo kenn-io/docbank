@@ -150,19 +150,23 @@ func ServerConfig(tb testing.TB) *pgx.ConnConfig {
 	return c
 }
 
-// schemaInstallSlots bounds how many tests install the Store schema at once on
-// the test server, in all test processes together. One installation holds
-// about 2,400 locks until it commits, and with default settings the server's
-// shared lock table has room for about 6,400, so a few more installations at
-// once fail with "out of shared memory".
+// schemaInstallSlots bounds how many transactions that lock most of the Store
+// schema run at once on the test server, in all test processes together. A
+// fresh installation holds about 2,400 locks until it commits, and a restore
+// or metadata import into the schema also locks most of its tables. With
+// default settings the server's shared lock table has room for about 6,400,
+// so a few more such transactions at once fail with "out of shared memory".
 const schemaInstallSlots = 2
 
 // schemaInstallLock is the first key of the advisory locks that stand for the
 // slots. The second key is the slot number.
 const schemaInstallLock = 0x64626b73
 
-// ReserveSchemaInstall waits for a free schema installation slot and returns
-// the function that frees it. The slot is also freed when the test ends.
+// ReserveSchemaInstall waits for a free slot and returns the function that
+// frees it. A test takes a slot around each transaction that locks most of
+// the Store schema, such as a fresh installation, a restore or a metadata
+// import, and frees it as soon as that transaction ends. The slot is also
+// freed when the test ends.
 func ReserveSchemaInstall(tb testing.TB) (release func()) {
 	tb.Helper()
 	ctx := tb.Context()

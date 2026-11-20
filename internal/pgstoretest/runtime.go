@@ -174,8 +174,9 @@ func newTemplateState() *templateState {
 
 // storeTemplate returns the template, building it if no process of the run
 // has yet. The processes take turns under an advisory lock, so one of them
-// builds the template and the others find it. A failed build leaves nothing
-// behind, and the next test tries again.
+// builds the template and the others find it. A build ends by marking the
+// database as a template, so a database left unmarked by a failed build, or
+// by a process that died during one, is dropped and built again.
 func storeTemplate(ctx context.Context, tb testing.TB, server *pgx.ConnConfig) (name, role string, err error) {
 	tb.Helper()
 	template.mu.Lock()
@@ -193,10 +194,13 @@ func storeTemplate(ctx context.Context, tb testing.TB, server *pgx.ConnConfig) (
 		return "", "", fmt.Errorf("wait for the Store template: %w", err)
 	}
 	var built bool
-	if err := conn.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname=$1)`, template.name).Scan(&built); err != nil {
+	if err := conn.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname=$1 AND datistemplate)`, template.name).Scan(&built); err != nil {
 		return "", "", fmt.Errorf("look for the Store template: %w", err)
 	}
 	if !built {
+		if err := dropTemplate(ctx, conn); err != nil {
+			return "", "", fmt.Errorf("drop an unfinished Store template: %w", err)
+		}
 		if err := createTemplate(ctx, tb, conn, server); err != nil {
 			return "", "", err
 		}
@@ -207,15 +211,18 @@ func storeTemplate(ctx context.Context, tb testing.TB, server *pgx.ConnConfig) (
 
 func createTemplate(ctx context.Context, tb testing.TB, conn *pgx.Conn, server *pgx.ConnConfig) error {
 	tb.Helper()
-	quotedName, quotedRole := pgx.Identifier{template.name}.Sanitize(), pgx.Identifier{template.role}.Sanitize()
+	quotedName := pgx.Identifier{template.name}.Sanitize()
 	if _, err := conn.Exec(ctx, "CREATE DATABASE "+quotedName); err != nil {
 		return fmt.Errorf("create the Store template database: %w", err)
 	}
-	if err := buildTemplate(ctx, tb, server, template.name, quotedRole); err != nil {
-		cleanup := context.WithoutCancel(ctx)
-		_, dropErr := conn.Exec(cleanup, "DROP DATABASE "+quotedName+" WITH (FORCE)")
-		_, roleErr := conn.Exec(cleanup, "DROP ROLE IF EXISTS "+quotedRole)
-		return errors.Join(err, dropErr, roleErr)
+	err := buildTemplate(ctx, tb, server, template.name, pgx.Identifier{template.role}.Sanitize())
+	if err == nil {
+		if _, markErr := conn.Exec(ctx, "ALTER DATABASE "+quotedName+" IS_TEMPLATE true"); markErr != nil {
+			err = fmt.Errorf("mark the Store template as built: %w", markErr)
+		}
+	}
+	if err != nil {
+		return errors.Join(err, dropTemplate(context.WithoutCancel(ctx), conn))
 	}
 	return nil
 }
@@ -242,6 +249,29 @@ func buildTemplate(ctx context.Context, tb testing.TB, server *pgx.ConnConfig, n
 	return nil
 }
 
+// dropTemplate drops the Store template database and its runtime login if
+// they exist. PostgreSQL refuses to drop a database marked as a template, so
+// the mark comes off first.
+func dropTemplate(ctx context.Context, conn *pgx.Conn) error {
+	quotedName := pgx.Identifier{template.name}.Sanitize()
+	var marked bool
+	if err := conn.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname=$1 AND datistemplate)`, template.name).Scan(&marked); err != nil {
+		return fmt.Errorf("look for the Store template: %w", err)
+	}
+	if marked {
+		if _, err := conn.Exec(ctx, "ALTER DATABASE "+quotedName+" IS_TEMPLATE false"); err != nil {
+			return fmt.Errorf("unmark the Store template: %w", err)
+		}
+	}
+	if _, err := conn.Exec(ctx, "DROP DATABASE IF EXISTS "+quotedName+" WITH (FORCE)"); err != nil {
+		return fmt.Errorf("drop the Store template database: %w", err)
+	}
+	if _, err := conn.Exec(ctx, "DROP ROLE IF EXISTS "+pgx.Identifier{template.role}.Sanitize()); err != nil {
+		return fmt.Errorf("drop the Store template's runtime login: %w", err)
+	}
+	return nil
+}
+
 // DropTemplate drops the package run's Store template and its runtime login
 // if this process chose their names and a process built them. Each package
 // that calls NewDatabase calls it from TestMain after its tests, when every
@@ -257,10 +287,11 @@ func DropTemplate(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("drop the Store template: %w", err)
 	}
-	admin := stdlib.OpenDB(*server)
-	_, dropErr := admin.ExecContext(ctx, "DROP DATABASE IF EXISTS "+pgx.Identifier{template.name}.Sanitize()+" WITH (FORCE)")
-	_, roleErr := admin.ExecContext(ctx, "DROP ROLE IF EXISTS "+pgx.Identifier{template.role}.Sanitize())
-	if err := errors.Join(dropErr, roleErr, admin.Close()); err != nil {
+	conn, err := pgx.ConnectConfig(ctx, server)
+	if err != nil {
+		return fmt.Errorf("connect to drop the Store template %s: %w", template.name, err)
+	}
+	if err := errors.Join(dropTemplate(ctx, conn), conn.Close(context.WithoutCancel(ctx))); err != nil {
 		return fmt.Errorf("drop the Store template %s: %w", template.name, err)
 	}
 	template.ready = false
