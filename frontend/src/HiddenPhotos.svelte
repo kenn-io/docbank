@@ -84,9 +84,6 @@
   export function activePhotos() {
     return workspaceVisible ? workspace?.photos : undefined;
   }
-  export function photoName() {
-    return workspaceVisible ? photoWorkspace?.photoName() : undefined;
-  }
   export function captureReturn() {
     photoWorkspace?.captureReturn();
   }
