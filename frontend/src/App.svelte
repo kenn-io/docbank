@@ -3801,6 +3801,7 @@
       const photos = activePhotos();
       const person = photos?.personFilter;
       if (missingPhotoAlbum) title = "Album not found";
+      else if (photos?.comparing) title = "Compare photos";
       else if (photoID || photos?.culling) title = photoName ?? "Photo";
       else if (mapMode) title = mapAlbumID && scopedAlbum ? `Map · ${scopedAlbum.name}` : "Map";
       else if (person && photos?.query.filters.person_ids?.includes(person.id))

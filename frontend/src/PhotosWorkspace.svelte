@@ -936,7 +936,7 @@
       : undefined,
   );
   export function photoName() {
-    return culling ? cullPhoto?.name : current?.name;
+    return culling ? (cull?.complete ? "Pass complete" : cullPhoto?.name) : current?.name;
   }
   // The photo the metadata panel edits, shown by name above its fields.
   const inspected = $derived(

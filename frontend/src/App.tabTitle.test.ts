@@ -3,8 +3,6 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import App from "./App.svelte";
 import { root } from "./version-test-fixtures.js";
 import { photo, photoMetadataResponse, storage } from "./photo-test-fixtures.js";
-import { PhotoCull } from "./photoCull.svelte.js";
-import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 
 beforeEach(() => {
   vi.stubGlobal(
@@ -19,62 +17,6 @@ beforeEach(() => {
     configurable: true,
     value: vi.fn(),
   });
-});
-
-it("names the photo shown in Cull and restores the library title", async () => {
-  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
-  storage();
-  vi.stubGlobal("indexedDB", new IDBFactory());
-  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
-  vi.spyOn(PhotoCull.prototype, "restore").mockResolvedValue(false);
-  vi.spyOn(PhotoCull.prototype, "start").mockImplementation(async function (this: PhotoCull) {
-    this.run = {
-      ids: ["photo-1", "photo-2"],
-      checkpoint: {
-        runID: "run",
-        revision: 0,
-        pass: ["photo-1", "photo-2"],
-        position: 0,
-        visited: [],
-        skipped: [],
-        unavailable: [],
-        scope: "all",
-        autoAdvance: true,
-      },
-    };
-    return true;
-  });
-  const rows = [photo(1), photo(2)];
-  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
-    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true });
-    if (url.includes("/audit/status"))
-      return Response.json({ vault_id: "11111111-1111-4111-8111-111111111111" });
-    if (url.endsWith("/photos/assets/query")) {
-      const ids: string[] | undefined = JSON.parse(String(init.body)).query.filters?.asset_ids;
-      return Response.json({
-        items: ids ? rows.filter((row) => ids.includes(row.asset_id)) : rows,
-        total: rows.length,
-      });
-    }
-    return (
-      photoMetadataResponse(url, init) ??
-      Response.json({ items: [], nodes: [], tags: [], profiles: [] })
-    );
-  });
-  render(App);
-  const cull = await screen.findByRole("button", { name: "Cull" });
-  await waitFor(() => expect((cull as HTMLButtonElement).disabled).toBe(false));
-  await fireEvent.click(cull);
-  const dialog = await screen.findByRole("dialog", { name: "Cull photos" });
-  await within(dialog).findByText("Photo 1.jpg");
-  await waitFor(() => expect(document.title).toBe("Photo 1.jpg · Docbank"));
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Next photo" }));
-  await within(dialog).findByText("Photo 2.jpg");
-  await waitFor(() => expect(document.title).toBe("Photo 2.jpg · Docbank"));
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Exit cull" }));
-  await waitFor(() => expect(document.title).toBe("Photos · Docbank"));
 });
 
 it("names a missing or loading linked photo and then its resolved name", async () => {

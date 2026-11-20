@@ -185,76 +185,89 @@ it("shows Find people instead of retained Library search in the People directory
   expect(screen.queryByRole("searchbox", { name: "Search photos" })).toBeNull();
 });
 
-it("retains the navigated comparison and closeup across a browser tab switch", async () => {
-  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
-  storage();
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
-  const rows = [photo(1), photo(2), photo(3)];
-  const lookup = vi.spyOn(Photos.prototype, "lookupMany");
-  const lookups: string[][] = [];
-  stubPhotoFetch(async (url, init) => {
-    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true });
-    if (url.endsWith("/photos/assets/query")) {
-      const ids: string[] | undefined = JSON.parse(String(init.body)).query.filters?.asset_ids;
-      if (ids) lookups.push(ids);
-      return Response.json({
-        items: ids ? rows.filter((row) => ids.includes(row.asset_id)) : rows,
-        total: rows.length,
-      });
-    }
-    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
-  });
-  render(App);
-  for (const id of [1, 2])
-    await fireEvent.click(
-      await screen.findByRole("checkbox", { name: `Select photo Photo ${id}.jpg` }),
+it.each([false, true])(
+  "retains the navigated comparison and closeup across a browser tab switch, album=%s",
+  async (albumView) => {
+    const album = photoAlbum();
+    history.replaceState(
+      null,
+      "",
+      `${albumView ? `/photos/albums/${album.id}` : "/photos"}#web_session=synthetic&web_upload_secret=proof`,
     );
-  await fireEvent.click(screen.getByRole("button", { name: "Compare" }));
-  let dialog = await screen.findByRole("dialog", { name: "Compare photos" });
-  await within(dialog).findByText("Photo 1.jpg");
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
-  await within(dialog).findByText("Photo 3.jpg");
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Manual closeup" }));
-  const frame = within(dialog).getByRole("button", { name: "Position closeup on Photo 2.jpg" });
-  await fireEvent.keyDown(frame, { key: "ArrowRight" });
-  await fireEvent.keyDown(frame, { key: "Enter" });
-  await fireEvent.click(frame);
-  await within(dialog).findByLabelText("Matching closeups");
-  await fireEvent.click(within(dialog).getByRole("button", { name: "1:1 (Z)" }));
-  const lookupCount = lookups.length;
-  const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
-  await fireEvent(document, new Event("visibilitychange"));
-  expect(screen.queryByRole("dialog", { name: "Compare photos" })).toBeNull();
-  visibility.mockReturnValue("visible");
-  await fireEvent(document, new Event("visibilitychange"));
-  dialog = await screen.findByRole("dialog", { name: "Compare photos" });
-  const closeups = await within(dialog).findByLabelText("Matching closeups");
-  await waitFor(() =>
-    expect(
-      within(closeups)
-        .getAllByRole("heading")
-        .map((heading) => heading.textContent),
-    ).toEqual(["Photo 2.jpg", "Photo 3.jpg"]),
-  );
-  const owner = lookup.mock.contexts.at(-1) as Photos;
-  expect(owner.compareView).toEqual({ scale: 1, x: 0.5, y: 0.5, actual: true });
-  expect(owner.compareCrop).toEqual({ scale: 1 / 0.15, x: 0.55, y: 0.5, actual: false });
-  expect(lookups.slice(lookupCount)).toContainEqual(["photo-2", "photo-3"]);
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Exit compare" }));
-  await screen.findByRole("button", { name: "Compare" });
-  expect(owner.compareIDs).toEqual([]);
-  expect(owner.compareCrop).toBeUndefined();
-  await fireEvent(document, new Event("visibilitychange"));
-  expect(screen.queryByRole("dialog", { name: "Compare photos" })).toBeNull();
-});
+    storage();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+    const rows = [photo(1), photo(2), photo(3)];
+    const lookup = vi.spyOn(Photos.prototype, "lookupMany");
+    const lookups: string[][] = [];
+    stubPhotoFetch(async (url, init) => {
+      if (url.endsWith("/photos/hidden")) return Response.json({ configured: true });
+      if (url.endsWith("/photos/albums")) return Response.json([album]);
+      if (url.endsWith("/photos/assets/query")) {
+        const ids: string[] | undefined = JSON.parse(String(init.body)).query.filters?.asset_ids;
+        if (ids) lookups.push(ids);
+        return Response.json({
+          items: ids ? rows.filter((row) => ids.includes(row.asset_id)) : rows,
+          total: rows.length,
+        });
+      }
+      return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+    });
+    render(App);
+    for (const id of [1, 2])
+      await fireEvent.click(
+        await screen.findByRole("checkbox", { name: `Select photo Photo ${id}.jpg` }),
+      );
+    await fireEvent.click(screen.getByRole("button", { name: "Compare" }));
+    let dialog = await screen.findByRole("dialog", { name: "Compare photos" });
+    await waitFor(() => expect(document.title).toBe("Compare photos · Docbank"));
+    await within(dialog).findByText("Photo 1.jpg");
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
+    await within(dialog).findByText("Photo 3.jpg");
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Manual closeup" }));
+    const frame = within(dialog).getByRole("button", { name: "Position closeup on Photo 2.jpg" });
+    await fireEvent.keyDown(frame, { key: "ArrowRight" });
+    await fireEvent.keyDown(frame, { key: "Enter" });
+    await fireEvent.click(frame);
+    await within(dialog).findByLabelText("Matching closeups");
+    await fireEvent.click(within(dialog).getByRole("button", { name: "1:1 (Z)" }));
+    const lookupCount = lookups.length;
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    await fireEvent(document, new Event("visibilitychange"));
+    expect(screen.queryByRole("dialog", { name: "Compare photos" })).toBeNull();
+    visibility.mockReturnValue("visible");
+    await fireEvent(document, new Event("visibilitychange"));
+    dialog = await screen.findByRole("dialog", { name: "Compare photos" });
+    const closeups = await within(dialog).findByLabelText("Matching closeups");
+    await waitFor(() =>
+      expect(
+        within(closeups)
+          .getAllByRole("heading")
+          .map((heading) => heading.textContent),
+      ).toEqual(["Photo 2.jpg", "Photo 3.jpg"]),
+    );
+    const owner = lookup.mock.contexts.at(-1) as Photos;
+    expect(owner.compareView).toEqual({ scale: 1, x: 0.5, y: 0.5, actual: true });
+    expect(owner.compareCrop).toEqual({ scale: 1 / 0.15, x: 0.55, y: 0.5, actual: false });
+    expect(lookups.slice(lookupCount)).toContainEqual(["photo-2", "photo-3"]);
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Exit compare" }));
+    await screen.findByRole("button", { name: "Compare" });
+    await waitFor(() =>
+      expect(document.title).toBe(`${albumView ? album.name : "Photos"} · Docbank`),
+    );
+    expect(owner.compareIDs).toEqual([]);
+    expect(owner.compareCrop).toBeUndefined();
+    await fireEvent(document, new Event("visibilitychange"));
+    expect(screen.queryByRole("dialog", { name: "Compare photos" })).toBeNull();
+  },
+);
 
 it.each(["workspace switch", "Clear filters"])(
   "discards unsent search text and mode on %s",
@@ -3360,11 +3373,27 @@ it("guards reload for a failed cull decision after vault identity arrives", asyn
   await fireEvent.click(screen.getByRole("button", { name: "Cull" }));
   const dialog = await screen.findByRole("dialog", { name: "Cull photos" });
   await within(dialog).findByText("Photo 1.jpg");
+  await waitFor(() => expect(document.title).toBe("Photo 1.jpg · Docbank"));
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Next photo" }));
+  await within(dialog).findByText("Photo 2.jpg");
+  await waitFor(() => expect(document.title).toBe("Photo 2.jpg · Docbank"));
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Next photo" }));
+  await within(dialog).findByRole("heading", { name: "Pass complete" });
+  await waitFor(() => expect(document.title).toBe("Pass complete · Docbank"));
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Previous" }));
+  await within(dialog).findByText("Photo 2.jpg");
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Previous photo" }));
+  await within(dialog).findByText("Photo 1.jpg");
   await fireEvent.keyDown(dialog.querySelector(".photo-cull")!, { key: "x" });
   await within(dialog).findByRole("button", { name: "Discard edit" });
   const event = new Event("beforeunload", { cancelable: true });
   window.dispatchEvent(event);
   expect(event.defaultPrevented).toBe(true);
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Discard edit" }));
+  const exit = within(dialog).getByRole("button", { name: "Exit cull" });
+  await waitFor(() => expect((exit as HTMLButtonElement).disabled).toBe(false));
+  await fireEvent.click(exit);
+  await waitFor(() => expect(document.title).toBe("Photos · Docbank"));
 });
 
 it("closes the viewer to the grid after refusing a typed photo hash", async () => {
