@@ -40,9 +40,10 @@ inside the .0036pt half-unit boundary of forward rounding.
 Still PNGs need one CRC-valid, metre-based pHYs chunk before image data with
 equal nonzero horizontal and vertical density. Animation, EXIF orientation,
 missing density, and unequal density are unsupported. PNG rendering keeps the
-original bytes. To request native density, omit DPI or pass zero. Any other
-requested DPI is rejected. Actual numeric DPI is `pixels_per_metre * 127 / 5000`.
-PDF requests default to 144 DPI and accept 1–1200 DPI within pixel limits.
+original bytes. Omit DPI or pass zero to use native density. Docbank rejects
+any nonzero DPI that differs from the native density. Actual numeric DPI is
+`pixels_per_metre * 127 / 5000`. PDF requests default to 144 DPI and accept
+1–1200 DPI within pixel limits.
 
 ## Configure the optional runtime
 
