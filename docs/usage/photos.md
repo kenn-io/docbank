@@ -6,47 +6,38 @@ description: Group camera files, browse photos, and organize albums in the web a
 
 # Photo assets
 
-Docbank groups ordinary file nodes into photo assets. Each file node and its
-content versions still hold the bytes. An asset stores only membership, roles,
-display selection, visibility, exclusion, and bounded decision receipts.
+Docbank groups ordinary file nodes into photo assets. Each file node and its content versions still hold the actual bytes, while the photo asset stores only membership, roles, display selection, visibility, exclusion, and bounded decision receipts.
 
-Image files and files with a concrete `video/*` MIME type are enrolled when
-they are created. Audio, generic video, and generic RAW files stay ordinary
-files until an operator promotes or creates an asset explicitly. Enrollment
-applies only to new files. Adding this feature does not scan older files.
+When you add new image files or files with a concrete `video/*` MIME type, Docbank enrolls them as photo assets automatically. Audio, generic video, and generic RAW files stay ordinary files unless you promote them or create an asset explicitly. Automatic enrollment applies only to new files and does not scan older files already in your vault.
 
-Replacing or reverting a file's content keeps the file in its asset with the
-same role, even when the new media type would not qualify. A file whose new
-content qualifies is not enrolled either. Membership changes only through
-explicit asset operations or permanent node deletion.
+If you replace or revert a file's content, the file stays in its asset with the same role, even if the new media type would not qualify on its own. Likewise, replacing an ordinary file with content that qualifies does not enroll it. Asset membership changes only through explicit asset operations or permanent node deletion.
 
-An asset can contain `raw`, `image`, `video`, and `sidecar` members. The
-default display order is RAW, image, then video. A vault preference can select
-image before RAW, and an asset override wins over the vault preference.
-Sidecars never display and must point at a RAW or image member in the same
-asset. Removing the selected member chooses another displayable member
-atomically, or stores a null display when none remains. Assets are limited to
-256 files.
+Each asset can hold up to 256 files across four roles: `raw`, `image`, `video`, and `sidecar`. By default, Docbank displays RAW first, then image, then video. You can change the vault preference to prefer image over RAW, and you can override that preference on individual assets. Sidecars never display and must point to a RAW or image member in the same asset. If you remove the selected display member, Docbank atomically picks another displayable member, or stores a null display when none remain.
 
 ## Live refresh
 
-Open photo views update when another tab, the CLI, an import, or a worker changes the library. Your selection, scroll position, and metadata draft stay in place, and a photo that is no longer available loses its cached image and says so. If a photo changed under a draft, Apply is refused until you choose **Reload metadata**.
+Open photo views update automatically whenever another tab, the CLI, an import, or a background worker changes your library. Your selection, scroll position, and metadata draft stay in place. If a photo becomes unavailable, it drops its cached image and shows that it is no longer available. If a photo changes while you have a draft open for it, Docbank refuses **Apply** until you choose **Reload metadata**.
 
-The daemon accepts up to 128 simultaneous photo event streams. When that limit is reached, additional streams retry automatically, waiting up to 30 seconds between attempts. Tabs in browsers with Web Locks share one stream per origin.
+The daemon accepts up to 128 simultaneous photo event streams. When all slots are full, additional streams retry automatically and wait up to 30 seconds between attempts. In browsers that support Web Locks, tabs share a single stream per origin.
 
 ## Add photos in the web app
 
-In **Photos > Library**, choose **Add photos** and set the vault destination, which defaults to `/`. Use **Choose folder** or **Choose files**, then start the import. An invalid destination fails before uploading. Changing the destination replans the selected files when you click **Add N groups**.
+To import photos from your computer in the browser:
 
-RAW, JPEG, and XMP files in the same folder with the same name form one photo. Videos stay separate. The drawer lists skipped files with their reasons, including unsupported types, invalid names or sizes, and duplicate relative paths. Each selection accepts up to 32,768 files, and its path-and-size declaration must fit the 8 MiB message limit.
+1. Open **Photos > Library** and choose **Add photos**.
+2. Set the vault destination folder. It defaults to `/`, and an invalid destination fails before any upload starts.
+3. Choose **Choose folder** or **Choose files** to pick your photos.
+4. Click **Add N groups** to start the import. If you change the destination after picking files, clicking **Add N groups** replans the selected files for the new path.
 
-The drawer reports additions, files already in the vault, ambiguous groups, and failures. Photos, album counts, and the plain Documents directory refresh after the import. Retained searches, tag filters, and frozen snapshots stay unchanged.
+RAW, JPEG, and XMP files that share a folder and filename become one photo, while videos stay separate. The import drawer lists skipped files along with why they were skipped, such as unsupported types, invalid names or sizes, or duplicate relative paths. Each selection accepts up to 32,768 files, and its path-and-size declaration must fit within the 8 MiB message limit. The browser checks both limits before asking to replace saved progress or reading photo content, and checks again if you change the destination.
+
+As the import runs, the drawer reports additions, files already in the vault, ambiguous groups, and failures. Failed groups stay available through **Add N groups**. When the import finishes, photos, album counts, and the plain Documents directory refresh automatically. Retained searches, tag filters, and frozen snapshots stay unchanged.
 
 Imported groups share one collection named `browser: Card` when you pick a folder named `Card`, or `browser: Choose files` for individual files. Reusing a filename with changed bytes in a new selection creates a separate file node. The existing file keeps its content and current version. Existing pairing rules decide whether the new file joins the same photo or a separate photo; identical RAW, image, and video content still returns already in vault. A lone XMP stays an ordinary file and is added again when picked in a new selection.
 
 A lost receipt leaves the result unknown. Reopen **Add photos**. **Interrupted import found** names the recorded folder and shows how many groups it contains. Choose **Choose the same folder…**, then **Add N remaining groups**. A saved checkpoint selects its import. Without one, Docbank adopts a single earlier import only when at least one selected file matches its exact path and bytes and no selected path has different recorded bytes. Zero or multiple matches start a fresh import. A group is already in the vault only when every member matches that import's exact path and bytes. For a checkpointed import, a selected path with different recorded bytes reports an error; missing members remain to send. Recovery ignores folder continuation, so a renamed or continued folder may send landed groups again. Identical photos still resolve to the same photo, but an ambiguous fresh import may add a standalone XMP again. **Dismiss** stops offering the recorded import in this browser. Choose the destination before resuming. File selections can be resumed when a checkpoint survives.
 
-**Choose folder** and **Choose files** start a new selection. When a directory contains a photo with the same bytes as an earlier browser import, its new siblings join that folder's burst groups and share stack decisions with those earlier photos, even if the matching file has a different name. Directories without a matching photo keep their own source. When a directory matches several earlier folders, its new photos keep the fresh selection identity automatically. Exact duplicates retain their earliest folder provenance. Each selected directory resolves independently.
+**Choose folder** and **Choose files** always start a new selection, and each selected directory resolves independently. If a directory contains a photo with the same bytes as an earlier browser import, its new siblings join that folder's burst groups and share stack decisions with those earlier photos, even if the matching file has a different name. Directories with no matching photo keep their own source identity, and directories that match several earlier folders automatically keep the fresh selection identity for their new photos. Exact duplicates retain their earliest folder provenance.
 
 If an unfinished import is saved, Docbank asks before replacing it. Cancel keeps it available through **Choose the same files…** or **Choose the same folder…**. Saved imports from an unsupported format stay intact and require a compatible Docbank version to resume.
 
@@ -54,19 +45,15 @@ Identical RAW, image, and video content returns as already in vault. A recovered
 
 If cookies or checkpoint storage are unavailable, a notice lets you import for this session. The vault can still find recorded browser imports. Authentication failures, progress changed in another tab, and unsupported saved formats still block import and preserve the saved selection.
 
-The browser checks the 32,768-file and 8 MiB JSON declaration limits before asking to replace saved progress or reading photo content. Changing the destination checks the declaration again.
-
-Web imports run in the open tab. Control them in the drawer. **Stop after this group** finishes the current group before stopping the import.
-
-Keep the tab open until the import finishes. This also works when you sign in to hosted Docbank with an API key. For large camera cards already on the daemon's computer, use `docbank photos import`.
+Web imports run inside the open tab, and you control them from the drawer. To finish the current group and then stop, choose **Stop after this group**. Keep the tab open until the import completes. This works both locally and when you sign in to hosted Docbank with an API key. For large camera cards that are already on the daemon's computer, use `docbank photos import` instead.
 
 ## Record faces and people
 
-The inspector's name search includes active operator assertions on visible versions, except blind-copy assertions, before document-people publication. People known only from automatic sensitive evidence or blind-copy assertions stay omitted. People backed only by locked Hidden photos appear after unlock. Manually created unlinked people remain searchable with blank identity labels. Automatically provisioned exact-identifier people need a visible assertion or non-sensitive published document link before their names appear. See [browser names and visibility](people.md#browser-names-and-visibility). The picker explains the duplicate risk. Create the person directly and merge a duplicate after unlock.
+In the inspector, name search includes active operator assertions on visible versions before document-people publication, except blind-copy assertions. People known only from automatic sensitive evidence or blind-copy assertions stay out of results. People backed only by locked Hidden photos appear once you unlock Hidden. Manually created unlinked people remain searchable with blank identity labels. Automatically provisioned exact-identifier people appear by name once they have a visible assertion or a non-sensitive published document link. See [browser names and visibility](people.md#browser-names-and-visibility) for details. The picker explains the duplicate risk. Create the person directly and merge any duplicate after unlocking.
 
-If a name search fails, choose Retry to repeat that page. Completed choices remain available after a later page fails. Create person appears after the search completes.
+If a name search fails, choose **Retry** to repeat that page. Choices from earlier completed pages stay available if a later page fails, and **Create person** appears once the search completes.
 
-Use a photo file's `current_version_id` from `docbank document stat <path-or-id> --json` to record an observation:
+To record a face or whole-photo observation from the CLI, first get the photo file's `current_version_id` from `docbank document stat <path-or-id> --json`, then run:
 
 ```sh
 docbank photos faces create <content-version-id> --box 0.1,0.2,0.3,0.4 --person <person-id>
@@ -74,13 +61,11 @@ docbank photos faces create <content-version-id> --person <person-id>
 docbank photos faces list <content-version-id>
 ```
 
-A box is `x,y,width,height`, each measured as a fraction of the EXIF-oriented preview before authored rotation. Omit `--person` for an unnamed face, or omit `--box` to mark a person in the whole photo. Naming a face records the same `depicted` person link as a whole-photo mark. Multiple faces of one person share that link. List returns up to 1,000 face boxes and 1,000 depicted-person records, including whole-photo marks and suppressed records referenced by a face. A photo holds at most 1,000 faces and 1,000 depicted people; a create past either limit fails.
+A box uses `x,y,width,height`, with each value measured as a fraction of the EXIF-oriented preview before authored rotation. Omit `--person` to record an unnamed face, or omit `--box` to mark a person in the whole photo. Naming a face records the same `depicted` person link as a whole-photo mark, and multiple faces of the same person share that link. `faces list` returns up to 1,000 face boxes and 1,000 depicted-person records, including whole-photo marks and suppressed records referenced by a face. Each photo holds at most 1,000 faces and 1,000 depicted people, and creating past either limit fails.
 
-A boxed create generates a face UUID. Retain the returned `face_id`, or use `--face-id <uuid>` to supply one. Retry with that same ID, box and version to recover the saved result. A supplied person must match the saved canonical person. A retry still succeeds after that person retires. A boxed command includes the retry ID after a connection failure, a server failure, or an unreadable success response. Conflicting reuse fails.
+Creating a boxed face generates a face UUID. Save the returned `face_id`, or pass `--face-id <uuid>` to supply your own. If a connection error, server failure, or unreadable success response interrupts a boxed create, retry with the same ID, box, and version to recover the saved result; the boxed command includes that retry ID automatically. If you supply a person, it must match the saved canonical person, and retries still succeed even if that person has since been retired. Reusing an ID with conflicting inputs fails.
 
-Name an existing box with `faces name`, using its face revision.
-
-Read face revisions with `faces list` before correcting a name:
+Name an existing box with `faces name` using its face revision. Before correcting a name, read its current revision with `faces list`:
 
 ```text
 docbank photos faces name <content-version-id> --face <face-id> --person <person-id> --revision REV
@@ -92,196 +77,138 @@ docbank photos faces key <content-version-id> --face <face-id> --person <person-
 docbank photos faces undo <receipt-id>
 ```
 
-Each correction returns `receipt_id`. The CLI prints an operation UUID before sending a decision or undo; retry with the same inputs and `--operation-id` to recover its receipt after a lost response. HTTP decisions accept `operation_id` in the body; undo accepts it as a query parameter. Undo restores changed records while their saved revisions still match; edits to unrelated faces stay intact. A later edit returns `412 stale_revision`; read again before deciding. Undo also returns a receipt, so it can be undone unless it retired the person created by a new-name face decision; undoing that undo returns not found. A rejected assigned person loses that face assignment atomically. Naming clears that face's rejection and dismissal while preserving decisions for other faces in a group. List returns `rejected_person_ids` and `dismissed`. Each face allows up to 1,000 rejected people; another rejection returns `409 photo_face_limit`.
+Each correction returns a `receipt_id`. Before sending a decision or undo, the CLI prints an operation UUID so you can retry with the same inputs and `--operation-id` to recover the receipt if a response is lost. HTTP decisions accept `operation_id` in the request body, and undo accepts it as a query parameter. Undo restores changed records as long as their saved revisions still match, leaving edits to unrelated faces intact. If a later edit changed the revision, the request returns `412 stale_revision` and you need to read the face again before deciding. Because undo also returns a receipt, you can undo an undo, unless it retired the person created by a new-name face decision, in which case undoing that undo returns not found.
 
-Retracting the last face assignment leaves a neutral `withdrawn` assertion unless an independent whole-photo mark remains. Assertions expose `photo_mark` for that mark; withdrawing it through the Go store method `Store.AssertDocumentPerson` clears it. Clear a standalone whole-photo mark in the browser or send HTTP `retract` with its `assertion_id` and assertion revision. Withdrawn assertions leave room for new depicted people. Explicit suppressions remain separate. Withdraw a rejection without changing the face's assignment with `faces withdraw-rejection`. Clear a key face with `faces key` and omit `--face`, using only `--person-revision`. Read the key face with `people show`; choosing a visible replacement works while the old key's photo is locked.
+Rejecting an assigned person removes that face assignment atomically. Naming a face clears its rejection and dismissal while keeping decisions for other faces in a group intact. `faces list` returns `rejected_person_ids` and `dismissed`. Each face allows up to 1,000 rejected people; rejecting another returns `409 photo_face_limit`.
 
-MCP `get_photo_faces` reads up to 100 face boxes and depicted-person records per page, reducing the page size to fit its response byte limit. Each named face includes its `person_id` and `action`. The page's `people` list provides the canonical `display_name` and `state` for people referenced by its faces and assertions, including retired labels. A smaller page includes only its own people. Pass `next_offset` as `offset` for the next page. MCP can't unlock Hidden photos. Manual faces and whole-photo marks use HTTP or the CLI.
+Retracting the last face assignment leaves a neutral `withdrawn` assertion unless an independent whole-photo mark remains. Assertions expose `photo_mark` for that mark, and withdrawing it through the Go store method `Store.AssertDocumentPerson` clears it. To clear a standalone whole-photo mark, use the browser or send an HTTP `retract` request with its `assertion_id` and assertion revision. Withdrawn assertions free up room for new depicted people, while explicit suppressions remain separate. To withdraw a rejection without changing the face's assignment, run `faces withdraw-rejection`. To clear a person's key face, run `faces key` without `--face` and pass only `--person-revision`. You can inspect a person's key face with `people show`, and you can choose a visible replacement even while the old key's photo is locked.
 
-New faces require the addressed current, live, included image or RAW member. Retained image and RAW versions remain readable and correctable until purge. Sidecars and replaced non-image versions cannot receive boxes or whole-photo marks. Face reads and manual writes require an unlock while the photo is Hidden. Audited vault writes return `audit_mutation_unsupported`. With [automatic detection configured](../configuration.md#automatic-face-detection) and consent granted, the same inspector rows, loupe boxes, and cull crops show detected faces unnamed. Detected faces appear in open photos as scanning finishes. Detection clips boxes to the frame in a parsable reply, then skips faces that remain invalid and keeps the valid faces. A malformed reply or a nonempty face list with no valid faces preserves earlier faces and leaves the scan incomplete; an explicit empty list completes a scan with no faces. Detection leaves caption suggestions and decisions alone. Hidden photos are excluded.
+In MCP, `get_photo_faces` reads up to 100 face boxes and depicted-person records per page, shrinking the page size when needed to stay within its response byte limit. Each named face includes its `person_id` and `action`. The page's `people` list supplies the canonical `display_name` and `state` for people referenced by its faces and assertions, including retired labels, and a smaller page includes only the people it references. Pass `next_offset` as `offset` to fetch the next page. MCP cannot unlock Hidden photos. To add manual faces or whole-photo marks, use HTTP or the CLI.
 
-Detected faces include normalized boxes measured from the top left of the oriented preview, clockwise roll in radians relative to the oriented preview, a facing score from zero to one, and eyes-open and smile measurements. An unavailable measurement has no value. A new detector fingerprint refreshes matching automatic faces and removes unmatched automatic faces that nobody has acted on. Manual faces and faces with names, rejections, dismissals, candidates, or history retain their saved boxes and measurements, preserving undo. A valid empty scan removes only untouched automatic faces. Each completed version and detector fingerprint scans once, including empty scans.
+To add new faces, target the current, live, included image or RAW member. Retained image and RAW versions stay readable and correctable until purge. You cannot add boxes or whole-photo marks to sidecars or replaced non-image versions. Reading faces or making manual writes on a Hidden photo requires an active unlock, and audited vault writes return `audit_mutation_unsupported`.
+
+When you have [automatic face detection configured](../configuration.md#automatic-face-detection) and consent granted, detected faces appear unnamed in the same inspector rows, loupe boxes, and cull crops as soon as scanning finishes. In a parsable reply, detection clips boxes to the frame, skips any faces that remain invalid, and keeps the valid ones. If a reply is malformed or contains a nonempty face list with no valid faces, Docbank keeps earlier faces and leaves the scan incomplete; an explicit empty list completes the scan with no faces. Detection leaves caption suggestions and decisions untouched, and skips Hidden photos.
+
+Detected faces include normalized boxes measured from the top left of the oriented preview, clockwise roll in radians relative to the oriented preview, a facing score from zero to one, and eyes-open and smile measurements. Any unavailable measurement has no value. When a new detector fingerprint runs, it refreshes matching automatic faces and removes unmatched automatic faces that nobody has acted on. Manual faces and faces with names, rejections, dismissals, candidates, or history keep their saved boxes and measurements, which preserves undo. A valid empty scan removes only untouched automatic faces. Each completed version and detector fingerprint scans once, including empty scans.
 
 ## Open and inspect a photo
 
-Double-click a photo to select it and open it above Library. Enter
-opens the photo while preserving any separate selection.
-On touch, tap a photo to open it when nothing is selected. Use the checkbox to
-start a selection. Taps then toggle selection. Double-tap opens a photo while a
-selection is active, and also selects it if it wasn't selected. The Open control
-stays reachable for screen readers and keyboard users.
+To open a photo above **Library**, double-click it to select and open it, or press **Enter** to open it without changing any separate selection. On a touch screen, tap a photo to open it when nothing is selected. To start a selection on touch, use the checkbox; after that, taps toggle selection, and double-tapping opens a photo while also selecting it if it is not already selected. The **Open** control remains available for screen readers and keyboard navigation.
 
-Use the arrow keys, Previous and Next buttons, or the thumbnail rail to move
-through the current result in query order, across calendar-month groups. Navigation loads the next page at the loaded edge
-and stops at the query boundary. If loading fails, Retry navigation resumes it
-inside the viewer, including after a cursor expires. Press I for available camera and exposure
-details. Wheel, pinch, or double-click to zoom. Use Reset zoom to reset. Escape
-returns to the scroll position and focus left on entering the viewer, including
-when Forward reopens it.
+Move through the current results in query order, across calendar-month groups, using the arrow keys, the **Previous** and **Next** buttons, or the thumbnail rail. Navigation loads the next page when you reach the loaded edge and stops at the query boundary. If loading fails, choose **Retry navigation** to resume inside the viewer, even after a cursor expires. Press **I** to view available camera and exposure details. Zoom with the scroll wheel, pinch gesture, or a double-click, and choose **Reset zoom** to return to the default view. Pressing **Escape** returns you to the scroll position and focus you left when entering the viewer, including when browser **Forward** reopens it.
 
 ![A photo open in the viewer with its metadata panel](https://docbank.ai/assets/generated/web-photo-viewer.png)
 
-The viewer shows the cached grid preview first, then a fit preview. Zoom loads
-a large preview while preserving the zoom. It prepares only two neighboring
-fit previews in each direction. A failed upgrade keeps the useful image. Retry
-preview retries a failed request. Retained failed or unsupported previews have
-no Retry; download the photo from Documents.
+The viewer displays the cached grid preview first, then upgrades to a fit preview. Zooming loads a large preview while keeping your zoom level. The viewer prepares only two neighboring fit previews in each direction. If an upgrade fails, the current image stays on screen and you can choose **Retry preview** to try the request again. Previews that are retained as failed or unsupported do not offer **Retry**; download those photos from **Documents** instead.
 
-Use Reload photo after a temporary opening failure or when the photo version, display, or Library eligibility changes. Reloading unchanged content restarts preview loading, clears the failure, and keeps the zoom.
+Choose **Reload photo** after a temporary opening failure, or when the photo version, display file, or Library eligibility changes. Reloading unchanged content restarts preview loading, clears the failure, and preserves your zoom.
 
-View original reads verified JPEG, PNG, or WebP bytes through the browser's
-existing download path. Originals are limited to 32 MiB, 16,384 pixels per side,
-and 40 million pixels. Use verified download in Documents for larger images.
-Animated WebP originals may animate in the browser. RAW photos always use
-server-produced JPEG previews.
+Choose **View original** to read verified JPEG, PNG, or WebP bytes through the browser's existing download path. Originals are limited to 32 MiB, 16,384 pixels per side, and 40 million pixels; for larger images, use verified download in **Documents**. Animated WebP originals may animate in the browser. RAW photos always display server-produced JPEG previews.
 
-A `/photos#photo=<asset-id>` URL opens that photo directly; an album URL such
-as `/photos/albums/<album-id>#photo=<asset-id>` works the same way. Direct views
-have no query navigation or thumbnail rail. Close returns to Library or to the
-album in the URL. Back and
-Forward also update the viewer. Browser sessions stay in memory. After a reload,
-run `docbank web` for a fresh session, then append `&photo=<asset-id>` to its
-fragment to reopen the direct photo.
+You can open a photo directly with a `/photos#photo=<asset-id>` URL, or inside an album with `/photos/albums/<album-id>#photo=<asset-id>`. Direct views do not include query navigation or the thumbnail rail. Choosing **Close** returns to **Library** or to the album in the URL, and browser **Back** and **Forward** update the viewer as well. Because browser sessions stay in memory, reloading drops the session. After a reload, run `docbank web` for a fresh session and append `&photo=<asset-id>` to its URL fragment to reopen the photo directly.
 
 ## Edit metadata
 
-Metadata editing currently works in the web app; CLI and MCP commands aren't available. The metadata panel starts open in the library and viewer. Press I or choose the **ⓘ** button to hide or show it. Drag the panel's left edge, or focus it and press the arrow keys, to resize it. Double-click the edge to reset. Your browser remembers both choices. File details appear above the viewer's edit controls. Click a path, hash, version, document ID, photo ID, or file ID to copy it. A Protected chip opens Audit history. The panel edits rating, flag, color label, caption, creator, copyright, rotation, and keywords. Whole pair edits every image or RAW member together. Choose a member to edit it alone. Mixed means members have different values. Stage fields and keyword changes, then choose Apply. Reloading or closing the page asks before discarding staged edits. Clear caption, creator, or copyright sets mixed text to empty.
+Metadata editing is available in the web app; CLI and MCP commands are not available. The metadata panel starts open in both the library and the viewer. Press **I** or click the **ⓘ** button to hide or show it. To resize the panel, drag its left edge or focus the edge and press the arrow keys; double-click the edge to reset its width. Your browser remembers both visibility and width.
 
-Select photos in the grid to edit them in the metadata panel. Select all results to edit the current search, including photos beyond the loaded page. Each edit allows at most 1,000 files, including both members of a pair. The editing session keeps the resolved photos through result refreshes until you change the selection, search, or inspected photo. Counts, checkboxes, album actions, drag, shortcuts, and trash use those same photos. After partial trash, failed photos stay selected with their captured revisions, including unloaded photos; retry them or choose Clear selection. A failed edit changes nothing. After a conflict, Reload metadata preserves your draft for review and an explicit retry. Keywords use the existing tag picker.
+In the viewer, file details appear above the edit controls. Click a path, hash, version, document ID, photo ID, or file ID to copy it, or click a **Protected** chip to open **Audit history**.
 
-In Photos, 0 through 5 set the rating, P picks, X rejects, and U clears the flag. 6 sets red, 7 yellow, 8 green, and 9 blue. R rotates each selected photo 90° clockwise, and V sets purple. Use the inspector for other rotation values or No label. A shortcut applies any staged fields and keywords together with its decision; the Undo feedback names those edits. Apply or Clear edits before switching between pair members. Typing in a text field keeps its normal shortcuts. Edits update open photo lists in place. A Metadata list with search text or a rating, flag, label, keyword, or modified-date filter reloads after each edit, so an edited photo can leave it; Meaning and Hybrid results keep their captured membership until Refresh. Map also reloads after a rotation or its Undo. Undo or Ctrl/Cmd+Z restores the last edit, including keyword changes. Undo uses conservative revision checks. It reports a conflict if an edited file has changed; keyword Undo also conflicts after any revision change to an affected document. Reload metadata before making another edit.
+The panel lets you edit rating, flag, color label, caption, creator, copyright, rotation, and keywords. Choose **Whole pair** to edit every image or RAW member together, or choose an individual member to edit it alone. **Mixed** indicates that members have different values. Stage your field and keyword changes, then choose **Apply**. Reloading or closing the page prompts you before discarding staged edits. Choosing **Clear caption**, **Clear creator**, or **Clear copyright** sets mixed text to empty.
 
-The viewer refuses edits until its photo has loaded, and refuses them if the photo was replaced after the viewer loaded it. After a replacement, the viewer shows the new photo and drops the refused shortcut. Edits staged in the Metadata panel stay until you choose Reload metadata.
+To edit multiple photos at once, select them in the grid, or choose **Select all N photos** to edit the current search, including photos beyond the loaded page. Each edit allows up to 1,000 files, counting both members of a pair. Your editing session keeps the resolved photos across result refreshes until you change the selection, search, or inspected photo, and counts, checkboxes, album actions, drag, shortcuts, and trash all act on those same photos. After a partial trash, failed photos stay selected with their captured revisions, including unloaded photos, so you can retry them or choose **Clear selection**. A failed edit changes nothing. After a conflict, choose **Reload metadata** to keep your draft for review and an explicit retry. Keywords use the existing tag picker.
 
-A pending rotation suggestion appears under Rotation for one photo. Face tilt supplies the angle when measured faces agree; the photo description can suggest an angle when no active faces remain. **Rotate** saves the suggested angle, and **Dismiss** confirms the current angle. Both support Undo, which reveals the current suggestion. A response requires a current nonzero proposal; if its angle changes while the inspector is open, **Rotate** still saves the angle you saw. If the proposal disappears, reload before responding. Face suggestions follow current face decisions immediately; conflicting or entirely unmeasured faces leave rotation undecided. For a RAW/JPEG pair, select the displayed member in **Edit members** to respond to its rotation suggestion. Suggestions leave the displayed image unchanged until you respond. Apply or clear staged edits before responding.
+In **Photos**, keyboard shortcuts let you triage quickly:
 
-Rotation applies to the displayed photo in the grid, viewer, and album cover without rebuilding previews. Hidden photos require an active unlock for editing and Undo. Undo after hiding a photo asks you to unlock Hidden and keeps Library signed in.
+- **0** through **5** set the star rating.
+- **P** picks, **X** rejects, and **U** clears the flag.
+- **6** sets red, **7** yellow, **8** green, **9** blue, and **V** sets purple.
+- **R** rotates each selected photo 90° clockwise.
+
+Use the inspector for other rotation values or **No label**. A shortcut applies any staged fields and keywords together with its decision, and the Undo feedback names those edits. Apply or clear edits before switching between pair members. While you are typing in a text field, normal text shortcuts stay active.
+
+Edits update open photo lists in place. A Metadata list with search text or a rating, flag, label, keyword, or modified-date filter reloads after each edit, so an edited photo can leave the list. Meaning and Hybrid results keep their captured membership until you choose **Refresh**. **Map** also reloads after a rotation or its Undo. Choose **Undo** or press **Ctrl+Z** or **Cmd+Z** to restore the last edit, including keyword changes. Undo uses conservative revision checks and reports a conflict if an edited file has changed; keyword Undo also conflicts after any revision change to an affected document. Reload metadata before making another edit.
+
+The viewer refuses edits until its photo has loaded, and refuses them if the photo was replaced after loading. After a replacement, the viewer shows the new photo and drops the refused shortcut, while edits staged in the Metadata panel stay until you choose **Reload metadata**.
+
+When you edit one photo, a pending rotation suggestion appears under **Rotation**. Face tilt supplies the angle when measured faces agree, and the photo description can suggest an angle when no active faces remain. Choose **Rotate** to save the suggested angle, or **Dismiss** to confirm the current angle. Both actions support Undo, which reveals the current suggestion again. Responding requires a current nonzero proposal. If the suggested angle changes while the inspector is open, **Rotate** still saves the angle you saw, and if the proposal disappears, reload before responding. Face suggestions reflect current face decisions immediately; conflicting or entirely unmeasured faces leave rotation undecided. For a RAW/JPEG pair, select the displayed member in **Edit members** to respond to its rotation suggestion. Suggestions leave the displayed image unchanged until you respond, and you must apply or clear staged edits first.
+
+Rotation applies to the displayed photo in the grid, viewer, and album cover without rebuilding previews. Hidden photos require an active unlock for editing and Undo. If you undo after hiding a photo, Docbank asks you to unlock **Hidden** and keeps **Library** signed in.
 
 ## Browse in the web app
 
-**System** in the sidebar opens **Disk use**, **Running now**, **Backups**, **Protected folders**, and **Search by meaning**.
+To view your photos in the browser, run `docbank web` and choose **Photos** in the sidebar. **Library** opens at `/photos` with the newest captures first. In the sidebar, **System** opens **Disk use**, **Running now**, **Backups**, **Protected folders**, and **Search by meaning**.
 
-Open `docbank web` and choose **Photos** in the sidebar. Library opens at
-`/photos`, newest captures first. A photo without a readable capture date sits
-in the month its file was last modified, when Docbank recorded that time; the
-viewer then shows File modified and leaves Captured blank. The rest appear under
-Undated. The date rail on the right lists years and months, including
-dates beyond the loaded grid. Hover a year or month for its photo count. It has no day choices. Scrolling
-loads more photos and reveals older years. The rail ends with "N undated", where
-N is the number of undated photos, when that number is above zero. Choose
-**Load more** to continue from the same position when further results remain.
+If a photo has no readable capture date, Docbank places it in the month its file was last modified, provided Docbank recorded that time; the viewer then shows **File modified** and leaves **Captured** blank. Photos with neither date appear under **Undated**. On the right, the date rail lists years and months, including dates beyond the loaded grid, with no day choices. Hover over a year or month to see its photo count. As you scroll, Docbank loads more photos and reveals older years. When undated photos exist, the rail ends with "N undated", where N is the undated count. Choose **Load more** to continue from the same position when more results remain.
 
-The **⋯** menu holds Trash rejected photos, Export, and Refresh previews, plus Rename album, Duplicate album, and Delete album in an album, and Group, Density, Cull, and Resume cull when available at 640px and below.
+The title row displays the photo count, **Sort**, **Group**, **Density**, **Cull**, **Resume cull** when saved, **Add photos** in Library, the **⋯** menu, and the **ⓘ** button for the metadata panel. On screens 640px wide and narrower, the title row wraps as needed and **Group**, **Density**, **Cull**, and **Resume cull** move into **⋯**. The **⋯** menu holds **Trash rejected photos**, **Export**, and **Refresh previews**, plus **Rename album**, **Duplicate album**, and **Delete album** when you are inside an album. A floating **Loading photos…** pill appears while a page loads.
 
-The title row holds the photo count, Sort, Group, Density, Cull, Resume cull when saved, **Add photos** in Library, the **⋯** menu, and the **ⓘ** button for the metadata panel. At 640px and below, the title row wraps as needed, and Group, Density, Cull, and Resume cull move into **⋯**. A floating **Loading photos…** pill appears while a page loads.
+Choose a year or month in the rail to jump there. Docbank loads pages until it reaches that date while keeping your current search, filters, and album intact. Choosing a year jumps to its newest month. If a collapsed stack holds that month's photos, the jump lands on the stack, and a month with no photos jumps to the next older month. Date navigation requires newest-first capture order: **Capture date** in Library and search, or **Captured** in an album. In other sorts, the rail still displays dates but disables clicking with a hint to change the sort. Scrolling the grid yourself or opening a photo cancels a pending jump. If a page fails to load, dates that are already loaded still jump, and choosing **Retry** or refreshing resumes a pending jump. The rail marks the first photo visible below the section heading in every sort order. A chosen year stays expanded so its months remain reachable even if the grid ends before that year reaches the top; scrolling the grid yourself returns the expanded year to the top photo's year.
 
-Choose a year or month to scroll there. Docbank loads pages until it reaches
-that date, so the search, filters, and album stay as they are. A year jumps to
-its newest month. If a collapsed stack holds that month's photos, the jump lands
-on the stack. A month without photos jumps to the next older one.
-Date navigation requires newest-first capture order: **Capture date** in Library
-and search, or **Captured** in an album. In other sorts, the
-rail keeps its dates visible and disables them with a hint to change the sort.
-Any scroll of the grid you make cancels a pending jump, and opening a photo does
-too. After a page fails to load, dates that are already loaded still jump, and
-**Retry** resumes a pending jump. Refreshing also retries a pending jump.
-The rail marks the first photo visible below the section heading in every sort order.
-A chosen year stays open so its months remain reachable, even when the grid reaches
-the end before that year reaches the top. Scrolling the grid yourself returns
-the open year to the top photo's year.
+On screens 640 pixels wide or narrower, a full-width **Jump to date** selector above the grid replaces the date rail. It lists each year and its months with photo counts, followed by a disabled "N undated" option when undated photos exist. Choosing a date jumps like the rail does, and other sorts disable the selector with the same sort hint. The selector displays **Loading dates…** until the first counts arrive, and **Jump to date** while no month sits at the top of the grid.
 
-On a screen 640 pixels wide or narrower, a full-width **Jump to date** selector
-above the grid replaces the rail. It lists each year and its months with photo
-counts, followed by a disabled "N undated" option when the count is above zero.
-Choosing a date jumps like the rail does. Other sorts disable the selector and show the same sort hint. It shows Loading dates… until the first
-counts arrive, and Jump to date while no month is at the top of the grid.
+The rail and selector appear whenever counts include dated or undated photos, including scopes that contain only undated photos. **Hidden** and **Map** have no date rail; in **Hidden**, use the **Year** filter instead. If counts fail or are unavailable, the rail or selector shows the reason and a **Retry** button, even when the grid is empty or a search has no matches. A failed count refresh keeps the last available dates beside the error. While a hide or trash operation runs, the rail and selector are disabled.
 
-The rail and selector appear when counts include dated or undated photos.
-A scope with only undated photos still shows its undated count. Hidden and Map
-have none; in Hidden, use the Year filter instead. Failed or unavailable counts
-show their reason and a **Retry** button in the rail or selector, even when the
-grid is empty or the search has no matches. A failed count
-refresh keeps the last available dates beside the error. While a hide or trash
-runs, the rail and selector are disabled.
+Dates use the selected display file's recorded calendar day, so a capture near midnight keeps its date regardless of your browser's time zone. A RAW/JPEG pair counts once. A photo with no capture date counts on the UTC day its file was last modified. When Docbank has seen the same bytes more than once, the first sighting that recorded a modified time decides the date, so re-importing copies never moves a photo. Reverting a photo restores the date of the original bytes, while replacing a photo with content recorded without a modified time leaves it undated until reverted. The **Undated** total includes photos with neither date.
 
-Dates use the selected display file's recorded calendar day, so a capture near
-midnight keeps its date regardless of the browser's timezone. A RAW/JPEG pair
-counts once. A photo without a capture date counts on the UTC day its file was
-last modified. When the same bytes were seen several times, the first
-sighting that recorded a modified time decides, so re-importing copies never
-moves a photo. Reverting a photo
-restores the date of the original bytes; a photo replaced by content recorded
-without a modified time is undated until reverted. The Undated total includes
-photos with neither.
-Timeline counts every included photo asset, even in a vault with many ordinary
-documents. It shows a limit message when the scope spans more than 250,000
-distinct capture days or the count runs past its time budget, and offers Retry.
-A busy message asks you to retry after other timeline requests finish. Loading
-the timeline does not block Documents queries. During refresh, the rail keeps the
-last successful counts until new counts arrive.
+Timeline counts every included photo asset, even in a vault with many ordinary documents. If the scope spans more than 250,000 distinct capture days or the count exceeds its time budget, Docbank shows a limit message and offers **Retry**. A busy message asks you to retry after other timeline requests finish. Loading the timeline does not block Documents queries. During a refresh, the rail keeps the last successful counts until new counts arrive.
 
-Search filenames, camera or lens names, and location labels in the Photos
-top-bar search box and press Enter. Using the clear button or Escape to clear the box also reruns an applied search. Search opens in relevance order, with one tile per asset even
-when several paired files match. Choose Capture date to
-return to date browsing. Relevance shows the best 250 matches and the total. Refine the search or sort by capture date to see all matches. Equal-score ties use capture placement descending, then asset ID.
+To search filenames, camera or lens names, and location labels, type in the **Photos** top-bar search box and press **Enter**. Using the clear button or pressing **Escape** clears the box and reruns an applied search. Search opens in relevance order with one tile per asset, even when several paired files match. Choose **Capture date** to return to date browsing. Relevance shows the best 250 matches along with the total; refine the search or sort by capture date to see all matches. Equal-score ties break by capture placement descending, then asset ID.
 
-Choose **Metadata**, **Meaning**, or **Hybrid** beside the search box. Meaning searches what photos show through a configured image/text embedding provider. Hybrid combines metadata relevance with visual meaning. Both always use relevance order, including during metadata fallback, and retain supported photo filters. Their membership and order stay fixed while paging. Flags, ratings, rotation, and previews show current values when each page loads. Ranked results keep [burst stacks](#burst-stacks). Filter counts and the date timeline stay unavailable. Refresh runs the search again.
+Choose **Metadata**, **Meaning**, or **Hybrid** beside the search box. **Meaning** searches what photos show using a configured image/text embedding provider, and **Hybrid** combines metadata relevance with visual meaning. Both always use relevance order, including during metadata fallback, and keep supported photo filters. Their membership and order stay fixed while you page through results, while flags, ratings, rotation, and previews show current values as each page loads. Ranked results keep [burst stacks](#burst-stacks). Filter counts and the date timeline stay unavailable. Choose **Refresh** to run the search again.
 
-Meaning and Hybrid retain up to 1,000 matches, including metadata fallback. When more matches exist, the results show that limit. Metadata fallback captures matching photos in relevance order. Each page starts with up to 250 matches and includes every live member of each intersecting stack. Select all, export, albums, and Cull use the captured IDs, including during fallback. Photos imported after capture enter the results when you refresh. Narrow the search to see matches beyond the limit. Cull reads the captured photos' current flags.
+**Meaning** and **Hybrid** retain up to 1,000 matches, including during metadata fallback, and show that limit when more matches exist. Metadata fallback captures matching photos in relevance order. Each page starts with up to 250 matches and includes every live member of each intersecting stack. Select all, export, albums, and **Cull** all use the captured IDs, including during fallback, and **Cull** reads the captured photos' current flags. Photos imported after capture appear when you refresh. To see matches beyond the 1,000-photo limit, narrow your search.
 
-Meaning includes only photos that meet the image binding's configured similarity threshold. When none qualify, it shows an empty result without falling back to metadata. Hybrid keeps metadata matches even when no photos meet the similarity threshold. A binding without a threshold shows the image-search-unavailable metadata fallback. See [image/text retrieval configuration](../configuration.md#imagetext-retrieval).
+**Meaning** returns only photos that meet the image binding's configured similarity threshold. When none qualify, it shows an empty result without falling back to metadata. **Hybrid** still shows metadata matches even when no photos meet the similarity threshold. A binding without a threshold falls back to metadata with an image-search-unavailable notice. See [image/text retrieval configuration](../configuration.md#imagetext-retrieval).
 
-When the provider, consent, or image index is unavailable, a status line explains why metadata matches are shown. Advanced Boolean queries that cannot preserve their meaning also use metadata search. Expired provider credentials also use metadata fallback. Docbank sign-in failures remain errors.
+When the provider, consent, or image index is unavailable, a status line explains why metadata matches are shown. Advanced Boolean queries that cannot preserve their meaning also use metadata search, as do expired provider credentials. Docbank sign-in failures remain errors.
 
-Open **Filters** beside the title to narrow the grid by Camera, Lens, Location, and Albums. Hidden also offers Year. Library shows Year while a saved search has an active capture range, so you can edit or clear it. Filters starts closed and loads counts when you open it for live metadata results. Meaning and Hybrid omit counts, including during metadata fallback. Its badge counts active filters you can edit in the panel, counting both ends of a range once. Counts cover the
-whole matching library, including photos beyond the loaded page. Tiles appear before the separate count request finishes. Counts have a 30-second budget. Unavailable counts show their reason. Choose Retry counts after a timeout. Member or byte limits require a narrower search or filters. Each facet
-omits its own selected filter while retaining search and the other filters.
-Camera, lens, and location describe the selected display file; Year
-uses its recorded local capture date, or the UTC day of its modified time when it has none. Text may match any live member of a
-pair, so a text match can appear under a different display-file camera or lens. Camera and lens count both make and model; their counts can sum to more than the asset total. Equivalent Unicode-folded values share one bucket and count each asset once. Buttons submit an original valid spelling; oversized metadata stays visible as informational counts. Year counts omit a selected whole-year range and retain other date ranges. Albums show live memberships. Choose Clear filters to reset the
-search and facets. Clear filters appears when a search or filter is applied. A facet group disappears when none of the photos have a value for it and no value in it is selected. Changing a facet keeps any unsent search text and mode. Changing scope clears selection and starts a fresh grid.
+To narrow the grid by **Camera**, **Lens**, **Location**, and **Albums**, open **Filters** beside the title. **Hidden** also offers **Year**, and **Library** shows **Year** whenever a saved search has an active capture range so you can edit or clear it. **Filters** starts closed and loads counts when you open it for live metadata results; **Meaning** and **Hybrid** omit counts, including during metadata fallback. The filter badge counts active filters you can edit in the panel, counting both ends of a range once.
 
-Choose Months or Capture sessions to group the grid. A session joins captures
-with gaps of four hours or less. Compact, Comfortable, and Large change the
-grid density. The browser remembers the density across reloads and fresh
-`docbank web` links until the daemon restarts on a new address.
+Filter counts cover the whole matching library, including photos beyond the loaded page, and tiles appear before the separate count request finishes. Counts have a 30-second budget. Unavailable counts show their reason; choose **Retry counts** after a timeout, or narrow your search and filters if you hit member or byte limits. Each facet omits its own selected filter while keeping the search text and other filters.
 
-Click a photo to select it. Shift-click adds the range from the previous
-selection, including loaded photos outside the screen. Ctrl-click or
-Command-click toggles a photo. Each photo also has a checkbox for touch.
-The selection dock can select loaded photos, select the complete live query, or clear the selection.
+Camera, lens, and location describe the selected display file, while **Year** uses its recorded local capture date, or the UTC day of its modified time if it has none. Because text search can match any live member of a pair, a text match can appear under a different display-file camera or lens. Camera and lens count both make and model, so their counts can sum to more than the asset total. Equivalent Unicode-folded values share one bucket and count each asset once. Filter buttons submit an original valid spelling, while oversized metadata stays visible as informational counts. Year counts omit a selected whole-year range and retain other date ranges, and **Albums** shows live memberships. Choose **Clear filters** to reset the search and facets; this button appears whenever a search or filter is applied. A facet group hides when none of the photos have a value for it and no value in it is selected. Changing a facet keeps any unsent search text and mode, while changing scope clears the selection and starts a fresh grid.
 
-Photos, selection, and scroll position stay in place across Documents/Photos switches until the session locks or ends. Leaving an album for Library, Albums, or another album resets that album's sort, selection, and scroll position. Library keeps its own selection and position. Switching workspaces stops unfinished photo reads while retaining loaded photos. Previews already seen stay in a private browser cache while their Photos view is active. Only mounted photos keep image URLs. Docbank deletes the cache when leaving the view, when the session locks or ends, or when the page closes. If a page closes without that cleanup, for example after a browser crash, the next signed-in session at the same `docbank web` address deletes the leftover cache. Caches from earlier addresses stay in browser storage until site data is cleared. Previews still display when browser storage is unavailable, but revisiting them may download them again. Preview downloads bypass the browser HTTP cache, so only that private cache retains bytes.
-Pending, unsupported, and failed previews have separate placeholders. Choose
-Refresh previews from the **⋯** menu to reload the listing after background preview work finishes.
-If a page fails to load, the earlier photos remain visible. Retry requests the
-failed page again. Refresh and expired-cursor recovery keep the current grid visible until the refreshed range succeeds. Refresh keeps selections and the range anchor only within the refreshed pages, plus failed trash targets. Whole-query selection keeps its query scope. Failed attempts keep the earlier view available for Retry. Each refresh page has a one-minute deadline.
+To group the grid, choose **Months** or **Capture sessions**. A session joins captures with gaps of four hours or less. Choose **Compact**, **Comfortable**, or **Large** to adjust grid density. Your browser remembers the density across reloads and fresh `docbank web` links until the daemon restarts on a new address.
+
+To select photos, click a photo, **Shift**-click to select a range from the previous selection including loaded photos off-screen, or **Ctrl**-click or **Command**-click to toggle a photo. Each photo also has a checkbox for touch devices. From the selection dock, you can select loaded photos, select the complete live query, or clear the selection.
+
+Your photos, selection, and scroll position stay in place when you switch between **Documents** and **Photos** until the session locks or ends. Leaving an album for **Library**, **Albums**, or another album resets that album's sort, selection, and scroll position, while **Library** keeps its own selection and position. Switching workspaces stops unfinished photo reads while keeping loaded photos.
+
+Previews you have already seen stay in a private browser cache while their **Photos** view is active, and only mounted photos keep image URLs. Docbank deletes the cache when you leave the view, when the session locks or ends, or when the page closes. If a page closes without that cleanup, for example after a browser crash, the next signed-in session at the same `docbank web` address deletes the leftover cache. Caches from earlier addresses stay in browser storage until site data is cleared. Previews still display if browser storage is unavailable, though revisiting them may download them again. Preview downloads bypass the browser HTTP cache, so only that private cache retains bytes.
+
+Pending, unsupported, and failed previews each display a separate placeholder. Choose **Refresh previews** from the **⋯** menu to reload the listing after background preview work finishes. If a page fails to load, earlier photos stay visible and you can choose **Retry** to request the failed page again. Refresh and expired-cursor recovery keep the current grid visible until the refreshed range succeeds. Refresh keeps selections and the range anchor only within the refreshed pages, plus any failed trash targets, while whole-query selection keeps its query scope. Failed attempts keep the earlier view available for **Retry**. Each refresh page has a one-minute deadline.
 
 ## Save and freeze a photo search
 
-Choose Plain words for ordinary words, or Query syntax for expressions such as `rating:5 pick label:red`. Changing the mode reruns typed text. In Query syntax, `pick` means `flag:pick`; quote `"pick"` to search for that word. Authored-text search matches caption, creator, and copyright on any live RAW, image, or video member, plus every tag name assigned to the photo and any pending [photo suggestion](#suggested-metadata). Photo search also includes camera and location metadata, filenames, and extracted text. Rating, flag, and color label facets use each asset's display file. Select None to find an empty flag or label.
+Choose **Plain words** for ordinary word search, or **Query syntax** for expressions such as `rating:5 pick label:red`. Switching modes reruns any typed text. In **Query syntax**, `pick` means `flag:pick`; wrap `"pick"` in quotes to search for the word itself. Authored-text search matches caption, creator, and copyright on any live RAW, image, or video member, plus every tag name assigned to the photo and any pending [photo suggestion](#suggested-metadata). Photo search also includes camera and location metadata, filenames, and extracted text. Rating, flag, and color label facets use each asset's display file. Choose **None** to find photos with an empty flag or label.
 
-Save search appears while a search or filter is applied. Choose it to save the applied search. Albums lists saved queries whose kind filter contains only photos or videos as Smart sets. A `kind:photo` expression alone does not put a Documents query in this list; saving from Photos adds the kind filter. Ordering stays in the current view; reopening uses capture date, or relevance for a text query. The saved definition also runs in Documents: bare `pick` searches for the word, while `rating:` and `flag:` test each document file's authored decisions rather than the asset's display file. Hidden photo files remain accessible there. Use its saved-query editor to change or delete the definition.
+When a search or filter is applied, **Save search** appears so you can save it. **Albums** lists saved queries whose kind filter contains only photos or videos as **Smart sets**. A `kind:photo` expression alone does not place a Documents query in this list; saving from **Photos** adds the required kind filter. Ordering stays in the current view, and reopening uses capture date, or relevance for a text query. Saved definitions also run in **Documents**, where bare `pick` searches for the word, `rating:` and `flag:` test each document file's authored decisions rather than the asset's display file, and hidden photo files remain accessible. Use the **Documents** saved-query editor to change or delete a definition.
 
-Choose Freeze results after saving a smart set. A metadata search freezes all matches in the smart set's saved sort, with asset ID breaking ties. Smart sets saved from Photos store name ascending. A smart set saved in Documents keeps its own sort; a `path` sort freezes by name ascending. Meaning and Hybrid searches freeze up to 1,000 results in relevance order. Frozen runs contain Library photos only. Their count and expiry appear beside Save as album and remain available when you return from Albums. Saving the album preserves the frozen asset membership and result order and clears the freeze, even if the live query's matches have changed. Frozen results expire with the daemon's snapshot session; the album persists.
+After saving a smart set, choose **Freeze results** to capture its current matches. A metadata search freezes all matches in the smart set's saved sort, breaking ties by asset ID. Smart sets saved from **Photos** store name ascending, while smart sets saved in **Documents** keep their own sort, with a `path` sort freezing by name ascending. **Meaning** and **Hybrid** searches freeze up to 1,000 results in relevance order. Frozen runs contain **Library** photos only. Their count and expiry appear beside **Save as album** and stay available when you return from **Albums**. Saving the album preserves the frozen asset membership and result order and clears the freeze, even if the live query's matches have changed. Frozen results expire with the daemon's snapshot session, while the saved album persists.
 
 ![A saved photo search shown as a smart set, with Freeze results](https://docbank.ai/assets/generated/web-photo-smart-set.png)
 
-A frozen result can contain at most 250,000 assets. Larger freeze requests fail before saving a run receipt. A freeze also fails without a receipt if any matching photo leaves Library before the run is saved. Expired snapshots and assets that are missing, hidden, excluded, or trashed also fail before creating an album. Authored-field, tag, content, and display-file edits keep the frozen asset membership. If results expire while naming an album, choose Freeze again; the album name stays in the form.
+A frozen result holds at most 250,000 assets; larger freeze requests fail before saving a run receipt. A freeze also fails without a receipt if any matching photo leaves **Library** before the run is saved. Expired snapshots and assets that are missing, hidden, excluded, or trashed also fail before creating an album. Authored-field, tag, content, and display-file edits keep the frozen asset membership intact. If results expire while you are naming an album, choose **Freeze** again; the album name stays in the form.
 
 ## Hidden photos
 
-Open a photo's actions menu or right-click it and choose Hide. If Hidden has no passcode, Hide asks you to enter a new one twice, then hides the photos. Setting a passcode from Hide leaves Hidden locked. If the photo belongs to the selection, the action applies to each selected photo. A stale photo reports an error while successful changes remain saved.
+To hide a photo, open its actions menu or right-click it and choose **Hide**. If **Hidden** does not yet have a passcode, **Hide** asks you to enter a new one twice, hides the photo, and leaves **Hidden** locked. If the photo is part of a selection, **Hide** applies to every selected photo. A stale photo reports an error while successful changes remain saved.
 
-Hidden photos disappear from Library, photo queries, and album contents. Albums retain their membership; their included count covers only visible photos. Background imports keep updating hidden files, including late sidecars. Import receipts retain ordinary photo IDs and file details. Documents, document tools, original bytes, and exports still expose the underlying files. Hidden is a Photos privacy control.
+Hidden photos disappear from **Library**, photo queries, and album contents. Albums keep their membership, while their included count covers only visible photos. Background imports continue updating hidden files, including late sidecars, and import receipts retain ordinary photo IDs and file details. **Documents**, document tools, original bytes, and exports still expose the underlying files, because **Hidden** is a Photos privacy control.
 
-Enter the passcode in Hidden to unlock for five minutes by default. Operators can run `docbank photos settings set hidden_unlock_lifetime 15m` to change future unlocks, from one second through 24 hours. `docbank photos settings reset hidden_unlock_lifetime` restores the default. The countdown uses the server's remaining time, so a wrong browser clock does not change it. Lock closes every active Hidden session, and so does locking or ending any browser session. Already admitted exports retain their rendered copies and remain downloadable until export retention expires. Locking and expiry clear the Hidden grid, selection, and browser preview cache. Photos check for committed changes every two seconds, with a two-second request timeout. Once a window has opened Photos, hiding its tab queues a keepalive lock after pending Hidden writes, including an in-flight unlock. Leaving blanks every Photos view, closes open photos, removes their URL links, and clears cached previews. Library and the open album's photo list reload when you return; a failed load keeps those lists blank with an error and Retry. The Albums index keeps its album list. Page close sends an immediate keepalive lock and, when Hidden writes are pending, queues another after them; closing during an unlock remains best effort. A failed lock shows an error and Retry lock in any workspace. Hidden stays concealed until a lock succeeds. An open Library photo stays open when the refresh still lists it; otherwise its viewer reports that the photo left the result. Background views stay concealed until status validation succeeds. Hidden conceals after any failed check. Library, Map, People, Albums, and each open album share the Library access checks. Library conceals after a denied check or three failed checks in a row; a concealed view stays concealed until Retry or a later check succeeds. Expired browser sessions use the shared session-expired screen. Reloads retain grouping, density, loaded range, scroll position and the selection of unaffected photos; failed batch targets stay available for retry. Hidden previews carry `Cache-Control: no-store`. Preview generation continues while a photo is hidden.
+To view hidden photos, open **Hidden** and enter the passcode. Unlocking lasts for five minutes by default. Operators can change future unlock lifetimes from one second through 24 hours by running `docbank photos settings set hidden_unlock_lifetime 15m`, or restore the default with `docbank photos settings reset hidden_unlock_lifetime`. The countdown uses the server's remaining time, so a wrong browser clock does not affect it.
+
+Choosing **Lock** closes every active Hidden session, as does locking or ending any browser session. Exports that were already admitted keep their rendered copies and stay downloadable until export retention expires. Locking and expiry clear the Hidden grid, selection, and browser preview cache.
+
+**Photos** checks for committed changes every two seconds, with a two-second request timeout. Once a window has opened **Photos**, hiding its tab queues a keepalive lock after any pending Hidden writes, including an in-flight unlock. Leaving blanks every **Photos** view, closes open photos, removes their URL links, and clears cached previews. **Library** and the open album's photo list reload when you return; if reloading fails, those lists stay blank with an error and **Retry**, while the **Albums** index keeps its album list. Closing the page sends an immediate keepalive lock and, when Hidden writes are pending, queues another lock after them; closing during an unlock remains best effort. A failed lock shows an error and **Retry lock** in any workspace, and **Hidden** stays concealed until a lock succeeds. An open **Library** photo stays open if the refresh still lists it; otherwise its viewer reports that the photo left the result.
+
+Background views stay concealed until status validation succeeds. **Hidden** conceals after any failed check. **Library**, **Map**, **People**, **Albums**, and each open album share the Library access checks. **Library** conceals after a denied check or three failed checks in a row; a concealed view stays concealed until **Retry** or a later check succeeds. Expired browser sessions show the shared session-expired screen. Reloads keep grouping, density, loaded range, scroll position, and the selection of unaffected photos, while failed batch targets remain available for retry. Hidden previews carry `Cache-Control: no-store`. Preview generation continues while a photo is hidden.
 
 ![Hidden, locked, asking for its passcode](https://docbank.ai/assets/generated/web-photo-hidden.png)
 
-Hidden supports direct links at `/photos/hidden#photo=<asset-id>` after unlock. Viewer navigation, larger previews and supported originals use the active Library or Hidden scope. Locking or concealing the view closes its viewer and removes displayed bytes.
+After unlocking, **Hidden** supports direct links at `/photos/hidden#photo=<asset-id>`. Viewer navigation, larger previews, and supported originals use the active **Library** or **Hidden** scope. Locking or concealing the view closes its viewer and removes displayed bytes.
 
-Five incorrect passcodes within sixty seconds lock access for five minutes. Failed attempts and lockout survive restart. Backups preserve hidden flags, credentials, failed attempts, active lockouts and decision receipts. Restored vaults require the backed-up passcode and start without unlock sessions. Unlock sessions expire on restart. Changing the passcode revokes sessions. Disable Hidden verifies the passcode and returns every hidden photo to Library in one transaction. Operator reset removes credentials and sessions while preserving hidden flags, so a new setup can recover access.
+Five incorrect passcodes within sixty seconds lock access for five minutes. Failed attempts and lockouts survive daemon restarts. Backups preserve hidden flags, credentials, failed attempts, active lockouts, and decision receipts. Restored vaults require the backed-up passcode and start without unlock sessions, and unlock sessions expire on restart. Changing the passcode revokes active sessions. **Disable Hidden** verifies the passcode and returns every hidden photo to **Library** in one transaction. An operator reset removes credentials and sessions while keeping hidden flags intact, so a new setup can recover access.
 
 ```text
 docbank photos hidden setup
@@ -294,16 +221,13 @@ docbank photos hidden state
 docbank photos hidden reset
 ```
 
-Passcodes must be 1 to 1,024 bytes without CR or LF line breaks. Canonically equivalent Unicode spellings use the same passcode. CLI input uses protected terminal input or one line from stdin. Terminal setup and change ask for the new passcode twice. Change reads the current and new passcode on separate lines. CLI commands prompt for the passcode when reading or editing a hidden asset and forward the unlock cookie only within that invocation, without saving a credential file. For hidden photo details, run `docbank photos assets inspect /path/to/photo.jpg` and enter the passcode. This returns the details without unhiding the asset; MCP photo tools remain locked. Hide requires an asset ID. Unhide also accepts an asset ID or `id:<node-id>`; ordinary Documents and MCP document tools retain file access. Hidden state `change_id` is an opaque equality token: compare it for changes without interpreting or ordering its value. HTTP operations live under `/api/v1/photos/hidden`; hide and unhide use `/api/v1/photos/assets/{asset_id}/hide` and `/unhide` with `If-Match`. Browser sessions can use the interactive operations. Reset requires the daemon API key.
+Passcodes must be 1 to 1,024 bytes with no CR or LF line breaks, and canonically equivalent Unicode spellings count as the same passcode. CLI input reads from protected terminal input or one line from stdin. Terminal `setup` and `change` ask for the new passcode twice, and `change` reads the current and new passcodes on separate lines. When you read or edit a hidden asset from the CLI, the command prompts for the passcode and forwards the unlock cookie only within that invocation without saving a credential file. For hidden photo details without unhiding the asset, run `docbank photos assets inspect /path/to/photo.jpg` and enter the passcode; MCP photo tools remain locked. `hide` requires an asset ID, while `unhide` also accepts an asset ID or `id:<node-id>`. Ordinary **Documents** and MCP document tools keep file access. The Hidden state `change_id` is an opaque equality token that you compare for changes without interpreting or ordering its value. HTTP operations live under `/api/v1/photos/hidden`, and hide and unhide use `/api/v1/photos/assets/{asset_id}/hide` and `/unhide` with `If-Match`. Browser sessions can use the interactive operations, while reset requires the daemon API key.
 
-A hide retry that returns `hidden_locked` already took effect.
+If a hide retry returns `hidden_locked`, the hide already took effect.
 
 ## Ratings and other decisions
 
-Each RAW, image, and video member stores its own rating, flag, label, caption,
-creator, copyright, and rotation. A RAW rated 5 and a JPEG rated 3 keep those
-values. Inspection returns every file's revision and an `agreement` map.
-`false` for a field means the displayable members have mixed values.
+Each RAW, image, and video member stores its own rating, flag, label, caption, creator, copyright, and rotation, so a RAW rated 5 and a JPEG rated 3 keep their separate values. Inspecting an asset returns every file's revision and an `agreement` map, where `false` for a field means the displayable members have mixed values.
 
 | Decision | Allowed values |
 | --- | --- |
@@ -313,32 +237,23 @@ values. Inspection returns every file's revision and an `agreement` map.
 | Rotation | 0, 90, 180, or 270 degrees clockwise on EXIF-normalized pixels |
 | Caption, creator, copyright | Up to 16 KiB of UTF-8 text each |
 
-A new member starts at revision 1 with no decisions. Detach and reattach keep
-each file's identity, decisions, and revision. Hidden is a Photos privacy
-control: Documents queries and audit history still show a hidden photo's
-decisions.
+A new member starts at revision 1 with no decisions. Detaching and reattaching a file keeps its identity, decisions, and revision. Because **Hidden** is a Photos privacy control, **Documents** queries and audit history still show a hidden photo's decisions.
 
-`confirmed_fields` records supplied fields with bits rating=1, flag=2, label=4,
-caption=8, creator=16, copyright=32, and rotation=64. Zero means untouched.
-Docbank edits with empty text or numeric zero confirm a clear. Unsupplied
-fields keep their earlier values and confirmation. Receipts, audit history,
-undo, and JSONL backup preserve the mask. Unknown bits and non-default values
-without confirmation are refused.
+`confirmed_fields` records supplied fields using bit values: rating=1, flag=2, label=4, caption=8, creator=16, copyright=32, and rotation=64. Zero means untouched. Docbank edits with empty text or numeric zero confirm a clear, while unsupplied fields keep their earlier values and confirmation. Receipts, audit history, undo, and JSONL backup preserve this mask. Unknown bits and non-default values without confirmation are refused.
 
-Type a keyword name to filter existing tags. Choose **Create “name”** to create
-and assign a new tag to the selected photo originals.
+To add a keyword in the inspector, type a keyword name to filter existing tags. Choose **Create “name”** to create and assign a new tag to the selected photo originals.
 
 ### Sync XMP sidecars
 
-The first import reads supported XMP decisions into an original that has no catalog decisions. Photo decisions and keywords sync with each original's linked XMP sidecar inside the vault. Catalog edits create immutable sidecar versions. Rescanning a source folder imports outside edits with provenance and an undoable metadata receipt. Docbank writes only vault content; source folders stay unchanged.
+Photo decisions and keywords sync with each original's linked XMP sidecar inside the vault. On first import, Docbank reads supported XMP decisions into an original that has no catalog decisions. Catalog edits create immutable sidecar versions, and rescanning a source folder imports outside edits with provenance and an undoable metadata receipt. Docbank writes only vault content and leaves source folders unchanged.
 
-After an upgrade, the first background sync writes a vault sidecar for each photo with a Docbank decision, a tag, or a linked sidecar. Other photos get one when you edit their decisions or keywords.
+After an upgrade, the first background sync writes a vault sidecar for each photo that has a Docbank decision, a tag, or a linked sidecar. Other photos get a sidecar when you edit their decisions or keywords.
 
-1. Edit decisions or keywords in Metadata; pending changes write a new sidecar version. A photo without a sidecar gets `<original-name>.xmp` beside its original.
-2. Rescan after editing outside XMP. Properties changed on one side merge automatically. Metadata offers **Undo sidecar import** while its file and keyword revisions still match.
-3. If both sides changed a property differently, Metadata shows Catalog and Sidecar values. **Use Catalog** or **Use Sidecar** settles the conflicting properties together; unrelated changes merge with either choice. Divergent keyword sets require a choice for the entire set. The whole packet waits until every conflict resolves.
+1. Edit decisions or keywords in **Metadata**. Pending changes write a new sidecar version, and a photo without a sidecar gets `<original-name>.xmp` beside its original.
+2. Rescan after editing an outside XMP file. Properties changed on only one side merge automatically, and **Metadata** offers **Undo sidecar import** while its file and keyword revisions still match.
+3. If both sides changed the same property differently, **Metadata** displays both **Catalog** and **Sidecar** values. Choose **Use Catalog** or **Use Sidecar** to settle the conflicting properties together; unrelated changes merge with either choice. Divergent keyword sets require a choice for the entire set, and the whole packet waits until every conflict is resolved.
 
-Editing a conflicting catalog value keeps the choice open until the values agree or you choose. Equal values become the comparison point for later edits. XMP conflicts are resolved in the browser only; the CLI and MCP have no route for them.
+Editing a conflicting catalog value keeps the choice open until the values agree or you choose one side. Equal values become the comparison point for later edits. You can resolve XMP conflicts in the browser only; the CLI and MCP have no route for them.
 
 | Decision | XMP property |
 | --- | --- |
@@ -351,100 +266,59 @@ Editing a conflicting catalog value keeps the choice open until the values agree
 | Copyright | `dc:rights`, preferring case-insensitive `x-default` |
 | Keywords | `dc:subject`, merged with catalog tags by name |
 
-Docbank writes a reject as `xmp:Rating="-1"` alone, preserving the independent catalog rating. Changing that rating in another app clears the reject. An outside app can keep the reject by writing `ts:Pick="reject"`. Clearing reject in Docbank writes the kept catalog rating.
+Docbank writes a reject as `xmp:Rating="-1"` alone, which keeps your independent catalog rating intact. Changing that rating in another app clears the reject, though an outside app can preserve the reject by writing `ts:Pick="reject"`. Clearing reject in Docbank writes the kept catalog rating back out.
 
-Caption and copyright edits replace `x-default` while preserving translations in order; clearing writes an empty default. Creator edits preserve later entries; clearing removes the entire creator property. Text preserves spaces exactly. Saving caption, creator, or copyright text XML cannot store names the field and character in its error. Older stored values receive the same error during sync and remain editable.
+Caption and copyright edits replace `x-default` while keeping translations in order, and clearing writes an empty default. Creator edits keep later entries, while clearing removes the entire creator property. Text preserves spaces exactly. If you save caption, creator, or copyright text that XML cannot store, the error names the field and character. Older stored values trigger the same error during sync and stay editable.
 
-First sync treats absent and default packet values as untouched. Equal values converge; divergent present values need a choice. Later, removing a previously present property clears it.
+First sync treats absent and default packet values as untouched. Equal values converge, while divergent present values require a choice. After that, removing a previously present property clears it.
 
 #### Rescans and pairing
 
-Each outside copy of a sidecar compares with the last version Docbank read from that copy, so reverting a copy to older bytes still counts as an edit, and a new copy that disagrees with the catalog asks for a choice. Nothing reaches the catalog or the sidecar until every choice is made, and one **Undo sidecar import** reverses the whole sync. Moving or renaming an original keeps its sidecar attached.
+Docbank compares each outside copy of a sidecar against the last version it read from that copy, so reverting a copy to older bytes still counts as an edit, and a new copy that disagrees with the catalog asks for a choice. Nothing reaches the catalog or the sidecar until every choice is made, and a single **Undo sidecar import** reverses the whole sync. Moving or renaming an original keeps its sidecar attached.
 
-A qualified filename such as `capture.JPG.xmp` selects that original. Import attaches an unqualified `capture.xmp` to the RAW, or the JPEG when no RAW exists. `photoshop:SidecarForExtension` must agree with the attached original. A conflicting claim or ambiguous match stops the first sync until its attachment or filename is corrected. After that sync, the saved attachment stands, and later renames or claims in the sidecar do not change it.
+A qualified filename such as `capture.JPG.xmp` selects that specific original. Import attaches an unqualified `capture.xmp` to the RAW, or to the JPEG when no RAW exists. `photoshop:SidecarForExtension` must agree with the attached original. A conflicting claim or ambiguous match stops the first sync until you fix its attachment or filename. After that first sync, the saved attachment stands, and later renames or claims in the sidecar do not change it.
 
-An original syncs with one linked sidecar. When more than one is attached, Metadata shows Invalid with the reason, and nothing imports or writes until you detach or trash all but one. Retained history and open choices return when sync resumes. A changed caption, creator, copyright, or keyword set moves into the first description of the packet, because other applications read only that one. Moving a collection preserves its language and the targets of its relative links.
+An original syncs with one linked sidecar at a time. If more than one sidecar is attached, **Metadata** shows **Invalid** with the reason, and nothing imports or writes until you detach or trash all but one; retained history and open choices return when sync resumes. Because other applications read only the first description in an XMP packet, a changed caption, creator, copyright, or keyword set moves into that first description. Moving a collection preserves its language and the targets of its relative links.
 
 #### Status and recovery
 
-`xmp:pending` finds photos waiting for work, including source extraction. `xmp:conflict` finds unresolved choices, including choices retained during failed reads. Dirty drafts, active writes, stale choices, and locked hidden photos disable the applicable actions.
+Use `xmp:pending` to find photos waiting for work, including source extraction, and `xmp:conflict` to find unresolved choices, including choices retained during failed reads. Dirty drafts, active writes, stale choices, and locked hidden photos disable the applicable actions.
 
-- Metadata checks the status in every state while it is open, so a background import or conflict appears without reopening.
-- Missing source or sidecar bytes stay Pending and retry automatically after repair. Failed reads retain existing choices and disable their buttons.
-- Malformed or unmergeable properties make the entire packet Invalid. Unsupported scalar values stay untouched until that catalog field changes. Catalog values and successful histories stay unchanged until the packet is corrected. Keyword changes remove Lightroom aliases whose leaf keyword was removed; other writes preserve them.
-- Packets over 1 MiB and text properties over 16 KiB refuse publication. Invalid or oversized incoming keywords refuse the whole packet. A merged keyword set over 64 KiB refuses the whole publication; shorten or remove keywords to recover.
-- A sync history over its size limit makes the packet Invalid. Detach the sidecar and attach a different XMP file to start a new history; detaching and reattaching the same file keeps it.
-- An occupied generated filename or 256-member limit stops sidecar creation. Metadata gives the reason.
-- Trashing or detaching the last sidecar suppresses recreation. A change to the saved decisions or keywords permits a fresh sidecar. If the original's detached, Docbank-generated sidecar still occupies that filename, sync reattaches it and keeps its history. Renaming the original keeps recreation suppressed. Reattaching resumes sync. Missing conflicting sidecars retain their choices.
-- Audited vaults require coverage of the original and sidecar and refuse new sidecar attachments. Enrolling the relevant scope reopens sync.
-- Hidden photos sync in the background; interactive reads and choices require an unlock.
+- **Live status.** **Metadata** checks sync status in every state while open, so a background import or conflict appears without reopening the panel.
+- **Missing bytes and failed reads.** Missing source or sidecar bytes stay **Pending** and retry automatically after repair. Failed reads keep existing choices and disable their buttons.
+- **Malformed packets.** Malformed or unmergeable properties mark the entire packet **Invalid**, while unsupported scalar values stay untouched until that catalog field changes. Catalog values and successful histories stay unchanged until the packet is corrected. Keyword changes remove Lightroom aliases whose leaf keyword was removed, while other writes preserve them.
+- **Size limits.** Packets over 1 MiB and text properties over 16 KiB refuse publication. Invalid or oversized incoming keywords refuse the whole packet. A merged keyword set over 64 KiB refuses the whole publication; shorten or remove keywords to recover.
+- **Sync history limit.** A sync history over its size limit marks the packet **Invalid**. To start a new history, detach the sidecar and attach a different XMP file; detaching and reattaching the same file keeps the existing history.
+- **Blocked sidecar creation.** An occupied generated filename or the 256-member limit stops sidecar creation, and **Metadata** shows the reason.
+- **Trashing or detaching the last sidecar.** Removing the last sidecar suppresses automatic recreation until you change the saved decisions or keywords. If the original's detached, Docbank-generated sidecar still occupies that filename, sync reattaches it and keeps its history. Renaming the original keeps recreation suppressed, and reattaching resumes sync. Missing conflicting sidecars retain their choices.
+- **Audited vaults.** Audited vaults require coverage of both the original and sidecar and refuse new sidecar attachments. Enrolling the relevant scope reopens sync.
+- **Hidden photos.** Hidden photos sync in the background; interactive reads and choices require an unlock.
 
-Typed queries accept `rating_min`, `rating_max`, `flags`, and `labels`. In Photos,
-each decision filter reads the asset's display file. With the default RAW display
-rated 5/pick and a paired JPEG rated 1/red, `rating:5`, `flag:pick`,
-`NOT rating:1`, and `NOT label:red` match, including with a linked XMP sidecar.
-Both typed bounds from 3 through 3 and `rating_min:3 AND rating_max:3` exclude
-the photo. Selecting the JPEG reverses those rating, flag, and label matches.
-Changing the display file changes these decision matches.
-Documents queries read each file's own decisions, so `NOT flag:pick` there
-also matches files that aren't photos. Decisions and their receipts round-trip
-through JSONL backup and restore.
-Advanced expressions accept `rating:5`, `rating_min:4`, `rating_max:3`,
-`flag:pick`, `label:red`, `xmp:pending`, and `xmp:conflict`.
+Typed queries accept `rating_min`, `rating_max`, `flags`, and `labels`. In **Photos**, each decision filter reads the asset's display file. For example, if the default RAW display is rated 5/pick and a paired JPEG is rated 1/red, then `rating:5`, `flag:pick`, `NOT rating:1`, and `NOT label:red` match, including with a linked XMP sidecar. Both typed bounds from 3 through 3 and `rating_min:3 AND rating_max:3` exclude the photo. Switching the display to the JPEG reverses those rating, flag, and label matches, because changing the display file changes which member's decisions match. In **Documents**, queries read each file's own decisions, so `NOT flag:pick` also matches files that are not photos. Decisions and their receipts round-trip through JSONL backup and restore. Advanced expressions accept `rating:5`, `rating_min:4`, `rating_max:3`, `flag:pick`, `label:red`, `xmp:pending`, and `xmp:conflict`.
 
 ## Previews
 
-The daemon produces a grid preview with a 512-pixel maximum edge for each
-included photo's selected display file. It discovers new imports continuously
-and resumes missing work after restart. It keeps completed results.
+For each included photo's selected display file, the daemon builds a grid preview with a 512-pixel maximum edge. It discovers new imports continuously, resumes missing work after a restart, and keeps completed previews.
 
-The web viewer and embedded applications can request fit previews at 2560 pixels or large
-previews at 4096 pixels. All sizes preserve aspect ratio and never upscale.
-JPEG, PNG, GIF, still WebP, and supported embedded JPEGs in ARW, DNG, CR2,
-NEF, and RAF files have decoder paths. Format support does not guarantee that
-every individual file decodes. Unsupported and deterministic decode failures
-are stored as terminal results. Temporary storage or read failures retry.
-JPEGs over 100 MP stop at one-eighth of the source edge instead of the
-2560 and 4096 recipe edges.
+The web viewer and embedded applications can also request fit previews at 2560 pixels or large previews at 4096 pixels. Every size preserves the aspect ratio and never upscales. Docbank has decoder paths for JPEG, PNG, GIF, still WebP, and supported embedded JPEGs in ARW, DNG, CR2, NEF, and RAF files, though format support does not guarantee that every individual file decodes. Unsupported files and deterministic decode failures are stored as terminal results, while temporary storage or read failures retry automatically. JPEGs larger than 100 MP stop at one-eighth of the source edge instead of the 2560-pixel and 4096-pixel recipe edges.
 
 ## Quality signals
 
-The daemon measures each ready grid preview locally. The photo query API
-returns `quality.state` as `ready` with numeric scores after measurement,
-or `pending` with `signals: null` while work can finish. A measured zero stays zero.
-Replacing content or changing the display file selects that version's signals.
-Videos have no quality object. `unavailable` with `signals: null` means work
-has finished without scores: the grid preview is unsupported or failed, or its
-verified bytes do not decode; detected faces still appear in `face_reports` without Sharpness or Light. Temporary read failures stay `pending` and retry.
+The daemon measures each ready grid preview locally. In the photo query API, `quality.state` returns `ready` with numeric scores once measurement finishes, or `pending` with `signals: null` while work can still complete. A measured zero stays zero. Replacing a file's content or changing the display file selects that version's signals, and videos have no quality object. A state of `unavailable` with `signals: null` means measurement finished without scores because the grid preview is unsupported or failed, or because its verified bytes do not decode; detected faces still appear in `face_reports` without Sharpness or Light. Temporary read failures stay `pending` and retry.
 
-All scores use the 0..1 scale. Focus measures adjacent luminance differences
-on a 16-by-16 sample, stretched by a 0.15 calibration ceiling. At that size it
-tracks coarse, large-scale contrast, not sharpness: a blurred copy of
-a photo scores close to the original, and a sharp photo of a plain surface
-scores low. Blur is `1 - focus`. Brightness uses
-RGB luminance weights, with black at 0 and white at 1. `color_red`,
-`color_green`, and `color_blue` are mean channel values. Framing scores the
-contrast-weighted center against the rule-of-thirds intersections. Flat
-images receive framing 0.5. Aesthetics combines focus, balanced exposure,
-channel spread, and framing. These pixel heuristics do not judge subject
-intent, distinguish motion blur from soft focus, or detect faces.
+All scores use a 0..1 scale:
 
-Scores can differ slightly from other tools because of image sampling differences.
+- **Focus and blur.** Focus measures adjacent luminance differences on a 16-by-16 sample, stretched by a 0.15 calibration ceiling. At that sample size it tracks coarse, large-scale contrast rather than sharpness, so a blurred copy of a photo scores close to the original, and a sharp photo of a plain surface scores low. Blur is `1 - focus`.
+- **Brightness and color.** Brightness uses RGB luminance weights, with black at 0 and white at 1. `color_red`, `color_green`, and `color_blue` are mean channel values.
+- **Framing and aesthetics.** Framing scores the contrast-weighted center against the rule-of-thirds intersections, and flat images receive a framing score of 0.5. Aesthetics combines focus, balanced exposure, channel spread, and framing.
 
-Each scalar supports `_min` and `_max` query filters. JSON bounds are decimal
-strings, such as `"brightness_min":"0.4"`, to preserve QueryV1's integer-only
-JSON number contract. Advanced search accepts `brightness_min:0.4 color_blue_min:0.5`.
-Quality filters follow the same version as other photo metadata filters. Photos
-uses the asset's selected display; Documents uses each document's own version.
-`unevaluated:true` selects versions eligible for measurement with pending or
-unavailable measurements. Expressions reject `unevaluated:false`; use
-`focus_min:0` for measured photos. Structured `"unevaluated":false` acts as omission.
-Missing measurements fail numeric comparisons. Saved queries keep these filters.
-Signals rebuild after restore and stay out of backups.
+These pixel heuristics do not judge subject intent, distinguish motion blur from soft focus, or detect faces. Scores can also differ slightly from other tools because of image sampling differences.
+
+Each scalar supports `_min` and `_max` query filters. To preserve QueryV1's integer-only JSON number contract, pass JSON bounds as decimal strings such as `"brightness_min":"0.4"`. In advanced search, you can write `brightness_min:0.4 color_blue_min:0.5`. Quality filters follow the same version rules as other photo metadata filters: **Photos** uses the asset's selected display file, while **Documents** uses each document's own version. Use `unevaluated:true` to select eligible versions with pending or unavailable measurements. Expressions reject `unevaluated:false`, so use `focus_min:0` for measured photos; structured `"unevaluated":false` acts as omission. Missing measurements fail numeric comparisons. Saved queries preserve these filters. Signals stay out of backups and rebuild after restore.
 
 ## CLI
 
-Inspect the asset created for a node or use a stable asset UUID:
+Inspect the asset created for a node, or manage assets directly using a stable asset UUID:
 
 ```text
 docbank photos assets inspect <asset-id|path-or-id>
@@ -456,16 +330,11 @@ docbank photos assets promote <path-or-id> [--revision REV] [--kind KIND] [--rol
 docbank photos assets display <asset-id> [file-id] [--revision REV]
 ```
 
-`inspect`, `create`, and `promote` accept absolute virtual paths or `id:N`
-node selectors, so `inspect id:42` finds the asset that owns file 42, even
-after file 42 is trashed.
+`inspect`, `create`, and `promote` accept absolute virtual paths or `id:N` node selectors. For example, `inspect id:42` finds the asset that owns file 42, even after file 42 is trashed.
 
-Operations on an existing asset read its current revision, send it, and retry
-once if another write changes the asset first. Pass `--revision` with the
-revision from your last inspection when a script needs the write to fail
-instead. Omitting the file ID from `display` clears the asset override.
+When you modify an existing asset, the CLI reads its current revision, sends it, and retries once if another write updates the asset first. If a script needs the write to fail on a conflict instead, pass `--revision` with the revision from your last inspection. Omitting the file ID from `display` clears the asset's display override.
 
-The vault preference is revisioned separately:
+Manage the vault's photo preferences separately, using their own revision:
 
 ```text
 docbank photos settings show
@@ -475,28 +344,23 @@ docbank photos settings reset [--revision REV]
 docbank photos settings set --burst-gap-seconds 5 [--revision REV]
 ```
 
-Asset and settings commands emit bounded JSON. Exit code 4 means the revision is stale: the
-`--revision` you passed no longer matched, or the one automatic retry lost to
-another write. Read the asset or settings again before retrying. The daemon
-performs role, ownership, sidecar, display, and audit checks.
+Asset and settings commands output bounded JSON. Exit code 4 means the revision is stale, either because the `--revision` you passed no longer matches or because the automatic retry lost to another write; read the asset or settings again before retrying. The daemon enforces all role, ownership, sidecar, display, and audit checks.
 
 ## Albums
 
-Albums group photo assets without moving their files. Manage albums in the
-web app, CLI, or HTTP API.
+Albums let you group photo assets without moving their files. You can manage albums in the web app, CLI, or HTTP API.
 
-In the web app, open Photos, then Albums. Cards and sidebar entries show starred albums first, with included photo counts. Cards also show covers. Open an album to star it, choose **Rename album**, **Duplicate album…**, or **Delete album…** in **⋯**, or sort its photos by Added, Captured, or Imported. Sort by **Captured**, newest first, to choose a date in the rail and scroll within the album. The photo viewer stays within its photos. Select one photo and choose Use as cover. Removing photos from an album or deleting the album keeps the photos in Library.
+In the web app, open **Photos** and choose **Albums**. Both album cards and sidebar entries list starred albums first along with their included photo counts, and cards also display covers. Open an album to star it, choose **Rename album**, **Duplicate album…**, or **Delete album…** from **⋯**, or sort its photos by **Added**, **Captured**, or **Imported**. When you sort by **Captured**, newest first, you can use the date rail to jump within the album. Opening a photo keeps viewer navigation inside that album. To set a custom cover, select a single photo and choose **Use as cover**. Removing photos from an album or deleting an album keeps the photos in **Library**.
 
 ![Albums with a saved smart set and an album card](https://docbank.ai/assets/generated/web-photo-albums.png)
 
-To use the newest ready photo as the cover again, run `docbank photos albums cover <album-id>` or use the HTTP API.
+To reset an album cover to the newest ready photo, run `docbank photos albums cover <album-id>` or use the HTTP API.
 
-Select photos in Library or an album, then choose Add to album in the selection dock. Type to find an album or create one. B adds to the last album chosen until you reload or the session locks; the dock and sidebar show that target. Without a target, B opens the picker. You can also drag a photo or selection onto a sidebar album. After every album change, Docbank reloads the album list. Membership changes also refresh the affected album's photo view. Trash and restore reload albums and every started photo view. A failed create or duplicate also reloads Albums, where the album may already appear.
+To add photos to an album from **Library** or another album, select them and choose **Add to album** in the selection dock, then type to find an existing album or create a new one. Press **B** to add to the last album you chose until you reload or the session locks; the dock and sidebar display that target, and pressing **B** without a target opens the picker. You can also drag a photo or selection onto an album in the sidebar. After every album change, Docbank reloads the album list, and membership changes also refresh the affected album's photo view. Trash and restore operations reload albums and every started photo view. A failed create or duplicate also reloads **Albums**, where the album may already appear.
 
-Select loaded photos selects only the pages already loaded. Select all N photos selects the complete live query, including unloaded pages. Add to album, B, and drag use that same scope. Before preparing metadata, Trash and Hide change loaded photos only and are unavailable while all N photos are selected. A prepared metadata selection also allows trash for its resolved photos. The server resolves the query when you add, so the refreshed album count can reflect imports made since browsing. Explicit selections allow up to 1,000 photos per album change. For larger selections, choose Select all N photos to send one atomic query write. A revision conflict shows the server error and reloads the album list. An open form shows the reloaded album and keeps what you typed. Save again to retry with its current revision.
+Choosing **Select loaded photos** selects only the pages already loaded, while **Select all N photos** selects the complete live query, including unloaded pages. **Add to album**, **B**, and drag use that same scope. Before preparing metadata, **Trash** and **Hide** act on loaded photos only and are unavailable while all N photos are selected; a prepared metadata selection also allows trashing its resolved photos. Because the server resolves the query when you add, the refreshed album count can reflect imports made since you started browsing. Explicit selections allow up to 1,000 photos per album change. For larger selections, choose **Select all N photos** to send one atomic query write. If a revision conflict occurs, Docbank shows the server error and reloads the album list; an open form shows the reloaded album while keeping what you typed, so you can save again to retry with its current revision.
 
-Create an album, add selected asset UUIDs or a complete query result, then
-browse its members:
+From the CLI, create an album, add selected asset UUIDs or a complete query result, and browse its members:
 
 ```text
 docbank photos albums create "Holiday"
@@ -507,7 +371,9 @@ docbank photos albums add <album-id> --query "{\"filters\":{\"kinds\":[\"photo\"
 docbank photos albums members <album-id> --sort added_time --direction desc
 ```
 
-`members` accepts `added_time`, `import_time`, or `capture_time`, plus `--page-size` and `--cursor`. Photos with neither a capture date nor a file modified time come last. Ties use ascending asset UUID. The cursor binds the album ID as well as the query and page options.
+`members` accepts `added_time`, `import_time`, or `capture_time`, along with `--page-size` and `--cursor`. Photos with neither a capture date nor a file modified time appear last, and ties break by ascending asset UUID. Each cursor binds the album ID along with the query and page options.
+
+Manage existing albums with these commands:
 
 ```text
 docbank photos albums rename <album-id> "Trip"
@@ -518,16 +384,15 @@ docbank photos albums remove <album-id> <asset-id> ...
 docbank photos albums delete <album-id>
 ```
 
-Existing-album writes accept `--revision` with the same automatic read and retry as asset writes. Repeating an unchanged decision preserves the revision. Deleting an album keeps every photo and file. Duplication preserves added dates and member order. Removing the chosen cover clears the override. A ready grid preview of the chosen member wins; otherwise the newest added included member with a ready grid preview supplies the cover.
+Writes to existing albums accept `--revision` with the same automatic read and retry behavior as asset writes, and repeating an unchanged decision leaves the revision untouched. Deleting an album keeps every photo and file. Duplicating an album preserves added dates and member order. Removing the chosen cover clears the cover override. A ready grid preview of the chosen member takes precedence; otherwise the newest added included member with a ready grid preview supplies the cover.
 
-`add` and `remove` accept up to 1,000 explicit IDs or `--query` with strict QueryV1 JSON. A query selects its complete current photo result inside the membership transaction, including display metadata and duplicate collapse. Query scopes have no total member cap. Their sort field, including `added_time`, does not change the selected IDs. A query selects only visible, unhidden photos, even while Hidden is unlocked, so `remove --query` keeps excluded, trashed, and empty members; remove those by asset ID or delete the album. Coverage-dependent queries accept `--coverage` and `--profile-fingerprint`. Each changed action advances the album revision once and records all changed IDs in bounded receipts. An invalid ID, query, coverage, or stale revision rolls back the complete action.
+`add` and `remove` accept up to 1,000 explicit IDs, or `--query` with strict QueryV1 JSON. A query selects its complete current photo result inside the membership transaction, including display metadata and duplicate collapse, with no total member cap. Its sort field, including `added_time`, does not change which IDs are selected. Because a query selects only visible, unhidden photos even while **Hidden** is unlocked, `remove --query` leaves excluded, trashed, and empty members in the album; remove those by asset ID or delete the album instead. Coverage-dependent queries accept `--coverage` and `--profile-fingerprint`. Each action that changes membership advances the album revision once and records all changed IDs in bounded receipts. An invalid ID, query, coverage, or stale revision rolls back the entire action.
 
-Exclusion, ordinary trash, detach, and permanent file deletion keep album membership and its added date. `member_count` counts members with at least one file. Empty members disappear from counts, browsing, and the effective cover until a file is attached again. These file changes preserve the album revision and chosen cover. Included counts and member browsing also omit excluded and trashed photos until they become visible again. Album names can repeat. Use `set:` followed by an album UUID, or typed `filters.set_ids`, to filter by membership. Values within `set_ids` combine with OR.
+Exclusion, ordinary trash, detach, and permanent file deletion all keep an asset's album membership and added date. `member_count` counts members that have at least one file. Empty members disappear from counts, browsing, and the effective cover until a file is attached again. These file changes leave the album revision and chosen cover unchanged. Included counts and member browsing also omit excluded and trashed photos until they become visible again. Album names can repeat. To filter by album membership, use `set:` followed by an album UUID, or use typed `filters.set_ids`. Values within `set_ids` combine with OR.
 
 ## Import a camera folder
 
-`photos import` reads a folder on the daemon host and imports its photos into a
-vault folder:
+Use `photos import` to import a folder on the daemon host into a vault folder:
 
 ```text
 docbank photos import <source-root> [destination] [--json]
@@ -535,11 +400,9 @@ docbank jobs show <operation-id> --json
 docbank jobs cancel <operation-id>
 ```
 
-`photos import` queues the import as a background job and prints its operation
-ID. Follow and stop it like any other background job: `jobs show` reports
-progress and the import receipt, and `jobs cancel` stops it.
+`photos import` queues the import as a background job and prints its operation ID. You can track and stop it like any other background job: run `jobs show` to check progress and the import receipt, and `jobs cancel` to stop it.
 
-Pause imports or previews before their next group or photo, then resume them:
+You can pause imports or preview generation before their next group or photo, adjust preview concurrency, and resume them later:
 
 ```text
 docbank jobs pause photo_import
@@ -549,64 +412,28 @@ docbank jobs concurrency derive:visual-previews 3
 docbank jobs resume derive:visual-previews
 ```
 
-Preview concurrency accepts 1 through 4. Pause and concurrency survive a daemon
-restart. Restoring a backup starts with unpaused lanes and concurrency 1.
-Storage lanes `place`, `evacuate`, `repair`, `salvage`, and `photo_checkout` also accept pause and
-resume, keeping their existing concurrency. Cancellation uses the operation ID.
-Document workers show read-only controls in `jobs`.
-If lane settings cannot be read, the import waits and keeps its progress.
-It resumes when settings become readable; cancellation still works.
-Cancelling a waiting import keeps its saved count and receipt. After a daemon
-restart, imports scan again and skip content already imported.
+Preview concurrency accepts values from 1 through 4. Pause state and concurrency settings survive a daemon restart, while restoring a backup starts with unpaused lanes and concurrency 1. Storage lanes `place`, `evacuate`, `repair`, `salvage`, and `photo_checkout` also support pause and resume while keeping their existing concurrency. Cancellation uses the operation ID, and document workers appear as read-only controls in `jobs`. If lane settings cannot be read, the import waits while keeping its progress and resumes once settings become readable, and cancellation still works while waiting. Cancelling a waiting import preserves its saved count and receipt. After a daemon restart, unfinished imports scan again and skip content that was already imported.
 
 ![Photo import progress and its cancellation control in System, Running now](https://docbank.ai/assets/generated/web-photo-import-dark.png)
 
-The import reads RAW files (`.ARW`, `.CR2`, `.CR3`, `.DNG`, `.NEF`, `.ORF`,
-`.RAF`, `.RW2`), images (`.JPG`, `.JPEG`, `.PNG`, `.GIF`, `.WEBP`, `.HEIC`),
-videos (`.MP4`, `.MOV`, `.M4V`, `.AVI`, `.MPG`), and `.XMP` sidecars. It leaves
-every other file out and counts it as `unsupported` in the receipt. The source
-folder must exist when you start the import. Otherwise the command fails with
-exit code 2 and no import starts.
+The importer reads RAW files `.ARW`, `.CR2`, `.CR3`, `.DNG`, `.NEF`, `.ORF`, `.RAF`, and `.RW2`, images `.JPG`, `.JPEG`, `.PNG`, `.GIF`, `.WEBP`, and `.HEIC`, videos `.MP4`, `.MOV`, `.M4V`, `.AVI`, and `.MPG`, and `.XMP` sidecars. Every other file is skipped and counted as `unsupported` in the receipt. The source folder must exist when you start the import; otherwise the command fails with exit code 2 and no import starts.
 
-Files with the same folder and name, such as `IMG_0001.ARW`, `IMG_0001.JPG`,
-and `IMG_0001.XMP`, become one photo. A qualified XMP filename attaches to its named original. Unqualified names attach to the RAW, or to the JPEG when there is no RAW; a conflicting packet extension claim leaves the attachment unchanged and shows Invalid until you correct its attachment or filename. An XMP with no same-name RAW or JPEG imports
-as a plain file. A later full scan pairs companions when both source files
-are still present. Matching uses files in the scan and their current duplicate
-owners. A video always becomes its own photo. Each photo commits in one
-transaction, so a failure leaves no half photo behind, and running the same
-import again skips content already in the vault. In a filesystem photo import, a file edited since it was
-imported, such as an XMP saved again by a photo editor, becomes a new version
-of the file already in the photo, not a second file. See
-[Sync XMP sidecars](#sync-xmp-sidecars) for how a changed XMP merges.
+Files in the same folder with the same base name, such as `IMG_0001.ARW`, `IMG_0001.JPG`, and `IMG_0001.XMP`, become one photo. A qualified XMP filename attaches to its named original, while an unqualified name attaches to the RAW, or to the JPEG when no RAW exists. If an XMP packet claims a conflicting extension, Docbank leaves the attachment unchanged and marks it **Invalid** until you fix its attachment or filename. An XMP with no same-name RAW or JPEG imports as a plain file, and a later full scan pairs companions when both source files are still present. Matching uses files in the scan and their current duplicate owners. A video always becomes its own photo. Each photo commits in one transaction, so a failure never leaves a half-built photo behind, and re-running the same import skips content already in the vault. In a filesystem photo import, a file edited since its earlier import, such as an XMP saved again by a photo editor, becomes a new version of the file already in the photo rather than a second file. See [Sync XMP sidecars](#sync-xmp-sidecars) for how changed XMP files merge.
 
-The import leaves a group unpaired and lists it under `ambiguities` in the
-receipt from `jobs show <operation-id> --json` in two cases:
+The importer leaves a group unpaired and lists it under `ambiguities` in the receipt from `jobs show <operation-id> --json` in two cases:
 
-- Two RAW files share a name, such as `IMG_0001.ARW` and `IMG_0001.DNG`. Each
-  RAW and JPEG becomes its own photo and the sidecar stays a plain file.
-- Same-name files already sit in separate photos. Nothing is merged.
+- Two RAW files share a base name, such as `IMG_0001.ARW` and `IMG_0001.DNG`. Each RAW and JPEG becomes its own photo and the sidecar stays a plain file.
+- Same-name files already belong to separate photos. Nothing is merged automatically.
 
-Pair the RAW and JPEG files yourself: `photos assets inspect <asset-id>` shows
-file IDs, `photos assets detach` frees a file, and `photos assets attach` adds
-it to the other photo. A later scan containing the sidecar and its image
-attaches it to the settled photo. The final receipt lists every group that
-remained ambiguous during that run, with each file's source path, node ID,
-role, and photo asset ID.
+To pair those RAW and JPEG files yourself, find their file IDs with `photos assets inspect <asset-id>`, free a file with `photos assets detach`, and add it to the other photo with `photos assets attach`. A later scan that includes both the sidecar and its image attaches the sidecar to the settled photo. The final receipt lists every group that stayed ambiguous during the run, including each file's source path, node ID, role, and photo asset ID.
 
-The import hashes the discovered files, waits one second, then compares each
-durable copy with that observation. It hashes every group member again before
-committing. A changed or deleted source leaves the entire group out and counts
-as changed, even if its size and modification time stayed the same. Import
-again to pick it up.
+Before committing, the importer hashes discovered files, waits one second, compares each durable copy with that observation, and hashes every group member again. If a source file changes or disappears during that check, the entire group is skipped and counted as changed, even when its size and modification time stayed the same. Run the import again to pick it up.
 
-The web Jobs drawer shows progress and has a Cancel button while the import
-runs. It leaves out source paths and the unpaired-group list. Cancel takes
-effect before the next group. A daemon restart resumes an unfinished import by
-scanning the folder again.
+In the web app, the **Jobs** drawer shows import progress and a **Cancel** button while the import runs, omitting source paths and the unpaired-group list. Cancellation takes effect before the next group. A daemon restart resumes an unfinished import by scanning the folder again.
 
 ## Create writable copies
 
-Use a checkout to edit copies outside the vault while Docbank retains their exact source versions:
+Use a checkout when you want to edit copies outside the vault while Docbank holds onto their exact source versions:
 
 ```text
 docbank photos checkout estimate --album <album-id>
@@ -623,259 +450,180 @@ docbank jobs show <operation-id> --json
 docbank jobs cancel <operation-id>
 ```
 
-Combine `--asset`, `--album`, and `--years` to copy their union. Each file appears once. Year ranges include both endpoints. Hidden and excluded photos stay out. Use `--all` alone with a positive byte limit. Other selections can also set a byte limit. Estimate returns asset count, file count, and bytes without creating a checkout.
+You can combine `--asset`, `--album`, and `--years` to copy their union, and each file appears once. Year ranges include both endpoints. Hidden and excluded photos stay out. Use `--all` on its own with a positive byte limit; other selections can also set a byte limit. Run `estimate` to see the asset count, file count, and total bytes without creating a checkout.
 
-The destination must be an existing empty folder on the daemon's computer. Keep it separate from the vault, storage roots, watched folders, and other checkouts. Creation requires a local daemon connection.
+The destination must be an existing empty folder on the daemon's computer, separate from the vault, storage roots, watched folders, and other checkouts. Creating a checkout requires a local daemon connection.
 
-Docbank preserves original filenames under capture-date and asset-ID folders so RAW, JPEG, and XMP members stay paired. A sidecar requires a selected, eligible original. Recorded sidecar links remain valid when filenames differ; each file uses its saved source path, even after importing renamed duplicates. Files without a saved source identity use their current document name. A sidecar with no source filename of its own is named after the original it ships beside. The photo's only `capture` RAW, or its only `capture` original, gets `capture.xmp`, which Lightroom, Camera Raw, and Teststrip read; the sidecar Docbank creates names that original's extension in `photoshop:SidecarForExtension`. Other originals, such as the JPEG beside `capture.ARW`, get `capture.JPG.xmp`. Docbank uses the modification date when capture metadata is absent, and `undated` when neither date exists. It verifies every copy before publication. Copies are private to the daemon user.
+Docbank preserves original filenames inside capture-date and asset-ID folders so RAW, JPEG, and XMP members stay paired. A sidecar requires a selected, eligible original, and recorded sidecar links remain valid even when filenames differ. Each file uses its saved source path, even after importing renamed duplicates, while files without a saved source identity use their current document name. A sidecar with no source filename of its own takes its name from the original it ships beside: the photo's only `capture` RAW, or its only `capture` original, gets `capture.xmp` for Lightroom, Camera Raw, and Teststrip, with that original's extension recorded in `photoshop:SidecarForExtension`. Other originals, such as a JPEG beside `capture.ARW`, get `capture.JPG.xmp`. When capture metadata is missing, Docbank uses the modification date, and `undated` when neither date exists. Every copy is verified before publication, and copies are private to the daemon user.
 
-A photo hidden, excluded, detached, or trashed during copying is skipped. Docbank copies the remaining eligible files, then marks the checkout failed with the first error.
+If a photo is hidden, excluded, detached, or trashed while copying is in progress, Docbank skips it, finishes copying the remaining eligible files, and marks the checkout failed with the first error.
 
-Estimate and creation skip the whole photo for invalid filenames or duplicate names within a photo. The estimate and the saved checkout report `skipped_photos`, capped at 20 entries with `asset_id`, `file_id`, `name`, and `reason`, plus `skipped_photo_count`. Creation returns these fields inside `checkout`. Status and list keep showing the skipped photos. Asset, file, and byte totals include only kept photos. A selection with no remaining files fails. Names longer than 255 bytes are invalid, or 255 UTF-16 units on Windows. On Windows, reserved names, forbidden punctuation, control characters, and trailing dots or spaces are also invalid. Retry with an explicit `--asset` selection that leaves out the listed photos. Renaming an imported document in Docbank does not change its copied filename, which comes from its recorded source path. If the destination filesystem treats two names as identical, publication fails and preserves copies already published.
+Estimate and creation skip an entire photo if it has invalid filenames or duplicate names within the photo. Both report `skipped_photos`, capped at 20 entries with `asset_id`, `file_id`, `name`, and `reason`, plus `skipped_photo_count`, with creation returning these fields inside `checkout` and `status` and `list` continuing to display them. Asset, file, and byte totals count only kept photos, and a selection with no remaining files fails. Names longer than 255 bytes are invalid, or 255 UTF-16 units on Windows; on Windows, reserved names, forbidden punctuation, control characters, and trailing dots or spaces are also invalid. To work around skipped photos, retry with an explicit `--asset` selection that leaves them out. Renaming an imported document in Docbank does not change its copied filename, because that name comes from its recorded source path. If the destination filesystem treats two names as identical, publication fails while preserving any copies already published.
 
-Creation returns the checkout and operation IDs as JSON. Jobs reports progress and accepts cancellation. Pause or resume the `photo_checkout` lane to control copying. Failed and cancelled creations keep their ID, partial files, and error. They release the destination reservation and holds for files that were never published. Published copies keep their base-version holds. Rebind a failed or cancelled creation before scanning or committing its copies.
+Creation returns the checkout and operation IDs as JSON. **Jobs** reports progress and lets you cancel, and you can pause or resume the `photo_checkout` lane to control copying. Failed and cancelled creations keep their ID, partial files, and error, while releasing the destination reservation and holds for unpublished files. Published copies keep their base-version holds. Before scanning or committing copies from a failed or cancelled creation, rebind it first.
 
-After a daemon restart, a started creation, including one waiting on a paused lane, reports failure with its ID, verified partial results, and error. Recovery preserves base versions for copies that may have been edited after installation. Copying stays stopped. If a temporary file or folder lock prevents inspection, recovery stays queued with its error and source holds until the lock clears. Cancellation can finish while the folder is unavailable. Published and uncertain copies keep their source holds until retirement.
+After a daemon restart, any started creation, including one waiting on a paused lane, reports failure with its ID, verified partial results, and error. Recovery keeps base versions for copies that may have been edited after installation, and copying stays stopped. If a temporary file or folder lock blocks inspection, recovery stays queued with its error and source holds until the lock clears, though cancellation can still finish while the folder is unavailable. Published and uncertain copies keep their source holds until retirement.
 
-Queued, running, and completed checkouts hold their frozen source versions against pruning and emptying trash. Completed checkouts and failed or cancelled commits keep their reservation until retirement. Clear any partial files before reusing a released destination.
+Queued, running, and completed checkouts hold their frozen source versions against pruning and emptying trash. Completed checkouts and failed or cancelled commits keep their folder reservation until retirement. Clear any partial files before reusing a released destination.
 
-Watches check separation from checkout folders when they start. Filesystem stores check at daemon start and at registration. At startup, an overlapping store stays unattached while the daemon checks in the background; unrelated stores keep running. Registration rejects overlapping roots. Released checkout folders stay protected while they contain copies or Docbank can't inspect them. Clear or move the copies from a released folder so the waiting watch or store can start. A missing folder or a regular file replacing it or an ancestor also releases protection. A waiting watch shows the checkout folder and the action needed in `docbank watch list`'s ERROR column and the watch API's `error` field. The reason clears when the wait ends.
+Watches verify that they do not overlap checkout folders when they start, and filesystem stores check at daemon startup and at registration. At startup, an overlapping store stays unattached while the daemon checks in the background, and unrelated stores keep running. Registration rejects overlapping roots. Released checkout folders stay protected as long as they still contain copies or Docbank cannot inspect them; clear or move the copies from a released folder so the waiting watch or store can start. A missing folder, or a regular file replacing it or an ancestor, also releases protection. A waiting watch displays the checkout folder and required action in the ERROR column of `docbank watch list` and in the watch API's `error` field, clearing that reason once the wait ends.
 
-Status reports file and byte totals, published counts, and the creation outcome. Checkout status shows the latest scan or commit failure. `docbank jobs show <operation-id> --json` shows the error and receipt counts and paths.
+`status` reports file and byte totals, published counts, and the creation outcome, along with the latest scan or commit failure. Run `docbank jobs show <operation-id> --json` to see the error, receipt counts, and paths.
 
-Backup includes checkout selections, historical version references, and whether retention has been released. Published, uncertain, and explicitly held bases retain their holds through restore until retirement. Backup releases unused selection holds. Retired checkouts stay released. Restore leaves checkouts unbound and carries no machine paths, job state, or copy observations. Checkout creation is unavailable in audited vaults. Commit works on existing checkouts after audit activation. Use `rebind` on the daemon's computer to verify a restored folder. Rebind hashes and classifies every present tracked path and records absent paths as missing. At least one tracked path must be present as a regular file. Edited files bind too; check the receipt before committing. Rebind also repairs an idle bound checkout after the folder identity changes, and refreshes published counts from verified present files. Rebinding to a different folder requires the previous folder to be empty or missing; clear or release it first. Rebind marks present files published and re-holds their surviving base versions. It preserves existing source holds, including held bases whose working files are missing. Commit holds each new base it creates. Pruned unpublished bases remain unheld history; an edited file whose base was pruned reports a conflict while independent files remain editable. Folder reservations are local and independent of source holds.
+Backups include checkout selections, historical version references, and whether retention has been released. Published, uncertain, and explicitly held bases keep their holds through restore until retirement, while backup releases unused selection holds and retired checkouts stay released. Restore leaves checkouts unbound and omits machine paths, job state, and copy observations. You cannot create new checkouts in audited vaults, though `commit` still works on existing checkouts after audit activation.
 
-After reconnecting or remounting a drive, `scan` or `commit` can report that the destination identity changed. Run `docbank photos checkout rebind <checkout-id> <folder>` with the folder's current path on the daemon's computer. Rebind can verify the original path again or use a new mount path when the previous folder is empty or missing.
+To verify a restored checkout folder on the daemon's computer, run `rebind`. It hashes and classifies every present tracked path and records absent paths as missing; at least one tracked path must be present as a regular file. Edited files bind too, so inspect the receipt before committing. `rebind` also repairs an idle bound checkout after a folder identity change and refreshes published counts from verified present files. To rebind to a different folder, the previous folder must be empty or missing, so clear or release it first. `rebind` marks present files published and re-holds their surviving base versions while keeping existing source holds, including held bases whose working files are missing. `commit` holds each new base it creates. Pruned unpublished bases stay as unheld history; an edited file whose base was pruned reports a conflict while independent files stay editable. Folder reservations stay local and independent of source holds.
 
-`scan` and `rebind` return a queued operation ID. Jobs shows files inspected and bytes verified while hashing; cancel through Jobs or `docbank jobs cancel <operation-id>`. Read `docbank jobs show <operation-id> --json` for the final receipt, including counts and at most 100 non-clean and 100 untracked paths. Counts include paths omitted from these lists. Use `docbank photos checkout status <checkout-id> --after <file-id> --limit 100` to page through every entry's working state. Status defaults to 100 entries and accepts up to 250; pass the returned `next_after` as `--after` for the next page. Completed scans persist settlement observations. Restart repeats an interrupted scan from the beginning against the current working bytes. A cancelled rebind leaves a restored checkout unbound.
+If `scan` or `commit` reports that the destination identity changed after reconnecting or remounting a drive, run `docbank photos checkout rebind <checkout-id> <folder>` with the folder's current path on the daemon's computer. `rebind` can verify the original path again, or bind a new mount path if the previous folder is empty or missing.
 
-After editing a working file, run `commit`. Docbank scans it, waits for two seconds of unchanged identity, bytes, size, and modification time, then creates a new version on the same photo file. A commit hashes every tracked file once, then rehashes only pending files after one settlement interval. A file that changed while it was being hashed gets one more interval. Every scan compares full bytes, including edits that preserve size and modification time. Files still changing remain pending and fail the job with their paths; independent stable edits commit, and pending retirement completes. Its checkout base and commit receipt advance together. Sidecars keep their existing file nodes and pairing. Jobs labels the operations Commit, Scan, and Rebind within the Photo checkout lane. All checkout operations share its pause control. Restart resumes interrupted commits. New versions enter the existing metadata and preview backfills. Independent edits commit even when another file conflicts; the operation then reports failure with the conflicting paths. Repeated scans keep those conflicts while the vault head or photo binding differs.
+`scan` and `rebind` return a queued operation ID. **Jobs** shows files inspected and bytes verified while hashing, and you can cancel through **Jobs** or with `docbank jobs cancel <operation-id>`. Run `docbank jobs show <operation-id> --json` for the final receipt, including counts and up to 100 non-clean and 100 untracked paths; the counts include paths omitted from those lists. To page through every entry's working state, run `docbank photos checkout status <checkout-id> --after <file-id> --limit 100`. `status` defaults to 100 entries and accepts up to 250; pass the returned `next_after` as `--after` for the next page. Completed scans persist settlement observations. A restart repeats an interrupted scan from the beginning against the current working bytes, and a cancelled rebind leaves a restored checkout unbound.
 
-`scan` previews `clean`, `pending`, `edited`, `missing`, or `conflict` entries and lists untracked paths separately. Editing a file whose Docbank base or binding changed fails the commit with the conflicting path; the working file and recorded base stay intact. Untouched working files stay clean even when their Docbank base changes. Unstable files stay pending while other files continue scanning. Missing files change no photo authority. Renamed and untracked files require a separate import decision. Unreadable tracked files, unreadable folders, or filenames with invalid UTF-8 stop the job; correct the folder and retry. Untracked regular files are listed without opening them.
+After editing a working file, run `commit`. Docbank scans the file, waits for two seconds of unchanged identity, bytes, size, and modification time, and then creates a new version on the same photo file. A commit hashes every tracked file once, then rehashes only pending files after one settlement interval, giving any file that changed during hashing one more interval. Every scan compares full bytes, including edits that keep the same size and modification time. Files that are still changing remain pending and fail the job with their paths, while independent stable edits commit and any pending retirement completes. The checkout base and commit receipt advance together, and sidecars keep their existing file nodes and pairing. **Jobs** labels these operations **Commit**, **Scan**, and **Rebind** inside the **Photo checkout** lane, and all checkout operations share its pause control. Restarts resume interrupted commits, and new versions enter the existing metadata and preview backfills. Independent edits commit even when another file conflicts, after which the operation reports failure with the conflicting paths; repeated scans keep reporting those conflicts as long as the vault head or photo binding differs.
 
-To recover a conflict, copy the edited file outside the old checkout. Create a checkout from the current photo, copy the saved edit over its matching path, and commit that checkout. If the photo file no longer exists in Docbank, import the saved file separately. Retire the old checkout after preserving the edit.
+`scan` previews `clean`, `pending`, `edited`, `missing`, and `conflict` entries and lists untracked paths separately. Editing a file whose Docbank base or binding changed fails the commit with the conflicting path while leaving the working file and recorded base intact. Untouched working files stay clean even if their Docbank base changes. Unstable files stay pending while other files continue scanning. Missing files do not change photo authority, and renamed or untracked files require a separate import decision. Unreadable tracked files, unreadable folders, or filenames with invalid UTF-8 stop the job until you fix the folder and retry. Untracked regular files are listed without opening them.
 
-Retirement releases source holds and the destination reservation while preserving copies, selection, receipts, and job history. Queued and running jobs accept retirement as pending and release the checkout when they finish or are cancelled. If the lane is paused, resume it or cancel the job through Jobs to finish retirement. A pending request stays local with its job; after restoring a backup, reissue `retire` without rebinding to release the restored holds. Watches and storage bindings still require the released folder to be empty or missing. Retirement and advanced bases are included in backup; working bytes stay outside it.
+To recover from a conflict:
+
+1. Copy the edited file outside the old checkout.
+2. Create a new checkout from the current photo, copy your saved edit over its matching path, and commit that checkout. If the photo file no longer exists in Docbank, import the saved file separately instead.
+3. Retire the old checkout once your edit is preserved.
+
+Running `retire` releases source holds and the destination reservation while keeping copies, selection, receipts, and job history. Queued and running jobs record retirement as pending and release the checkout once they finish or are cancelled; if the lane is paused, resume it or cancel the job through **Jobs** to finish retirement. Because a pending request stays local with its job, after restoring a backup you can reissue `retire` without rebinding to release the restored holds. Watches and storage bindings still require the released folder to be empty or missing. Backups include retirement state and advanced bases, while working bytes stay outside backups.
 
 ## HTTP and JSONL
 
-The daemon exposes asset inspection by asset ID or node ID, plus create,
-attach, detach, exclude, promote, display, and settings operations under
-`/api/v1/photos`. Existing-asset and settings mutations require `If-Match`.
-Responses carry the new revision in both the body and the `ETag` header.
+Under `/api/v1/photos`, the daemon exposes asset inspection by asset ID or node ID along with create, attach, detach, exclude, promote, display, and settings operations. Mutations to existing assets and settings require `If-Match`, and responses return the new revision in both the body and the `ETag` header.
 
-Photo assets, file memberships, the singleton settings row, and change
-receipts are part of the deterministic metadata JSONL stream. Restore checks
-node ownership, local pointers, sidecar targets, display selection, enum
-values, revisions, receipt JSON, and the complete graph before commit. Older
-supported metadata streams restore an empty photo authority.
+Photo assets, file memberships, the singleton settings row, and change receipts are included in the deterministic metadata JSONL stream. Before committing a restore, Docbank checks node ownership, local pointers, sidecar targets, display selection, enum values, revisions, receipt JSON, and the complete graph. Older supported metadata streams restore an empty photo authority.
 
-Email children are identified by `email_document_relations.child_version_id`.
-An image produced by processing remains eligible when it is not an email
-child. Existing graphs survive ordinary trash and restore. Permanent node
-deletion removes file memberships and repairs the affected asset while preserving
-an empty asset identity.
+Email children are identified by `email_document_relations.child_version_id`. Any image produced by processing stays eligible as long as it is not an email child. Existing graphs survive ordinary trash and restore. Permanent node deletion removes file memberships and repairs the affected asset while keeping an empty asset identity.
 
-Automatic enrollment and explicit graph writes are skipped or refused when
-audit authority is active, according to the existing audit boundary. The
-preexisting graph is preserved. Photo trash and restore remain available under audit and record audited node changes plus photo revision receipts.
-Hidden unlock and lock remain available. Setup, change, disable, reset, hide, and unhide are unavailable while audit authority is active.
+When audit authority is active, automatic enrollment and explicit graph writes are skipped or refused according to the existing audit boundary, while the preexisting graph stays intact. Photo trash and restore remain available under audit and record both audited node changes and photo revision receipts. Hidden unlock and lock also remain available, whereas setup, change, disable, reset, hide, and unhide are unavailable while audit authority is active.
 
 ## Browse photo assets over HTTP
 
-`POST /api/v1/photos/assets/query` accepts a `query` object using
-[QueryV1](../architecture/http-api.md#saved-query-and-highlight-definitions),
-optional `coverage`, `page_size` from 1 through 250, `facets`, `cursor`, `snapshot_id`, and `hidden`. With `projection: "map"`, `page_size` allows up to 1,000. Larger pages return a validation error.
-Omit `hidden` or set it to `false` for visible photos. `hidden: true` selects
-only hidden photos and requires an active unlock on every page.
-Request `camera`, `lens`, `year`, `location`, `set`, `rating`, `flag`, or
-`label` facets. The response includes `relevance_available`, `items`, the
-matching asset `total`, first-page `facets`, and an optional `next_cursor`.
-Facets count distinct eligible assets across the whole scope and omit their
-own root structured filter. Keep them across continuations.
-The web app requests counts separately from tile pages, with `page_size: 1` and a time sort.
-Facet time, member, or byte limits return an unavailable reason. Later pages keep that total. Start a new browse to refresh it.
-The default page size is 50. Send the same query and page options with each
-continuation. Editing a saved query invalidates its earlier cursor. Cursors
-expire 15 minutes after issuance. In metadata mode (`lexical`), relevance returns one page of up to `page_size` matches, the total, and no `next_cursor`. A metadata cursor with relevance returns `invalid_photo_cursor`. Other metadata sorts read live results, so file changes can move assets across the previous page boundary.
+Send a `POST /api/v1/photos/assets/query` request with a `query` object using [QueryV1](../architecture/http-api.md#saved-query-and-highlight-definitions), along with optional `coverage`, `page_size` from 1 through 250, `facets`, `cursor`, `snapshot_id`, and `hidden`. With `projection: "map"`, `page_size` allows up to 1,000; larger pages return a validation error. Omit `hidden` or set it to `false` for visible photos. Setting `hidden: true` selects only hidden photos and requires an active unlock on every page.
 
-Meaning (`semantic`) and Hybrid (`hybrid`) freeze their ranked matches. Their responses include `snapshot_id`, the captured membership `member_hash`, `requested_mode`, and `actual_mode`. Send the same `snapshot_id`, query, page size, and projection with each ranked cursor; omitting `snapshot_id` returns `invalid_photo_cursor`. With `stacks: true`, ranked pages include every live display row for each intersecting stack among the captured members. Responses can exceed `page_size`. Filter counts and the date timeline stay unavailable.
+You can request `camera`, `lens`, `year`, `location`, `set`, `rating`, `flag`, or `label` facets. The response returns `relevance_available`, `items`, the matching asset `total`, first-page `facets`, and an optional `next_cursor`. Facets count distinct eligible assets across the whole scope and omit their own root structured filter; keep them across continuations. The web app requests counts separately from tile pages using `page_size: 1` and a time sort. If a facet hits a time, member, or byte limit, the response returns an unavailable reason. Later pages keep the initial total, so start a new browse to refresh it.
 
-The Photos filter panel keeps selected camera and lens filters available to edit while ranked results are active. When duplicate collapse is enabled, duplicate images collapse before the 1,000-result bound, leaving room for distinct matches.
+The default page size is 50. Send the same query and page options with each continuation. Editing a saved query invalidates its earlier cursor, and cursors expire 15 minutes after issuance. In metadata mode, `lexical`, relevance returns a single page of up to `page_size` matches, the total, and no `next_cursor`, and sending a metadata cursor with relevance returns `invalid_photo_cursor`. Other metadata sorts read live results, so file changes can move assets across the previous page boundary.
 
-`coverage_incomplete: true` means some photos in the filtered scope lack current image vectors; available image matches remain ranked. `truncated: true` means retrieval bounds left matches outside the captured set of up to 1,000 photos. Whole-result actions use the captured asset IDs. If image search falls back, `actual_mode` is `lexical` and `fallback_reason` explains why. Metadata fallback retains up to 1,000 photos in a snapshot, sets `truncated: true` when more match, and uses the original requested query for continuation. Its pages use the same stack grouping and omit filter counts and the date timeline. Action requests use the captured asset IDs. Hidden view uses live metadata results without a snapshot.
+Meaning, `semantic`, and Hybrid, `hybrid`, freeze their ranked matches and return `snapshot_id`, the captured membership `member_hash`, `requested_mode`, and `actual_mode`. Send the same `snapshot_id`, query, page size, and projection with each ranked cursor; omitting `snapshot_id` returns `invalid_photo_cursor`. With `stacks: true`, ranked pages include every live display row for each intersecting stack among the captured members, so responses can exceed `page_size`. Filter counts and the date timeline stay unavailable.
 
-Use `kind:photo`, `camera:"Synthetic Camera"`, `lens:"Synthetic Lens"`,
-`location:"Paris, Île-de-France, France"`, `iso:400`, `iso_min:100`, `iso_max:800`, `capture_after:2024-01-01`,
-`capture_before:2025-01-01`, `gps:"-10,170,10,-170"`, `rating:5`, `flag:pick`,
-`label:red`, `xmp:pending`, `xmp:conflict`, or `asset:` or `set:`
-followed by a canonical asset or album UUIDv4. Existing `collection:`, tag, and text predicates combine
-with these fields. Camera and lens match the complete make or model, ignoring
-case using Unicode case folding. Values in one typed filter array combine with
-OR. Separate filters combine with AND. `locations` and `location:` match
-the complete location label exactly.
+In the web app, the **Photos** filter panel keeps selected camera and lens filters editable while ranked results are active. When duplicate collapse is enabled, duplicate images collapse before the 1,000-result bound, leaving room for distinct matches.
 
-Use typed `flags:[""]` or `labels:[""]` to select unflagged or unlabeled photos. Use `flag:""` or `label:""` for the same filters in expressions. `NOT flag:pick` selects unflagged and rejected photos; `NOT label:red` selects unlabeled photos and other colors.
+`coverage_incomplete: true` indicates that some photos in the filtered scope lack current image vectors, while available image matches stay ranked. `truncated: true` means retrieval bounds left additional matches outside the captured set of up to 1,000 photos. Whole-result actions use the captured asset IDs. If image search falls back, `actual_mode` is `lexical` and `fallback_reason` explains why. Metadata fallback keeps up to 1,000 photos in a snapshot, sets `truncated: true` when more match, and uses the original requested query for continuation. Its pages use the same stack grouping and omit filter counts and the date timeline, and action requests use the captured asset IDs. Hidden view uses live metadata results without a snapshot.
 
-Dates use the photo's recorded local calendar day, with an inclusive lower
-bound and exclusive upper bound. A January 1 photo remains in January 1 date
-filters even if its recorded UTC offset puts it on January 2 in UTC. GPS uses
-inclusive decimal-string latitude/longitude bounds and permits boxes crossing
-the antimeridian.
+In query expressions, you can use `kind:photo`, `camera:"Synthetic Camera"`, `lens:"Synthetic Lens"`, `location:"Paris, Île-de-France, France"`, `iso:400`, `iso_min:100`, `iso_max:800`, `capture_after:2024-01-01`, `capture_before:2025-01-01`, `gps:"-10,170,10,-170"`, `rating:5`, `flag:pick`, `label:red`, `xmp:pending`, `xmp:conflict`, or `asset:` or `set:` followed by a canonical asset or album UUIDv4. Existing `collection:`, tag, and text predicates combine with these fields. Camera and lens match the complete make or model, ignoring case with Unicode case folding. Values inside one typed filter array combine with OR, while separate filters combine with AND. `locations` and `location:` match the complete location label exactly.
 
-Camera, lens, location, ISO, capture-date, and GPS predicates use the asset's selected
-display file. Metadata from other members is not combined with it. If the
-selected RAW has camera A and its paired JPEG has lens B, `camera:A` matches
-and `lens:B` does not. A sidecar without camera metadata cannot make
-`NOT camera:A` match. Changing the display file changes these metadata matches.
+To find unflagged or unlabeled photos, use typed `flags:[""]` or `labels:[""]`, or `flag:""` and `label:""` in expressions. `NOT flag:pick` selects unflagged and rejected photos, and `NOT label:red` selects unlabeled photos and other colors.
 
-Photos text also searches camera and lens makes/models and location labels from
-active metadata heads. `name:` searches filenames only. Relevance orders filename matches, authored text and tag names, pending suggestions, technical metadata, then retained content-only matches. A photo that matches the whole query only with pending suggestion text ranks in the suggestions group, below fully authored matches. Each group uses its own BM25 scores. Prefix, phrase and NEAR operands keep their matching meaning when scored.
-The best matching member supplies an asset's score, after the complete
-expression restricts eligible members. Authored caption, creator, and copyright match any live non-sidecar member of the asset, so a JPEG caption can match an asset selected by `extension:cr2`. Filename, technical metadata, retained content, name, extension, tag, and collection predicates still match
-individual members. One member must satisfy the complete expression, using
-the display file for its photo metadata predicates. For example,
-`extension:xmp AND camera:A` can match a sidecar paired with a display image
-from camera A. Saved expressions follow the same rule. Document metadata filters use each document's own file; ordinary Documents text membership keeps its filename and retained-content sources. Excluded, trashed, and displayless assets
-stay out.
+Date filters use each photo's recorded local calendar day with an inclusive lower bound and exclusive upper bound. A January 1 photo stays in January 1 date filters even if its recorded UTC offset puts it on January 2 in UTC. GPS filters use inclusive decimal-string latitude and longitude bounds and allow boxes that cross the antimeridian.
 
-Sort by `relevance`, `capture_time`, `import_time`, `name`, `modified_at`, `size`, or
-`media_type`, with `asc` or `desc`. Set `filters.set_ids` to album UUIDs to browse their members. `added_time` requires exactly one album ID after normalization. Capture-time album queries can return burst stacks; added-time queries keep individual rows. Capture sorting converts recorded offsets
-to UTC. Omitted zones use civil calendar coordinates. A photo without a
-readable capture time sorts by its file's modified time when Docbank recorded
-one. Photos with neither sort last in both directions and do not match
-capture-date filters. Asset UUID orders equal keys. Names and media types compare only their
-first 1,024 characters, so longer values that share that prefix also fall back
-to UUID order. Relevance orders evidence tier and numeric score in the requested direction, then capture placement descending and asset UUID ascending. Only members retained after duplicate collapse contribute scores. An unchanged library pages without duplicates or gaps with other sorts. `path` is
-unsupported by this route. Document
-snapshots reject `capture_time`, `import_time`, and `added_time` with an error naming Photos
-as the supported view.
+Camera, lens, location, ISO, capture-date, and GPS predicates all read the asset's selected display file rather than combining metadata from other members. If a selected RAW has camera A and its paired JPEG has lens B, `camera:A` matches and `lens:B` does not, and a sidecar without camera metadata cannot make `NOT camera:A` match. Changing the display file changes which metadata matches.
 
-Each row has grid, fit, and large preview slots. `missing` means no result is
-stored for that recipe. Stored `ready`, `unsupported`, and `failed` outcomes
-keep their generation identity. Only ready slots include a generation URL and
-JPEG output metadata. Read that URL with the browser session header.
-Credentials stay out of URLs.
+Photos text search also searches camera and lens makes and models and location labels from active metadata heads, while `name:` searches filenames only. Relevance ranks matches in order: filename matches first, then authored text and tag names, pending suggestions, technical metadata, and retained content-only matches. A photo that matches the full query only by using pending suggestion text ranks in the suggestions group, below fully authored matches. Each group uses its own BM25 scores, and prefix, phrase, and NEAR operands keep their matching meaning when scored.
 
-Visible display-preview responses use `Cache-Control: private, no-cache`: the browser may keep
-bytes but must check with the server before reusing them. Hidden previews require
-an active unlock and use `Cache-Control: no-store`, including `304` responses. A matching
-`If-None-Match` returns `304` after the server checks the session, current
-display, exclusion state, and any required Hidden unlock. This avoids reading the preview blob again.
-An excluded asset or replaced display returns `404`, even with a matching
-validator. A response with new bytes verifies the complete image. Listing
-never creates previews.
+After the complete expression narrows eligible members, the best-matching member supplies the asset's score. Authored caption, creator, and copyright match any live non-sidecar member of the asset, so a JPEG caption can match an asset selected by `extension:cr2`. Filename, technical metadata, retained content, name, extension, tag, and collection predicates still match individual members. One member must satisfy the complete expression, using the display file for its photo metadata predicates. For example, `extension:xmp AND camera:A` can match a sidecar paired with a display image from camera A. Saved expressions follow the same rule. Document metadata filters use each document's own file, while ordinary **Documents** text membership keeps its filename and retained-content sources. Excluded, trashed, and displayless assets stay out of results.
 
-The initial count evaluates the whole query. Later pages seek from the last
-sort key. Queries that collapse duplicate content still evaluate the complete
-matching population to choose representatives before returning a page.
+Sort by `relevance`, `capture_time`, `import_time`, `name`, `modified_at`, `size`, or `media_type`, with direction `asc` or `desc`. Set `filters.set_ids` to album UUIDs to browse their members; `added_time` requires exactly one album ID after normalization. Capture-time album queries can return burst stacks, while added-time queries keep individual rows. Capture sorting converts recorded offsets to UTC, and omitted zones use civil calendar coordinates. A photo without a readable capture time sorts by its file's modified time when Docbank recorded one; photos with neither sort last in both directions and do not match capture-date filters. Equal keys break ties by asset UUID. Names and media types compare only their first 1,024 characters, so longer values sharing that prefix also fall back to UUID order. Relevance orders by evidence tier and numeric score in the requested direction, then capture placement descending and asset UUID ascending, with only members retained after duplicate collapse contributing scores. On an unchanged library, other sorts page without duplicates or gaps. `path` is unsupported by this route, and document snapshots reject `capture_time`, `import_time`, and `added_time` with an error naming Photos as the supported view.
 
-`POST /api/v1/photos/assets/{asset_id}/preview` prepares a `grid`, `fit`, or `large`
-preview for the supplied `content_version_id`. Include `hidden: true` and an active unlock cookie to prepare a hidden photo. It returns the same preview
-slot shape as browsing, reuses retained terminal outcomes, and refuses an
-excluded, trashed, or changed display. Each request has a 30-second bound.
-For namesake crops, include `person_id` with `size: "grid"` to prepare an assigned source version. Preparation and byte reads require its live photo membership, active assignment, and Hidden access. Source reads use `no-store`.
-Camera, lens, exposure, dimensions, and orientation come from the current
-display's technical metadata. When map tiles are configured, browser Map-projection
-rows include the selected display file's nullable GPS latitude and longitude.
+Each row includes grid, fit, and large preview slots. `missing` means no result is stored for that recipe, while stored `ready`, `unsupported`, and `failed` outcomes keep their generation identity. Only ready slots include a generation URL and JPEG output metadata. Fetch that URL with the browser session header, keeping credentials out of URLs.
+
+Visible display-preview responses carry `Cache-Control: private, no-cache`, so the browser may cache bytes but must revalidate with the server before reusing them. Hidden previews require an active unlock and return `Cache-Control: no-store`, including on `304` responses. A matching `If-None-Match` returns `304` after the server verifies the session, current display, exclusion state, and any required Hidden unlock, avoiding a preview blob read. An excluded asset or replaced display returns `404`, even with a matching validator. Any response returning new bytes verifies the complete image. Listing never triggers preview generation.
+
+The initial count evaluates the whole query, and later pages seek from the last sort key. Queries that collapse duplicate content still evaluate the complete matching population to pick representatives before returning a page.
+
+To prepare a `grid`, `fit`, or `large` preview for a specific `content_version_id`, send `POST /api/v1/photos/assets/{asset_id}/preview`. Include `hidden: true` and an active unlock cookie for a hidden photo. The endpoint returns the same preview slot shape as browsing, reuses retained terminal outcomes, refuses excluded, trashed, or changed displays, and enforces a 30-second bound per request. For namesake crops, include `person_id` with `size: "grid"` to prepare an assigned source version; preparation and byte reads require its live photo membership, active assignment, and Hidden access, and source reads use `no-store`. Camera, lens, exposure, dimensions, and orientation come from the current display's technical metadata. When map tiles are configured, browser Map-projection rows include the selected display file's nullable GPS latitude and longitude.
 
 ## Count photos by capture day
 
-`docbank photos timeline` prints JSON counts for every recorded capture day in
-a photo scope, newest day first. The web app's date rail uses the same counts.
+Run `docbank photos timeline` to print JSON counts for every recorded capture day in a photo scope, newest day first. The web app's date rail uses these same counts.
 
 ```bash
 docbank photos timeline
 docbank photos timeline --query '{"filters":{"capture_after":"2024-01-01"}}'
 ```
 
-`--query` takes strict QueryV1 JSON and defaults to `{}`, every included
-photo. `--coverage` and `--profile-fingerprint` work as in photo browsing. The
-output's single `capture_day` facet lists one value per day. `total` counts
-every matching asset, and `missing` counts those with neither a readable
-capture date nor a recorded file modified time. A photo without a capture date
-counts on the UTC day of its file's modified time. Days follow the same recorded calendar day as `capture_after` and
-`capture_before`.
+`--query` takes strict QueryV1 JSON and defaults to `{}`, which covers every included photo. `--coverage` and `--profile-fingerprint` work the same way as in photo browsing. The output's single `capture_day` facet lists one entry per day. `total` counts every matching asset, and `missing` counts assets with neither a readable capture date nor a recorded file modified time. A photo without a capture date counts on the UTC day of its file's modified time. Days follow the same recorded calendar day rules as `capture_after` and `capture_before`.
 
-Over HTTP, send the same `query` and optional `coverage` to
-`POST /api/v1/photos/assets/timeline`. The
-[HTTP reference](../architecture/http-api.md) lists its limits and errors.
+Over HTTP, send the same `query` and optional `coverage` to `POST /api/v1/photos/assets/timeline`. See the [HTTP reference](../architecture/http-api.md) for limits and errors.
 
-Apply or clear staged metadata edits before changing the selection, search, sort, or viewed photo, or hiding or trashing photos. Hide uses the prepared selection, including unloaded photos, and keeps failed targets selected with their captured revisions.
+Apply or clear staged metadata edits before changing the selection, search, sort, or viewed photo, or before hiding or trashing photos. **Hide** uses the prepared selection, including unloaded photos, and keeps failed targets selected with their captured revisions.
 
 ## Suggested metadata
 
-With a [configured vision profile](../configuration.md#photo-descriptions) and processing consent, the inspector shows a suggested caption, tags, and read-only visible text for the displayed file. Choose **Accept selected** to write the checked caption or tags as authored metadata; accepted fields leave the suggestion, and **Dismiss** closes the rest without changing authored metadata. Undo or Ctrl/Cmd+Z restores the caption and tags from before the latest acceptance while their saved revisions still match. Undo leaves suggestion decisions unchanged, so accepted fields stay settled. Unchecked fields and visible text stay searchable until you dismiss them. Derivative purge and consent revocation leave pending suggestion text in place; dismissing the suggestion or purging the photo version removes it.
+When you have a [configured vision profile](../configuration.md#photo-descriptions) and processing consent, the inspector displays a suggested caption, suggested tags, and read-only visible text for the displayed file. Choose **Accept selected** to save the checked caption or tags as authored metadata; accepted fields leave the suggestion, and **Dismiss** closes the rest without changing authored metadata. Choose **Undo** or press **Ctrl+Z** or **Cmd+Z** to restore the caption and tags from before the latest acceptance while their saved revisions still match. Undo leaves suggestion decisions unchanged, so accepted fields stay settled. Unchecked fields and visible text remain searchable until you dismiss them. Derivative purge and consent revocation leave pending suggestion text in place; dismissing the suggestion or purging the photo version removes it.
 
-Photo search matches suggested text below authored caption, creator, and copyright and above technical metadata. **Matched AI suggestion** appears on a result that needs suggested text to match. Accepted tags are ordinary tags, so every tag name assigned to a photo matches text search, including after a rename or a content replacement.
+Photo search matches suggested text below authored caption, creator, and copyright and above technical metadata. **Matched AI suggestion** appears on any result that relies on suggested text to match. Accepted tags become ordinary tags, so every tag name assigned to a photo matches text search, even after a rename or content replacement.
 
-Changing the profile keeps existing suggestions and dismissals. Photos described before orientation support need an explicit processing run under the updated vision prompt to receive a provider rotation answer. After a prompt change, recompute the [pinned vision fingerprints](../configuration.md#photo-descriptions), review the changed processing plan, and grant fresh consent. A consented explicit run under another provider fingerprint can refresh rotation while preserving pending and accepted caption and tag decisions. After a dismissal, an explicit run with a different provider fingerprint can offer replacement text along with the new rotation answer. Automatic processing leaves settled descriptions alone. A rotation-only refresh keeps the text producer fingerprint, so another explicit run under a different fingerprint can ask for rotation again, including after an uncertain answer. Backups keep dismissals, accepted-field decisions, and a marker for pending rotation work, while leaving generated text and angles out; after restore and fresh consent, only undecided fields are described again, and a description with nothing left to decide is not described again. A dismissed caption stays dismissed when restore regenerates its pending rotation. Confirmed rotations need no regeneration. A profile you dismissed on a photo never regenerates another profile's undecided fields there; those go to another ready profile that you have not dismissed there, which automatic work tries for restored photos.
+Switching the profile keeps existing suggestions and dismissals intact. Photos described before orientation support need an explicit processing run under the updated vision prompt to get a provider rotation answer. After changing a prompt, recompute the [pinned vision fingerprints](../configuration.md#photo-descriptions), review the updated processing plan, and grant fresh consent. A consented explicit run under a different provider fingerprint can refresh rotation while keeping pending and accepted caption and tag decisions. After a dismissal, an explicit run with a different provider fingerprint can offer replacement text along with the new rotation answer, while automatic processing leaves settled descriptions alone. A rotation-only refresh keeps the text producer fingerprint, so another explicit run under a different fingerprint can ask for rotation again, including after an uncertain answer. Backups keep dismissals, accepted-field decisions, and a marker for pending rotation work, while leaving generated text and angles out. After a restore and fresh consent, Docbank describes only undecided fields again and skips descriptions with nothing left to decide. A dismissed caption stays dismissed when restore regenerates its pending rotation, and confirmed rotations do not regenerate. A profile you dismissed on a photo never regenerates another profile's undecided fields on that photo; instead, those go to another ready profile that you have not dismissed there, which automatic work tries for restored photos.
 
 ## Export photos
 
-Choose **Export all N photos** in the **⋯** menu for the whole current scope, or **Export selection** for selected photos. In Map, use **Export selection**; it includes selected photos outside the current map area. The [export drawer](export-bundles.md#export-photos) prepares JPEG or PNG copies with your size, metadata, and GPS choices, then delivers a verified ZIP. RAW display members export embedded previews and carry that label. GPS removal leaves descriptive location names intact. With metadata enabled, current catalog tags on the display file replace embedded keywords only when that file has at least one tag; companion-file tags are excluded. Conflicting XMP orientation stops preparation with metadata enabled; turn metadata off to export the viewed pixels. A changed or unavailable photo stops preparation with an error naming it; the linked guide lists preparation and metadata limits.
+To export photos in the web app, choose **Export all N photos** from the **⋯** menu for the entire current scope, or choose **Export selection** for selected photos. In **Map**, **Export selection** includes selected photos outside the current map area. The [export drawer](export-bundles.md#export-photos) prepares JPEG or PNG copies using your size, metadata, and GPS choices and delivers a verified ZIP. RAW display members export their embedded previews and carry that label. Removing GPS leaves descriptive location names intact. When metadata is enabled, current catalog tags on the display file replace embedded keywords only if that file has at least one tag, and companion-file tags are excluded. Conflicting XMP orientation stops preparation when metadata is enabled; turn metadata off to export the viewed pixels. A changed or unavailable photo stops preparation with an error naming it. See the linked guide for preparation and metadata limits.
 
 ![The photo export drawer for three selected photos](https://docbank.ai/assets/generated/web-photo-export.png)
 
 ## Move photos to trash
 
-Select photos in Library and choose **Move to trash**. Confirming moves every member of each selected photo, including RAW files, images, videos, and sidecars, to recoverable trash together. A changed photo revision refuses the action; failed photos remain selected for retry. Each photo is atomic; a selection runs sequentially and can make partial progress. Changing the selection changes the next action's targets. A failed photo outside the loaded grid keeps its captured revision; load and select it again before accepting a newer revision.
+To move selected photos to trash, select them in **Library** and choose **Move to trash**. Confirming moves every member of each selected photo, including RAW files, images, videos, and sidecars, to recoverable trash together. If a photo's revision has changed, Docbank refuses that photo and keeps failed photos selected for retry. Each photo moves atomically, while a multi-photo selection runs sequentially and can make partial progress. Changing the selection changes the targets for the next action. A failed photo outside the loaded grid keeps its captured revision; load and select it again before accepting a newer revision.
 
-Choose **Trash rejected photos** in Photos' **⋯** menu to preview the complete current scope, including photos beyond the loaded page. The preview counts eligible photos and files, lists up to 20 mixed pairs with their total count, and counts photos that stay in Docbank. Every original member, including individually trashed originals, must have the stored `reject` flag; sidecars follow their photo. The preview returns exact targets in asset ID order, limited to 1,000 live member files. A photo that would exceed the limit waits for the next batch. Confirmation moves those photos atomically. A missing target, changed asset or original node revision, changed reject flag, or changed Library/Hidden scope refuses the whole batch and requires another preview. Sidecar writes from XMP sync don't count as changes, but a sidecar version sync hasn't read yet, such as an outside edit, does. Changes elsewhere in the scope, including album membership, leave the previewed targets valid. Larger scopes still show complete counts and how many photos will move now. Preview and confirm again for the rest. Select up to 64 photos and choose **Selected photos** in the modal to narrow the scope. Hidden scope requires an active unlock at preview and confirmation. An audit refusal names the blocked photo and file and leaves the entire batch in Docbank. Close the dialog, select up to 64 other photos, and choose **Selected photos** to move them.
+To trash rejected photos across the entire current scope, including photos beyond the loaded page, choose **Trash rejected photos** from the **⋯** menu in **Photos**. The preview counts eligible photos and files, lists up to 20 mixed pairs with their total count, and counts photos that stay in Docbank. Every original member, including individually trashed originals, must carry the stored `reject` flag, and sidecars follow their photo. The preview returns exact targets in asset ID order, capped at 1,000 live member files; any photo that would exceed the limit waits for the next batch. Confirming moves those photos atomically. A missing target, changed asset or original node revision, changed reject flag, or changed **Library** or **Hidden** scope refuses the whole batch and requires a new preview. Sidecar writes from XMP sync do not count as changes, whereas a sidecar version that sync has not read yet, such as an outside edit, does. Changes elsewhere in the scope, including album membership, leave the previewed targets valid. Larger scopes still show complete counts alongside how many photos move in the current batch; preview and confirm again for the rest. To narrow the scope, select up to 64 photos and choose **Selected photos** in the modal. Hidden scope requires an active unlock at both preview and confirmation. An audit refusal names the blocked photo and file and leaves the entire batch in Docbank; close the dialog, select up to 64 other photos, and choose **Selected photos** to move them.
 
 ![Move rejects preview counting the photos that will move to trash](https://docbank.ai/assets/generated/web-photo-rejects.png)
 
-Moving rejects preserves the loaded range, browsing position, and surviving selections. If reloading fails, the grid stays available. Retry reloads the range and reconciles selections.
+Moving rejects preserves the loaded range, browsing position, and surviving selections. If reloading fails, the grid stays available, and **Retry** reloads the range and reconciles selections.
 
-HTTP clients preview with `POST /api/v1/photos/rejects/preflight` and `{query, hidden}`, then confirm with `POST /api/v1/photos/rejects/trash` and `{hidden, targets}`. Each target carries `asset_id`, the asset `revision`, and `member_revision`, the sum of the original members' node revisions; sidecar syncing after the preview does not make it stale. Confirmation reads each member once in the writer transaction, checks its revision and every original's reject flag, and moves the reviewed files.
+HTTP clients preview rejects with `POST /api/v1/photos/rejects/preflight` sending `{query, hidden}`, then confirm with `POST /api/v1/photos/rejects/trash` sending `{hidden, targets}`. Each target includes `asset_id`, the asset `revision`, and `member_revision`, which is the sum of the original members' node revisions; sidecar syncing after the preview does not make it stale. Confirmation reads each member once in the writer transaction, verifies its revision and every original's reject flag, and moves the reviewed files.
 
-Use `docbank photos assets trash <asset-id>` for the same operation from the CLI. `--revision` binds the action to an inspected asset revision. Ordinary Documents deletion and `docbank document remove` still remove the selected file or folder.
+From the CLI, run `docbank photos assets trash <asset-id>` for the same operation, using `--revision` to bind the action to an inspected asset revision. Ordinary **Documents** deletion and `docbank document remove` still remove the selected file or folder.
 
-Open **Trash** in either workspace to restore a photo group. Trash lists files, including hidden photos' files, just like Documents. One row represents its independently trashed members and shows how many trashed files restore will recover, including companions inside folders. Restoring any member recovers the complete group. The selected member's revision guards the request; Docbank reads all affected roots in the same transaction. A member inside a trashed folder restores that folder's subtree and the photo's companions elsewhere. Selected destination folders return before their files. Separately trashed unrelated items stay in trash.
+To restore a photo group, open **Trash** in either workspace. **Trash** lists files, including hidden photos' files, in the same way as **Documents**. One row represents its independently trashed members and displays how many trashed files restoring it recovers, including companions inside folders. Restoring any member recovers the complete group. The selected member's revision guards the request, and Docbank reads all affected roots in the same transaction. Restoring a member inside a trashed folder restores that folder's subtree along with the photo's companions elsewhere, returning selected destination folders before their files. Separately trashed unrelated items stay in trash.
 
 Trash keeps file bytes, content versions, photo relationships, and album membership intact. Trash and restore each advance the affected asset revision once and record a change receipt. Permanent deletion waits until every member is trashed, old enough, and free of retention references. For a partially trashed photo, trash the remaining companions with the asset action or detach its live companions before emptying trash. See [Trash and garbage collection](trash-and-gc.md).
 
-Metadata JSONL v1 includes `trash` and `restore` receipts recording the operation and asset revision change; node trash state remains in the node records. Older Docbank clients refuse imports containing these operations; use a version that supports photo trash to restore that metadata.
+Metadata JSONL v1 includes `trash` and `restore` receipts recording the operation and asset revision change, while node trash state remains in the node records. Older Docbank clients refuse imports containing these operations, so use a version that supports photo trash to restore that metadata.
 
 ## Map
 
-Map opened from an album plots that album's GPS photos. Otherwise, it plots GPS photos matching the current Library search and filters. Hidden is never mapped. Metadata results sort by capture date; Meaning and Hybrid results sort by relevance.
+When you open **Map** from an album, it plots that album's GPS photos. Otherwise, it plots GPS photos matching your current **Library** search and filters. Hidden photos are never mapped. Metadata results sort by capture date, while Meaning and Hybrid results sort by relevance.
 
-Configure [photo map tiles](../configuration.md#photo-map-tiles) in `[web.map_tiles]` and restart Docbank; Map stays out of the sidebar until then. Choose Map beside Library to browse GPS-positioned photos from the current query. Markers group nearby photos into numbered clusters. Click a marker to open the photo viewer. Escape returns focus to the marker or its cluster and retains the map position. The map also keeps its position when an access check conceals and refreshes it. Switching workspaces resets the map position. A cluster zooms in or spreads overlapping markers so you can open each photo.
+To enable **Map**, configure [photo map tiles](../configuration.md#photo-map-tiles) in `[web.map_tiles]` and restart Docbank; **Map** stays hidden from the sidebar until then. Choose **Map** beside **Library** to browse GPS-positioned photos from the current query. Nearby photos group into numbered clusters. Click a marker to open the photo viewer, or click a cluster to zoom in or spread overlapping markers so you can open each photo. Pressing **Escape** returns focus to the marker or its cluster and keeps the map position. The map also keeps its position when an access check conceals and refreshes it, while switching workspaces resets the map position.
 
 ![Map with photo clusters beside the photos in view](https://docbank.ai/assets/generated/photo-map-enabled-1440-dark.png)
 
-Map uses album membership when opened from an album. Otherwise it inherits Library's text and filters. It adds GPS eligibility and retains the search mode's order. Each visit starts a fresh result and selection. Metadata Map fetches the newest 20,000 matching located photos by capture date in pages of 1,000, at most 20 requests. Meaning and Hybrid Map show up to 1,000 matches, including during metadata fallback. Map shows the search status and says how many of the best matches it's showing when relevance results are capped. Narrow the search or filters to see older photos. Map has no date filter, and choosing a date in Library does not change what Map fetches. Returning to the Map rechecks access and reloads only after a hide or unhide. Like Library, the Map picks up other clients' trash, imports or edits on refresh. Markers and the grid show each page as it arrives. Earlier results stay visible during a refresh or if it fails. Retry resumes the failed page. An expired cursor starts a fresh load. The viewer and arrow keys follow the Map query, while the viewport filters only the grid. Panning retains selection, and the trash confirmation discloses selections outside the grid.
+Each visit to **Map** starts a fresh result and selection, adding GPS eligibility and keeping the search mode's order. Metadata **Map** fetches the newest 20,000 matching located photos by capture date in pages of 1,000, up to 20 requests. Meaning and Hybrid **Map** show up to 1,000 matches, including during metadata fallback. When relevance results are capped, **Map** displays the search status and how many of the best matches it is showing. Narrow your search or filters to see older photos. **Map** has no date filter, and choosing a date in **Library** does not change what **Map** fetches. Returning to **Map** rechecks access and reloads only after a hide or unhide. Like **Library**, **Map** picks up other clients' trash, imports, or edits on refresh. Markers and the grid appear as each page arrives, and earlier results stay visible during a refresh or if a page fails; choose **Retry** to resume a failed page. An expired cursor starts a fresh load. The viewer and arrow keys follow the **Map** query, while the viewport filters only the grid. Panning keeps your selection, and the trash confirmation notes any selections outside the visible grid.
 
 ## Cull and compare
 
-Choose **Cull** in Library or an album to review the whole current query full-screen. Docbank captures its order and membership before starting. A cull accepts up to 250,000 photos; narrow larger queries before starting. Flag or rating changes keep photos in the current pass; the next pass refreshes eligibility. Cull decisions are flags. A decision changes both files of a RAW and JPEG pair. When the pair's flags or ratings differ, it changes only the shown file and says so. Star ratings leave a photo unflagged. **S** or the scope button in the header cycles through unflagged, picks, rejects, and all photos, with confirmation before resetting an unfinished pass.
+Choose **Cull** in **Library** or an album to review the entire current query full-screen. Docbank captures the query's order and membership before starting. A cull accepts up to 250,000 photos; narrow larger queries first. Flag or rating changes keep photos in the current pass, and the next pass refreshes eligibility. Cull decisions set flags and update both files of a RAW and JPEG pair; if the pair's flags or ratings differ, Cull updates only the shown file and says so. Star ratings leave a photo unflagged. Press **S** or click the scope button in the header to cycle through unflagged, picks, rejects, and all photos, with confirmation before resetting an unfinished pass.
 
 ![Full-screen Cull with flag, skip, and filmstrip controls](https://docbank.ai/assets/generated/web-photo-cull.png)
 
 ### Burst stacks
 
-Library groups adjacent capture times from the same import folder, camera make, model, and body serial number. Photos with no recorded serial group with other photos with no serial; known serials stay separate. A flat **Choose files** selection shares one folder identity. A collapsed stack shows its representative and a count. Selecting it selects every frame. Expand it to select frames separately.
+**Library** groups adjacent capture times from the same import folder, camera make, model, and body serial number. Photos with no recorded serial group with other photos that have no serial, while known serials stay separate. A flat **Choose files** selection shares one folder identity. A collapsed stack shows its representative frame and a count. Selecting a collapsed stack selects every frame; expand it to select individual frames.
 
 ![Library showing collapsed burst stacks, each with a frame count](https://docbank.ai/assets/generated/web-photo-stacks.png)
 
-Clearing the search box returns to Metadata browse. Meaning and Hybrid requests with blank text also use Metadata browse.
+Clearing the search box returns to Metadata browse, and Meaning or Hybrid requests with blank text also use Metadata browse.
 
-Meaning and Hybrid keep their result membership, order, and search status while paging and during background updates. Flags, ratings, rotation, and previews show current values on each page and background refresh. Only an explicit refresh, trashing from the results, or a query change retrieves new matches; Select all keeps the photos it captured. A ranked page that intersects a stack includes all its live display rows from the captured set. The stack occupies its highest-ranked member's position, with the chosen representative first. Continuations may repeat stack rows; the browser keeps one row per asset ID. Ranked results omit filter counts and the date timeline. Hidden view uses authorized metadata matches and explains the fallback.
+Meaning and Hybrid keep their result membership, order, and search status while paging and during background updates, while flags, ratings, rotation, and previews show current values on each page and background refresh. Only an explicit refresh, trashing from the results, or a query change fetches new matches; **Select all** keeps the photos it captured. A ranked page that intersects a stack includes all its live display rows from the captured set. The stack sits at its highest-ranked member's position with the chosen representative first. Continuations may repeat stack rows, and the browser keeps one row per asset ID. Ranked results omit filter counts and the date timeline. Hidden view uses authorized metadata matches and explains the fallback.
 
-Choose a **Burst gap** from 1 to 30 seconds in the Cull header to regroup existing photos. Capture-time pages keep each stack together. A photo with missing or outdated camera details groups as one with no serial, so it stacks only with other photos that have no serial. Per-photo flags and ratings remain available. Unreadable originals leave camera details unavailable until they can be read; background extraction retries them. A notice says groups can change after details update, and Cull refreshes them when you choose **Retry grouping** or change the burst gap.
+To regroup existing photos, choose a **Burst gap** from 1 to 30 seconds in the **Cull** header. Capture-time pages keep each stack together. A photo with missing or outdated camera details groups as one with no serial, so it stacks only with other photos that have no serial. Per-photo flags and ratings remain available. Unreadable originals leave camera details unavailable until they can be read, and background extraction retries them. A notice explains that groups can change after details update, and **Cull** refreshes them when you choose **Retry grouping** or change the burst gap.
 
-With an active image index, adjacent frames in the same folder and camera stream link when they fall within the configured burst gap, or within 60 seconds with cosine similarity of at least 0.95 in any shared image space. A linked chain stacks together if its whole span is at most 60 seconds and it meets the stack size limits; otherwise its frames group by burst gap alone. This applies in capture-date Library, metadata relevance pages, ranked snapshots, Cull, and stack decisions. Frames without a vector keep burst-gap grouping, and pending image work leaves decisions available. If several bindings supply indexed vectors for one asset in a space, grouping chooses the lowest row identity, ordered by vector-set ID, input ID, then input checksum. Live photo changes, including index publication, quietly regroup Cull's frozen members while its controls remain available.
+When an image index is active, adjacent frames in the same folder and camera stream link if they fall within the configured burst gap, or within 60 seconds with cosine similarity of at least 0.95 in any shared image space. A linked chain stacks together if its total span is at most 60 seconds and it meets the stack size limits; otherwise its frames group by burst gap alone. This applies across capture-date **Library**, metadata relevance pages, ranked snapshots, **Cull**, and stack decisions. Frames without a vector keep burst-gap grouping, and pending image work leaves decisions available. If several bindings supply indexed vectors for one asset in a space, grouping chooses the lowest row identity, ordered by vector-set ID, input ID, then input checksum. Live photo changes, including index publication, quietly regroup **Cull**'s frozen members while its controls remain available.
 
-Hidden photos don't take part in image links. The Hidden view groups photos by burst gap only.
+Hidden photos do not take part in image links. The **Hidden** view groups photos by burst gap only.
 
-In Cull, use H/L to move between stacks and J/K to move within a stack. Check frames in the filmstrip and choose **Keep selected** to retain those frames. Flags owned by another decision stay unchanged. Navigation preserves the checked frames; starting a new pass or regrouping clears them. A Cull stack holds only frames in the current pass, so a frame the pass excludes keeps its flag. **Keep all** picks every frame in the stack. **Keep current** (Return) picks the viewed frame and rejects the rest. Later Return decisions replace earlier Return assignments only for frames still owned by Return. Stack decisions update every live member file together, including paired originals, with one receipt and one Undo.
+In **Cull**, press **H** or **L** to move between stacks, and **J** or **K** to move within a stack. Check frames in the filmstrip and choose **Keep selected** to retain those frames while leaving flags owned by another decision unchanged. Navigation preserves checked frames, while starting a new pass or regrouping clears them. Because a **Cull** stack holds only frames in the current pass, any frame excluded from the pass keeps its flag. Choose **Keep all** to pick every frame in the stack, or choose **Keep current** or press **Return** to pick the viewed frame and reject the rest. Later **Return** decisions replace earlier **Return** assignments only for frames still owned by **Return**. Stack decisions update every live member file together, including paired originals, with one receipt and one Undo.
 
 ![Cull on a burst stack with Keep current, Keep all, and Keep selected](https://docbank.ai/assets/generated/web-photo-cull-stack.png)
 
-Choose **Choose representative** to change which frame represents the stack while preserving every frame's flags. A rejected frame in a mixed stack cannot become its representative. Choose a picked or unflagged frame, or change its flag first.
+To change which frame represents a stack without changing any frame's flags, choose **Choose representative**. A rejected frame in a mixed stack cannot become its representative; choose a picked or unflagged frame, or change its flag first.
 
-With auto-advance on, P, X, and U move to the next photo; 0-5 change the rating and stay on the current photo.
+When auto-advance is on, **P**, **X**, and **U** move to the next photo, while **0** through **5** set the rating and stay on the current photo.
 
 | Key | Action |
 | --- | --- |
@@ -892,40 +640,52 @@ With auto-advance on, P, X, and U move to the next photo; 0-5 change the rating 
 | ? | Show the key map |
 | Esc | Leave cull mode |
 
-Use **Skip** to record a skipped photo. The decision toast offers **Undo**. Ctrl, Cmd, and Alt shortcuts pause during cull. Apply or clear pending metadata edits before entering, moving, or leaving.
+Choose **Skip** to record a skipped photo, and use **Undo** in the decision toast to reverse a decision. **Ctrl**, **Cmd**, and **Alt** shortcuts pause during cull. Apply or clear pending metadata edits before entering, moving, or leaving cull mode.
 
-**Resume cull** restores the saved pass, position, visited and skipped photos, scope, and auto-advance setting for this vault in this browser. Its captured membership survives snapshot expiry and browser restarts. Each daemon restart gives local `docbank web` a new browser address, so saved progress from the previous address no longer appears; [signing in on a server or container](web.md#sign-in-on-a-server-or-container) keeps one address. Earlier progress stays in browser storage until site data is cleared. Starting another cull asks before replacing saved progress. Storage failures appear when you choose Cull or Resume. If another tab changes the saved progress, close and resume the latest pass. At completion, Docbank checks the captured set once; flag changes or Undo check it again, and **Previous** cancels a check in progress. **Review unflagged remainder** appears when unflagged photos remain anywhere in the captured set, including skipped and never-viewed photos. Missing or newly hidden photos are counted as unavailable. Cull is not offered in Hidden.
+Choose **Resume cull** to restore your saved pass, position, visited and skipped photos, scope, and auto-advance setting for this vault in this browser. Its captured membership survives snapshot expiry and browser restarts. Because each daemon restart gives local `docbank web` a new browser address, saved progress from an earlier address no longer appears; [signing in on a server or container](web.md#sign-in-on-a-server-or-container) keeps a single address. Earlier progress stays in browser storage until site data is cleared. Starting a new cull asks before replacing saved progress, and storage failures appear when you choose **Cull** or **Resume**. If another tab changes saved progress, close and resume the latest pass. At completion, Docbank checks the captured set once; flag changes or Undo check it again, and **Previous** cancels a check in progress. **Review unflagged remainder** appears whenever unflagged photos remain anywhere in the captured set, including skipped and never-viewed photos, while missing or newly hidden photos count as unavailable. Cull is not offered in **Hidden**.
 
-Select 2–8 photos and choose **Compare** in the selection bar. Zoom, pan, and arrow-key navigation move the panes together. **Z** toggles 1:1 for each displayed preview. Choose **Manual closeup**, then click a face or draw a region on a full frame. Matching crop tiles appear below the full frames; **Clear closeup** removes them. The closeup uses your chosen location rather than automatic face detection.
+To compare photos side by side, select 2 to 8 photos and choose **Compare** in the selection bar. Zoom, pan, and arrow-key navigation move all panes together, and **Z** toggles 1:1 for each displayed preview. Choose **Manual closeup**, then click a face or draw a region on a full frame to show matching crop tiles below the full frames. Choose **Clear closeup** to remove them. Manual closeup uses the area you chose rather than automatic face detection.
 
 ![Compare showing three photos side by side](https://docbank.ai/assets/generated/web-photo-compare.png)
 
 ### People in photos
 
-Once a photo preview appears, choose **Add face**. Drag a box around a face, or focus the photo's face control, position it with the arrow keys, and press Enter. Escape cancels placement. If a create request has an uncertain result, **Retry face** or Enter retries the same box. A new placement waits until the pending request is resolved.
+Once a photo preview loads, choose **Add face** to draw a face box. Drag a box around the face, or focus the photo's face control, position it with the arrow keys, and press **Enter**. Press **Escape** to cancel placement. If a create request has an uncertain result, choose **Retry face** or press **Enter** to retry the same box; new placements wait until the pending request resolves.
 
-In the inspector's **People** section, choose a name from the search results or choose **Create person**. Each face has its own name picker. Creating a person and naming the face save together; a revision conflict creates neither. After an uncertain response, the picker reloads the face before another choice.
+In the inspector's **People** section, pick a name from the search results or choose **Create person**. Each face has its own name picker. Creating a person and naming the face save together, so a revision conflict creates neither. After an uncertain response, the picker reloads the face before letting you make another choice.
 
-Created people remain after you clear their photo assignment or remove their face. Removed faces still count toward the photo's 1,000-face limit. Use `docbank people retire` to retire an unwanted person.
+People you create stay in your vault even if you clear their photo assignment or remove their face, and removed faces still count toward the photo's 1,000-face limit. Run `docbank people retire` to retire an unwanted person.
 
-Names allow up to 200 UTF-8 bytes. Duplicate names are allowed; choose **Create person** for a different person with the same name, and merge people later if needed. See [browser names and visibility](people.md#browser-names-and-visibility) for search eligibility and duplicate-name recognition.
+Names can be up to 200 UTF-8 bytes. Duplicate names are allowed: choose **Create person** to add a different person with the same name, and merge people later if needed. See [browser names and visibility](people.md#browser-names-and-visibility) for search eligibility and duplicate-name recognition.
 
-Name search ignores case and matches the start of any word. For example, **Smith** finds **John Smith** and **John—Smith**. Letters, numbers, and combining marks stay within a word; punctuation and other separators start a new one. Search text is literal, including `%` and `_`. Choose **Load more** to reach later results.
+Name search ignores case and matches the start of any word. For example, **Smith** finds **John Smith** and **John—Smith**. Letters, numbers, and combining marks stay within a word, while punctuation and other separators start a new one. Search text is literal, including `%` and `_`. Choose **Load more** to load additional results, and finish loading the search before **Create person** becomes available.
 
-Open a named face’s picker and choose **Clear name** to remove its name. Choose **Remove face** to dismiss a mistaken box and its closeup. Choose **Clear whole-photo mark** to clear a photo-wide mark while keeping any named faces. Removing an assigned face or clearing a whole-photo mark asks for confirmation. Removed faces cannot be restored in the browser. Choose **Mark person in photo** to select an existing person or create a person from a new name. The person and whole-photo mark save together. HTTP callers supply `person_name` with a caller-chosen UUIDv4 `person_id` and reuse both fields when retrying. A name without an ID or an existing ID with a different name returns `422 invalid_photo_face`; a retired person returns `404 not_found`. A retry with the same ID and name reuses the saved assertion. Removing an unnamed manual face is immediate because you can redraw it. The face-decision API retains undo receipts.
+To edit or remove face assignments:
 
-Each face shares its number across the inspector, Loupe, and Cull closeup. Cull restores face captions after a rating refresh, including when the photo leaves the Library filter. Removing a face closes gaps in those numbers. Unnamed faces read **Face N**. Choose **Load more** to finish the search before **Create person** becomes available. The [namesake chooser](people.md#browser-names-and-visibility) lists identity details and loads face previews when you expand a candidate.
+- **Clear a name.** Open a named face's picker and choose **Clear name**.
+- **Remove a face.** Choose **Remove face** to dismiss a mistaken box and its closeup. Removing an unnamed manual face takes effect immediately because you can redraw it, while removing an assigned face asks for confirmation. Removed faces cannot be restored in the browser, though the face-decision API retains undo receipts.
+- **Mark a person in the whole photo.** Choose **Mark person in photo** to select an existing person or create one from a new name; the person and whole-photo mark save together. Choose **Clear whole-photo mark** and confirm to clear a photo-wide mark while keeping any named faces.
 
-Choose an active person's name beside the picker to filter photos to that person. Library links open Library; Hidden links stay in the unlocked Hidden view. This clears the text search and shows every match in capture-time order. Naming or clearing a face refreshes loaded views with person filters or search text in the same Hidden scope. Choose **Retry** after a People page error, including an empty first page. Retired names keep their labels and correction controls. Face labels follow the photo through rotation, zoom, and pan.
+HTTP callers supply `person_name` with a caller-chosen UUIDv4 `person_id` and reuse both fields when retrying. A name without an ID, or an existing ID with a different name, returns `422 invalid_photo_face`, and a retired person returns `404 not_found`. Retrying with the same ID and name reuses the saved assertion.
 
-Cull shows whole-photo marks first, then one closeup per face in creation order, matching the Face N labels. Closeups share the fit preview already loaded for the photo and rotate with it. If that preview is unavailable, each tile says **No preview**; choose **Retry preview** to try again.
+Each face shares its number across the inspector, Loupe, and Cull closeup, and removing a face closes any gaps in those numbers. Unnamed faces appear as **Face N**. Cull restores face captions after a rating refresh, even if the photo leaves the **Library** filter. The [namesake chooser](people.md#browser-names-and-visibility) lists identity details and loads face previews when you expand a candidate.
+
+Click an active person's name beside the picker to filter photos to that person. **Library** links open **Library**, and **Hidden** links stay in the unlocked **Hidden** view. Filtering clears the text search and shows every match in capture-time order. Naming or clearing a face refreshes loaded views that have person filters or search text in the same Hidden scope. Choose **Retry** after a **People** page error, including an empty first page. Retired names keep their labels and correction controls. Face labels follow the photo through rotation, zoom, and pan.
+
+**Cull** displays whole-photo marks first, followed by one closeup per face in creation order, matching the **Face N** labels. Closeups reuse the fit preview already loaded for the photo and rotate with it. If that preview is unavailable, each tile displays **No preview** and you can choose **Retry preview** to try again.
 
 ## Best shots
 
-Burst stacks show KEEP and CUT suggestions automatically when at least two frames have comparable measurements. The planner ranks shared focus, open eyes, aesthetics, and framing, with weights of 100, 90, 50, and 45. The eyes score uses the least-open prominent face. Blur duplicates inverse focus, so it adds no second vote. Ties favor RAW originals, then stable photo IDs. An unmeasured frame stays undecided. Frames with confirmed flags leave planning before ranking. A stack with an owner-confirmed pick receives no further keeper proposals.
+Burst stacks display **KEEP** and **CUT** suggestions automatically when at least two frames have comparable measurements. The planner ranks shared focus, open eyes, aesthetics, and framing with weights of 100, 90, 50, and 45. The eyes score uses the least-open prominent face, and because blur duplicates inverse focus, it adds no second vote. Ties favor RAW originals, then stable photo IDs. Unmeasured frames stay undecided, frames with confirmed flags leave planning before ranking, and a stack with an owner-confirmed pick receives no further keeper proposals.
 
-Face closeups show Sharpness, Light, Facing, Prominence, Eyes, and Smile. Missing observations show Unavailable. A face's worst measured sharpness, light, facing, or eyes score sets its grade. Below 0.33 is red for a subject occupying at least 2.1% of the frame, otherwise yellow. Scores from 0.33 to below 0.42 are yellow; 0.42 and above are green. Smile describes the face and doesn't affect its grade. Tiny crops leave sharpness and light unavailable.
+Face closeups display **Sharpness**, **Light**, **Facing**, **Prominence**, **Eyes**, and **Smile**, showing **Unavailable** for missing observations. A face's worst measured sharpness, light, facing, or eyes score sets its grade:
 
-Select a stack and choose **Accept all** or **Dismiss all**. P picks and X rejects through the ordinary photo editor. Acceptance checks the displayed KEEP/CUT choices, complete file revisions, and observed stack membership in one transaction. A changed choice or stack asks you to reload and changes nothing. Each batch creates one receipt. Undo restores accepted or manually edited flags, or reverses the latest dismissal, making the suggestions available again. Dismiss confirms each offered frame's current flag as your choice. **Keep current** preserves those flags on the other frames.
+- **Red.** Below 0.33 for a subject occupying at least 2.1% of the frame; smaller subjects below 0.33 grade yellow instead.
+- **Yellow.** From 0.33 to below 0.42.
+- **Green.** 0.42 and above.
 
-Backups retain confirmed flags. Pending suggestions and face report caches regenerate locally. Audited vaults support the same best-shot decisions and ordinary P/X edits.
+**Smile** describes the face without affecting its grade, and tiny crops leave sharpness and light unavailable.
+
+Select a stack and choose **Accept all** or **Dismiss all**, or use **P** to pick and **X** to reject through the ordinary photo editor. Acceptance verifies the displayed **KEEP** and **CUT** choices, complete file revisions, and observed stack membership in one transaction; if a choice or stack has changed, Docbank asks you to reload and changes nothing. Each batch creates one receipt. Undo restores accepted or manually edited flags, or reverses the latest dismissal so the suggestions become available again. Dismissing confirms each offered frame's current flag as your choice, and **Keep current** preserves those flags on the other frames.
+
+Backups keep confirmed flags, while pending suggestions and face report caches regenerate locally. Audited vaults support the same best-shot decisions and ordinary **P** and **X** edits.
