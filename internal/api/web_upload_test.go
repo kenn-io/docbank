@@ -924,8 +924,8 @@ func TestBrowserPhotoRecoveryPlan(t *testing.T) {
 	require.Equal(t, http.StatusOK, empty.StatusCode, emptyBody)
 	require.JSONEq(t, "null", emptyBody)
 	files := []map[string]any{
-		{"relative_path": "Card/one.xmp", "size": len("one"), "expected_hash": testHash("one")},
-		{"relative_path": "Card/two.xmp", "size": len("two"), "expected_hash": testHash("two")},
+		{"relative_path": "Choose files/one.xmp", "size": len("one"), "expected_hash": testHash("one")},
+		{"relative_path": "Choose files/two.xmp", "size": len("two"), "expected_hash": testHash("two")},
 	}
 	plan := map[string]any{"type": "plan_photo_import", "request_id": "plan", "destination": "/photos", "source_id": source, "files": files}
 	require.NoError(t, wsjson.Write(t.Context(), conn, plan))
@@ -947,9 +947,13 @@ func TestBrowserPhotoRecoveryPlan(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(body), &summary))
 	require.Equal(t, source, summary.SourceID)
-	require.Equal(t, "Card", summary.Folder)
+	require.Equal(t, "Choose files", summary.Folder)
 	require.Equal(t, 1, summary.Groups)
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+"/api/v1/photos/browser-imports?exclude="+source, nil)
+	excludedIDs := []string{source}
+	for i := range 20 {
+		excludedIDs = append(excludedIDs, fmt.Sprintf("30000000-0000-4000-8000-%012d", i))
+	}
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+"/api/v1/photos/browser-imports?exclude="+strings.Join(excludedIDs, ","), nil)
 	require.NoError(t, err)
 	request.Header["X-Api-Key"] = []string{""}
 	request.Header.Set(api.WebSessionHeader, issueWebSession(t, ts))
@@ -968,6 +972,7 @@ func TestBrowserPhotoRecoveryPlan(t *testing.T) {
 	require.NoError(t, err)
 
 	reconnected := browserUploadSocket(t, ts)
+	plan["recovering"] = true
 	plan["destination"] = "/elsewhere"
 	plan["inferred_source"] = true
 	require.NoError(t, wsjson.Write(t.Context(), reconnected, plan))
@@ -1007,6 +1012,20 @@ func TestBrowserPhotoRecoveryPlan(t *testing.T) {
 	require.NoError(t, wsjson.Write(t.Context(), reconnected, plan))
 	ambiguous := readPhotoResponse(t, reconnected)
 	require.Equal(t, "photo_import_ambiguous", ambiguous.Code)
+}
+
+func TestBrowserPhotoFreshPlanDoesNotRecoverSource(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	conn := browserUploadSocket(t, ts)
+	file := map[string]any{"relative_path": "Card/one.xmp", "size": 3, "expected_hash": testHash("one")}
+	plan := map[string]any{"type": "plan_photo_import", "request_id": "plan", "destination": "/photos", "source_id": "20000000-0000-4000-8000-000000000001", "files": []map[string]any{file}}
+	require.NoError(t, wsjson.Write(t.Context(), conn, plan))
+	initial := readPhotoResponse(t, conn)
+	require.Equal(t, "added", uploadBrowserPhoto(t, conn, initial.ImportID, 0, file, []byte("one")).Receipt.Status)
+	file["expected_hash"] = testHash("two")
+	require.NoError(t, wsjson.Write(t.Context(), conn, plan))
+	require.Equal(t, "photo_import_plan", readPhotoResponse(t, conn).Type)
 }
 
 func TestBrowserPhotoRecoveryMovedMember(t *testing.T) {

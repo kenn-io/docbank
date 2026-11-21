@@ -289,9 +289,6 @@ func webSessionRequestAllowed(r *http.Request) bool {
 				return false
 			}
 			ids := strings.Split(excluded[0], ",")
-			if len(ids) > 20 {
-				return false
-			}
 			for _, id := range ids {
 				if _, err := uuid.Parse(id); err != nil {
 					return false

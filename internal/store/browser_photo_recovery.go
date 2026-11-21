@@ -10,12 +10,13 @@ import (
 
 // BrowserPhotoImport describes recorded members of one browser selection.
 type BrowserPhotoImport struct {
-	SourceID    string            `json:"source_id"`
-	Folder      string            `json:"folder"`
-	StartedAt   string            `json:"started_at"`
-	Groups      int               `json:"groups"`
-	Destination string            `json:"destination"`
-	Members     map[string]string `json:"-"`
+	SourceID        string            `json:"source_id"`
+	Folder          string            `json:"folder"`
+	StartedAt       string            `json:"started_at"`
+	Groups          int               `json:"groups"`
+	Destination     string            `json:"destination"`
+	Members         map[string]string `json:"-"`
+	FolderSelection bool              `json:"-"`
 }
 
 // BrowserPhotoImport finds a browser source from its committed provenance.
@@ -25,7 +26,7 @@ func (s *Store) BrowserPhotoImport(ctx context.Context, sourceID string, exclude
 		return BrowserPhotoImport{}, false, err
 	}
 	for _, item := range imports {
-		if item.SourceID == sourceID || sourceID == "" && item.Folder != "Choose files" && !slices.Contains(excluded, item.SourceID) {
+		if item.SourceID == sourceID || sourceID == "" && item.FolderSelection && !slices.Contains(excluded, item.SourceID) {
 			return *item, true, nil
 		}
 	}
@@ -67,7 +68,7 @@ func (s *Store) BrowserPhotoImports(ctx context.Context) ([]*BrowserPhotoImport,
 		}
 		result := byID[id]
 		if result == nil {
-			result = &BrowserPhotoImport{SourceID: id, Folder: strings.TrimPrefix(desc, "browser: "), StartedAt: started, Members: map[string]string{}}
+			result = &BrowserPhotoImport{SourceID: id, Folder: strings.TrimPrefix(desc, "browser: "), StartedAt: started, Members: map[string]string{}, FolderSelection: strings.Contains(relative, "/")}
 			byID[id] = result
 			groups[id] = map[string]bool{}
 			parents[id] = map[int64]bool{}

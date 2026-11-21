@@ -101,7 +101,7 @@ it("remembers settled imports per vault and tolerates unusable browser storage",
   const vault = settledPhotoImports("vault-a");
   for (let index = 0; index < 21; index++) vault.add(`source-${index}`);
   vault.add("source-5");
-  expect(vault.has("source-0")).toBe(false);
+  expect(vault.has("source-0")).toBe(true);
   expect(vault.has("source-1")).toBe(true);
   expect(vault.has("source-5")).toBe(true);
   expect(vault.has("source-20")).toBe(true);

@@ -91,7 +91,7 @@ export function settledPhotoImports(vaultID: string) {
       try {
         localStorage.setItem(
           key,
-          JSON.stringify([...read().filter((id) => id !== sourceID), sourceID].slice(-20)),
+          JSON.stringify([...read().filter((id) => id !== sourceID), sourceID]),
         );
       } catch {
         /* Browser storage is optional. */

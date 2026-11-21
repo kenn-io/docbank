@@ -863,7 +863,7 @@ func handleWebPhotoPlan(
 	}
 	var recovered *store.BrowserPhotoImport
 	var imports []*store.BrowserPhotoImport
-	if problem == nil && begin.SourceID != nil {
+	if problem == nil && begin.SourceID != nil && (begin.Recovering || begin.InferredSource) {
 		var err error
 		imports, err = d.Store.BrowserPhotoImports(ctx)
 		if err != nil {
@@ -894,26 +894,25 @@ func handleWebPhotoPlan(
 	for i, file := range begin.Files {
 		paths[i] = "browser:" + sourceID.String() + "/" + file.RelativePath
 	}
-	{
-		var members []store.PhotoImportMember
-		var indexes []int
-		for _, group := range groups {
-			for _, index := range group {
-				members = append(members, store.PhotoImportMember{BlobHash: begin.Files[index].ExpectedHash, OriginalPath: paths[index]})
-				indexes = append(indexes, index)
-			}
-		}
-		resolved, resolveErr := d.Store.ResolveBrowserPhotoPaths(ctx, members)
-		if resolveErr != nil {
-			return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(resolveErr)) == nil
-		}
-		for i, index := range indexes {
-			if recovered == nil || recovered.Members[begin.Files[index].RelativePath] == "" {
-				paths[index] = resolved[i]
-			}
+	var members []store.PhotoImportMember
+	var indexes []int
+	for _, group := range groups {
+		for _, index := range group {
+			members = append(members, store.PhotoImportMember{BlobHash: begin.Files[index].ExpectedHash, OriginalPath: paths[index]})
+			indexes = append(indexes, index)
 		}
 	}
-	if problem == nil && recovered != nil {
+	resolved, resolveErr := d.Store.ResolveBrowserPhotoPaths(ctx, members)
+	if resolveErr != nil {
+		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(resolveErr)) == nil
+	}
+	for i, index := range indexes {
+		if recovered == nil || recovered.Members[begin.Files[index].RelativePath] == "" {
+			paths[index] = resolved[i]
+		}
+	}
+
+	if recovered != nil {
 		if begin.InferredSource && (recovered.Destination == "" || path.Clean(begin.Destination) != recovered.Destination) {
 			problem = NewError(http.StatusConflict, "photo_import_destination", "Choose the destination containing the recorded files.")
 		}
