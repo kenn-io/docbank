@@ -1015,7 +1015,7 @@ it.each(["content", "destination"])(
     });
     await fireEvent.click(await screen.findByRole("button", { name: "Choose the same folder…" }));
     if (change === "destination")
-      await fireEvent.input(screen.getByLabelText("Destination used for this import"), {
+      await fireEvent.input(screen.getByLabelText("Destination"), {
         target: { value: "/other" },
       });
     const changed =
@@ -1290,9 +1290,7 @@ it("loads a checkpoint when the vault identity arrives and routes Resume to file
   expect(screen.queryByRole("status")).toBeNull();
   expect(filePicker).toHaveBeenCalledOnce();
   expect(folderPicker).not.toHaveBeenCalled();
-  expect(screen.getByLabelText<HTMLInputElement>("Destination used for this import").value).toBe(
-    "/photos",
-  );
+  expect(screen.getByLabelText<HTMLInputElement>("Destination").value).toBe("/photos");
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
@@ -1353,9 +1351,7 @@ it.each([
     expect(screen.queryByRole("status")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
     await fireEvent.click(screen.getByRole("button", { name: "Choose the same files…" }));
-    expect(screen.getByLabelText<HTMLInputElement>("Destination used for this import").value).toBe(
-      "/photos",
-    );
+    expect(screen.getByLabelText<HTMLInputElement>("Destination").value).toBe("/photos");
     await fireEvent.change(screen.getByLabelText("Choose photo files"), {
       target: { files: selected },
     });
@@ -1701,7 +1697,7 @@ it("finishes a recorded folder import after a lost session by sending only the m
   );
   expect(screen.getByRole("button", { name: "Dismiss" })).toBeTruthy();
   // The vault does not record the original destination, so recovery waits for one.
-  const destination = screen.getByLabelText<HTMLInputElement>("Destination used for this import");
+  const destination = screen.getByLabelText<HTMLInputElement>("Destination");
   expect(section.contains(destination)).toBe(true);
   expect(destination.value).toBe("");
   expect(screen.getByRole("button", { name: "Choose the same folder…" })).toHaveProperty(
@@ -1714,20 +1710,18 @@ it("finishes a recorded folder import after a lost session by sending only the m
     screen.getByLabelText<HTMLInputElement>("Choose photo folder"),
     "click",
   );
-  await fireEvent.input(screen.getByLabelText("Destination used for this import"), {
+  await fireEvent.input(screen.getByLabelText("Destination"), {
     target: { value: "/photos" },
   });
   await fireEvent.click(screen.getByRole("button", { name: "Choose the same folder…" }));
   expect(folderPicker).toHaveBeenCalledOnce();
-  expect(screen.getByLabelText<HTMLInputElement>("Destination used for this import").value).toBe(
-    "/photos",
-  );
+  expect(screen.getByLabelText<HTMLInputElement>("Destination").value).toBe("/photos");
   await fireEvent.change(screen.getByLabelText("Choose photo folder"), {
     target: { files: selected },
   });
   const add = await screen.findByRole("button", { name: "Add 1 remaining group" });
   expect(screen.getByText("Destination: /photos")).toBeTruthy();
-  expect(screen.queryByLabelText("Destination used for this import")).toBeNull();
+  expect(screen.queryByLabelText("Destination")).toBeNull();
   expect(screen.queryByRole("button", { name: "Choose folder" })).toBeNull();
   expect(screen.queryByText("Already in the vault")).toBeNull();
   expect(screen.getAllByRole("listitem")).toHaveLength(1);
@@ -1787,7 +1781,7 @@ it("settles a recovered import whose groups are all in the vault without sending
     onauthfailure: vi.fn(),
   });
   await screen.findByRole("heading", { name: "Interrupted import found" });
-  await fireEvent.input(screen.getByLabelText("Destination used for this import"), {
+  await fireEvent.input(screen.getByLabelText("Destination"), {
     target: { value: "/photos" },
   });
   await fireEvent.click(screen.getByRole("button", { name: "Choose the same folder…" }));
@@ -1839,7 +1833,7 @@ it.each(["folder", "files"] as const)(
     const section = (await screen.findByRole("heading", { name: "Interrupted import found" }))
       .parentElement!;
     if (kind === "folder")
-      await fireEvent.input(screen.getByLabelText("Destination used for this import"), {
+      await fireEvent.input(screen.getByLabelText("Destination"), {
         target: { value: "/photos" },
       });
     await fireEvent.click(
@@ -1891,7 +1885,7 @@ it.each([false, true])(
     const section = (await screen.findByRole("heading", { name: "Interrupted import found" }))
       .parentElement!;
     expect(section.querySelector("p")!.textContent).toMatch(/^Folder “Trip” · started /);
-    const destination = screen.getByLabelText<HTMLInputElement>("Destination used for this import");
+    const destination = screen.getByLabelText<HTMLInputElement>("Destination");
     expect(destination.value).toBe(saved ? "/photos" : "");
     await fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     await waitFor(() =>
@@ -1936,9 +1930,7 @@ it("names a saved import with nothing in the vault yet without a zero count", as
     .parentElement!;
   expect(browserImports).toHaveBeenCalledWith("session", "saved-source", expect.any(AbortSignal));
   expect(section.querySelector("p")!.textContent).toBe("Import of chosen files");
-  expect(screen.getByLabelText<HTMLInputElement>("Destination used for this import").value).toBe(
-    "/photos",
-  );
+  expect(screen.getByLabelText<HTMLInputElement>("Destination").value).toBe("/photos");
   expect(screen.getByRole("button", { name: "Choose the same files…" })).toHaveProperty(
     "disabled",
     false,
@@ -1968,7 +1960,7 @@ it("keeps the interrupted import offered when a different folder is chosen for i
     onauthfailure: vi.fn(),
   });
   await screen.findByRole("heading", { name: "Interrupted import found" });
-  await fireEvent.input(screen.getByLabelText("Destination used for this import"), {
+  await fireEvent.input(screen.getByLabelText("Destination"), {
     target: { value: "/photos" },
   });
   await fireEvent.click(screen.getByRole("button", { name: "Choose the same folder…" }));
@@ -2017,9 +2009,7 @@ it("keeps a fresh import closed until a failed recovery lookup succeeds", async 
     /^Folder “Trip” · started .+ · 2 groups already in the vault$/,
   );
   // Without a checkpoint the destination is unknown, so recovery still waits for one.
-  expect(screen.getByLabelText<HTMLInputElement>("Destination used for this import").value).toBe(
-    "",
-  );
+  expect(screen.getByLabelText<HTMLInputElement>("Destination").value).toBe("");
   expect(screen.getByRole("button", { name: "Choose the same folder…" })).toHaveProperty(
     "disabled",
     true,
@@ -2058,9 +2048,7 @@ it("resumes a saved checkpoint under its own ID when its summary lookup fails", 
   expect(section.querySelector("p")!.textContent).toBe("Import from a folder");
   expect(screen.queryByText(/Could not check the vault/)).toBeNull();
   expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
-  expect(screen.getByLabelText<HTMLInputElement>("Destination used for this import").value).toBe(
-    "/photos",
-  );
+  expect(screen.getByLabelText<HTMLInputElement>("Destination").value).toBe("/photos");
   await fireEvent.click(screen.getByRole("button", { name: "Choose the same folder…" }));
   await fireEvent.change(screen.getByLabelText("Choose photo folder"), {
     target: { files: selected },

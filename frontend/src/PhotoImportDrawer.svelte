@@ -598,9 +598,9 @@
 
 {#snippet destinationField()}
   <label for="photo-destination"
-    >{recovery ? "Destination used for this import" : "Destination"}<TextInput
+    >Destination<TextInput
       id="photo-destination"
-      ariaLabel={recovery ? "Destination used for this import" : "Destination"}
+      ariaLabel="Destination"
       bind:value={destination}
       onchange={() => {
         if (!items.length && destination !== plannedDestination) void plan();
