@@ -164,9 +164,14 @@ func TestEgressRevalidatesDNSOnEachConnection(t *testing.T) {
 }
 
 func TestEgressFallsBackAcrossApprovedDNSAnswers(t *testing.T) {
+	ipv6, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp6", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 unavailable: %v", err)
+	}
+	require.NoError(t, ipv6.Close())
+
 	var listener, first net.Listener
 	var port uint16
-	var err error
 	for range 10 {
 		listener, err = (&net.ListenConfig{}).Listen(t.Context(), "tcp4", "127.0.0.1:0")
 		require.NoError(t, err)
