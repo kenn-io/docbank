@@ -71,3 +71,30 @@ export function photoImportStorage(vaultID: string, session: string) {
     },
   };
 }
+
+// Remembers, per vault in this browser, recorded imports the person dismissed or finished,
+// so a lookup that finds one again does not offer to finish it.
+export function settledPhotoImports(vaultID: string) {
+  const key = `docbank.photoImportsSettled.${vaultID}`;
+  function read(): string[] {
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem(key) ?? "[]");
+      return Array.isArray(saved) ? saved.filter((id) => typeof id === "string") : [];
+    } catch {
+      return [];
+    }
+  }
+  return {
+    has: (sourceID: string) => read().includes(sourceID),
+    add(sourceID: string) {
+      try {
+        localStorage.setItem(
+          key,
+          JSON.stringify([...read().filter((id) => id !== sourceID), sourceID].slice(-20)),
+        );
+      } catch {
+        /* Browser storage is optional. */
+      }
+    },
+  };
+}

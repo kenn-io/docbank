@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"uuid"
 )
 
 const (
@@ -270,6 +271,24 @@ func (r *webSessionRegistry) waitRevocations() {
 }
 
 func webSessionRequestAllowed(r *http.Request) bool {
+	if r.URL.Path == "/api/v1/photos/browser-imports" {
+		if r.Method != http.MethodGet {
+			return false
+		}
+		values, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil || len(values) > 1 {
+			return false
+		}
+		sourceIDs, ok := values["source_id"]
+		if !ok {
+			return r.URL.RawQuery == ""
+		}
+		if len(sourceIDs) != 1 {
+			return false
+		}
+		_, err = uuid.Parse(sourceIDs[0])
+		return err == nil
+	}
 	if strings.HasPrefix(r.URL.Path, "/api/v1/redaction/") {
 		return redactionBrowserRequestAllowed(r)
 	}

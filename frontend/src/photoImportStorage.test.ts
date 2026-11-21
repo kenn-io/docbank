@@ -94,3 +94,23 @@ it("loads the saved digest and picker kind and sends only the expected identity 
     expected: { sourceID: checkpoint.sourceID, revision: checkpoint.revision },
   });
 });
+
+it("remembers settled imports per vault and tolerates unusable browser storage", async () => {
+  const { settledPhotoImports } = await import("./photoImportStorage.js");
+  localStorage.clear();
+  const vault = settledPhotoImports("vault-a");
+  for (let index = 0; index < 21; index++) vault.add(`source-${index}`);
+  vault.add("source-5");
+  expect(vault.has("source-0")).toBe(false);
+  expect(vault.has("source-1")).toBe(true);
+  expect(vault.has("source-5")).toBe(true);
+  expect(vault.has("source-20")).toBe(true);
+  expect(settledPhotoImports("vault-b").has("source-20")).toBe(false);
+  localStorage.setItem("docbank.photoImportsSettled.vault-c", "{not json");
+  expect(settledPhotoImports("vault-c").has("source")).toBe(false);
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new DOMException("Full", "QuotaExceededError");
+  });
+  expect(() => settledPhotoImports("vault-c").add("source")).not.toThrow();
+  localStorage.clear();
+});

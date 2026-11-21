@@ -80,13 +80,15 @@ for (const prior of [false, true]) {
       else await expect(readFile(savedPath, "utf8")).rejects.toThrow(/ENOENT/);
       await page.getByRole("button", { name: "Close add photos", exact: true }).click();
       await open();
-      await expect(page.getByRole("button", { name: "Resume import", exact: true })).toHaveCount(
-        prior ? 1 : 0,
-      );
+      await expect(
+        page.getByRole("button", { name: "Choose the same files…", exact: true }),
+      ).toHaveCount(prior ? 1 : 0);
       if (prior) {
-        await page.getByRole("button", { name: "Resume import", exact: true }).click();
+        await page.getByRole("button", { name: "Choose the same files…", exact: true }).click();
         await page.getByLabel("Choose photo files").setInputFiles(selectionA);
-        await expect(page.getByRole("button", { name: "Add 1 group", exact: true })).toBeEnabled();
+        await expect(
+          page.getByRole("button", { name: "Add 1 remaining group", exact: true }),
+        ).toBeEnabled();
         const resumed = (await readFile(savedPath, "utf8")).split("\n")[1]!;
         expect(JSON.parse(resumed).sourceID).toBe(JSON.parse(saved!.split("\n")[1]!).sourceID);
         await page.getByRole("button", { name: "Close add photos", exact: true }).click();
