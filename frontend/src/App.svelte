@@ -5754,7 +5754,7 @@
   }
   @media (hover: none), (pointer: coarse) {
     .album-item {
-      min-height: max(44px, var(--nav-subitem-height));
+      min-height: 44px;
     }
   }
   .album-drop {

@@ -272,7 +272,7 @@ body .app-shell .search-controls .kit-button--outline.kit-button--neutral {
 
 @media (hover: none), (pointer: coarse) {
   .nav-item {
-    min-height: max(44px, var(--nav-item-height));
+    min-height: 44px;
   }
 }
 
