@@ -214,6 +214,12 @@
   </p>
 {/snippet}
 
+{#snippet laneStateText(state: string)}
+  <span class="state" data-state={state} data-kit-tone={state === "Paused" ? "warning" : undefined}
+    >{state}</span
+  >
+{/snippet}
+
 <DrawerShell title="Running now" closeLabel="Close background jobs" {onclose}>
   {#snippet actions()}
     {#if busy > 0}<span class="busy-count">{busy} running</span>{/if}
@@ -247,11 +253,7 @@
           <section class="job" aria-label={lane.title}>
             <div class="job-row">
               <strong class="job-name">{lane.title}</strong>
-              {#if state !== "Running"}<span
-                  class="state"
-                  data-state={state}
-                  data-kit-tone={state === "Paused" ? "warning" : undefined}>{state}</span
-                >{/if}
+              {#if state !== "Running"}{@render laneStateText(state)}{/if}
               <div class="controls">
                 {@render laneControls(lane)}
                 {#if lane.members.filter((member) => member.can_cancel).length === 1}
@@ -349,12 +351,7 @@
                   {/if}
                 </th>
                 <td
-                  ><span
-                    class="state"
-                    data-state={laneState(lane)}
-                    data-kit-tone={laneState(lane) === "Paused" ? "warning" : undefined}
-                    >{laneState(lane)}</span
-                  >
+                  >{@render laneStateText(laneState(lane))}
                   {#if !lane.visible}
                     {#each lane.members.filter((member) => member.error) as member (member.name)}
                       <p class="error">{member.error}</p>
@@ -443,7 +440,7 @@
   .error {
     color: var(--accent-red);
   }
-  .state[data-state="Paused"] {
+  .state[data-kit-tone] {
     color: var(--kit-tone-ink);
   }
   .error {

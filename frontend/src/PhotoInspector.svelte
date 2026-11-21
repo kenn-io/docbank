@@ -551,7 +551,7 @@
   }
   .suggestions :global(.suggested-keyword:has(input:checked)) {
     border-color: var(--accent-blue);
-    background: var(--selection-bg);
+    background: color-mix(in srgb, var(--accent-blue) 10%, var(--bg-surface));
   }
   .suggestions :global(.suggested-keyword:has(input:checked) .kit-checkbox__label) {
     color: var(--text-primary);

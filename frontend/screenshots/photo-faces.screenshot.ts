@@ -4,6 +4,7 @@ import path from "node:path";
 import * as api from "../src/generated/docbank.js";
 import { captureThemes } from "./capture-themes.js";
 import { photoFixture, repository, withPhotoAPI } from "./photo-fixture.js";
+import { expectReadableTone } from "./tone-contrast.js";
 
 const output = process.env.DOCBANK_FACES_SCREENSHOT_DIR;
 test.use({ actionTimeout: 15_000 });
@@ -30,6 +31,33 @@ test("shows detected faces in the inspector and loupe", async ({ page }) => {
       people.getByRole("button", { name: "Find or create a person: Face 1" }),
     ).toBeVisible();
     await captureThemes(page, output!, "after-detection-inspector-loupe");
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("keeps green and yellow face grades readable in both themes", async ({ page }) => {
+  const fixture = photoFixture(
+    await mkdtemp(path.join(repository, ".superpowers", "face-grades-proof-")),
+  );
+  try {
+    await fixture.seed(3, "--face-grades");
+    const url = new URL(await fixture.run("web", "--no-browser"));
+    url.pathname = "/photos";
+    await page.goto(url.href);
+    await page.getByRole("button", { name: "Cull", exact: true }).click();
+    const cull = page.getByRole("dialog", { name: "Cull photos" });
+    await cull.getByRole("button", { name: "Show Synthetic-photo-00003.jpg", exact: true }).click();
+    const grades = cull.getByRole("region", { name: "Face closeups" }).locator(".grade");
+    await expect(grades).toHaveText(["green", "yellow"]);
+    for (const theme of ["light", "dark"] as const) {
+      await page.evaluate((value) => {
+        localStorage.setItem("docbank-theme", value);
+        document.documentElement.classList.toggle("dark", value === "dark");
+      }, theme);
+      await expectReadableTone(grades.nth(0), theme, "success");
+      await expectReadableTone(grades.nth(1), theme, "warning");
+    }
   } finally {
     await fixture.dispose();
   }

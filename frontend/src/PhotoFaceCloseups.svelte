@@ -151,10 +151,7 @@
     border-radius: 50%;
     background: currentColor;
   }
-  .grade[data-grade="green"] {
-    color: var(--kit-tone-ink);
-  }
-  .grade[data-grade="yellow"] {
+  .grade[data-kit-tone] {
     color: var(--kit-tone-ink);
   }
   .grade[data-grade="red"] {

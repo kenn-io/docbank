@@ -332,7 +332,7 @@
     border: 1px solid color-mix(in srgb, var(--accent-blue) 40%, var(--border-default));
     border-radius: 999px;
     color: color-mix(in srgb, var(--accent-blue) 72%, var(--text-primary));
-    background: var(--selection-bg);
+    background: color-mix(in srgb, var(--accent-blue) 10%, var(--bg-surface));
   }
   .smart-set-kind::before {
     width: 6px;
