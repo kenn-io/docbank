@@ -165,10 +165,10 @@ func TestEgressRevalidatesDNSOnEachConnection(t *testing.T) {
 
 func TestEgressFallsBackAcrossApprovedDNSAnswers(t *testing.T) {
 	ipv6, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp6", "[::1]:0")
-	if err != nil {
-		t.Skipf("IPv6 unavailable: %v", err)
+	ipv6Available := err == nil
+	if ipv6Available {
+		require.NoError(t, ipv6.Close())
 	}
-	require.NoError(t, ipv6.Close())
 
 	var listener, first net.Listener
 	var port uint16
@@ -176,6 +176,9 @@ func TestEgressFallsBackAcrossApprovedDNSAnswers(t *testing.T) {
 		listener, err = (&net.ListenConfig{}).Listen(t.Context(), "tcp4", "127.0.0.1:0")
 		require.NoError(t, err)
 		_, port = endpoint(t, listener.Addr())
+		if !ipv6Available {
+			break
+		}
 		first, err = (&net.ListenConfig{}).Listen(t.Context(), "tcp6", net.JoinHostPort("::1", strconv.Itoa(int(port))))
 		if err == nil {
 			break
@@ -187,7 +190,9 @@ func TestEgressFallsBackAcrossApprovedDNSAnswers(t *testing.T) {
 		}
 	}
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = first.Close() })
+	if first != nil {
+		t.Cleanup(func() { _ = first.Close() })
+	}
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, "fallback")
 	}))
@@ -210,7 +215,9 @@ func TestEgressFallsBackAcrossApprovedDNSAnswers(t *testing.T) {
 	}})
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://provider.invalid:"+strconv.Itoa(int(port)), nil)
 	require.NoError(t, err)
-	require.NoError(t, first.Close())
+	if first != nil {
+		require.NoError(t, first.Close())
+	}
 	response, err := (&http.Client{Transport: transport}).Do(request)
 	require.NoError(t, err)
 	body, err := io.ReadAll(response.Body)
