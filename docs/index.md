@@ -5,15 +5,15 @@ description: Install Docbank, then find the guide for importing, searching, expo
 
 # Docbank documentation
 
-Docbank keeps documents in a vault on your own machine. The vault holds the
-stored files, every saved version, and the catalog that records where each
-document lives.
+Docbank stores your documents in a vault on your own machine, keeping the
+files, every saved version, and the catalog that tracks where each document
+lives.
 
-If you are new, start with [setup](setup.md) and then the
-[ten-minute quickstart](quickstart.md). For an overview of the product, see
-[docbank.ai](https://docbank.ai) or the [visual tour](tour.md).
+If you are new to Docbank, start with [setup](setup.md) and work through the
+[ten-minute quickstart](quickstart.md). For a quick overview, visit
+[docbank.ai](https://docbank.ai) or browse the [visual tour](tour.md).
 
-## What do you want to do?
+## Common tasks
 
 | Task | Start here |
 | --- | --- |
@@ -40,11 +40,12 @@ If you are new, start with [setup](setup.md) and then the
 
 ## Build an integration
 
-- [Docbank for agents](agents.md) helps you choose an interface.
+- [Docbank for agents](agents.md) helps you choose the right interface.
 - [MCP setup](usage/mcp.md) connects a local agent to the daemon.
 - [Agent integration](agents/integration.md) covers authentication, verified
-  transfers, and conflicting edits.
-- [Embed in Go](embedding.md) shows how an application can own its own vault.
+  transfers, and handling conflicting edits.
+- [Embed in Go](embedding.md) shows how your application can own a separate
+  vault.
 - [Document understanding in Go](document-understanding.md) covers the packages
   for text preparation, optical character recognition (OCR), and embeddings.
 - [Document processing](architecture/document-processing.md) explains how the
@@ -52,18 +53,17 @@ If you are new, start with [setup](setup.md) and then the
 
 ## Look up a command, endpoint, or setting
 
-Use the [CLI reference](cli-reference.md) for commands and flags, the
+Check the [CLI reference](cli-reference.md) for commands and flags, the
 [HTTP API reference](architecture/http-api.md) for requests and errors, and
-[configuration](configuration.md) for settings.
-
-[How Docbank works](architecture/overview.md) introduces the storage model and
-links to the architecture pages that define it.
+[configuration](configuration.md) for settings. To see how the storage model
+fits together, read [How Docbank works](architecture/overview.md), which links
+to the detailed architecture pages.
 
 ## Check capabilities and releases
 
-The [capability guide](capabilities.md) lists what Docbank does today. The
-[roadmap](roadmap.md) lists what is planned. The [changelog](changelog.md)
-records each published release.
+See the [capability guide](capabilities.md) for what Docbank does today, the
+[roadmap](roadmap.md) for planned work, and the [changelog](changelog.md) for
+published releases.
 
 Docbank is alpha software. Keep your own copies of anything irreplaceable, and
 verify a backup before you rely on it.

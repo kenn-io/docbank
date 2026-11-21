@@ -5,9 +5,10 @@ description: A ten-minute tour of the docbank CLI.
 
 # Quickstart
 
-Import documents, find and organize them, then test recovery in a temporary
-vault. These examples use a Unix shell. Set `DOCBANK_HOME` first so the commands
-use a scratch vault:
+In about ten minutes, you can import a folder of documents into a temporary
+vault, organize and search them, and test a backup and restore. These
+examples use a Unix shell. Set `DOCBANK_HOME` first so every command targets a
+scratch vault:
 
 ```bash
 export DOCBANK_HOME=$(mktemp -d)
@@ -15,37 +16,39 @@ export DOCBANK_HOME=$(mktemp -d)
 
 ## Import some documents
 
-`add` copies files into the vault. Sources are never modified or deleted.
+`add` copies files into the vault without modifying or deleting the originals:
 
 ```bash
-docbank document add ~/Documents/taxes --dest /taxes
+docbank document add ~/Documents/taxes --dest /
 ```
 
 ```
-added: 214  skipped: 0  failed: 0
+added: 214  skipped: 0  excluded: 0  failed: 0
 ```
 
-Directories import recursively: the directory's own name becomes a
-folder under `--dest`, and the relative structure underneath is
-preserved. Without `--dest`, files land in `/inbox`.
+Directories import recursively. The directory's own name becomes a folder under
+`--dest`, keeping the relative structure underneath intact. Without `--dest`,
+files land in `/inbox`.
 
 ### The daemon
 
-The first `add` command starts the daemon, the background process that owns
-and reads the vault. Data commands start it automatically when needed. Use
-`docbank daemon status` to inspect it and `docbank daemon stop` to stop it. It
-also exits after a period of inactivity. See [Daemon](architecture/daemon.md)
-for startup and lifetime rules.
+That first `add` command starts the daemon, the background process that owns
+and reads your vault. Any data command starts it automatically when needed, and
+it exits after a period of inactivity. Run `docbank daemon status` to check on
+it, or `docbank daemon stop` to shut it down. See
+[Daemon](architecture/daemon.md) for startup and lifetime rules.
 
-Repeat the same import to see the completed files skipped. Docbank checks
-content at the destination name and its collision suffixes. See
-[Importing documents](usage/importing.md) for the matching rules.
+If you run the same import again, Docbank skips the files it already has. It
+checks content at the destination name and its collision suffixes, as described
+in [Importing documents](usage/importing.md):
 
 ```
-added: 0  skipped: 214  failed: 0
+added: 0  skipped: 214  excluded: 0  failed: 0
 ```
 
 ## Browse the tree
+
+List a folder to see its entries, sizes, and modification times:
 
 ```bash
 docbank document list /taxes
@@ -58,7 +61,7 @@ id:102    dir   0      2026-07-06T21:14:05Z  2025
 id:231    file  48211  2026-07-06T21:14:08Z  checklist.pdf
 ```
 
-`tree` prints the whole hierarchy with node IDs:
+To see the full hierarchy along with node IDs, run `tree`:
 
 ```bash
 docbank document tree /taxes
@@ -66,30 +69,30 @@ docbank document tree /taxes
 
 ```
 /taxes
-  2024  [14]
-    return.pdf  [15]
-  2025  [102]
-    return.pdf  [103]
-  checklist.pdf  [231]
+  2024  [id:14]
+    return.pdf  [id:15]
+  2025  [id:102]
+    return.pdf  [id:103]
+  checklist.pdf  [id:231]
 ```
 
-For an interactive view of the same tree, open the terminal browser:
+To browse the same tree interactively, open the terminal browser:
 
 ```bash
 docbank tui
 ```
 
-Use the arrow keys or `j`/`k` to select a document, Enter to open a directory,
-and `/` to search names and extracted text. Press `i` to inspect the document's
-IDs, revision, and content hash, or `a` for its permanent audit timeline.
-Press `x` to review moving the selected revision to recoverable trash, or `T`
-to browse and restore trash roots. Press `O` for the read-only storage inventory
-and configured backup recovery points. The TUI does not expose permanent
-deletion or maintenance mutations. See the
-[interactive terminal browser](usage/tui.md) guide for the complete key map.
+Use the arrow keys or `j` and `k` to move through documents, press **Enter** to
+open a directory, and press `/` to search names and extracted text. Press `i`
+to check a document's IDs, revision, and content hash, or `a` to view its
+permanent audit timeline. Press `x` to review moving the selected revision to
+recoverable trash, `T` to browse and restore trash roots, or `O` to inspect the
+read-only storage inventory and configured backup recovery points. The TUI does
+not expose permanent deletion or maintenance mutations. See the
+[interactive terminal browser](usage/tui.md) guide for the full key map.
 
-`cat` streams a file's bytes to stdout. To save a local file, use `get`. It
-verifies the complete download in a private temporary file before publishing
+To stream a file's bytes to stdout, use `cat`. To save a local copy, use `get`,
+which verifies the complete download in a private temporary file before writing
 the destination:
 
 ```bash
@@ -97,7 +100,8 @@ docbank document cat /taxes/checklist.pdf
 docbank document get /taxes/checklist.pdf /tmp/checklist.pdf
 ```
 
-Every imported file also has an immutable content version with its own UUID:
+Every imported file gets an immutable content version with its own UUID, which
+stays valid even if you rename or move the node:
 
 ```bash
 docbank document versions list /taxes/checklist.pdf
@@ -105,34 +109,36 @@ docbank document versions show <version-uuid> --json
 docbank document versions cat <version-uuid> > /tmp/checklist-version.pdf
 ```
 
-The version ID survives node renames and moves. Replace the current content
-while keeping the same file node:
+To replace the current content while keeping the same file node, use `put`:
 
 ```bash
 docbank document put ~/Documents/revised-checklist.pdf /taxes/checklist.pdf
 docbank document versions list /taxes/checklist.pdf
 ```
 
-`put` hashes the source before contacting the daemon, then inspects the target
-and uploads it, showing separate progress for both file passes. The upload
-requires the target revision it just observed, so it fails if the target
-changed in the meantime instead of overwriting that change. The prior version
-remains available through `docbank document versions cat <old-version-uuid>`. Adopt it as
-current without erasing the replacement:
+`put` hashes the source file before contacting the daemon, then inspects the
+target and uploads the replacement while showing separate progress for each
+pass. The upload checks that the target still has the revision `put`
+observed, so it fails if the target changed in the meantime instead of
+overwriting that change. The previous version remains available through
+`docbank document versions cat <old-version-uuid>`.
+
+To adopt an older version as current without erasing the replacement, run
+`revert`:
 
 ```bash
 docbank document revert /taxes/checklist.pdf <old-version-uuid>
 ```
 
-Reverting creates a new current version that records the older version it
-uses. Docbank reuses the stored bytes and preserves both earlier versions.
-See [Editing and versions](architecture/editing-and-versions.md) for retention
-and revision rules.
+Reverting creates a new current version that records which older version it
+uses. Docbank reuses the stored bytes and keeps both earlier versions. See
+[Editing and versions](architecture/editing-and-versions.md) for retention and
+revision rules.
 
 For text and other editor-friendly files, `edit` verifies a private copy, opens
-the blocking command from `VISUAL` or `EDITOR`, and creates a replacement only
-when the result changed. GUI editors need their wait flag, for example
-`VISUAL='code --wait'`.
+the blocking command from `VISUAL` or `EDITOR`, and creates a new version only
+when the file changed. If you use a GUI editor, include its wait flag, for
+example `VISUAL='code --wait'`:
 
 ```bash
 docbank document edit /notes/draft.md
@@ -148,15 +154,15 @@ docbank tag assign taxes /taxes/checklist.pdf
 docbank tag nodes taxes
 ```
 
-The human CLI accepts the current tag name or UUID. Input shaped like a
-canonical UUID is always treated as an ID, even if a tag has that string as its
-display name. `docbank tag list` shows revisions and assignment counts.
-`tag rename` changes only the display name. `tag delete` removes assignments
-without deleting any document.
+The human CLI accepts either the current tag name or its UUID. Any input shaped like
+a canonical UUID is always treated as an ID, even if a tag uses that string as
+its display name. Run `docbank tag list` to see revisions and assignment
+counts. `tag rename` changes only the display name, and `tag delete` removes
+assignments without deleting any document.
 
 ## Reorganize
 
-Moves and renames change only metadata. The stored bytes do not move.
+Moves and renames update metadata only. The stored bytes stay where they are:
 
 ```bash
 # Rename in place (destination doesn't exist; its parent does)
@@ -167,34 +173,35 @@ docbank document move /taxes/filing-checklist.pdf /taxes/2025
 ```
 
 ```
-moved [231] /taxes/2025/filing-checklist.pdf
+moved [id:231] /taxes/2025/filing-checklist.pdf
 ```
 
 ## Search
 
-Search matches prepared words and their regular forms in document names and supported current
-text. Every remaining word must match. Quote a phrase within the query to require adjacent words:
+Search matches prepared words and their regular forms in document names and
+supported current text. Every remaining word in the query must match. To
+require adjacent words, quote a phrase:
 
 ```bash
-docbank search tax check
+docbank search filing check
 ```
 
 ```
-ID   PATH
-231  /taxes/2025/filing-checklist.pdf
+SELECTOR  MATCH  PATH
+id:231    name   /taxes/2025/filing-checklist.pdf
 ```
 
 ## Trash and recovery
 
-`rm` is soft deletion. The node (and its subtree, for directories) moves to
-the trash and its name becomes reusable:
+`remove` performs soft deletion. It moves the node, along with its subtree for
+directories, to the trash and frees up its name for reuse:
 
 ```bash
 docbank document remove /taxes/2024/return.pdf
 ```
 
 ```
-trashed [15] /taxes/2024/return.pdf (restore with: docbank document restore 15)
+trashed [id:15] /taxes/2024/return.pdf (restore with: docbank document restore id:15)
 ```
 
 ```bash
@@ -206,9 +213,10 @@ docbank trash empty --older-than 30d --run   # permanently delete old trash
 
 ## Reclaim and verify
 
-Emptying the trash deletes tree entries, but the underlying bytes remain
-until you garbage-collect. `gc` is a dry run by default. It removes loose files
-directly and marks unreachable packed payload as pending repack:
+Emptying the trash deletes tree entries, while the underlying bytes stay on
+disk until you run garbage collection. `gc` runs in dry-run mode by default.
+When you pass `--run`, it removes loose files directly and marks unreachable
+packed payload as pending repack:
 
 ```bash
 docbank vault gc
@@ -232,12 +240,12 @@ docbank vault verify            # re-hash every stored blob
 
 ## Prove recovery
 
-A backup repository stores recovery snapshots outside the live vault. Each
-capture reuses unchanged content from earlier snapshots. The commands below
-perform this recovery test:
+A backup repository stores recovery snapshots outside the live vault, and each
+capture reuses unchanged content from earlier snapshots. Follow these steps to
+run a complete recovery test:
 
 1. Create temporary backup and restore directories.
-2. Initialize a repository and capture the vault.
+2. Initialize a backup repository and capture the vault.
 3. List and verify the snapshots.
 4. Restore the latest snapshot into a separate vault.
 5. Browse and verify the restored vault.
@@ -256,15 +264,14 @@ DOCBANK_HOME="$DOCBANK_RESTORE" docbank document tree /
 DOCBANK_HOME="$DOCBANK_RESTORE" docbank vault verify
 ```
 
-You can use the restored vault independently. Restore does not replace the
-running source vault. See [Backup and restore](usage/backup.md) for progress
-modes, snapshot selection, overwrite rules, and the proof that restore
-returns.
+The restored vault works independently and does not replace your running source
+vault. See [Backup and restore](usage/backup.md) for progress modes, snapshot
+selection, overwrite rules, and the proof that restore returns.
 
-That is the core document workflow. From here:
+From here, you can explore the rest of the docs:
 
-- [Capabilities](capabilities.md) gives the complete product map.
-- The [Visual tour](tour.md) shows the real interfaces.
-- [Vault lifecycle](usage/lifecycle.md) covers maintenance and upgrades.
-- [Docbank for agents](agents.md) covers automation.
-- The [CLI reference](cli-reference.md) documents each command.
+- [Capabilities](capabilities.md) maps out everything Docbank does today.
+- [Visual tour](tour.md) shows the web app and terminal browser in action.
+- [Vault lifecycle](usage/lifecycle.md) covers ongoing maintenance and upgrades.
+- [Docbank for agents](agents.md) covers agent integration and automation.
+- [CLI reference](cli-reference.md) documents every command and flag.

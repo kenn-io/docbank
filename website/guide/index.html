@@ -94,7 +94,7 @@
     <main id="main">
       <header class="hero compact">
         <h1>Follow one document through Docbank</h1>
-        <p class="lede">This guide follows a single document from import to backup. Each step says what Docbank stores and what is left for you to decide. The processing steps apply only if you set up processing.</p>
+        <p class="lede">Follow a single document from import to backup. Each step explains what Docbank stores and what you decide, and the processing steps apply only if you set up processing.</p>
         <ol class="guide-nav" aria-label="Guide steps">
           <li><a href="#ingest">01 Import</a></li>
           <li><a href="#identify">02 Move and edit</a></li>
@@ -113,7 +113,7 @@
         <li class="guide-stop" id="ingest">
           <div class="guide-copy">
             <h2>Import the file</h2>
-            <p>Docbank copies the file into the vault and leaves the source where it was. The copy appears in a folder tree you can browse. Docbank records a checksum at import, so it can tell later whether the stored bytes have changed.</p>
+            <p>Docbank copies the file into the vault, leaves the original where it is, and adds the copy to a folder tree you can browse. It also records a checksum at import so it can tell later if the stored bytes have changed.</p>
             <a href="/docs/usage/importing/">Importing documents</a>
           </div>
           <div class="guide-media">
@@ -126,7 +126,7 @@
         <li class="guide-stop" id="identify">
           <div class="guide-copy">
             <h2>Move, rename, or replace it</h2>
-            <p>Every document has a node ID that stays the same for its whole life. Moving or renaming the document changes its path and nothing else. Replacing its content saves a new version, and the earlier versions you keep can still be opened or downloaded.</p>
+            <p>Every document gets a node ID that stays the same for its entire life. Moving or renaming the document changes only its path. When you replace its content, Docbank saves a new version, and you can still open or download any earlier version you keep.</p>
             <a href="/docs/architecture/editing-and-versions/">Editing and versions</a>
           </div>
           <div class="guide-media">
@@ -138,8 +138,8 @@
         </li>
         <li class="guide-stop" id="authorize">
           <div class="guide-copy">
-            <h2>Review what processing will send</h2>
-            <p>Processing is set up as profiles. Choose one, and Docbank shows its plan for the selected version: each provider, where it runs, and the kind of content it will receive. Give consent once you have read the plan. A vault restored from a backup needs new consent before any network processing.</p>
+            <h2>Review what processing sends</h2>
+            <p>Processing runs through profiles you configure. When you choose a profile, Docbank shows its plan for the selected version: each provider, where it runs, and the kind of content it receives. Once you review the plan, you grant consent. A vault restored from a backup requires new consent before any network processing runs.</p>
             <a href="/docs/usage/document-processing/">Processing and consent</a>
           </div>
           <div class="guide-media">
@@ -152,7 +152,7 @@
         <li class="guide-stop" id="render">
           <div class="guide-copy">
             <h2>Extract the text</h2>
-            <p>Processing produces a rendition: the document&rsquo;s text as Markdown, saved against the version it came from. Start it from the web app, TUI, CLI, HTTP API, or Go API. The original file is not changed. With a supported provider, optical character recognition (OCR) reads text from scans and images.</p>
+            <p>Processing creates a rendition, the document's text saved as Markdown against the version it came from, without changing the original file. You can start processing from the web app, TUI, CLI, HTTP API, or Go API. With a supported provider, optical character recognition (OCR) reads text from scans and images.</p>
             <a href="/docs/usage/document-processing/">Document processing</a>
           </div>
           <div class="guide-media">
@@ -165,7 +165,7 @@
         <li class="guide-stop" id="embed">
           <div class="guide-copy">
             <h2>Add search by meaning</h2>
-            <p>An embedding is a list of numbers that stands for a piece of content, so similar content can be found by comparing numbers. Configure an embedding service, review what it will receive, and process the versions you want to search. The web app and TUI then offer Semantic and Hybrid search. Finding similar documents compares embeddings already in the vault and calls no provider.</p>
+            <p>An embedding is a list of numbers representing a piece of content, so Docbank can find similar content by comparing numbers. Configure an embedding service, review what it receives, and process the versions you want to search. The web app and TUI then offer Semantic and Hybrid search, and finding similar documents compares embeddings already in the vault without calling a provider.</p>
             <a href="/docs/usage/search/">Search by meaning</a>
           </div>
           <div class="guide-media">
@@ -178,7 +178,7 @@
         <li class="guide-stop" id="retrieve">
           <div class="guide-copy">
             <h2>Find the document again</h2>
-            <p>Search file names and extracted text, then narrow the results by tag, folder, file type, or date. Save the queries and highlight terms you use often. A lexical (keyword) query can also be frozen: its rows, counts, and facets stay as they were when it ran, whatever changes in the vault afterwards.</p>
+            <p>Search file names and extracted text, then narrow results by tag, folder, file type, or date, and save the queries and highlight terms you use often. You can also freeze a lexical (keyword) query so its rows, counts, and facets stay exactly as they were when it ran, no matter what changes in the vault afterwards.</p>
             <a href="/docs/usage/searching/">Searching</a>
           </div>
           <div class="guide-media">
@@ -191,7 +191,7 @@
         <li class="guide-stop" id="export">
           <div class="guide-copy">
             <h2>Export the versions you reviewed</h2>
-            <p>Select documents, or take a whole frozen query. Docbank lists the originals and processing outputs the export will include, then builds a ZIP and verifies it. If a document changes after you start, the export still holds the version you selected. For search counts over a date range, download the CSV report with its evidence ZIP.</p>
+            <p>Select individual documents or a whole frozen query. Docbank lists the originals and processing outputs included in the export, then builds and verifies a ZIP archive. If a document changes after you start, the export still holds the version you selected. For search counts over a date range, you can download the CSV report along with its evidence ZIP.</p>
             <a href="/docs/usage/export-bundles/">Verified export bundles</a>
           </div>
           <div class="guide-media">
@@ -204,7 +204,7 @@
         <li class="guide-stop" id="replace">
           <div class="guide-copy">
             <h2>Processing outputs stay separate</h2>
-            <p>Text, previews, embeddings, and indexes are derivatives: outputs computed from a saved document. Docbank stores them apart from the original and records which version each one came from. Processing and retention rules decide when a derivative can be replaced or removed.</p>
+            <p>Text, previews, embeddings, and indexes are derivatives computed from a saved document. Docbank stores them separately from the original and tracks which version each one came from. Processing and retention rules govern when a derivative can be replaced or removed.</p>
             <a href="/docs/architecture/overview/">Processing and retention</a>
           </div>
           <div class="guide-media">
@@ -214,7 +214,7 @@
         <li class="guide-stop" id="serve">
           <div class="guide-copy">
             <h2>Use any interface</h2>
-            <p>The command line, web app, terminal browser, and HTTP API all go through the local daemon. A local agent connects with <code>docbank mcp</code> and works with the same versions and revision checks. A Go application can instead own a separate vault in its own process.</p>
+            <p>The command line, web app, terminal browser, and HTTP API all talk to the same local daemon. A local agent connects with <code>docbank mcp</code> and works with the same versions and revision checks, while a Go application can instead own a separate vault in its own process.</p>
             <a href="/docs/agents/">Docbank for agents</a>
           </div>
           <div class="guide-media">
@@ -224,7 +224,7 @@
         <li class="guide-stop" id="prove">
           <div class="guide-copy">
             <h2>Back up, then test a restore</h2>
-            <p>Create an incremental backup and verify it. Then restore it into a separate vault and check the result before you need it. A backup holds document content, metadata, and version history.</p>
+            <p>Create an incremental backup, verify it, and restore it into a separate vault to check the result before you need it. Each backup holds document content, metadata, and version history.</p>
             <a href="/docs/usage/backup/">Backup and restore</a>
           </div>
           <div class="guide-media">
@@ -237,7 +237,7 @@
         <div class="section-heading">
           <h2 id="next-title">Next steps</h2>
           <div>
-            <p>Run the quickstart to try these steps on your own files. The task guides cover commands, automation, storage, and recovery.</p>
+            <p>Run the quickstart to try these steps on your own files, or browse the task guides for commands, automation, storage, and recovery.</p>
             <div class="actions">
               <a class="button primary" href="/docs/quickstart/">Run the quickstart</a>
               <a class="button" href="/docs/">Browse the docs</a>
