@@ -162,6 +162,15 @@
   const needsDestination = $derived(!destination.trim());
   const started = $derived(counts.ready < items.length);
   const recovering = $derived(Boolean(recovery && items.length && sourceID === recovery.sourceID));
+  const recoveryGroupSummary = $derived(
+    recovering
+      ? counts.skipped > 0
+        ? `${counts.skipped} of ${items.length} group${items.length === 1 ? "" : "s"} already in the vault`
+        : ""
+      : recovery && recovery.groups > 0
+        ? `${recovery.groups} group${recovery.groups === 1 ? "" : "s"} already in the vault`
+        : "",
+  );
   const totals = $derived(
     (["added", "skipped", "ambiguous", "failed", "unconfirmed"] as const).filter(
       (state) => counts[state] > 0 && !(recovering && state === "skipped"),
@@ -175,8 +184,7 @@
             : recovery.pickerKind === "folder"
               ? "Import from a folder"
               : "Import of chosen files",
-          recovery.groups > 0 &&
-            `${recovery.groups} group${recovery.groups === 1 ? "" : "s"} already in the vault`,
+          recoveryGroupSummary,
         ]
           .filter(Boolean)
           .join(" · ")
@@ -601,6 +609,37 @@
     >{/if}
 {/snippet}
 
+{#snippet selection()}
+  {#if totals.length || unsupported.length}<div class="totals" aria-live="polite">
+      {#each totals as state, index}
+        {#if index}<span aria-hidden="true">·</span>{/if}<span
+          >{labels[state]}: {counts[state]}</span
+        >
+      {/each}
+      {#if unsupported.length}
+        {#if totals.length}<span aria-hidden="true">·</span>{/if}
+        <span>Skipped: {unsupported.length}</span>
+      {/if}
+    </div>{/if}
+  <ul class:photo-import-recovery-list={recovering}>
+    {#each items.filter((item) => !(recovering && item.state === "skipped")) as item}
+      <li class:photo-import-skipped={item.state === "skipped"}>
+        <strong>{item.files.map(localFilePath).join(", ")}</strong>
+        {#if item.state !== "ready"}<span>{labels[item.state]}</span>{/if}
+        {#if item.state === "hashing" || item.state === "uploading"}<progress
+            max={item.progress.total || 1}
+            value={item.progress.processed}
+            aria-label={labels[item.state]}
+          ></progress>{/if}
+        {#if item.error}<p role="alert">{item.error}</p>{/if}
+      </li>
+    {/each}
+    {#each unsupported as { file, reason }}<li>
+        <strong>{localFilePath(file)}</strong><span>{reason}</span>
+      </li>{/each}
+  </ul>
+{/snippet}
+
 {#snippet destinationField()}
   <label for="photo-destination"
     >Destination<TextInput
@@ -610,7 +649,7 @@
       onchange={() => {
         if (!items.length && destination !== plannedDestination) void plan();
       }}
-      disabled={!checkpointReady || running || planning || started || recovering}
+      disabled={!checkpointReady || running || planning || started}
       block
     /></label
   >
@@ -633,40 +672,26 @@
   {onclose}
   footer={disabledReason ? channelFooter : undefined}
 >
-  <div class="tool-body" class:photo-import-planned={items.length > 0}>
-    <section class="tool-section" aria-label="Photo source">
-      {#if lookupError}
-        <p role="alert">{lookupError}</p>
-        <div class="tool-actions">
-          <Button onclick={() => retryLookup?.()}>Check again</Button>
-        </div>
-      {:else if !recovery && !disabledReason && error}
-        <p role="alert">{error}</p>
-      {:else if !disabledReason && !checkpointReady}
-        <p role="status">{vaultID ? "Loading saved import…" : "Waiting for vault identity…"}</p>
-      {/if}
-      {#if storageNotice}<p role="status">{storageNotice}</p>{/if}
-      {@render destinationField()}
-      {#if planning}
-        <p role="status">{hashProgress ? "Hashing" : "Planning"}</p>
-        {#if hashProgress}<progress
-            max={hashProgress.total || 1}
-            value={hashProgress.processed}
-            aria-label="Hashing"
-          ></progress>{/if}
-      {/if}
-      <div class="controls">
-        {@render photoPicker()}
-      </div>
-      {#if !recovery && !disabledReason && !error && (pending || running)}<p class="tool-muted">
-          Keep this tab open until the import finishes.
-        </p>{/if}
-    </section>
+  <div
+    class="tool-body"
+    class:photo-import-planned={items.length > 0 && !recovery}
+    class:photo-import-recovery={recovery}
+  >
     {#if recovery}
       <section class="tool-section" aria-labelledby="photo-recovery-heading">
         <h3 id="photo-recovery-heading">Interrupted import found</h3>
-        <p>{recoverySummary}</p>
         {#if error}<p role="alert">{error}</p>{/if}
+        {#if recovering}
+          <div class="photo-import-recovery-plan">
+            <p>{recoverySummary}</p>
+            {@render selection()}
+          </div>
+          <p>
+            Adding to {plannedDestination === "/" ? "the vault root" : plannedDestination}
+          </p>
+        {:else}
+          <p>{recoverySummary}</p>
+        {/if}
         <div class="tool-actions">
           {#if !running}<Button disabled={planning} onclick={() => void dismiss()}>Dismiss</Button
             >{/if}
@@ -686,43 +711,51 @@
             >
           {/if}
         </div>
-        {#if recovering && (pending || running)}<p class="tool-muted">
+        {#if recovering && running}<p class="tool-muted">
             Keep this tab open until the import finishes.
           </p>{/if}
       </section>
     {/if}
-    {#if items.some((item) => !(recovering && item.state === "skipped")) || unsupported.length}
+    <section
+      class="tool-section"
+      class:photo-import-source-separated={recovery}
+      aria-label="Photo source"
+    >
+      {#if recovery}<h3>Start a new import</h3>{/if}
+      {#if lookupError}
+        <p role="alert">{lookupError}</p>
+        <div class="tool-actions">
+          <Button onclick={() => retryLookup?.()}>Check again</Button>
+        </div>
+      {:else if !recovery && !disabledReason && error}
+        <p role="alert">{error}</p>
+      {:else if !disabledReason && !checkpointReady}
+        <p role="status">{vaultID ? "Loading saved import…" : "Waiting for vault identity…"}</p>
+      {/if}
+      {#if storageNotice}<p role="status">{storageNotice}</p>{/if}
+      {#if !recovering}{@render destinationField()}{/if}
+      {#if recovering}<p>
+          New photos will also go to {destination === "/" ? "the vault root" : destination}.
+        </p>{/if}
+      {#if planning}
+        <p role="status">{hashProgress ? "Hashing" : "Planning"}</p>
+        {#if hashProgress}<progress
+            max={hashProgress.total || 1}
+            value={hashProgress.processed}
+            aria-label="Hashing"
+          ></progress>{/if}
+      {/if}
+      <div class="controls">
+        {@render photoPicker()}
+      </div>
+      {#if !recovery && !disabledReason && !error && running}<p class="tool-muted">
+          Keep this tab open until the import finishes.
+        </p>{/if}
+    </section>
+    {#if !recovering && (items.length || unsupported.length)}
       <section class="tool-section" aria-label="Selected photos">
-        {#if totals.length || unsupported.length}<div class="totals" aria-live="polite">
-            {#each totals as state, index}
-              {#if index}<span aria-hidden="true">·</span>{/if}<span
-                >{labels[state]}: {counts[state]}</span
-              >
-            {/each}
-            {#if unsupported.length}
-              {#if totals.length}<span aria-hidden="true">·</span>{/if}
-              <span>Skipped: {unsupported.length}</span>
-            {/if}
-          </div>{/if}
-        <ul>
-          {#each items.filter((item) => !(recovering && item.state === "skipped")) as item}
-            <li class:photo-import-skipped={item.state === "skipped"}>
-              <strong>{item.files.map(localFilePath).join(", ")}</strong><span
-                >{labels[item.state]}</span
-              >
-              {#if item.state === "hashing" || item.state === "uploading"}<progress
-                  max={item.progress.total || 1}
-                  value={item.progress.processed}
-                  aria-label={labels[item.state]}
-                ></progress>{/if}
-              {#if item.error}<p role="alert">{item.error}</p>{/if}
-            </li>
-          {/each}
-          {#each unsupported as { file, reason }}<li>
-              <strong>{localFilePath(file)}</strong><span>{reason}</span>
-            </li>{/each}
-        </ul>
-        {#if !recovering && (pending || running)}<div class="tool-actions">
+        {@render selection()}
+        {#if pending || running}<div class="tool-actions">
             {@render addActions()}
           </div>{/if}
       </section>
@@ -743,6 +776,17 @@
   .tool-body.photo-import-planned {
     gap: var(--space-5);
   }
+  .tool-body.photo-import-recovery {
+    gap: var(--space-5);
+  }
+  .photo-import-source-separated {
+    border-top: 1px solid var(--border-default);
+    padding-top: var(--space-5);
+  }
+  .photo-import-recovery-plan {
+    display: grid;
+    gap: var(--space-3);
+  }
   p {
     margin: 0;
   }
@@ -761,10 +805,22 @@
     overflow-y: auto;
   }
   li {
-    padding: var(--space-3);
+    padding: var(--space-4) var(--space-5);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     overflow-wrap: anywhere;
+  }
+  .photo-import-recovery-list li {
+    padding: var(--space-3) 0;
+    border: 0;
+    border-bottom: 1px solid var(--border-default);
+    border-radius: 0;
+  }
+  .photo-import-recovery-list li:last-child {
+    border-bottom: 0;
+  }
+  li > strong {
+    font-weight: var(--font-weight-normal, 400);
   }
   li.photo-import-skipped > strong {
     color: var(--text-secondary);

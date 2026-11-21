@@ -2,7 +2,7 @@ import * as actions from "./action-events.js";
 import { Blob as NodeBlob, File as NodeFile } from "node:buffer";
 import { beforeEach, afterEach, expect, it, vi } from "vite-plus/test";
 import { tick } from "svelte";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { photoSelectionFiles as files } from "./photo-test-fixtures.js";
 import PhotoImportDrawer from "./PhotoImportDrawer.svelte";
 import { APIError } from "./api-transport.js";
@@ -1717,7 +1717,17 @@ it("finishes a recorded folder import after a lost session by sending only the m
   expect(section.querySelector("p")!.textContent).toMatch(
     /^Folder “Trip” · 2 groups already in the vault$/,
   );
+  expect(
+    within(screen.getByRole("region", { name: "Photo source" })).getByRole("heading", {
+      name: "Start a new import",
+    }),
+  ).toBeTruthy();
+  expect(
+    section.compareDocumentPosition(screen.getByLabelText("Destination")) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
   expect(screen.getByRole("button", { name: "Dismiss" })).toBeTruthy();
+  expect(section.parentElement!.classList.contains("photo-import-planned")).toBe(false);
   // The vault does not record the original destination, so recovery waits for one.
   expect(screen.getByLabelText<HTMLInputElement>("Destination").value).toBe("");
   expect(screen.getByRole("button", { name: "Choose the same folder…" })).toHaveProperty(
@@ -1738,12 +1748,28 @@ it("finishes a recorded folder import after a lost session by sending only the m
     target: { files: selected },
   });
   const add = await screen.findByRole("button", { name: "Add 1 remaining group" });
-  expect(screen.getByLabelText<HTMLInputElement>("Destination").value).toBe("/photos");
-  expect(screen.getByLabelText<HTMLInputElement>("Destination").disabled).toBe(true);
+  // The recovery section names the destination, so the field leaves and the spacing holds.
+  expect(screen.queryByLabelText("Destination")).toBeNull();
+  expect(section.querySelector("p")!.textContent).toBe(
+    "Folder “Trip” · 2 of 3 groups already in the vault",
+  );
+  expect(section.parentElement!.classList.contains("photo-import-planned")).toBe(false);
   expect(screen.queryByText("Already in the vault")).toBeNull();
   expect(screen.getAllByRole("listitem")).toHaveLength(1);
   expect(screen.getByRole("listitem").textContent).toContain("Trip/notes.txt");
-  expect(screen.getByText("Keep this tab open until the import finishes.")).toBeTruthy();
+  expect(screen.queryByText("Ready")).toBeNull();
+  // The remaining list and its destination stay in the recovery section, above the Add action.
+  expect(section.contains(screen.getByRole("listitem"))).toBe(true);
+  expect(
+    screen.getByRole("listitem").compareDocumentPosition(add) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(within(section).getByText("Adding to /photos")).toBeTruthy();
+  expect(
+    within(screen.getByRole("region", { name: "Photo source" })).getByText(
+      "New photos will also go to /photos.",
+    ),
+  ).toBeTruthy();
+  expect(screen.queryByText("Keep this tab open until the import finishes.")).toBeNull();
   expect(channel.planPhotoImport).toHaveBeenCalledWith(
     selected,
     "/photos",
@@ -1824,6 +1850,10 @@ it("starts a new import from the regular picker while an interrupted import is o
   expect(savedImports.get("fresh-during-recovery")?.sourceID).toBe(sourceID);
   expect(screen.queryByRole("heading", { name: "Interrupted import found" })).toBeNull();
   expect(screen.queryByRole("button", { name: /remaining/ })).toBeNull();
+  // A fresh import keeps its Destination field and the compact planned spacing.
+  const destination = screen.getByLabelText<HTMLInputElement>("Destination");
+  expect(destination.value).toBe("/photos");
+  expect(destination.closest(".tool-body")!.classList.contains("photo-import-planned")).toBe(true);
 });
 
 it("settles a recovered import whose groups are all in the vault without sending any", async () => {
@@ -1923,7 +1953,9 @@ it.each(["folder", "files"] as const)(
       true,
     );
     expect(savedImports.get("general-picker")?.sourceID).toBe(recorded.source_id);
-    expect(section.querySelector("p")!.textContent).toMatch(/ · 2 groups already in the vault$/);
+    expect(section.querySelector("p")!.textContent).toMatch(
+      / · 2 of 3 groups already in the vault$/,
+    );
     expect(screen.getByRole("button", { name: "Dismiss" })).toBeTruthy();
   },
 );
@@ -1952,7 +1984,9 @@ it.each([false, true])(
     render(PhotoImportDrawer, props);
     const section = (await screen.findByRole("heading", { name: "Interrupted import found" }))
       .parentElement!;
-    expect(section.querySelector("p")!.textContent).toBe("Folder “Trip” · 2 groups already in the vault");
+    expect(section.querySelector("p")!.textContent).toBe(
+      "Folder “Trip” · 2 groups already in the vault",
+    );
     const destination = screen.getByLabelText<HTMLInputElement>("Destination");
     expect(destination.value).toBe(saved ? "/photos" : "");
     await fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
