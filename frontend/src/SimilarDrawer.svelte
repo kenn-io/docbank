@@ -146,7 +146,7 @@
       {#if error}
         <p class="error" role="alert">{error}</p>
       {:else if scopeVersionIDs.length > maxScope}
-        <p class="warning">Narrow this view to at most 4,096 files.</p>
+        <p class="warning" data-kit-tone="warning">Narrow this view to at most 4,096 files.</p>
       {:else if busy}
         <p class="muted"><Spinner size={14} /> Finding similar files…</p>
       {:else if report?.state === "unavailable"}
@@ -208,7 +208,7 @@
     color: var(--accent-red);
   }
   .warning {
-    color: var(--warning-ink);
+    color: var(--kit-tone-ink);
   }
   .results {
     display: grid;

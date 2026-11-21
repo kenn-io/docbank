@@ -189,7 +189,7 @@
     {/if}
 
     {#if action.state === "complete"}
-      <p class="status done" role="status">
+      <p class="status done" data-kit-tone="success" role="status">
         <CheckIcon size={14} aria-hidden="true" />
         {tagChangeDone(action.assign, tagName, changedDocuments, action.total)}
       </p>
@@ -367,7 +367,7 @@
     font-size: var(--font-size-sm);
   }
   .status.done {
-    color: var(--success-ink);
+    color: var(--kit-tone-ink);
   }
   .alert {
     color: var(--accent-red);

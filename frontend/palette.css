@@ -8,8 +8,6 @@
   --folder-fill: color-mix(in srgb, var(--accent-blue) 15%, var(--bg-surface));
   --selection-bg: color-mix(in srgb, var(--accent-blue) 10%, var(--bg-surface));
   --nav-active-bg: color-mix(in srgb, var(--accent-blue) 12%, var(--bg-surface));
-  --warning-ink: color-mix(in srgb, var(--accent-amber) 72%, var(--text-primary));
-  --success-ink: color-mix(in srgb, var(--accent-green) 72%, var(--text-primary));
 
   --radius-sm: 4px;
   --radius-md: 6px;

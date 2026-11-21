@@ -247,7 +247,11 @@
           <section class="job" aria-label={lane.title}>
             <div class="job-row">
               <strong class="job-name">{lane.title}</strong>
-              {#if state !== "Running"}<span class="state" data-state={state}>{state}</span>{/if}
+              {#if state !== "Running"}<span
+                  class="state"
+                  data-state={state}
+                  data-kit-tone={state === "Paused" ? "warning" : undefined}>{state}</span
+                >{/if}
               <div class="controls">
                 {@render laneControls(lane)}
                 {#if lane.members.filter((member) => member.can_cancel).length === 1}
@@ -345,7 +349,12 @@
                   {/if}
                 </th>
                 <td
-                  ><span class="state" data-state={laneState(lane)}>{laneState(lane)}</span>
+                  ><span
+                    class="state"
+                    data-state={laneState(lane)}
+                    data-kit-tone={laneState(lane) === "Paused" ? "warning" : undefined}
+                    >{laneState(lane)}</span
+                  >
                   {#if !lane.visible}
                     {#each lane.members.filter((member) => member.error) as member (member.name)}
                       <p class="error">{member.error}</p>
@@ -435,7 +444,7 @@
     color: var(--accent-red);
   }
   .state[data-state="Paused"] {
-    color: var(--warning-ink);
+    color: var(--kit-tone-ink);
   }
   .error {
     margin: 0;

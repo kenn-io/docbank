@@ -62,7 +62,15 @@
         <figcaption>
           <div class="head">
             <span class="name" title={tile.label}>{tile.label}</span>
-            {#if r?.grade}<span class="grade" data-grade={r.grade}>{r.grade}</span>{/if}
+            {#if r?.grade}<span
+                class="grade"
+                data-grade={r.grade}
+                data-kit-tone={r.grade === "green"
+                  ? "success"
+                  : r.grade === "yellow"
+                    ? "warning"
+                    : undefined}>{r.grade}</span
+              >{/if}
           </div>
           {#if r}
             <dl>
@@ -144,10 +152,10 @@
     background: currentColor;
   }
   .grade[data-grade="green"] {
-    color: var(--success-ink);
+    color: var(--kit-tone-ink);
   }
   .grade[data-grade="yellow"] {
-    color: var(--warning-ink);
+    color: var(--kit-tone-ink);
   }
   .grade[data-grade="red"] {
     color: var(--accent-red);

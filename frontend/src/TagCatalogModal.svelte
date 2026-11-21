@@ -298,7 +298,7 @@
         <p class="bounded">Showing the first {current.length} of {currentTotal} tags.</p>
       {/if}
 
-      {#if notice}<p class="notice" role="status">{notice}</p>{/if}
+      {#if notice}<p class="notice" data-kit-tone="success" role="status">{notice}</p>{/if}
       {#if failure}<p class="failure" role="alert">{failure}</p>{/if}
     </div>
   {/if}
@@ -399,7 +399,7 @@
   }
 
   .notice {
-    color: var(--success-ink);
+    color: var(--kit-tone-ink);
   }
 
   .failure {
