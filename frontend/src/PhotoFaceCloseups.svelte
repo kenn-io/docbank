@@ -12,8 +12,7 @@
     faces: PhotoFaces;
     fit?: { url: string; content_version_id: string; width: number; height: number };
   } = $props();
-  const gradeTones: Record<PhotoFaceReportGrade, "success" | "warning" | "danger" | undefined> = {
-    "": undefined,
+  const gradeTones: Record<Exclude<PhotoFaceReportGrade, "">, "success" | "warning" | "danger"> = {
     green: "success",
     yellow: "warning",
     red: "danger",
