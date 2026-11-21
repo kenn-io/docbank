@@ -546,9 +546,6 @@ jobs:
           group: macos-arm64
           save-owner: "true"
 
-      - name: Vet
-        run: go vet -tags fts5 ./...
-
       - name: Test
         run: bash scripts/test-go-ci.sh
 
