@@ -159,8 +159,8 @@ report-export-browser-test: frontend
 	node frontend/screenshots/report-export.run.mjs
 
 theme-contrast-browser-test: build
-	DOCBANK_PLAYWRIGHT_SUITE=theme-contrast node frontend/node_modules/@playwright/test/cli.js test face-grade-contrast.screenshot.ts tag-error-contrast.screenshot.ts --config frontend/screenshots/playwright.config.ts --project chromium
-	DOCBANK_PLAYWRIGHT_SUITE=theme-contrast-snapshot DOCBANK_SNAPSHOT_SCREENSHOT_DIR="$(CURDIR)/.superpowers" node frontend/node_modules/@playwright/test/cli.js test snapshot-workspace.screenshot.ts --config frontend/screenshots/playwright.config.ts --project chromium -g 'retries an interrupted send'
+	DOCBANK_PLAYWRIGHT_SUITE=report-export-theme-contrast node frontend/node_modules/@playwright/test/cli.js test face-grade-contrast.screenshot.ts tag-error-contrast.screenshot.ts --config frontend/screenshots/playwright.config.ts --project chromium
+	DOCBANK_PLAYWRIGHT_SUITE=report-export-theme-contrast-snapshot DOCBANK_SNAPSHOT_SCREENSHOT_DIR="$(CURDIR)/.superpowers" node frontend/node_modules/@playwright/test/cli.js test snapshot-workspace.screenshot.ts --config frontend/screenshots/playwright.config.ts --project chromium -g 'retries an interrupted send'
 
 .PHONY: bates-recovery-browser-test
 bates-recovery-browser-test: frontend

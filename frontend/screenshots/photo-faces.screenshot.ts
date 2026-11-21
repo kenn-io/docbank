@@ -10,7 +10,6 @@ test.use({ actionTimeout: 15_000 });
 test.skip(!output, "DOCBANK_FACES_SCREENSHOT_DIR enables synthetic face review proof");
 
 test("shows detected faces in the inspector and loupe", async ({ page }) => {
-  await mkdir(path.join(repository, ".superpowers"), { recursive: true });
   const fixture = photoFixture(
     await mkdtemp(path.join(repository, ".superpowers", "detected-faces-proof-")),
   );

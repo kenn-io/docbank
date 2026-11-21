@@ -329,15 +329,6 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
-      - name: Upload Playwright theme contrast results
-        if: always()
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: playwright-theme-contrast-attempt-${{ github.run_attempt }}
-          path: frontend/test-results/playwright/theme-contrast*.json
-          retention-days: 14
-          if-no-files-found: ignore
-
       - name: Qualify photo map in Chromium
         env:
           CGO_ENABLED: "0"
