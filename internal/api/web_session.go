@@ -279,28 +279,21 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		if err != nil || len(values) > 1 {
 			return false
 		}
-		sourceIDs, ok := values["source_id"]
-		if !ok {
-			if r.URL.RawQuery == "" {
-				return true
-			}
-			excluded, ok := values["exclude"]
-			if !ok || len(excluded) != 1 {
+		for key, entries := range values {
+			if (key != "source_id" && key != "exclude") || len(entries) != 1 {
 				return false
 			}
-			ids := strings.Split(excluded[0], ",")
+			ids := []string{entries[0]}
+			if key == "exclude" {
+				ids = strings.Split(entries[0], ",")
+			}
 			for _, id := range ids {
 				if _, err := uuid.Parse(id); err != nil {
 					return false
 				}
 			}
-			return true
 		}
-		if len(sourceIDs) != 1 {
-			return false
-		}
-		_, err = uuid.Parse(sourceIDs[0])
-		return err == nil
+		return true
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/v1/redaction/") {
 		return redactionBrowserRequestAllowed(r)

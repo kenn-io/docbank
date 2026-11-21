@@ -971,8 +971,6 @@ func handleWebPhotoPlan(
 				break
 			}
 		}
-		slices.Sort(needed)
-		needed = slices.Compact(needed)
 	}
 	if problem != nil {
 		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, problem) == nil
@@ -990,9 +988,6 @@ func handleWebPhotoPlan(
 					for _, item := range imports {
 						if item.SourceID == source {
 							hash = item.Members[name]
-							if begin.InferredSource && hash != "" && (item.Destination == "" || item.Destination != path.Clean(begin.Destination)) {
-								return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, NewError(http.StatusConflict, "photo_import_destination", "Choose the destination containing the recorded files.")) == nil
-							}
 							break
 						}
 					}

@@ -7,7 +7,6 @@
 
   let {
     disabled = false,
-    showButtons = true,
     initialKind,
     filesLabel = "Choose local files",
     folderLabel = "Choose local folder",
@@ -15,7 +14,6 @@
     onopen,
   }: {
     disabled?: boolean;
-    showButtons?: boolean;
     initialKind?: PickerKind;
     filesLabel?: string;
     folderLabel?: string;
@@ -59,23 +57,21 @@
   aria-label={folderLabel}
   onchange={(event) => selected(event, "folder")}
 />
-{#if showButtons}
-  <Button
-    size="sm"
-    surface="soft"
-    {disabled}
-    onclick={() => {
-      onopen?.();
-      choose("files");
-    }}><FileUpIcon size="14" />Choose files</Button
-  >
-  <Button
-    size="sm"
-    surface="soft"
-    {disabled}
-    onclick={() => {
-      onopen?.();
-      choose("folder");
-    }}><FolderOpenIcon size="14" />Choose folder</Button
-  >
-{/if}
+<Button
+  size="sm"
+  surface="soft"
+  {disabled}
+  onclick={() => {
+    onopen?.();
+    choose("files");
+  }}><FileUpIcon size="14" />Choose files</Button
+>
+<Button
+  size="sm"
+  surface="soft"
+  {disabled}
+  onclick={() => {
+    onopen?.();
+    choose("folder");
+  }}><FolderOpenIcon size="14" />Choose folder</Button
+>

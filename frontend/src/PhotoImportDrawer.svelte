@@ -7,6 +7,7 @@
   import DrawerShell from "./DrawerShell.svelte";
   import "./toolForm.css";
   import { APIError } from "./api-transport.js";
+  import { formatDate } from "./format.js";
   import {
     UploadChannelError,
     getBrowserPhotoImport,
@@ -176,7 +177,7 @@
             : recovery.pickerKind === "folder"
               ? "Import from a folder"
               : "Import of chosen files",
-          recovery.startedAt && `started ${shortDate(recovery.startedAt)}`,
+          recovery.startedAt && `started ${formatDate(recovery.startedAt)}`,
           recovery.groups > 0 &&
             `${recovery.groups} group${recovery.groups === 1 ? "" : "s"} already in the vault`,
         ]
@@ -205,18 +206,6 @@
     controller?.abort();
     lifecycle.abort();
   });
-
-  function shortDate(value: string): string {
-    const date = new Date(value);
-    if (Number.isNaN(date.valueOf())) return value;
-    return new Intl.DateTimeFormat(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      ...(date.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
-    }).format(date);
-  }
 
   // A saved checkpoint names its import; without one, the daemon's latest recorded folder import stands in.
   // Until that lookup answers, a fresh import could take a new ID and add an interrupted import's sidecars again.

@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"uuid"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -45,11 +44,6 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 		SourceID string `query:"source_id"`
 		Exclude  string `query:"exclude"`
 	}) (*struct{ Body *store.BrowserPhotoImport }, error) {
-		if in.SourceID != "" {
-			if _, err := uuid.Parse(in.SourceID); err != nil {
-				return nil, NewError(http.StatusUnprocessableEntity, "validation", "invalid source_id")
-			}
-		}
 		var excluded []string
 		if in.Exclude != "" {
 			excluded = strings.Split(in.Exclude, ",")

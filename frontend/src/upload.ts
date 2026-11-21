@@ -477,15 +477,6 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
         throw this.protocolError();
       if (plan.groups.some((group) => !Array.isArray(group) || !group.length))
         throw this.protocolError();
-      const present = plan.present ?? [];
-      if (
-        !Array.isArray(present) ||
-        new Set(present).size !== present.length ||
-        present.some(
-          (index) => !Number.isInteger(index) || index < 0 || index >= plan.groups!.length,
-        )
-      )
-        throw this.protocolError();
       const indexes = [...plan.groups.flat(), ...plan.unsupported];
       if (
         indexes.length !== files.length ||
@@ -496,7 +487,7 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
       return {
         import_id: plan.import_id,
         groups: plan.groups,
-        present,
+        present: plan.present ?? [],
         unsupported: plan.unsupported,
         skip_reasons: plan.skip_reasons,
         hashes,
