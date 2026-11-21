@@ -17,17 +17,17 @@ type BrowserPhotoImport struct {
 }
 
 // BrowserPhotoImport finds a browser source from its committed provenance.
-func (s *Store) BrowserPhotoImport(ctx context.Context, sourceID string) (*BrowserPhotoImport, error) {
+func (s *Store) BrowserPhotoImport(ctx context.Context, sourceID string) (BrowserPhotoImport, bool, error) {
 	imports, err := s.BrowserPhotoImports(ctx)
 	if err != nil {
-		return nil, err
+		return BrowserPhotoImport{}, false, err
 	}
 	for _, item := range imports {
 		if item.SourceID == sourceID || sourceID == "" && item.Folder != "Choose files" {
-			return item, nil
+			return *item, true, nil
 		}
 	}
-	return nil, nil
+	return BrowserPhotoImport{}, false, nil
 }
 
 // BrowserPhotoImports returns committed browser sources, newest first.

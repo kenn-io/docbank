@@ -22,9 +22,9 @@ func checkBrowserPhotoRecovery(t *testing.T, open func(*testing.T) *Store) {
 		_, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(member))
 		require.NoError(t, err)
 	}
-	result, err := s.BrowserPhotoImport(ctx, "")
+	result, found, err := s.BrowserPhotoImport(ctx, "")
 	require.NoError(t, err)
-	require.NotNil(t, result)
+	require.True(t, found)
 	require.Equal(t, source, result.SourceID)
 	require.Equal(t, "Card", result.Folder)
 	require.Equal(t, 2, result.Groups)

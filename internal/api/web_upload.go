@@ -861,10 +861,11 @@ func handleWebPhotoPlan(
 	}
 	var recovered *store.BrowserPhotoImport
 	if problem == nil && begin.SourceID != nil {
-		var err error
-		recovered, err = d.Store.BrowserPhotoImport(ctx, begin.SourceID.String())
+		item, found, err := d.Store.BrowserPhotoImport(ctx, begin.SourceID.String())
 		if err != nil {
 			problem = uploadError(err)
+		} else if found {
+			recovered = &item
 		}
 	}
 	if problem == nil && recovered != nil {

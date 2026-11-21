@@ -48,11 +48,15 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 				return nil, NewError(http.StatusUnprocessableEntity, "validation", "invalid source_id")
 			}
 		}
-		item, err := d.Store.BrowserPhotoImport(ctx, in.SourceID)
+		item, found, err := d.Store.BrowserPhotoImport(ctx, in.SourceID)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		return &struct{ Body *store.BrowserPhotoImport }{Body: item}, nil
+		out := &struct{ Body *store.BrowserPhotoImport }{}
+		if found {
+			out.Body = &item
+		}
+		return out, nil
 	})
 	runnerDeps := d
 	runnerDeps.Gate = g
