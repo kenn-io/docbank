@@ -167,7 +167,12 @@ func TestEgressFallsBackAcrossApprovedDNSAnswers(t *testing.T) {
 	_, port := endpoint(t, server.Listener.Addr())
 	first, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp6", net.JoinHostPort("::1", strconv.Itoa(int(port))))
 	if err != nil {
-		t.Skipf("reserve IPv6 loopback: %v", err)
+		probe, probeErr := (&net.ListenConfig{}).Listen(t.Context(), "tcp6", "[::1]:0")
+		if probeErr != nil {
+			t.Skipf("IPv6 loopback unavailable: %v", probeErr)
+		}
+		require.NoError(t, probe.Close())
+		require.NoError(t, err)
 	}
 	t.Cleanup(func() { _ = first.Close() })
 	resolver := &recordingResolver{answers: [][]netip.Addr{{
