@@ -95,6 +95,7 @@ export function validateUploadReceipt(
 
 export interface PhotoImportPlan {
   import_id: string;
+  source_id?: string;
   groups: number[][];
   present?: number[];
   unsupported: number[];
@@ -174,6 +175,7 @@ export function photoImportNeedsContentHash(file: File): boolean {
 
 interface UploadMessage {
   import_id?: string;
+  source_id?: string;
   files?: { relative_path: string; size: number; modified_time?: number }[];
   groups?: number[][];
   present?: number[];
@@ -427,6 +429,7 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
         plan.type !== "photo_import_plan" ||
         typeof plan.import_id !== "string" ||
         !plan.import_id ||
+        (plan.source_id !== undefined && (typeof plan.source_id !== "string" || !plan.source_id)) ||
         !Array.isArray(plan.groups) ||
         !Array.isArray(plan.unsupported)
       )
@@ -451,6 +454,7 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
         throw this.protocolError();
       return {
         import_id: plan.import_id,
+        source_id: plan.source_id,
         groups: plan.groups,
         present,
         unsupported: plan.unsupported,

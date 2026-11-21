@@ -569,6 +569,22 @@ it("hashes only the files the daemon asks for before it plans", async () => {
   channel.close();
 });
 
+it("returns the source selected by the daemon's recovery plan", async () => {
+  const { socket, channel } = await photoChannel();
+  socket.planSourceID = "20000000-0000-4000-8000-000000000011";
+  const plan = await channel.planPhotoImport(
+    photoSelectionFiles(),
+    "/photos",
+    "20000000-0000-4000-8000-000000000012",
+    new AbortController().signal,
+    vi.fn(),
+    undefined,
+    true,
+  );
+  expect(plan.source_id).toBe("20000000-0000-4000-8000-000000000011");
+  channel.close();
+});
+
 it("reuses a selected file hash when planning on a new channel", async () => {
   const { socket, channel } = await photoChannel();
   const files = photoSelectionFiles();

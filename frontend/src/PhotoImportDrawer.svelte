@@ -161,7 +161,7 @@
   const pending = $derived(counts.ready + counts.failed + counts.unconfirmed);
   const needsDestination = $derived(!destination.trim());
   const started = $derived(counts.ready < items.length);
-  const recovering = $derived(Boolean(recovery && items.length && sourceID === recovery.sourceID));
+  const recovering = $derived(Boolean(recovery && items.length && resumes));
   const recoveryGroupSummary = $derived(
     recovering
       ? counts.skipped > 0
@@ -276,7 +276,7 @@
         if (!useSessionOnly(cause)) throw cause;
       }
     }
-    settled.set(recovery?.sourceID ?? sourceID);
+    settled.set(resumes ? sourceID : (recovery?.sourceID ?? sourceID));
     checkpoint = undefined;
     recovery = undefined;
   }
@@ -361,8 +361,8 @@
         throw new Error(
           "These files or destination differ from the saved import. Reselect the original files or folder and destination.",
         );
-      const nextSourceID = reconnect ? sourceID : (resumed ?? randomUUID());
-      const next = reconnect
+      let nextSourceID = reconnect ? sourceID : (resumed ?? randomUUID());
+      let next = reconnect
         ? undefined
         : {
             sourceID: nextSourceID,
@@ -397,6 +397,8 @@
         ...recoveryArgs,
       );
       hashProgress = undefined;
+      nextSourceID = plan.source_id ?? nextSourceID;
+      if (next && next.sourceID !== nextSourceID) next = { ...next, sourceID: nextSourceID };
       if (
         reconnect &&
         (active.signal.aborted || destroyed || channel !== planChannel || destination !== target)
@@ -413,6 +415,13 @@
       if (!reconnect) checkpoint = plan.groups.length ? next : undefined;
       // A new import replaced the offered one's saved progress, so it is no longer offered here.
       if (!resumed) recovery = undefined;
+      else if (recovery) {
+        recovery = {
+          ...recovery,
+          sourceID: nextSourceID,
+          folder: pickerKind === "folder" ? (localFilePath(files[0]!).split("/")[0] ?? "") : "",
+        };
+      }
       plannedDestination = target;
       sourceID = nextSourceID;
       plannedChannel = planChannel;

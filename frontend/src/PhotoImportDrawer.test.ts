@@ -1623,10 +1623,10 @@ it("retains a selection when the channel changes during checkpoint save", async 
   expect(screen.queryByText(/changed in another tab/)).toBeNull();
 });
 
-function tripFolder() {
+function tripFolder(folder = "Trip") {
   const selected = files();
   for (const file of selected)
-    Object.defineProperty(file, "webkitRelativePath", { value: `Trip/${file.name}` });
+    Object.defineProperty(file, "webkitRelativePath", { value: `${folder}/${file.name}` });
   return selected;
 }
 
@@ -1658,10 +1658,12 @@ it("dismisses the newest recorded import without offering older imports", async 
 
 it("finishes a recorded folder import after a lost session by sending only the missing group", async () => {
   browserImports.mockResolvedValue(recorded);
-  const selected = tripFolder();
+  const adoptedSourceID = "20000000-0000-4000-8000-000000000011";
+  const selected = tripFolder("Card");
   const channel: PhotoImportTransport = {
     planPhotoImport: vi.fn().mockResolvedValue({
       import_id: "recovered",
+      source_id: adoptedSourceID,
       groups: [[0, 1], [2]],
       present: [0],
       unsupported: [3],
@@ -1724,13 +1726,13 @@ it("finishes a recorded folder import after a lost session by sending only the m
   expect(destination.value).toBe("/photos");
   expect(destination.disabled).toBe(true);
   expect(section.querySelector("p")!.textContent).toBe(
-    "Folder “Trip” · 1 of 2 groups already in the vault",
+    "Folder “Card” · 1 of 2 groups already in the vault",
   );
   expect(screen.queryByText("Already in the vault")).toBeNull();
   const rows = screen.getAllByRole("listitem");
   expect(rows).toHaveLength(2);
-  expect(rows[0]!.textContent).toContain("Trip/movie.MP4");
-  expect(rows[1]!.textContent).toContain("Trip/notes.txt");
+  expect(rows[0]!.textContent).toContain("Card/movie.MP4");
+  expect(rows[1]!.textContent).toContain("Card/notes.txt");
   expect(rows[1]!.textContent).toContain("Unsupported type");
   expect(screen.getByText("Skipped: 1")).toBeTruthy();
   expect(screen.queryByText(/: 0(?:\D|$)/)).toBeNull();
@@ -1753,7 +1755,7 @@ it("finishes a recorded folder import after a lost session by sending only the m
     undefined,
     true,
   );
-  expect(savedImports.get("lost-session")?.sourceID).toBe(recorded.source_id);
+  expect(savedImports.get("lost-session")?.sourceID).toBe(adoptedSourceID);
   await fireEvent.click(add);
   await waitFor(() => expect(props.oncomplete).toHaveBeenCalledOnce());
   expect(channel.uploadPhotoGroup).toHaveBeenCalledExactlyOnceWith(
@@ -1768,10 +1770,10 @@ it("finishes a recorded folder import after a lost session by sending only the m
   expect(screen.getByText("Added: 1")).toBeTruthy();
   const completedRows = screen.getAllByRole("listitem");
   expect(completedRows).toHaveLength(3);
-  expect(completedRows[0]!.textContent).toContain("Trip/capture.ARW");
-  expect(completedRows[0]!.textContent).toContain("Trip/capture.JPG");
+  expect(completedRows[0]!.textContent).toContain("Card/capture.ARW");
+  expect(completedRows[0]!.textContent).toContain("Card/capture.JPG");
   expect(completedRows[0]!.textContent).toContain("Already in vault");
-  expect(completedRows[1]!.textContent).toContain("Trip/movie.MP4");
+  expect(completedRows[1]!.textContent).toContain("Card/movie.MP4");
   expect(completedRows[1]!.textContent).toContain("Added");
   expect(completedRows[2]!.textContent).toContain("Unsupported type");
   expect(screen.getByLabelText<HTMLInputElement>("Destination").value).toBe("/photos");
@@ -1780,6 +1782,8 @@ it("finishes a recorded folder import after a lost session by sending only the m
   expect(screen.getByText("Skipped: 1")).toBeTruthy();
   expect(screen.queryByRole("heading", { name: "Interrupted import found" })).toBeNull();
   expect(savedImports.has("lost-session")).toBe(false);
+  const { settledPhotoImports } = await import("./photoImportStorage.js");
+  expect(settledPhotoImports("lost-session").get()).toBe(adoptedSourceID);
 });
 
 it("starts a new import from the regular picker while an interrupted import is offered", async () => {

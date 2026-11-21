@@ -859,26 +859,6 @@ func handleWebPhotoPlan(
 	var needed []int
 	if problem == nil {
 		needed, problem = unhashedBrowserPhotos(ctx, d.Store, begin.Files, groups)
-		if problem == nil && begin.Recovering {
-			for _, group := range groups {
-				for _, index := range group {
-					if begin.Files[index].ExpectedHash == "" {
-						needed = append(needed, index)
-					}
-				}
-			}
-			slices.Sort(needed)
-			needed = slices.Compact(needed)
-		}
-	}
-	var recovered *store.BrowserPhotoImport
-	if problem == nil && begin.SourceID != nil && begin.Recovering {
-		item, found, err := d.Store.BrowserPhotoImport(ctx, begin.SourceID.String())
-		if err != nil {
-			problem = uploadError(err)
-		} else if found {
-			recovered = &item
-		}
 	}
 
 	if problem != nil {
@@ -893,6 +873,7 @@ func handleWebPhotoPlan(
 	if begin.SourceID != nil {
 		sourceID = *begin.SourceID
 	}
+	requestedSourceID := sourceID.String()
 	paths := make([]string, len(begin.Files))
 	for i, file := range begin.Files {
 		paths[i] = "browser:" + sourceID.String() + "/" + file.RelativePath
@@ -910,9 +891,114 @@ func handleWebPhotoPlan(
 		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(resolveErr)) == nil
 	}
 	for i, index := range indexes {
-		if recovered == nil || recovered.Members[begin.Files[index].RelativePath] == "" {
-			paths[index] = resolved[i]
+		paths[index] = resolved[i]
+	}
+
+	sources := map[string]*store.BrowserPhotoImport{}
+	loadSource := func(id string) (*store.BrowserPhotoImport, error) {
+		if item, loaded := sources[id]; loaded {
+			return item, nil
 		}
+		item, found, err := d.Store.BrowserPhotoImport(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			sources[id] = nil
+			return nil, nil
+		}
+		sources[id] = &item
+		return &item, nil
+	}
+	var requested *store.BrowserPhotoImport
+	matchedSources := map[string]bool{}
+	if begin.Recovering {
+		var err error
+		requested, err = loadSource(requestedSourceID)
+		if err != nil {
+			return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
+		}
+		if requested != nil {
+			for _, index := range indexes {
+				file := begin.Files[index]
+				hash, recorded := requested.Members[file.RelativePath]
+				if !recorded {
+					continue
+				}
+				if hash == "" || file.ExpectedHash != "" && hash != file.ExpectedHash {
+					problem = NewError(http.StatusConflict, "photo_import_changed", "The recorded import differs from this selection. Choose the original folder.")
+					break
+				}
+				paths[index] = "browser:" + requestedSourceID + "/" + file.RelativePath
+				matchedSources[requestedSourceID] = true
+				if file.ExpectedHash == "" {
+					needed = append(needed, index)
+				}
+			}
+		}
+		if problem != nil {
+			return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, problem) == nil
+		}
+		for _, index := range indexes {
+			file := begin.Files[index]
+			source, name, ok := strings.Cut(strings.TrimPrefix(paths[index], "browser:"), "/")
+			if !ok {
+				continue
+			}
+			item, err := loadSource(source)
+			if err != nil {
+				return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
+			}
+			if item == nil {
+				continue
+			}
+			if _, recorded := item.Members[name]; !recorded {
+				continue
+			}
+			matchedSources[source] = true
+			if file.ExpectedHash == "" {
+				needed = append(needed, index)
+			}
+		}
+		slices.Sort(needed)
+		needed = slices.Compact(needed)
+		if len(needed) > 0 {
+			return nil, wsjson.Write(ctx, conn, webUploadMessage{
+				Type: "photo_import_hashes_needed", RequestID: begin.RequestID, Indexes: needed,
+			}) == nil
+		}
+		if len(matchedSources) > 1 {
+			problem = NewError(http.StatusConflict, "photo_import_changed", "The recorded import differs from this selection. Choose the original folder.")
+		} else if len(matchedSources) == 1 {
+			for id := range matchedSources {
+				matched, err := uuid.Parse(id)
+				if err != nil {
+					problem = NewError(http.StatusConflict, "photo_import_changed", "The recorded import differs from this selection. Choose the original folder.")
+					break
+				}
+				sourceID = matched
+			}
+		}
+		if problem == nil && sourceID.String() != requestedSourceID {
+			requestedPrefix := "browser:" + requestedSourceID + "/"
+			adoptedPrefix := "browser:" + sourceID.String() + "/"
+			for index, original := range paths {
+				if strings.HasPrefix(original, requestedPrefix) {
+					paths[index] = adoptedPrefix + strings.TrimPrefix(original, requestedPrefix)
+				}
+			}
+		}
+	}
+	if problem != nil {
+		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, problem) == nil
+	}
+	var recovered *store.BrowserPhotoImport
+	if begin.Recovering {
+		item, err := loadSource(sourceID.String())
+		if err != nil {
+			return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
+		}
+		recovered = item
 	}
 
 	if recovered != nil {
@@ -945,10 +1031,6 @@ func handleWebPhotoPlan(
 
 	var present []int
 	if recovered != nil || begin.Recovering {
-		sources := map[string]*store.BrowserPhotoImport{}
-		if recovered != nil {
-			sources[recovered.SourceID] = recovered
-		}
 		for i, group := range groups {
 			matched := true
 			for _, index := range group {
@@ -957,16 +1039,9 @@ func handleWebPhotoPlan(
 				var hash string
 				var recorded bool
 				if ok {
-					item, loaded := sources[source]
-					if !loaded {
-						foundItem, found, err := d.Store.BrowserPhotoImport(ctx, source)
-						if err != nil {
-							return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
-						}
-						if found {
-							item = &foundItem
-						}
-						sources[source] = item
+					item, err := loadSource(source)
+					if err != nil {
+						return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
 					}
 					if item != nil {
 						hash, recorded = item.Members[name]
@@ -1005,7 +1080,7 @@ func handleWebPhotoPlan(
 		id:    rand.Text(), files: begin.Files, groups: groups, destination: destination,
 	}
 	err := wsjson.Write(ctx, conn, webUploadMessage{
-		Type: "photo_import_plan", RequestID: begin.RequestID, ImportID: photoImport.id,
+		Type: "photo_import_plan", RequestID: begin.RequestID, ImportID: photoImport.id, SourceID: &sourceID,
 		Groups: groups, Present: present, Unsupported: unsupported, SkipReasons: skipReasons,
 	})
 	return photoImport, err == nil
