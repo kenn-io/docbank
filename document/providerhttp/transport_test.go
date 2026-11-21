@@ -177,7 +177,7 @@ func TestEgressFallsBackAcrossApprovedDNSAnswers(t *testing.T) {
 		}
 		require.NoError(t, listener.Close())
 		// Windows reports WSAEADDRINUSE (10048) rather than EADDRINUSE.
-		if !errors.Is(err, syscall.EADDRINUSE) && !(runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(10048))) {
+		if !errors.Is(err, syscall.EADDRINUSE) && (runtime.GOOS != "windows" || !errors.Is(err, syscall.Errno(10048))) {
 			require.NoError(t, err)
 		}
 	}
