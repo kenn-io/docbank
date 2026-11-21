@@ -125,13 +125,13 @@
     };
   });
 
-  let picker = $state<LocalFilePicker>();
+  let picker: LocalFilePicker;
   let destination = $state("/");
   let items = $state<Item[]>([]);
   let selectedFiles: File[] = [];
   let unsupported = $state<{ file: File; reason: string }[]>([]);
   let importID = $state("");
-  let sourceID = $state("");
+  let sourceID = "";
   let plannedChannel: PhotoImportTransport | undefined;
   let interruptedPlan = $state.raw<PhotoImportTransport>();
   let plannedDestination = $state("");
@@ -256,7 +256,7 @@
   function recover(): void {
     if (!recovery || needsDestination) return;
     recoveryRequested = true;
-    picker?.choose(recovery.pickerKind);
+    picker.choose(recovery.pickerKind);
   }
 
   function clearSelection(): void {

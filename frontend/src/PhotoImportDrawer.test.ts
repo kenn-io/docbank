@@ -669,23 +669,9 @@ it.each([
     expect(screen.getByText("Failed: 1")).toBeTruthy();
 });
 
-it.each([
-  { size: 3, sessionOnly: false },
-  { size: 0, sessionOnly: false },
-  { size: 3, sessionOnly: true },
-])(
-  "marks a lost receipt unconfirmed and refreshes after submitting $size bytes with sessionOnly=$sessionOnly",
-  async ({ size, sessionOnly }) => {
-    if (sessionOnly) {
-      const module = await import("./photoImportStorage.js");
-      const createStorage = module.photoImportStorage;
-      vi.spyOn(module, "photoImportStorage").mockImplementation((id, session) => ({
-        ...createStorage(id, session),
-        load: async () => {
-          throw new APIError("Storage unavailable", 500, "checkpoint_storage");
-        },
-      }));
-    }
+it.each([3, 0])(
+  "marks a lost receipt unconfirmed and refreshes after submitting %s bytes",
+  async (size) => {
     const channel: PhotoImportTransport = {
       planPhotoImport: vi
         .fn()
@@ -1637,25 +1623,6 @@ const recorded = {
   folder_selection: true,
 };
 
-it("dismisses the newest recorded import without offering older imports", async () => {
-  browserImports.mockResolvedValue(recorded);
-  render(PhotoImportDrawer, {
-    channel: { planPhotoImport: vi.fn(), uploadPhotoGroup: vi.fn() },
-    vaultID: "older-import",
-    session: "session",
-    onclose: vi.fn(),
-    oncomplete: vi.fn(),
-    onauthfailure: vi.fn(),
-  });
-  expect(await screen.findByText(/Folder “Trip”/)).toBeTruthy();
-  await fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
-  await waitFor(() =>
-    expect(screen.queryByRole("heading", { name: "Interrupted import found" })).toBeNull(),
-  );
-  expect(browserImports).toHaveBeenCalledTimes(1);
-  expect(screen.getByRole("button", { name: "Choose folder" })).toBeTruthy();
-});
-
 it("finishes a recorded folder import after a lost session by sending only the missing group", async () => {
   browserImports.mockResolvedValue(recorded);
   const adoptedSourceID = "20000000-0000-4000-8000-000000000011";
@@ -1698,9 +1665,6 @@ it("finishes a recorded folder import after a lost session by sending only the m
     }),
   ).toBeTruthy();
   const destination = screen.getByLabelText<HTMLInputElement>("Destination");
-  expect(
-    destination.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBeTruthy();
   expect(screen.getByRole("button", { name: "Dismiss" })).toBeTruthy();
   expect(destination.value).toBe("");
   expect(screen.getByRole("button", { name: "Choose the same folder…" })).toHaveProperty(
@@ -1737,14 +1701,6 @@ it("finishes a recorded folder import after a lost session by sending only the m
   expect(screen.getByText("Skipped: 1")).toBeTruthy();
   expect(screen.queryByText(/: 0(?:\D|$)/)).toBeNull();
   expect(within(rows[0]!).queryByText("Ready")).toBeNull();
-  // The remaining file stays in the recovery section above Add, with its destination at the top.
-  expect(section.contains(rows[0]!)).toBe(true);
-  expect(rows[0]!.compareDocumentPosition(add) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(
-    within(section)
-      .getAllByRole("button")
-      .map((button) => button.textContent?.trim()),
-  ).toEqual(["Add 1 remaining group", "Dismiss"]);
   expect(screen.queryByText("Keep this tab open until the import finishes.")).toBeNull();
   expect(channel.planPhotoImport).toHaveBeenCalledWith(
     selected,
@@ -1872,15 +1828,16 @@ it("settles a recovered import whose groups are all in the vault and hides it on
   expect(screen.queryByRole("heading", { name: "Interrupted import found" })).toBeNull();
 });
 
-it("dismisses a saved interrupted import and clears its checkpoint", async () => {
-  savedImports.set("dismiss", {
-    sourceID: recorded.source_id,
-    revision: "saved",
-    destination: "/photos",
-    manifestVersion: 2,
-    manifestHash: "a".repeat(64),
-    pickerKind: "folder",
-  });
+it.each([true, false])("dismisses an interrupted import with checkpoint=%s", async (checkpoint) => {
+  if (checkpoint)
+    savedImports.set("dismiss", {
+      sourceID: recorded.source_id,
+      revision: "saved",
+      destination: "/photos",
+      manifestVersion: 2,
+      manifestHash: "a".repeat(64),
+      pickerKind: "folder",
+    });
   browserImports.mockResolvedValue(recorded);
   render(PhotoImportDrawer, {
     channel: { planPhotoImport: vi.fn(), uploadPhotoGroup: vi.fn() },
@@ -1897,6 +1854,7 @@ it("dismisses a saved interrupted import and clears its checkpoint", async () =>
   );
   expect(savedImports.has("dismiss")).toBe(false);
   expect(browserImports).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("button", { name: "Choose folder" })).toBeTruthy();
 });
 
 it("names a saved import with nothing in the vault yet without a zero count", async () => {

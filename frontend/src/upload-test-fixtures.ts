@@ -38,7 +38,7 @@ export class DaemonSocket extends EventTarget {
   needHashes: number[] = [];
   // Further requests the daemon makes after those hashes arrive, one per declaration.
   followUps: number[][] = [];
-  present: number[] = [];
+  present: number[] | undefined;
   planSourceID = "";
   frames: (string | ArrayBuffer)[] = [];
 

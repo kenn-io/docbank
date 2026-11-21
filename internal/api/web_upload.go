@@ -785,8 +785,6 @@ type webPhotoImport struct {
 	destination store.IngestDirectoryPlan
 }
 
-var errBrowserPhotoImportNotFound = errors.New("browser photo import not found")
-
 func (p *webPhotoImport) sourceDescription() string {
 	folder, folderSelection := browserPhotoSelectionFolder(p.files)
 	if folderSelection {
@@ -811,101 +809,131 @@ func browserPhotoSelectionFolder(files []webPhotoFile) (string, bool) {
 	return folder, true
 }
 
-func browserPhotoSelectionRelativePath(file webPhotoFile, folder string, folderSelection bool) (string, bool) {
-	if folderSelection {
-		return strings.CutPrefix(file.RelativePath, folder+"/")
+// recoverBrowserPhotos continues the one recorded import that the selected
+// paths and bytes repeat, moving the selection's paths to that source. It
+// returns the source and the groups whose every member it records with the
+// same bytes. Recovery hashes every member before this runs.
+func recoverBrowserPhotos(
+	ctx context.Context, st *store.Store, files []webPhotoFile, groups [][]int, paths []string, requested uuid.UUID,
+) (uuid.UUID, []int, error) {
+	changed := NewError(http.StatusConflict, "photo_import_changed", "The recorded import differs from this selection. Choose the original folder.")
+	sources := map[string]*store.BrowserPhotoImport{}
+	load := func(source string) (*store.BrowserPhotoImport, error) {
+		if item, loaded := sources[source]; loaded {
+			return item, nil
+		}
+		found, exists, err := st.BrowserPhotoImport(ctx, source)
+		if exists {
+			sources[source] = &found
+		} else {
+			sources[source] = nil
+		}
+		return sources[source], err
 	}
-	return file.RelativePath, file.RelativePath != ""
-}
-
-// matchOlderBrowserPhotos finds the older recorded imports that the selected
-// files continue, marks them in matched, and points each file's path at its
-// recorded source. It returns the files whose hashes are still needed to
-// confirm a match.
-func matchOlderBrowserPhotos(
-	ctx context.Context, st *store.Store, files []webPhotoFile, indexes []int, paths []string,
-	matched map[string]bool, loadSource func(string) (*store.BrowserPhotoImport, error),
-) ([]int, error) {
-	var needed []int
+	recordedHash := func(path string) (string, string, bool, error) {
+		source, name, _ := strings.Cut(strings.TrimPrefix(path, "browser:"), "/")
+		item, err := load(source)
+		if item == nil || err != nil {
+			return source, "", false, err
+		}
+		hash, recorded := item.Members[name]
+		return source, hash, recorded, nil
+	}
+	offered, err := load(requested.String())
+	if err != nil {
+		return requested, nil, err
+	}
+	matched := map[string]bool{}
 	recorded := map[int]bool{}
-	for _, index := range indexes {
-		source, name, ok := strings.Cut(strings.TrimPrefix(paths[index], "browser:"), "/")
-		if !ok {
-			continue
-		}
-		item, err := loadSource(source)
-		if errors.Is(err, errBrowserPhotoImportNotFound) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		if _, ok := item.Members[name]; !ok {
-			continue
-		}
-		matched[source] = true
-		recorded[index] = true
-		if files[index].ExpectedHash == "" {
-			needed = append(needed, index)
+	for _, group := range groups {
+		for _, index := range group {
+			source, _, ok, err := recordedHash(paths[index])
+			if err != nil {
+				return requested, nil, err
+			}
+			if ok {
+				matched[source] = true
+				recorded[index] = true
+			}
 		}
 	}
-	standalone, err := matchOlderStandaloneSidecars(ctx, st, files, indexes, recorded, paths, matched)
-	return append(needed, standalone...), err
-}
-
-// matchOlderStandaloneSidecars matches sidecars that no hash-resolved path
-// covers against older browser imports by selected relative path and content
-// hash. Several sources matching the same selection are left in matched for
-// the caller to reject.
-func matchOlderStandaloneSidecars(
-	ctx context.Context, st *store.Store, files []webPhotoFile, indexes []int, recorded map[int]bool,
-	paths []string, matched map[string]bool,
-) ([]int, error) {
+	// A standalone sidecar has no photo to resolve its folder, so match it to
+	// older imports by its path beneath the selected folder and its bytes.
 	folder, folderSelection := browserPhotoSelectionFolder(files)
 	byPath := map[string]int{}
 	var selected []string
-	for _, index := range indexes {
-		if recorded[index] || store.ClassifyPhotoSource(files[index].RelativePath).Kind != store.PhotoSourceSidecar {
-			continue
-		}
-		if name, ok := browserPhotoSelectionRelativePath(files[index], folder, folderSelection); ok {
+	for _, group := range groups {
+		for _, index := range group {
+			if recorded[index] || store.ClassifyPhotoSource(files[index].RelativePath).Kind != store.PhotoSourceSidecar {
+				continue
+			}
+			name := files[index].RelativePath
+			if folderSelection {
+				name = strings.TrimPrefix(name, folder+"/")
+			}
 			byPath[name] = index
 			selected = append(selected, name)
 		}
 	}
 	candidates, err := st.BrowserPhotoImportPaths(ctx, selected)
 	if err != nil {
-		return nil, err
+		return requested, nil, err
 	}
-	var needed []int
 	for _, candidate := range candidates {
 		name := candidate.RelativePath
 		if candidate.FolderSelection {
 			name, _ = strings.CutPrefix(name, candidate.Folder+"/")
 		}
 		index, ok := byPath[name]
-		if !ok || candidate.FolderSelection != folderSelection {
-			continue
-		}
-		switch {
-		case files[index].ExpectedHash == "":
-			if candidate.BlobHash != "" {
-				needed = append(needed, index)
-			}
-		case candidate.BlobHash == files[index].ExpectedHash:
+		if ok && candidate.FolderSelection == folderSelection && candidate.BlobHash == files[index].ExpectedHash {
 			paths[index] = "browser:" + candidate.SourceID + "/" + candidate.RelativePath
 			matched[candidate.SourceID] = true
 		}
 	}
-	return needed, nil
+	if len(matched) > 1 || offered != nil && len(matched) == 0 {
+		return requested, nil, changed
+	}
+	sourceID := requested
+	for source := range matched {
+		if sourceID, err = uuid.Parse(source); err != nil {
+			return requested, nil, changed
+		}
+	}
+	if sourceID != requested {
+		requestedPrefix, adoptedPrefix := "browser:"+requested.String()+"/", "browser:"+sourceID.String()+"/"
+		for index, original := range paths {
+			if suffix, ok := strings.CutPrefix(original, requestedPrefix); ok {
+				paths[index] = adoptedPrefix + suffix
+			}
+		}
+	}
+	var present []int
+	for i, group := range groups {
+		complete := true
+		for _, index := range group {
+			_, hash, ok, err := recordedHash(paths[index])
+			if err != nil {
+				return requested, nil, err
+			}
+			if ok && hash != files[index].ExpectedHash {
+				return requested, nil, changed
+			}
+			complete = complete && ok
+		}
+		if complete {
+			present = append(present, i)
+		}
+	}
+	return sourceID, present, nil
 }
 
 // unhashedBrowserPhotos lists the planned files that declared no hash but
 // match the size of an eligible earlier browser photo. Only exact bytes can
 // continue a folder, so these are the only files the browser must hash before
-// the plan; the rest hash with their group at upload.
+// the plan; the rest hash with their group at upload. Recovery compares every
+// member with its recorded bytes, so it needs every hash.
 func unhashedBrowserPhotos(
-	ctx context.Context, s *store.Store, files []webPhotoFile, groups [][]int,
+	ctx context.Context, s *store.Store, files []webPhotoFile, groups [][]int, recovering bool,
 ) ([]int, *Error) {
 	var sizes []int64
 	for _, group := range groups {
@@ -925,7 +953,7 @@ func unhashedBrowserPhotos(
 	var needed []int
 	for _, group := range groups {
 		for _, index := range group {
-			if files[index].ExpectedHash == "" && candidates[files[index].Size] {
+			if files[index].ExpectedHash == "" && (recovering || candidates[files[index].Size]) {
 				needed = append(needed, index)
 			}
 		}
@@ -960,19 +988,8 @@ func handleWebPhotoPlan(
 	}
 	var needed []int
 	if problem == nil {
-		if begin.Recovering {
-			for _, group := range groups {
-				for _, index := range group {
-					if begin.Files[index].ExpectedHash == "" {
-						needed = append(needed, index)
-					}
-				}
-			}
-		} else {
-			needed, problem = unhashedBrowserPhotos(ctx, d.Store, begin.Files, groups)
-		}
+		needed, problem = unhashedBrowserPhotos(ctx, d.Store, begin.Files, groups, begin.Recovering)
 	}
-
 	if problem != nil {
 		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, problem) == nil
 	}
@@ -985,7 +1002,6 @@ func handleWebPhotoPlan(
 	if begin.SourceID != nil {
 		sourceID = *begin.SourceID
 	}
-	requestedSourceID := sourceID.String()
 	paths := make([]string, len(begin.Files))
 	for i, file := range begin.Files {
 		paths[i] = "browser:" + sourceID.String() + "/" + file.RelativePath
@@ -1005,154 +1021,13 @@ func handleWebPhotoPlan(
 	for i, index := range indexes {
 		paths[index] = resolved[i]
 	}
-
-	sources := map[string]*store.BrowserPhotoImport{}
-	loadSource := func(id string) (*store.BrowserPhotoImport, error) {
-		if item, loaded := sources[id]; loaded {
-			if item == nil {
-				return nil, errBrowserPhotoImportNotFound
-			}
-			return item, nil
-		}
-		item, found, err := d.Store.BrowserPhotoImport(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		if !found {
-			sources[id] = nil
-			return nil, errBrowserPhotoImportNotFound
-		}
-		sources[id] = &item
-		return &item, nil
-	}
-	var requested *store.BrowserPhotoImport
-	matchedSources := map[string]bool{}
+	var present []int
 	if begin.Recovering {
 		var err error
-		requested, err = loadSource(requestedSourceID)
-		if errors.Is(err, errBrowserPhotoImportNotFound) {
-			err = nil
-		}
+		sourceID, present, err = recoverBrowserPhotos(ctx, d.Store, begin.Files, groups, paths, sourceID)
 		if err != nil {
 			return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
 		}
-		if requested != nil {
-			for _, index := range indexes {
-				file := begin.Files[index]
-				hash, recorded := requested.Members[file.RelativePath]
-				if !recorded {
-					continue
-				}
-				if hash == "" || file.ExpectedHash != "" && hash != file.ExpectedHash {
-					continue
-				}
-				paths[index] = "browser:" + requestedSourceID + "/" + file.RelativePath
-				matchedSources[requestedSourceID] = true
-				if file.ExpectedHash == "" {
-					needed = append(needed, index)
-				}
-			}
-		}
-		if problem != nil {
-			return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, problem) == nil
-		}
-		more, err := matchOlderBrowserPhotos(ctx, d.Store, begin.Files, indexes, paths, matchedSources, loadSource)
-		if err != nil {
-			return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
-		}
-		needed = append(needed, more...)
-		slices.Sort(needed)
-		needed = slices.Compact(needed)
-		if len(needed) > 0 {
-			return nil, wsjson.Write(ctx, conn, webUploadMessage{
-				Type: "photo_import_hashes_needed", RequestID: begin.RequestID, Indexes: needed,
-			}) == nil
-		}
-		if len(matchedSources) > 1 || requested != nil && len(matchedSources) == 0 {
-			problem = NewError(http.StatusConflict, "photo_import_changed", "The recorded import differs from this selection. Choose the original folder.")
-		} else if len(matchedSources) == 1 {
-			for id := range matchedSources {
-				matched, err := uuid.Parse(id)
-				if err != nil {
-					problem = NewError(http.StatusConflict, "photo_import_changed", "The recorded import differs from this selection. Choose the original folder.")
-					break
-				}
-				sourceID = matched
-			}
-		}
-		if problem == nil && sourceID.String() != requestedSourceID {
-			requestedPrefix := "browser:" + requestedSourceID + "/"
-			adoptedPrefix := "browser:" + sourceID.String() + "/"
-			for index, original := range paths {
-				if suffix, ok := strings.CutPrefix(original, requestedPrefix); ok {
-					paths[index] = adoptedPrefix + suffix
-				}
-			}
-		}
-	}
-	if problem != nil {
-		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, problem) == nil
-	}
-	var recovered *store.BrowserPhotoImport
-	if begin.Recovering {
-		item, err := loadSource(sourceID.String())
-		if errors.Is(err, errBrowserPhotoImportNotFound) {
-			err = nil
-		}
-		if err != nil {
-			return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
-		}
-		recovered = item
-	}
-
-	var present []int
-	if recovered != nil || begin.Recovering {
-		for i, group := range groups {
-			matched := true
-			for _, index := range group {
-				file := begin.Files[index]
-				source, name, ok := strings.Cut(strings.TrimPrefix(paths[index], "browser:"), "/")
-				var hash string
-				var recorded bool
-				if ok {
-					item, err := loadSource(source)
-					if errors.Is(err, errBrowserPhotoImportNotFound) {
-						err = nil
-					}
-					if err != nil {
-						return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
-					}
-					if item != nil {
-						hash, recorded = item.Members[name]
-					}
-				}
-				if recorded && (hash == "" || file.ExpectedHash != "" && hash != file.ExpectedHash) {
-					problem = NewError(http.StatusConflict, "photo_import_changed", "The recorded import differs from this selection. Choose the original folder.")
-					break
-				}
-				if recorded && file.ExpectedHash == "" {
-					needed = append(needed, index)
-				}
-				if !recorded || hash != file.ExpectedHash {
-					matched = false
-				}
-			}
-			if problem != nil {
-				break
-			}
-			if matched {
-				present = append(present, i)
-			}
-		}
-	}
-	if problem != nil {
-		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, problem) == nil
-	}
-	if len(needed) > 0 {
-		slices.Sort(needed)
-		return nil, wsjson.Write(ctx, conn, webUploadMessage{
-			Type: "photo_import_hashes_needed", RequestID: begin.RequestID, Indexes: slices.Compact(needed),
-		}) == nil
 	}
 	photoImport := &webPhotoImport{
 		paths: paths,
