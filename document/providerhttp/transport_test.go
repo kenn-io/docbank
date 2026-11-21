@@ -160,24 +160,28 @@ func TestEgressRevalidatesDNSOnEachConnection(t *testing.T) {
 }
 
 func TestEgressFallsBackAcrossApprovedDNSAnswers(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	first, err := net.Listen("tcp6", "[::1]:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = first.Close() })
+	_, port := endpoint(t, first.Addr())
+	listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(port))))
+	require.NoError(t, err)
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, "fallback")
 	}))
+	require.NoError(t, server.Listener.Close())
+	server.Listener = listener
+	server.Start()
 	defer server.Close()
-	_, port := endpoint(t, server.Listener.Addr())
 	resolver := &recordingResolver{answers: [][]netip.Addr{{
 		netip.MustParseAddr("::1"),
 		netip.MustParseAddr("127.0.0.1"),
 	}}}
-	transport, err := providerhttp.NewTransport(providerhttp.EgressPolicy{
-		Scheme: "http", Host: "provider.invalid", Port: port,
-		AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("::1/128"), netip.MustParsePrefix("127.0.0.0/8")},
-		ProxyMode:    providerhttp.ProxyDisabled,
-	}, resolver)
-	require.NoError(t, err)
+	transport := newHTTPTransport(t, port, resolver, netip.MustParsePrefix("::1/128"))
 
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://provider.invalid:"+strconv.Itoa(int(port)), nil)
 	require.NoError(t, err)
+	require.NoError(t, first.Close())
 	response, err := (&http.Client{Transport: transport}).Do(request)
 	require.NoError(t, err)
 	body, err := io.ReadAll(response.Body)
@@ -482,11 +486,12 @@ func newHTTPTransport(
 	t *testing.T,
 	port uint16,
 	resolver providerhttp.Resolver,
+	extraCIDRs ...netip.Prefix,
 ) *http.Transport {
 	t.Helper()
 	transport, err := providerhttp.NewTransport(providerhttp.EgressPolicy{
 		Scheme: "http", Host: "provider.invalid", Port: port,
-		AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")},
+		AllowedCIDRs: append([]netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, extraCIDRs...),
 		ProxyMode:    providerhttp.ProxyDisabled,
 	}, resolver)
 	require.NoError(t, err)
