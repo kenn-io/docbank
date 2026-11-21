@@ -965,8 +965,6 @@ it("resumes an interrupted folder with its original source on a fresh channel", 
   });
   await fireEvent.click(await screen.findByRole("button", { name: "Choose the same folder…" }));
   expect(folderPicker).toHaveBeenCalledOnce();
-  expect(screen.queryByRole("button", { name: "Choose files" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Choose folder" })).toBeNull();
   await fireEvent.change(screen.getByLabelText("Choose photo folder"), {
     target: { files: selected },
   });
@@ -1721,15 +1719,11 @@ it("finishes a recorded folder import after a lost session by sending only the m
   );
   expect(screen.getByRole("button", { name: "Dismiss" })).toBeTruthy();
   // The vault does not record the original destination, so recovery waits for one.
-  const destination = screen.getByLabelText<HTMLInputElement>("Destination");
-  expect(section.contains(destination)).toBe(true);
-  expect(destination.value).toBe("");
+  expect(screen.getByLabelText<HTMLInputElement>("Destination").value).toBe("");
   expect(screen.getByRole("button", { name: "Choose the same folder…" })).toHaveProperty(
     "disabled",
     true,
   );
-  expect(screen.queryByRole("button", { name: "Choose folder" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Choose files" })).toBeNull();
   const folderPicker = vi.spyOn(
     screen.getByLabelText<HTMLInputElement>("Choose photo folder"),
     "click",
@@ -1744,9 +1738,8 @@ it("finishes a recorded folder import after a lost session by sending only the m
     target: { files: selected },
   });
   const add = await screen.findByRole("button", { name: "Add 1 remaining group" });
-  expect(screen.getByText("Destination: /photos")).toBeTruthy();
-  expect(screen.queryByLabelText("Destination")).toBeNull();
-  expect(screen.queryByRole("button", { name: "Choose folder" })).toBeNull();
+  expect(screen.getByLabelText<HTMLInputElement>("Destination").value).toBe("/photos");
+  expect(screen.getByLabelText<HTMLInputElement>("Destination").disabled).toBe(true);
   expect(screen.queryByText("Already in the vault")).toBeNull();
   expect(screen.getAllByRole("listitem")).toHaveLength(1);
   expect(screen.getByRole("listitem").textContent).toContain("Trip/notes.txt");
@@ -1786,6 +1779,51 @@ it("finishes a recorded folder import after a lost session by sending only the m
   );
   await tick();
   expect(screen.queryByRole("heading", { name: "Interrupted import found" })).toBeNull();
+});
+
+it("starts a new import from the regular picker while an interrupted import is offered", async () => {
+  browserImports.mockResolvedValue(recorded);
+  const selected = files().slice(0, 2);
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn().mockResolvedValue({
+      import_id: "fresh",
+      groups: [[0], [1]],
+      present: [],
+      unsupported: [],
+    }),
+    uploadPhotoGroup: vi.fn(),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "fresh-during-recovery",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await screen.findByRole("heading", { name: "Interrupted import found" });
+  await fireEvent.input(screen.getByLabelText("Destination"), {
+    target: { value: "/photos" },
+  });
+  // Opening the recovery picker and backing out of it leaves the regular picker starting fresh.
+  await fireEvent.click(screen.getByRole("button", { name: "Choose the same folder…" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Choose files" }));
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: selected },
+  });
+  await screen.findByRole("button", { name: "Add 2 groups" });
+  expect(channel.planPhotoImport).toHaveBeenCalledExactlyOnceWith(
+    selected,
+    "/photos",
+    expect.any(String),
+    expect.any(AbortSignal),
+    expect.any(Function),
+  );
+  const sourceID = vi.mocked(channel.planPhotoImport).mock.calls[0][2];
+  expect(sourceID).not.toBe(recorded.source_id);
+  expect(savedImports.get("fresh-during-recovery")?.sourceID).toBe(sourceID);
+  expect(screen.queryByRole("heading", { name: "Interrupted import found" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /remaining/ })).toBeNull();
 });
 
 it("settles a recovered import whose groups are all in the vault without sending any", async () => {

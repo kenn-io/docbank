@@ -75,6 +75,9 @@
   let checkpoint = $state<PhotoImportCheckpoint>();
   let recovery = $state<Recovery>();
   let pickerKind: "files" | "folder" = "files";
+  // Only "Choose the same …" resumes the offered import; the regular picker starts a new one.
+  let recoveryRequested = false;
+  let resumes = false;
   const checkpointVaultID = $derived(vaultID);
   const checkpointSession = $derived(session);
   const storage = $derived(photoImportStorage(checkpointVaultID, checkpointSession));
@@ -260,6 +263,7 @@
 
   function recover(): void {
     if (!recovery || needsDestination) return;
+    recoveryRequested = true;
     picker?.choose(recovery.pickerKind);
   }
 
@@ -308,9 +312,10 @@
       showError(cause);
       return;
     }
-    // While recovery is offered, either picker resumes it under its source ID; Dismiss starts a new import.
+    const resume = Boolean(recovery) && recoveryRequested;
+    recoveryRequested = false;
     const expected = checkpoint;
-    if (expected && !recovery) {
+    if (expected && !resume) {
       planning = true;
       const confirmed = await confirmation?.confirm(
         "Replace the unfinished import?",
@@ -321,6 +326,7 @@
       if (!confirmed || destroyed || checkpoint !== expected) return;
     }
     pickerKind = kind;
+    resumes = resume;
     interruptedPlan = undefined;
     sourceID = "";
     selectedFiles = files;
@@ -355,8 +361,9 @@
     error = "";
     try {
       const { digest } = photoImportManifest(files);
+      const resumed = resumes ? recovery?.sourceID : undefined;
       if (
-        recovery &&
+        resumed &&
         checkpoint &&
         (checkpoint.destination !== target ||
           checkpoint.manifestVersion !== 2 ||
@@ -366,7 +373,6 @@
         throw new Error(
           "These files or destination differ from the saved import. Reselect the original files or folder and destination.",
         );
-      const resumed = recovery?.sourceID;
       const nextSourceID = reconnect ? sourceID : (resumed ?? randomUUID());
       const next = reconnect
         ? undefined
@@ -390,7 +396,7 @@
             false,
             true,
           ]
-        : recovery
+        : resumed
           ? [undefined, !checkpoint, true]
           : [];
       const plan = await planChannel.planPhotoImport(
@@ -418,6 +424,8 @@
       }
       if (active.signal.aborted || destroyed || destination !== target) return;
       if (!reconnect) checkpoint = plan.groups.length ? next : undefined;
+      // A new import replaced the offered one's saved progress, so it is no longer offered here.
+      if (!resumed) recovery = undefined;
       plannedDestination = target;
       sourceID = nextSourceID;
       plannedChannel = planChannel;
@@ -617,7 +625,7 @@
       onchange={() => {
         if (!items.length && destination !== plannedDestination) void plan();
       }}
-      disabled={!checkpointReady || running || planning || started}
+      disabled={!checkpointReady || running || planning || started || recovering}
       block
     /></label
   >
@@ -630,7 +638,7 @@
     filesLabel="Choose photo files"
     folderLabel="Choose photo folder"
     onchoose={choose}
-    showButtons={!recovery}
+    onopen={() => (recoveryRequested = false)}
   />
 {/snippet}
 
@@ -641,12 +649,38 @@
   footer={disabledReason ? channelFooter : undefined}
 >
   <div class="tool-body" class:photo-import-planned={items.length > 0}>
+    <section class="tool-section" aria-label="Photo source">
+      {#if lookupError}
+        <p role="alert">{lookupError}</p>
+        <div class="tool-actions">
+          <Button onclick={() => retryLookup?.()}>Check again</Button>
+        </div>
+      {:else if !recovery && !disabledReason && error}
+        <p role="alert">{error}</p>
+      {:else if !disabledReason && !checkpointReady}
+        <p role="status">{vaultID ? "Loading saved import…" : "Waiting for vault identity…"}</p>
+      {/if}
+      {#if storageNotice}<p role="status">{storageNotice}</p>{/if}
+      {@render destinationField()}
+      {#if planning}
+        <p role="status">{hashProgress ? "Hashing" : "Planning"}</p>
+        {#if hashProgress}<progress
+            max={hashProgress.total || 1}
+            value={hashProgress.processed}
+            aria-label="Hashing"
+          ></progress>{/if}
+      {/if}
+      <div class="controls">
+        {@render photoPicker()}
+      </div>
+      {#if !recovery && !disabledReason && !error && (pending || running)}<p class="tool-muted">
+          Keep this tab open until the import finishes.
+        </p>{/if}
+    </section>
     {#if recovery}
       <section class="tool-section" aria-labelledby="photo-recovery-heading">
         <h3 id="photo-recovery-heading">Interrupted import found</h3>
         <p>{recoverySummary}</p>
-        {#if recovering}<p>Destination: {destination}</p>{/if}
-        {#if !recovering}{@render destinationField()}{/if}
         {#if error}<p role="alert">{error}</p>{/if}
         <div class="tool-actions">
           {#if !running}<Button disabled={planning} onclick={() => void dismiss()}>Dismiss</Button
@@ -672,41 +706,6 @@
           </p>{/if}
       </section>
     {/if}
-    <section
-      class="tool-section"
-      class:photo-source-recovery={!!recovery}
-      aria-label="Photo source"
-      aria-hidden={!!recovery}
-    >
-      {#if !recovery}
-        {#if lookupError}
-          <p role="alert">{lookupError}</p>
-          <div class="tool-actions">
-            <Button onclick={() => retryLookup?.()}>Check again</Button>
-          </div>
-        {:else if !disabledReason && error}
-          <p role="alert">{error}</p>
-        {:else if !disabledReason && !checkpointReady}
-          <p role="status">{vaultID ? "Loading saved import…" : "Waiting for vault identity…"}</p>
-        {/if}
-        {#if !recovery && storageNotice}<p role="status">{storageNotice}</p>{/if}
-        {@render destinationField()}
-        {#if planning}
-          <p role="status">{hashProgress ? "Hashing" : "Planning"}</p>
-          {#if hashProgress}<progress
-              max={hashProgress.total || 1}
-              value={hashProgress.processed}
-              aria-label="Hashing"
-            ></progress>{/if}
-        {/if}
-      {/if}
-      <div class="controls" class:photo-source-recovery={!!recovery}>
-        {@render photoPicker()}
-      </div>
-      {#if !recovery && !disabledReason && !error && (pending || running)}<p class="tool-muted">
-          Keep this tab open until the import finishes.
-        </p>{/if}
-    </section>
     {#if items.some((item) => !(recovering && item.state === "skipped")) || unsupported.length}
       <section class="tool-section" aria-label="Selected photos">
         {#if totals.length || unsupported.length}<div class="totals" aria-live="polite">
@@ -755,9 +754,6 @@
     align-items: center;
     gap: var(--space-2);
     flex-wrap: wrap;
-  }
-  .photo-source-recovery {
-    display: contents;
   }
   .tool-body.photo-import-planned {
     gap: var(--space-5);
