@@ -26,7 +26,12 @@ func TestDialFallsBackInDNSOrder(t *testing.T) {
 	firstAddress := net.JoinHostPort("::1", strconv.Itoa(port))
 	first, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp6", firstAddress)
 	if err != nil {
-		t.Skipf("reserve IPv6 loopback: %v", err)
+		probe, probeErr := (&net.ListenConfig{}).Listen(t.Context(), "tcp6", "[::1]:0")
+		if probeErr != nil {
+			t.Skipf("IPv6 loopback unavailable: %v", probeErr)
+		}
+		require.NoError(t, probe.Close())
+		require.NoError(t, err)
 	}
 	t.Cleanup(func() { _ = first.Close() })
 
