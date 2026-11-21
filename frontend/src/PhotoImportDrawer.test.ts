@@ -355,7 +355,7 @@ it.each([false, true])(
       [""],
     );
     expect(screen.getByText("Added: 1")).toBeTruthy();
-    expect(screen.getByText("Already in the vault: 1")).toBeTruthy();
+    expect(screen.getByText("Already in vault: 1")).toBeTruthy();
     expect(screen.getByText("Skipped: 1")).toBeTruthy();
     expect(screen.getByText("Unsupported type")).toBeTruthy();
     expect(screen.getByText("notes.txt")).toBeTruthy();
@@ -564,7 +564,7 @@ it("reports ambiguous and failed groups and uses the chosen destination", async 
   const destination = screen.getByLabelText<HTMLInputElement>("Destination");
   await fireEvent.click(await screen.findByRole("button", { name: "Add 2 groups" }));
   await waitFor(() => expect(complete).toHaveBeenCalledOnce());
-  expect(destination.readOnly).toBe(true);
+  expect(destination.disabled).toBe(true);
   expect(screen.getByText("Multiple RAW files share this name.")).toBeTruthy();
   expect(screen.getByText("Ambiguous: 1")).toBeTruthy();
   expect(screen.getByText("Failed: 1")).toBeTruthy();
@@ -1538,7 +1538,7 @@ it("replans on a replacement channel and skips an unconfirmed group the vault ho
   expect(replacement.uploadPhotoGroup).not.toHaveBeenCalled();
   await fireEvent.click(screen.getByRole("button", { name: "Add 2 groups" }));
   await waitFor(() => expect(replacement.uploadPhotoGroup).toHaveBeenCalledOnce());
-  await screen.findByText("Already in the vault: 1");
+  await screen.findByText("Already in vault: 1");
   expect(replacement.uploadPhotoGroup).toHaveBeenCalledWith(
     "second",
     1,
@@ -1722,7 +1722,7 @@ it("finishes a recorded folder import after a lost session by sending only the m
   });
   const add = await screen.findByRole("button", { name: "Add 1 remaining group" });
   expect(destination.value).toBe("/photos");
-  expect(destination.readOnly).toBe(true);
+  expect(destination.disabled).toBe(true);
   expect(section.querySelector("p")!.textContent).toBe(
     "Folder “Trip” · 1 of 2 groups already in the vault",
   );
@@ -1764,16 +1764,16 @@ it("finishes a recorded folder import after a lost session by sending only the m
     expect.any(Function),
     [""],
   );
-  expect(screen.getByText("Already in the vault: 1")).toBeTruthy();
+  expect(screen.getByText("Already in vault: 1")).toBeTruthy();
   expect(screen.getByText("Added: 1")).toBeTruthy();
   const completedRows = screen.getAllByRole("listitem");
-  expect(completedRows).toHaveLength(2);
-  expect(completedRows[0]!.textContent).toContain("Trip/movie.MP4");
-  expect(completedRows[0]!.textContent).toContain("Added");
-  expect(completedRows[1]!.textContent).toContain("Unsupported type");
-  expect(completedRows.every((row) => !/capture\.(ARW|JPG)/.test(row.textContent ?? ""))).toBe(
-    true,
-  );
+  expect(completedRows).toHaveLength(3);
+  expect(completedRows[0]!.textContent).toContain("Trip/capture.ARW");
+  expect(completedRows[0]!.textContent).toContain("Trip/capture.JPG");
+  expect(completedRows[0]!.textContent).toContain("Already in vault");
+  expect(completedRows[1]!.textContent).toContain("Trip/movie.MP4");
+  expect(completedRows[1]!.textContent).toContain("Added");
+  expect(completedRows[2]!.textContent).toContain("Unsupported type");
   expect(screen.getByLabelText<HTMLInputElement>("Destination").value).toBe("/photos");
   expect(screen.queryByText("Keep this tab open until the import finishes.")).toBeNull();
   expect(screen.queryByText(/^(Failed|Ambiguous|Unconfirmed)/)).toBeNull();
@@ -1853,7 +1853,7 @@ it("settles a recovered import whose groups are all in the vault and hides it on
   await fireEvent.change(screen.getByLabelText("Choose photo folder"), {
     target: { files: tripFolder() },
   });
-  await screen.findByText("Already in the vault: 2");
+  await screen.findByText("Already in vault: 2");
   await waitFor(() =>
     expect(screen.queryByRole("heading", { name: "Interrupted import found" })).toBeNull(),
   );

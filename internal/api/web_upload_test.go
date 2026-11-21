@@ -1012,31 +1012,66 @@ func TestBrowserPhotoRecoveryContinuedFolder(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	conn := browserUploadSocket(t, ts)
+	const originalSource = "20000000-0000-4000-8000-000000000001"
+	const continuedSource = "20000000-0000-4000-8000-000000000002"
+	const resumedSource = "20000000-0000-4000-8000-000000000003"
 	photo := map[string]any{"relative_path": "Previous/A/one.jpg", "size": 3, "expected_hash": testHash("one")}
+	originalSidecar := map[string]any{"relative_path": "Previous/A/loose.xmp", "size": 4, "expected_hash": testHash("side")}
 	sidecar := map[string]any{"relative_path": "Card/A/loose.xmp", "size": 4, "expected_hash": testHash("side")}
 	other := map[string]any{"relative_path": "Card/B/other.xmp", "size": 5, "expected_hash": testHash("other")}
-	plan := map[string]any{"type": "plan_photo_import", "request_id": "plan", "destination": "/photos", "source_id": "20000000-0000-4000-8000-000000000001", "files": []map[string]any{photo}}
+	initialFiles := []map[string]any{photo, originalSidecar}
+	plan := map[string]any{"type": "plan_photo_import", "request_id": "plan", "destination": "/photos", "source_id": originalSource, "files": initialFiles}
 	require.NoError(t, wsjson.Write(t.Context(), conn, plan))
 	initial := readPhotoResponse(t, conn)
-	require.Equal(t, "added", uploadBrowserPhoto(t, conn, initial.ImportID, 0, photo, []byte("one")).Receipt.Status)
+	require.Equal(t, 2, len(initial.Groups))
+	for group, members := range initial.Groups {
+		index := members[0]
+		data := []byte("one")
+		if index == 1 {
+			data = []byte("side")
+		}
+		require.Equal(t, "added", uploadBrowserPhoto(t, conn, initial.ImportID, group, initialFiles[index], data).Receipt.Status)
+	}
 	photo["relative_path"] = "Card/A/one.jpg"
-	plan["source_id"] = "20000000-0000-4000-8000-000000000002"
+	plan["source_id"] = continuedSource
 	plan["files"] = []map[string]any{photo, sidecar, other}
 	require.NoError(t, wsjson.Write(t.Context(), conn, plan))
 	continued := readPhotoResponse(t, conn)
 	require.Equal(t, "photo_import_plan", continued.Type)
 	for group, members := range continued.Groups {
 		if members[0] == 1 {
-			require.Equal(t, "added", uploadBrowserPhoto(t, conn, continued.ImportID, group, sidecar, []byte("side")).Receipt.Status)
+			require.Equal(t, "skipped", uploadBrowserPhoto(t, conn, continued.ImportID, group, sidecar, []byte("side")).Receipt.Status)
 		}
 	}
 	reconnected := browserUploadSocket(t, ts)
 	plan["recovering"] = true
+	response, body := get(t, ts, "/api/v1/photos/browser-imports", nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var lookup struct {
+		Import struct {
+			SourceID string `json:"source_id"`
+		} `json:"import"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &lookup))
+	require.Equal(t, originalSource, lookup.Import.SourceID)
+	plan["source_id"] = lookup.Import.SourceID
 	sidecar["expected_hash"] = ""
 	require.NoError(t, wsjson.Write(t.Context(), reconnected, plan))
 	needed := readPhotoResponse(t, reconnected)
 	require.Equal(t, "photo_import_hashes_needed", needed.Type)
 	require.Equal(t, []int{1}, needed.Indexes)
+	sidecar["expected_hash"] = testHash("side")
+	require.NoError(t, wsjson.Write(t.Context(), reconnected, plan))
+	recovered := readPhotoResponse(t, reconnected)
+	require.Equal(t, "photo_import_plan", recovered.Type)
+	require.Len(t, recovered.Present, 2)
+
+	plan["source_id"] = resumedSource
+	sidecar["expected_hash"] = testHash("diff")
+	require.NoError(t, wsjson.Write(t.Context(), reconnected, plan))
+	changed := readPhotoResponse(t, reconnected)
+	require.Equal(t, "photo_import_changed", changed.Code)
+
 	sidecar["expected_hash"] = testHash("side")
 	require.NoError(t, wsjson.Write(t.Context(), reconnected, plan))
 	resumed := readPhotoResponse(t, reconnected)

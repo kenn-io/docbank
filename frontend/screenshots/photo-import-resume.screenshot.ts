@@ -154,10 +154,11 @@ test("resumes the complete selection and source after a daemon and browser resta
     await utimes(files[2]!, times.atime, times.mtime);
     await resumed.page.getByRole("button", { name: "Choose the same files…", exact: true }).click();
     await resumed.page.getByLabel("Choose photo files").setInputFiles(files);
+    await expect(recovery).toContainText("2 of 3 groups already in the vault");
     await resumed.page.getByRole("button", { name: "Add 1 remaining group", exact: true }).click();
     await expect(resumed.page.getByText("Added: 1", { exact: true })).toBeVisible();
-    await expect(recovery).toContainText("2 groups already in the vault");
-    await expect(resumed.page.getByText("Already in vault: 2", { exact: true })).toHaveCount(0);
+    await expect(recovery).toHaveCount(0);
+    await expect(resumed.page.getByText("Already in vault: 2", { exact: true })).toBeVisible();
     expect(plans).toHaveLength(2);
     expect(plans[1]).toBe(plans[0]);
     // Wait for real source metadata before opening the final Library view.

@@ -859,6 +859,17 @@ func handleWebPhotoPlan(
 	var needed []int
 	if problem == nil {
 		needed, problem = unhashedBrowserPhotos(ctx, d.Store, begin.Files, groups)
+		if problem == nil && begin.Recovering {
+			for _, group := range groups {
+				for _, index := range group {
+					if begin.Files[index].ExpectedHash == "" {
+						needed = append(needed, index)
+					}
+				}
+			}
+			slices.Sort(needed)
+			needed = slices.Compact(needed)
+		}
 	}
 	var recovered *store.BrowserPhotoImport
 	if problem == nil && begin.SourceID != nil && begin.Recovering {
@@ -906,9 +917,12 @@ func handleWebPhotoPlan(
 
 	if recovered != nil {
 		selected := make(map[string]int, len(begin.Files))
+		recoveredPrefix := "browser:" + recovered.SourceID + "/"
 		for _, group := range groups {
 			for _, index := range group {
-				selected[begin.Files[index].RelativePath] = index
+				if strings.HasPrefix(paths[index], recoveredPrefix) {
+					selected[strings.TrimPrefix(paths[index], recoveredPrefix)] = index
+				}
 			}
 		}
 		for name, hash := range recovered.Members {
@@ -941,6 +955,7 @@ func handleWebPhotoPlan(
 				file := begin.Files[index]
 				source, name, ok := strings.Cut(strings.TrimPrefix(paths[index], "browser:"), "/")
 				var hash string
+				var recorded bool
 				if ok {
 					item, loaded := sources[source]
 					if !loaded {
@@ -954,20 +969,30 @@ func handleWebPhotoPlan(
 						sources[source] = item
 					}
 					if item != nil {
-						hash = item.Members[name]
+						hash, recorded = item.Members[name]
 					}
 				}
-				if hash != "" && file.ExpectedHash == "" {
+				if recorded && (hash == "" || file.ExpectedHash != "" && hash != file.ExpectedHash) {
+					problem = NewError(http.StatusConflict, "photo_import_changed", "The recorded import differs from this selection. Choose the original folder.")
+					break
+				}
+				if recorded && file.ExpectedHash == "" {
 					needed = append(needed, index)
 				}
-				if hash == "" || hash != file.ExpectedHash {
+				if !recorded || hash != file.ExpectedHash {
 					matched = false
 				}
+			}
+			if problem != nil {
+				break
 			}
 			if matched {
 				present = append(present, i)
 			}
 		}
+	}
+	if problem != nil {
+		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, problem) == nil
 	}
 	if len(needed) > 0 {
 		slices.Sort(needed)

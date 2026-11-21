@@ -73,7 +73,6 @@
   let confirmation = $state<PhotoCullConfirmation>();
   let checkpoint = $state<PhotoImportCheckpoint>();
   let recovery = $state<Recovery>();
-  let recoveredImport = $state(false);
   let pickerKind: "files" | "folder" = "files";
   // Only "Choose the same …" resumes the offered import; the regular picker starts a new one.
   let recoveryRequested = false;
@@ -99,7 +98,6 @@
     storageNotice = "";
     checkpoint = undefined;
     recovery = undefined;
-    recoveredImport = false;
     controller?.abort();
     items = [];
     unsupported = [];
@@ -203,7 +201,7 @@
     hashing: "Hashing",
     uploading: "Uploading",
     added: "Added",
-    skipped: "Already in the vault",
+    skipped: "Already in vault",
     ambiguous: "Ambiguous",
     failed: "Failed",
     unconfirmed: "Unconfirmed",
@@ -263,7 +261,6 @@
 
   function clearSelection(): void {
     items = [];
-    recoveredImport = false;
     for (const state of Object.keys(counts) as Item["state"][]) counts[state] = 0;
     unsupported = [];
     selectedFiles = [];
@@ -416,7 +413,6 @@
       if (!reconnect) checkpoint = plan.groups.length ? next : undefined;
       // A new import replaced the offered one's saved progress, so it is no longer offered here.
       if (!resumed) recovery = undefined;
-      recoveredImport = Boolean(resumed);
       plannedDestination = target;
       sourceID = nextSourceID;
       plannedChannel = planChannel;
@@ -620,8 +616,8 @@
       {/if}
     </div>{/if}
   <ul class:photo-import-recovery-list={recovering}>
-    {#each items.filter((item) => !((recovering || recoveredImport) && item.state === "skipped")) as item}
-      <li class:photo-import-skipped={item.state === "skipped"}>
+    {#each items.filter((item) => !(recovering && item.state === "skipped")) as item}
+      <li>
         <strong>{item.files.map(localFilePath).join(", ")}</strong>
         {#if item.state !== "ready"}<span>{labels[item.state]}</span>{/if}
         {#if item.state === "hashing" || item.state === "uploading"}<progress
@@ -657,8 +653,7 @@
         onchange={() => {
           if (!items.length && destination !== plannedDestination) void plan();
         }}
-        disabled={!checkpointReady || running || planning}
-        readonly={started}
+        disabled={!checkpointReady || running || planning || started}
         block
       /></label
     >
@@ -808,19 +803,10 @@
     overflow-y: auto;
   }
   li {
-    padding: var(--space-4) var(--space-5);
+    padding: var(--space-3);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     overflow-wrap: anywhere;
-  }
-  li > strong {
-    font-weight: var(--font-weight-normal, 400);
-  }
-  li.photo-import-skipped > strong {
-    color: var(--text-secondary);
-  }
-  li.photo-import-skipped > span {
-    color: var(--text-muted);
   }
   .totals,
   li span,
