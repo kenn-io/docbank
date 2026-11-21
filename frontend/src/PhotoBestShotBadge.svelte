@@ -27,7 +27,7 @@
   }
   .proposal.keep {
     color: var(--kit-tone-ink);
-    border-color: var(--accent-green);
+    border-color: var(--kit-tone-border);
   }
   .proposal.compact {
     padding: 1px 4px;
