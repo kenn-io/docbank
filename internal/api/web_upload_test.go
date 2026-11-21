@@ -949,6 +949,10 @@ func TestBrowserPhotoRecoveryPlan(t *testing.T) {
 	require.Equal(t, source, summary.SourceID)
 	require.Equal(t, "Card", summary.Folder)
 	require.Equal(t, 1, summary.Groups)
+	node, err := catalog.NodeByPath(t.Context(), "/photos/one.xmp")
+	require.NoError(t, err)
+	_, _, err = catalog.ReplaceContent(t.Context(), node.ID, node.Revision, testHash("edited"), 6, "application/rdf+xml")
+	require.NoError(t, err)
 
 	reconnected := browserUploadSocket(t, ts)
 	require.NoError(t, wsjson.Write(t.Context(), reconnected, plan))

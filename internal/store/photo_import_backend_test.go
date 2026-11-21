@@ -22,6 +22,10 @@ func checkBrowserPhotoRecovery(t *testing.T, open func(*testing.T) *Store) {
 		_, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(member))
 		require.NoError(t, err)
 	}
+	node, err := s.NodeByPath(ctx, "/other.XMP")
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContent(ctx, node.ID, node.Revision, fakeHash("edited"), 4, "application/rdf+xml")
+	require.NoError(t, err)
 	result, found, err := s.BrowserPhotoImport(ctx, "")
 	require.NoError(t, err)
 	require.True(t, found)

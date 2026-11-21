@@ -32,12 +32,11 @@ func (s *Store) BrowserPhotoImport(ctx context.Context, sourceID string) (Browse
 
 // BrowserPhotoImports returns committed browser sources, newest first.
 func (s *Store) BrowserPhotoImports(ctx context.Context) ([]*BrowserPhotoImport, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT i.started_at,i.source_desc,p.original_path,cv.blob_hash,live.blob_hash
+	rows, err := s.db.QueryContext(ctx, `SELECT i.started_at,i.source_desc,p.original_path,cv.blob_hash
 		FROM ingests i JOIN provenance p ON p.ingest_id=i.id
 		JOIN nodes n ON n.id=p.node_id AND n.trashed_at IS NULL
 		JOIN provenance_version_bindings b ON b.provenance_identity=p.identity
 		JOIN content_versions cv ON cv.version_id=b.content_version_id
-		JOIN content_versions live ON live.version_id=n.current_version_id
 		WHERE i.source_kind=$1 AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
 		ORDER BY i.started_at DESC,p.original_path`, storedString(s.postgresSchema != "", "photo-import"))
 	if err != nil {
@@ -48,8 +47,8 @@ func (s *Store) BrowserPhotoImports(ctx context.Context) ([]*BrowserPhotoImport,
 	byID := map[string]*BrowserPhotoImport{}
 	groups := map[string]map[string]bool{}
 	for rows.Next() {
-		var started, desc, original, hash, current string
-		if err := rows.Scan(&started, &desc, &original, &hash, &current); err != nil {
+		var started, desc, original, hash string
+		if err := rows.Scan(&started, &desc, &original, &hash); err != nil {
 			return nil, err
 		}
 		if !strings.HasPrefix(original, "browser:") || !strings.HasPrefix(desc, "browser: ") {
@@ -69,7 +68,7 @@ func (s *Store) BrowserPhotoImports(ctx context.Context) ([]*BrowserPhotoImport,
 			groups[id] = map[string]bool{}
 			imports = append(imports, result)
 		}
-		if old, exists := result.Members[relative]; hash != current || exists && old != hash {
+		if old, exists := result.Members[relative]; exists && old != hash {
 			result.Members[relative] = ""
 		} else if !exists {
 			result.Members[relative] = hash

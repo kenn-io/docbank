@@ -939,20 +939,20 @@ func handleWebPhotoPlan(
 	for i, file := range begin.Files {
 		paths[i] = "browser:" + sourceID.String() + "/" + file.RelativePath
 	}
-	var members []store.PhotoImportMember
-	var indexes []int
-	for _, group := range groups {
-		for _, index := range group {
-			members = append(members, store.PhotoImportMember{BlobHash: begin.Files[index].ExpectedHash, OriginalPath: paths[index]})
-			indexes = append(indexes, index)
+	if recovered == nil {
+		var members []store.PhotoImportMember
+		var indexes []int
+		for _, group := range groups {
+			for _, index := range group {
+				members = append(members, store.PhotoImportMember{BlobHash: begin.Files[index].ExpectedHash, OriginalPath: paths[index]})
+				indexes = append(indexes, index)
+			}
 		}
-	}
-	resolved, resolveErr := d.Store.ResolveBrowserPhotoPaths(ctx, members)
-	if resolveErr != nil {
-		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(resolveErr)) == nil
-	}
-	for i, index := range indexes {
-		if recovered == nil {
+		resolved, resolveErr := d.Store.ResolveBrowserPhotoPaths(ctx, members)
+		if resolveErr != nil {
+			return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(resolveErr)) == nil
+		}
+		for i, index := range indexes {
 			paths[index] = resolved[i]
 		}
 	}
