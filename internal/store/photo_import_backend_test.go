@@ -47,6 +47,17 @@ func checkBrowserPhotoRecovery(t *testing.T, open func(*testing.T) *Store) {
 	require.True(t, found)
 	require.Equal(t, 2, result.Groups)
 	require.Equal(t, fakeHash("Card/other.XMP"), result.Members["Card/other.XMP"])
+	photo, err := s.NodeByPath(ctx, "/first.JPG")
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, photo.ID, photo.Revision)
+	require.NoError(t, err)
+	selected := []PhotoImportMember{{OriginalPath: "browser:new/Again/first.JPG", BlobHash: fakeHash("Card/first.JPG")}}
+	resolved, err := s.ResolveBrowserPhotoPaths(ctx, selected, true)
+	require.NoError(t, err)
+	require.Equal(t, []string{"browser:" + source + "/Card/first.JPG"}, resolved)
+	resolved, err = s.ResolveBrowserPhotoPaths(ctx, selected, false)
+	require.NoError(t, err)
+	require.Equal(t, []string{"browser:new/Again/first.JPG"}, resolved)
 	looseRun, err := s.BeginIngest(ctx, "photo-import", "browser: Choose files")
 	require.NoError(t, err)
 	const looseID = "20000000-0000-4000-8000-000000000002"

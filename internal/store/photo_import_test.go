@@ -1036,13 +1036,13 @@ func checkBrowserPhotoDirectoryContinuation(t *testing.T, open func(*testing.T) 
 		{OriginalPath: "browser:new/Other/independent.JPG", BlobHash: fakeHash("unmatched")},
 		{OriginalPath: "browser:new/Card/unhashed.JPG"},
 	}
-	resolved, err := s.ResolveBrowserPhotoPaths(ctx, members)
+	resolved, err := s.ResolveBrowserPhotoPaths(ctx, members, false)
 	require.NoError(t, err)
 	require.Equal(t, []string{"browser:first/renamed.JPG", "browser:first/sibling.JPG", "browser:new/Other/independent.JPG", "browser:first/unhashed.JPG"}, resolved)
 	members = append(members,
 		PhotoImportMember{OriginalPath: "browser:new/Card/another.JPG", BlobHash: fakeHash("second")},
 		PhotoImportMember{OriginalPath: "browser:new/Separate/preview.JPG", BlobHash: fakeHash("first")})
-	resolved, err = s.ResolveBrowserPhotoPaths(ctx, members)
+	resolved, err = s.ResolveBrowserPhotoPaths(ctx, members, false)
 	require.NoError(t, err)
 	require.Equal(t, []string{"browser:new/Card/renamed.JPG", "browser:new/Card/sibling.JPG", "browser:new/Other/independent.JPG", "browser:new/Card/unhashed.JPG", "browser:new/Card/another.JPG", "browser:first/preview.JPG"}, resolved)
 	// Hidden and excluded photos never lend their source to a continuation.
@@ -1061,7 +1061,7 @@ func checkBrowserPhotoDirectoryContinuation(t *testing.T, open func(*testing.T) 
 		resolved, err = s.ResolveBrowserPhotoPaths(ctx, []PhotoImportMember{
 			{OriginalPath: "browser:new/" + state + "/preview.JPG", BlobHash: fakeHash(state)},
 			{OriginalPath: "browser:new/" + state + "/sibling.JPG", BlobHash: fakeHash("new")},
-		})
+		}, false)
 		require.NoError(t, err)
 		require.Equal(t, []string{"browser:new/" + state + "/preview.JPG", "browser:new/" + state + "/sibling.JPG"}, resolved)
 	}

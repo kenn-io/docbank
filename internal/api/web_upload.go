@@ -960,7 +960,17 @@ func handleWebPhotoPlan(
 	}
 	var needed []int
 	if problem == nil {
-		needed, problem = unhashedBrowserPhotos(ctx, d.Store, begin.Files, groups)
+		if begin.Recovering {
+			for _, group := range groups {
+				for _, index := range group {
+					if begin.Files[index].ExpectedHash == "" {
+						needed = append(needed, index)
+					}
+				}
+			}
+		} else {
+			needed, problem = unhashedBrowserPhotos(ctx, d.Store, begin.Files, groups)
+		}
 	}
 
 	if problem != nil {
@@ -988,7 +998,7 @@ func handleWebPhotoPlan(
 			indexes = append(indexes, index)
 		}
 	}
-	resolved, resolveErr := d.Store.ResolveBrowserPhotoPaths(ctx, members)
+	resolved, resolveErr := d.Store.ResolveBrowserPhotoPaths(ctx, members, begin.Recovering)
 	if resolveErr != nil {
 		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(resolveErr)) == nil
 	}
@@ -1034,8 +1044,7 @@ func handleWebPhotoPlan(
 					continue
 				}
 				if hash == "" || file.ExpectedHash != "" && hash != file.ExpectedHash {
-					problem = NewError(http.StatusConflict, "photo_import_changed", "The recorded import differs from this selection. Choose the original folder.")
-					break
+					continue
 				}
 				paths[index] = "browser:" + requestedSourceID + "/" + file.RelativePath
 				matchedSources[requestedSourceID] = true
@@ -1059,7 +1068,7 @@ func handleWebPhotoPlan(
 				Type: "photo_import_hashes_needed", RequestID: begin.RequestID, Indexes: needed,
 			}) == nil
 		}
-		if len(matchedSources) > 1 {
+		if len(matchedSources) > 1 || requested != nil && len(matchedSources) == 0 {
 			problem = NewError(http.StatusConflict, "photo_import_changed", "The recorded import differs from this selection. Choose the original folder.")
 		} else if len(matchedSources) == 1 {
 			for id := range matchedSources {
@@ -1094,34 +1103,6 @@ func handleWebPhotoPlan(
 			return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
 		}
 		recovered = item
-	}
-
-	if recovered != nil {
-		selected := make(map[string]int, len(begin.Files))
-		recoveredPrefix := "browser:" + recovered.SourceID + "/"
-		for _, group := range groups {
-			for _, index := range group {
-				if name, ok := strings.CutPrefix(paths[index], recoveredPrefix); ok {
-					selected[name] = index
-				}
-			}
-		}
-		for name, hash := range recovered.Members {
-			index, ok := selected[name]
-			if !ok || hash == "" {
-				problem = NewError(http.StatusConflict, "photo_import_changed", "The recorded import differs from this selection. Choose the original folder.")
-				break
-			}
-			if begin.Files[index].ExpectedHash == "" {
-				needed = append(needed, index)
-			} else if begin.Files[index].ExpectedHash != hash {
-				problem = NewError(http.StatusConflict, "photo_import_changed", "The recorded import differs from this selection. Choose the original folder.")
-				break
-			}
-		}
-	}
-	if problem != nil {
-		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, problem) == nil
 	}
 
 	var present []int

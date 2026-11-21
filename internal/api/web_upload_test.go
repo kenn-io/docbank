@@ -1060,8 +1060,9 @@ func TestBrowserPhotoRecoveryContinuedFolder(t *testing.T) {
 	require.NoError(t, wsjson.Write(t.Context(), reconnected, plan))
 	needed := readPhotoResponse(t, reconnected)
 	require.Equal(t, "photo_import_hashes_needed", needed.Type)
-	require.Equal(t, []int{1}, needed.Indexes)
+	require.Equal(t, []int{1, 2}, needed.Indexes)
 	sidecar["expected_hash"] = testHash("side")
+	other["expected_hash"] = testHash("other")
 	require.NoError(t, wsjson.Write(t.Context(), reconnected, plan))
 	recovered := readPhotoResponse(t, reconnected)
 	require.Equal(t, "photo_import_plan", recovered.Type)
@@ -1215,6 +1216,86 @@ func TestBrowserPhotoRecoveryOlderStandaloneSelection(t *testing.T) {
 	children, err := catalog.Children(t.Context(), destination.ID)
 	require.NoError(t, err)
 	require.Len(t, children, 3)
+}
+
+func TestBrowserPhotoRecoveryOverlappingNames(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	conn := browserUploadSocket(t, ts)
+	const olderSource = "20000000-0000-4000-8000-000000000031"
+	const newerSource = "20000000-0000-4000-8000-000000000032"
+	file := map[string]any{"relative_path": "Card/photo.jpg", "size": 5, "expected_hash": testHash("older")}
+	plan := map[string]any{"type": "plan_photo_import", "request_id": "plan", "destination": "/photos", "source_id": olderSource, "files": []map[string]any{file}}
+	require.NoError(t, wsjson.Write(t.Context(), conn, plan))
+	older := readPhotoResponse(t, conn)
+	require.Equal(t, "added", uploadBrowserPhoto(t, conn, older.ImportID, 0, file, []byte("older")).Receipt.Status)
+	file["expected_hash"] = testHash("newer")
+	plan["source_id"] = newerSource
+	require.NoError(t, wsjson.Write(t.Context(), conn, plan))
+	newer := readPhotoResponse(t, conn)
+	require.Equal(t, "added", uploadBrowserPhoto(t, conn, newer.ImportID, 0, file, []byte("newer")).Receipt.Status)
+	file["expected_hash"] = testHash("older")
+	plan["recovering"] = true
+	require.NoError(t, wsjson.Write(t.Context(), conn, plan))
+	recovered := readPhotoResponse(t, conn)
+	require.Equal(t, "photo_import_plan", recovered.Type, "%s: %s", recovered.Code, recovered.Detail)
+	require.Equal(t, olderSource, recovered.SourceID)
+	require.Equal(t, []int{0}, recovered.Present)
+}
+
+func TestBrowserPhotoRecoveryContinuedSubset(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	conn := browserUploadSocket(t, ts)
+	const source = "20000000-0000-4000-8000-000000000041"
+	files := []map[string]any{
+		{"relative_path": "Card/shared.jpg", "size": 6, "expected_hash": testHash("shared")},
+		{"relative_path": "Card/archived.jpg", "size": 8, "expected_hash": testHash("archived")},
+	}
+	plan := map[string]any{"type": "plan_photo_import", "request_id": "plan", "destination": "/photos", "source_id": source, "files": files}
+	require.NoError(t, wsjson.Write(t.Context(), conn, plan))
+	initial := readPhotoResponse(t, conn)
+	for group, members := range initial.Groups {
+		index := members[0]
+		data := []byte("shared")
+		if index == 1 {
+			data = []byte("archived")
+		}
+		require.Equal(t, "added", uploadBrowserPhoto(t, conn, initial.ImportID, group, files[index], data).Receipt.Status)
+	}
+	plan["files"] = []map[string]any{files[0], {"relative_path": "Card/new.jpg", "size": 3, "expected_hash": testHash("new")}}
+	plan["recovering"] = true
+	require.NoError(t, wsjson.Write(t.Context(), conn, plan))
+	recovered := readPhotoResponse(t, conn)
+	require.Equal(t, "photo_import_plan", recovered.Type, "%s: %s", recovered.Code, recovered.Detail)
+	require.Len(t, recovered.Present, 1)
+}
+
+func TestBrowserPhotoRecoveryContinuedTrashedPhoto(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, nil)
+	conn := browserUploadSocket(t, ts)
+	const originalSource = "20000000-0000-4000-8000-000000000051"
+	const continuedSource = "20000000-0000-4000-8000-000000000052"
+	file := map[string]any{"relative_path": "Previous/photo.jpg", "size": 5, "expected_hash": testHash("photo")}
+	plan := map[string]any{"type": "plan_photo_import", "request_id": "plan", "destination": "/photos", "source_id": originalSource, "files": []map[string]any{file}}
+	require.NoError(t, wsjson.Write(t.Context(), conn, plan))
+	initial := readPhotoResponse(t, conn)
+	require.Equal(t, "added", uploadBrowserPhoto(t, conn, initial.ImportID, 0, file, []byte("photo")).Receipt.Status)
+	file["relative_path"] = "Card/photo.jpg"
+	plan["source_id"] = continuedSource
+	require.NoError(t, wsjson.Write(t.Context(), conn, plan))
+	continued := readPhotoResponse(t, conn)
+	require.Equal(t, "skipped", uploadBrowserPhoto(t, conn, continued.ImportID, 0, file, []byte("photo")).Receipt.Status)
+	node, err := catalog.NodeByPath(t.Context(), "/photos/photo.jpg")
+	require.NoError(t, err)
+	_, _, err = catalog.Trash(t.Context(), node.ID, node.Revision)
+	require.NoError(t, err)
+	plan["recovering"] = true
+	require.NoError(t, wsjson.Write(t.Context(), conn, plan))
+	recovered := readPhotoResponse(t, conn)
+	require.Equal(t, "photo_import_plan", recovered.Type, "%s: %s", recovered.Code, recovered.Detail)
+	require.Equal(t, []int{0}, recovered.Present)
 }
 
 func TestBrowserUploadBoundsAuthentication(t *testing.T) {
