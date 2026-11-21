@@ -160,19 +160,16 @@ func TestEgressRevalidatesDNSOnEachConnection(t *testing.T) {
 }
 
 func TestEgressFallsBackAcrossApprovedDNSAnswers(t *testing.T) {
-	first, err := net.Listen("tcp6", "[::1]:0")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = first.Close() })
-	_, port := endpoint(t, first.Addr())
-	listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(port))))
-	require.NoError(t, err)
-	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, "fallback")
 	}))
-	require.NoError(t, server.Listener.Close())
-	server.Listener = listener
-	server.Start()
 	defer server.Close()
+	_, port := endpoint(t, server.Listener.Addr())
+	first, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp6", net.JoinHostPort("::1", strconv.Itoa(int(port))))
+	if err != nil {
+		t.Skipf("reserve IPv6 loopback: %v", err)
+	}
+	t.Cleanup(func() { _ = first.Close() })
 	resolver := &recordingResolver{answers: [][]netip.Addr{{
 		netip.MustParseAddr("::1"),
 		netip.MustParseAddr("127.0.0.1"),
