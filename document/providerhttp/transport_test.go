@@ -166,10 +166,15 @@ func TestEgressFallsBackAcrossApprovedDNSAnswers(t *testing.T) {
 	defer server.Close()
 	_, port := endpoint(t, server.Listener.Addr())
 	resolver := &recordingResolver{answers: [][]netip.Addr{{
-		netip.MustParseAddr("127.0.0.2"),
+		netip.MustParseAddr("::1"),
 		netip.MustParseAddr("127.0.0.1"),
 	}}}
-	transport := newHTTPTransport(t, port, resolver)
+	transport, err := providerhttp.NewTransport(providerhttp.EgressPolicy{
+		Scheme: "http", Host: "provider.invalid", Port: port,
+		AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("::1/128"), netip.MustParsePrefix("127.0.0.0/8")},
+		ProxyMode:    providerhttp.ProxyDisabled,
+	}, resolver)
+	require.NoError(t, err)
 
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://provider.invalid:"+strconv.Itoa(int(port)), nil)
 	require.NoError(t, err)
