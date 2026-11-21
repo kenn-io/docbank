@@ -6,6 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { createSyntheticCameraFiles } from "./camera-fixture";
+import { expectReadableTone } from "./tone-contrast";
 
 const exec = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -93,6 +94,7 @@ test("activity lanes and controls use the real daemon", async ({ browser }) => {
     );
     for (const theme of ["dark", "light"] as const) {
       await page.emulateMedia({ colorScheme: theme });
+      await expectReadableTone(pausedImport.getByText("Paused", { exact: true }), theme, "warning");
       await drawer.screenshot({
         path: path.join(output, `activity-after-${theme}.png`),
         animations: "disabled",

@@ -401,7 +401,9 @@
         </li>
       </ul>
       {#if plan.rendition_ineligible_reason}
-        <p class="warning">{ineligibleSentence(plan.rendition_ineligible_reason)}</p>
+        <p class="warning" data-kit-tone="warning">
+          {ineligibleSentence(plan.rendition_ineligible_reason)}
+        </p>
       {:else if plan.consent_required}
         <Checkbox
           bind:checked={consented}
@@ -485,7 +487,7 @@
     color: var(--accent-red);
   }
   .warning {
-    color: var(--accent-amber);
+    color: var(--kit-tone-ink);
   }
   .profile {
     display: flex;

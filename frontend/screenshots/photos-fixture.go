@@ -42,6 +42,7 @@ func check(err error) {
 func main() {
 	bestShots := flag.Bool("best-shots", false, "Measure synthetic frames for best-shot proposals")
 	detectedFaces := flag.Bool("detected-faces", false, "Include automatically detected synthetic faces")
+	faceGrades := flag.Bool("face-grades", false, "Include detected faces measured as green, yellow, and red")
 	suggestions := flag.Bool("suggestions", false, "Include synthetic photo suggestions")
 	namesakes := flag.Bool("namesakes", false, "Include people with the same name and distinct identities")
 	manyNamesakes := flag.Bool("many-namesakes", false, "Include 300 people named Alex")
@@ -284,6 +285,9 @@ func main() {
 		if *detectedFaces && index == 2 {
 			seedDetectedFaces(ctx, s, blobs, layout.BlobsDir(), node)
 		}
+		if *faceGrades && index == 2 {
+			seedFaceGrades(ctx, s, blobs, layout.BlobsDir(), node)
+		}
 		if *bestShots {
 			check(processing.EvaluatePhotoQuality(ctx, s, blobs, store.PhotoVisualPreviewTarget{VersionID: node.CurrentVersionID, SourceSHA256: node.BlobHash, Size: node.Size, MediaType: node.MimeType}))
 		}
@@ -437,6 +441,30 @@ func seedSuggestion(ctx context.Context, s *store.Store, blobs *blob.Store, spoo
 
 func seedDetectedFaces(ctx context.Context, s *store.Store, blobs *blob.Store, spool string, node store.Node) {
 	seedVisionResult(ctx, s, blobs, spool, node, document.FaceDetection{Faces: []document.FaceObservation{{Box: document.FaceBox{X: .25, Y: .2, Width: .2, Height: .3}, Roll: new(0.0), Facing: new(.9), EyesOpen: new(true), Smile: new(false)}}}, document.FaceDetectionProviderID)
+}
+
+// seedFaceGrades publishes measured face reports directly, because the
+// synthetic previews are too flat to measure as anything but red.
+func seedFaceGrades(ctx context.Context, s *store.Store, blobs *blob.Store, spool string, node store.Node) {
+	face := document.FaceObservation{Box: document.FaceBox{X: .1, Y: .2, Width: .2, Height: .3}, Facing: new(.9), EyesOpen: new(true), Smile: new(false)}
+	second := face
+	second.Box.X = .4
+	third := face
+	third.Box.X = .7
+	seedVisionResult(ctx, s, blobs, spool, node, document.FaceDetection{Faces: []document.FaceObservation{face, second, third}}, document.FaceDetectionProviderID)
+	faces, inputs, err := s.PhotoQualityFaces(ctx, node.CurrentVersionID)
+	check(err)
+	if len(faces) != 3 {
+		panic(fmt.Sprintf("seeded %d faces, want 3", len(faces)))
+	}
+	reports := make([]document.PhotoFaceReport, len(faces))
+	for i, f := range faces {
+		// Green needs every score at 0.42 or above; lower sharpness gives yellow and red.
+		sharpness := []float64{.9, .38, .1}[i]
+		reports[i] = document.PhotoFaceReport{FaceID: f.FaceID, Prominence: f.Box.Width * f.Box.Height, Sharpness: &sharpness, Light: new(.9), Facing: f.Facing, EyesOpen: f.EyesOpen, Smile: f.Smile}
+	}
+	target := store.PhotoVisualPreviewTarget{VersionID: node.CurrentVersionID, SourceSHA256: node.BlobHash, Size: node.Size, MediaType: node.MimeType}
+	check(s.PublishPhotoQualitySignals(ctx, target, document.PhotoQualitySignals{FaceReports: reports, Framing: .5}, inputs))
 }
 
 func seedVisionResult(ctx context.Context, s *store.Store, blobs *blob.Store, spool string, node store.Node, value any, task string) {

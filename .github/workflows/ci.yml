@@ -318,7 +318,7 @@ jobs:
           kit-retry 3 5 node frontend/node_modules/@playwright/test/cli.js install chromium
 
       - name: Qualify browser workflow with both SQLite builds
-        run: make report-export-browser-test
+        run: make report-export-browser-test theme-contrast-browser-test
 
       - name: Upload Playwright report-export results
         if: always()

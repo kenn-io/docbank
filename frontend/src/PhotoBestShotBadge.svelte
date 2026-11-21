@@ -8,6 +8,7 @@
     class="proposal"
     class:compact
     class:keep={proposal.flag === "pick"}
+    data-kit-tone={proposal.flag === "pick" ? "success" : undefined}
     title={`${proposal.rationale} · ${Math.round(proposal.confidence * 100)}% confidence`}
     aria-label={proposal.flag === "pick" ? "Suggested keep" : "Suggested cut"}
     >{proposal.flag === "pick" ? "KEEP" : "CUT"}</span
@@ -25,8 +26,8 @@
     white-space: nowrap;
   }
   .proposal.keep {
-    color: var(--accent-green);
-    border-color: var(--accent-green);
+    color: var(--kit-tone-ink);
+    border-color: var(--kit-tone-border);
   }
   .proposal.compact {
     padding: 1px 4px;

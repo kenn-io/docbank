@@ -251,7 +251,7 @@
       <p class="consequence" class:pending={!tag}>{consequence}</p>
     {/if}
     {#if receipt}
-      <p class="status done" role="status">
+      <p class="status done" data-kit-tone="success" role="status">
         <CheckIcon size={14} aria-hidden="true" />
         {recovering ? "Earlier retry: " : ""}{tagChangeDone(
           receipt.assign,
@@ -394,7 +394,7 @@
     font-size: var(--font-size-sm);
   }
   .status.done {
-    color: var(--accent-green);
+    color: var(--kit-tone-ink);
   }
   .alert {
     color: var(--accent-red);

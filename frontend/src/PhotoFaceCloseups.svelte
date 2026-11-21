@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Button } from "@kenn-io/kit-ui";
   import type { PhotoFaces } from "./photoFaces.svelte.js";
-  import type { PhotoBrowseRow, FaceBox } from "./generated/docbank.js";
+  import type { PhotoBrowseRow, FaceBox, PhotoFaceReportGrade } from "./generated/docbank.js";
   import { photoFaceCropStyle } from "./photoRotation.js";
   let {
     photo,
@@ -12,6 +12,11 @@
     faces: PhotoFaces;
     fit?: { url: string; content_version_id: string; width: number; height: number };
   } = $props();
+  const gradeTones: Record<Exclude<PhotoFaceReportGrade, "">, "success" | "warning" | "danger"> = {
+    green: "success",
+    yellow: "warning",
+    red: "danger",
+  };
   const source = $derived(
     fit?.content_version_id === faces.version && faces.version === photo.content_version_id
       ? fit
@@ -62,7 +67,8 @@
         <figcaption>
           <div class="head">
             <span class="name" title={tile.label}>{tile.label}</span>
-            {#if r?.grade}<span class="grade" data-grade={r.grade}>{r.grade}</span>{/if}
+            {#if r?.grade}<span class="grade" data-kit-tone={gradeTones[r.grade]}>{r.grade}</span
+              >{/if}
           </div>
           {#if r}
             <dl>
@@ -143,14 +149,8 @@
     border-radius: 50%;
     background: currentColor;
   }
-  .grade[data-grade="green"] {
-    color: var(--accent-green);
-  }
-  .grade[data-grade="yellow"] {
-    color: var(--accent-amber);
-  }
-  .grade[data-grade="red"] {
-    color: var(--accent-red);
+  .grade[data-kit-tone] {
+    color: var(--kit-tone-ink);
   }
   .closeups {
     display: flex;

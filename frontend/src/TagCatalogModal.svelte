@@ -188,7 +188,7 @@
         <strong>{deleting.name}</strong> is on {filesLabel(deleting.assignment_count)}. Deleting it
         removes it from them and can't be undone.
       </p>
-      {#if failure}<p class="failure" role="alert">{failure}</p>{/if}
+      {#if failure}<p class="failure" data-kit-tone="danger" role="alert">{failure}</p>{/if}
     </div>
   {:else}
     <div class="tag-catalog">
@@ -298,8 +298,8 @@
         <p class="bounded">Showing the first {current.length} of {currentTotal} tags.</p>
       {/if}
 
-      {#if notice}<p class="notice" role="status">{notice}</p>{/if}
-      {#if failure}<p class="failure" role="alert">{failure}</p>{/if}
+      {#if notice}<p class="notice" data-kit-tone="success" role="status">{notice}</p>{/if}
+      {#if failure}<p class="failure" data-kit-tone="danger" role="alert">{failure}</p>{/if}
     </div>
   {/if}
   {#snippet footer()}
@@ -399,15 +399,15 @@
   }
 
   .notice {
-    color: var(--accent-green);
+    color: var(--kit-tone-ink);
   }
 
   .failure {
     padding: var(--space-3);
-    border: 1px solid color-mix(in srgb, var(--accent-red) 35%, transparent);
+    border: 1px solid var(--kit-tone-border);
     border-radius: var(--radius-md);
-    background: color-mix(in srgb, var(--accent-red) 8%, transparent);
-    color: var(--accent-red);
+    background: var(--kit-tone-band-bg);
+    color: var(--kit-tone-ink);
   }
 
   .empty,

@@ -24,7 +24,7 @@
 >
   {#if retrying || state === "failed"}
     {#if state === "failed"}
-      <span class="message"
+      <span class="message" data-kit-tone="danger"
         >Docbank couldn't reconnect the upload channel. Run `docbank web` again if reconnecting
         fails.</span
       >
@@ -41,7 +41,7 @@
       onclick={onreconnect}
     />
   {:else}
-    <span class="message">{message}</span>
+    <span class="message" data-kit-tone="danger">{message}</span>
   {/if}
 </div>
 
@@ -61,6 +61,6 @@
     margin-left: auto;
   }
   .error .message {
-    color: var(--accent-red);
+    color: var(--kit-tone-ink);
   }
 </style>
