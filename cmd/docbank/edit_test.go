@@ -298,7 +298,6 @@ func TestEditUnchangedRejectsConcurrentReplacement(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
-	sqlitetest.DisableSync.Store(true)
 	pdfiumtest.ShareCompiledCode()
 	if os.Getenv("DOCBANK_EDIT_TEST_ORPHAN") == "1" {
 		os.Exit(runEditTestOrphan())
@@ -309,6 +308,7 @@ func TestMain(m *testing.M) {
 	if os.Getenv("DOCBANK_EDIT_TEST_HELPER") == "1" {
 		os.Exit(runEditHelper())
 	}
+	sqlitetest.DisableSync.Store(true)
 	binaries := ""
 	docbankBinaryDir = os.Getenv(docbankBinaryDirEnv)
 	if docbankBinaryDir == "" {
