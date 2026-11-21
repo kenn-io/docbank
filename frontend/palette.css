@@ -1,40 +1,12 @@
 /*
- * Docbank retunes kit-ui's tokens for a quiet, document-first workspace:
- * platform system fonts, neutral surfaces, one blue accent, and a 14px
- * reading base. kit-ui components read only these tokens, so declaring them
- * after kit-ui/theme.css restyles every component consistently.
- *
- * This is the palette definition file, so raw colors belong here; it lives
- * outside src/ because kit-ui-check guards component styles, not palettes.
+ * Docbank's workspace dimensions and type scale, plus colors derived from
+ * kit-ui's theme for application-specific elements.
  */
 :root {
-  --bg-primary: #f7f8fa;
-  --bg-surface: #ffffff;
-  --bg-surface-hover: #f2f4f7;
-  --bg-inset: #f4f5f7;
-  --border-default: #dde1e6;
-  --border-muted: #eceef1;
-
-  --text-primary: #1b1f24;
-  --text-secondary: #464e58;
-  --text-muted: #666e79;
-
-  --accent-blue: #0061d5;
-  --accent-amber: #b45309;
-  --accent-purple: #6d4ad6;
-  --accent-green: #047857;
-  --accent-red: #c62828;
-  --accent-teal: #0e7490;
-
-  --folder-ink: #4f7fbf;
-  --folder-fill: #dce8f7;
-  --selection-bg: #e8f1fd;
-  --nav-active-bg: #e6eefb;
-
-  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05);
-  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.08);
-  --shadow-lg: 0 16px 40px rgba(16, 24, 40, 0.16);
-  --overlay-bg: rgba(16, 24, 40, 0.32);
+  --folder-ink: var(--accent-blue);
+  --folder-fill: color-mix(in srgb, var(--accent-blue) 15%, var(--bg-surface));
+  --selection-bg: color-mix(in srgb, var(--accent-blue) 10%, var(--bg-surface));
+  --nav-active-bg: color-mix(in srgb, var(--accent-blue) 12%, var(--bg-surface));
 
   --radius-sm: 4px;
   --radius-md: 6px;
@@ -58,36 +30,6 @@
   --header-height: 56px;
   --nav-width: 232px;
   --inspector-width: clamp(300px, 28vw, 380px);
-}
-
-:root.dark {
-  --bg-primary: #151618;
-  --bg-surface: #1c1d20;
-  --bg-surface-hover: #26282b;
-  --bg-inset: #222427;
-  --border-default: #34373c;
-  --border-muted: #2a2c30;
-
-  --text-primary: #ececee;
-  --text-secondary: #b8bcc3;
-  --text-muted: #8f949c;
-
-  --accent-blue: #4d9cff;
-  --accent-amber: #f0a64a;
-  --accent-purple: #a995f5;
-  --accent-green: #4cc38a;
-  --accent-red: #f27474;
-  --accent-teal: #3fc1d6;
-
-  --folder-ink: #7aa7e0;
-  --folder-fill: #2a3a52;
-  --selection-bg: #1d2f4a;
-  --nav-active-bg: #243650;
-
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
-  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.5);
-  --overlay-bg: rgba(0, 0, 0, 0.55);
 }
 
 /* Repeats kit-ui's handheld type scale, which the base block above would
