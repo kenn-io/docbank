@@ -786,16 +786,116 @@ type webPhotoImport struct {
 }
 
 func (p *webPhotoImport) sourceDescription() string {
-	folder, _, nested := strings.Cut(p.files[0].RelativePath, "/")
-	if nested {
-		for _, file := range p.files {
-			if !strings.HasPrefix(file.RelativePath, folder+"/") {
-				return "browser: Choose files"
-			}
-		}
+	folder, folderSelection := browserPhotoSelectionFolder(p.files)
+	if folderSelection {
 		return "browser: " + folder
 	}
 	return "browser: Choose files"
+}
+
+func browserPhotoSelectionFolder(files []webPhotoFile) (string, bool) {
+	if len(files) == 0 {
+		return "", false
+	}
+	folder, _, nested := strings.Cut(files[0].RelativePath, "/")
+	if !nested {
+		return "", false
+	}
+	for _, file := range files {
+		if !strings.HasPrefix(file.RelativePath, folder+"/") {
+			return "", false
+		}
+	}
+	return folder, true
+}
+
+func browserPhotoSelectionRelativePath(file webPhotoFile, folder string, folderSelection bool) (string, bool) {
+	if folderSelection {
+		return strings.CutPrefix(file.RelativePath, folder+"/")
+	}
+	return file.RelativePath, file.RelativePath != ""
+}
+
+// matchOlderBrowserPhotos finds the older recorded imports that the selected
+// files continue, marks them in matched, and points each file's path at its
+// recorded source. It returns the files whose hashes are still needed to
+// confirm a match.
+func matchOlderBrowserPhotos(
+	ctx context.Context, st *store.Store, files []webPhotoFile, indexes []int, paths []string,
+	matched map[string]bool, loadSource func(string) (*store.BrowserPhotoImport, error),
+) ([]int, error) {
+	var needed []int
+	recorded := map[int]bool{}
+	for _, index := range indexes {
+		source, name, ok := strings.Cut(strings.TrimPrefix(paths[index], "browser:"), "/")
+		if !ok {
+			continue
+		}
+		item, err := loadSource(source)
+		if err != nil {
+			return nil, err
+		}
+		if item == nil {
+			continue
+		}
+		if _, ok := item.Members[name]; !ok {
+			continue
+		}
+		matched[source] = true
+		recorded[index] = true
+		if files[index].ExpectedHash == "" {
+			needed = append(needed, index)
+		}
+	}
+	standalone, err := matchOlderStandaloneSidecars(ctx, st, files, indexes, recorded, paths, matched)
+	return append(needed, standalone...), err
+}
+
+// matchOlderStandaloneSidecars matches sidecars that no hash-resolved path
+// covers against older browser imports by selected relative path and content
+// hash. Several sources matching the same selection are left in matched for
+// the caller to reject.
+func matchOlderStandaloneSidecars(
+	ctx context.Context, st *store.Store, files []webPhotoFile, indexes []int, recorded map[int]bool,
+	paths []string, matched map[string]bool,
+) ([]int, error) {
+	folder, folderSelection := browserPhotoSelectionFolder(files)
+	byPath := map[string]int{}
+	var selected []string
+	for _, index := range indexes {
+		if recorded[index] || store.ClassifyPhotoSource(files[index].RelativePath).Kind != store.PhotoSourceSidecar {
+			continue
+		}
+		if name, ok := browserPhotoSelectionRelativePath(files[index], folder, folderSelection); ok {
+			byPath[name] = index
+			selected = append(selected, name)
+		}
+	}
+	candidates, err := st.BrowserPhotoImportPaths(ctx, selected)
+	if err != nil {
+		return nil, err
+	}
+	var needed []int
+	for _, candidate := range candidates {
+		name := candidate.RelativePath
+		if candidate.FolderSelection {
+			name, _ = strings.CutPrefix(name, candidate.Folder+"/")
+		}
+		index, ok := byPath[name]
+		if !ok || candidate.FolderSelection != folderSelection {
+			continue
+		}
+		switch {
+		case files[index].ExpectedHash == "":
+			if candidate.BlobHash != "" {
+				needed = append(needed, index)
+			}
+		case candidate.BlobHash == files[index].ExpectedHash:
+			paths[index] = "browser:" + candidate.SourceID + "/" + candidate.RelativePath
+			matched[candidate.SourceID] = true
+		}
+	}
+	return needed, nil
 }
 
 // unhashedBrowserPhotos lists the planned files that declared no hash but
@@ -939,27 +1039,11 @@ func handleWebPhotoPlan(
 		if problem != nil {
 			return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, problem) == nil
 		}
-		for _, index := range indexes {
-			file := begin.Files[index]
-			source, name, ok := strings.Cut(strings.TrimPrefix(paths[index], "browser:"), "/")
-			if !ok {
-				continue
-			}
-			item, err := loadSource(source)
-			if err != nil {
-				return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
-			}
-			if item == nil {
-				continue
-			}
-			if _, recorded := item.Members[name]; !recorded {
-				continue
-			}
-			matchedSources[source] = true
-			if file.ExpectedHash == "" {
-				needed = append(needed, index)
-			}
+		more, err := matchOlderBrowserPhotos(ctx, d.Store, begin.Files, indexes, paths, matchedSources, loadSource)
+		if err != nil {
+			return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
 		}
+		needed = append(needed, more...)
 		slices.Sort(needed)
 		needed = slices.Compact(needed)
 		if len(needed) > 0 {

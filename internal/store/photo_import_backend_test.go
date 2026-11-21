@@ -32,6 +32,12 @@ func checkBrowserPhotoRecovery(t *testing.T, open func(*testing.T) *Store) {
 	require.True(t, result.FolderSelection)
 	require.Equal(t, 2, result.Groups)
 	require.Equal(t, fakeHash("Card/other.XMP"), result.Members["Card/other.XMP"])
+	paths, err := s.BrowserPhotoImportPaths(ctx, []string{"other.XMP"})
+	require.NoError(t, err)
+	require.Contains(t, paths, BrowserPhotoImportMember{
+		SourceID: source, Folder: "Card", FolderSelection: true,
+		RelativePath: "Card/other.XMP", BlobHash: fakeHash("Card/other.XMP"),
+	})
 	node, err := s.NodeByPath(ctx, "/other.XMP")
 	require.NoError(t, err)
 	_, _, err = s.Trash(ctx, node.ID, node.Revision)
