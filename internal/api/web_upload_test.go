@@ -1024,7 +1024,7 @@ func TestBrowserPhotoRecoveryContinuedFolder(t *testing.T) {
 	plan := map[string]any{"type": "plan_photo_import", "request_id": "plan", "destination": "/photos", "source_id": originalSource, "files": initialFiles}
 	require.NoError(t, wsjson.Write(t.Context(), conn, plan))
 	initial := readPhotoResponse(t, conn)
-	require.Equal(t, 2, len(initial.Groups))
+	require.Len(t, initial.Groups, 2)
 	for group, members := range initial.Groups {
 		index := members[0]
 		data := []byte("one")

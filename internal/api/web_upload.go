@@ -785,6 +785,8 @@ type webPhotoImport struct {
 	destination store.IngestDirectoryPlan
 }
 
+var errBrowserPhotoImportNotFound = errors.New("browser photo import not found")
+
 func (p *webPhotoImport) sourceDescription() string {
 	folder, folderSelection := browserPhotoSelectionFolder(p.files)
 	if folderSelection {
@@ -832,11 +834,11 @@ func matchOlderBrowserPhotos(
 			continue
 		}
 		item, err := loadSource(source)
+		if errors.Is(err, errBrowserPhotoImportNotFound) {
+			continue
+		}
 		if err != nil {
 			return nil, err
-		}
-		if item == nil {
-			continue
 		}
 		if _, ok := item.Members[name]; !ok {
 			continue
@@ -997,6 +999,9 @@ func handleWebPhotoPlan(
 	sources := map[string]*store.BrowserPhotoImport{}
 	loadSource := func(id string) (*store.BrowserPhotoImport, error) {
 		if item, loaded := sources[id]; loaded {
+			if item == nil {
+				return nil, errBrowserPhotoImportNotFound
+			}
 			return item, nil
 		}
 		item, found, err := d.Store.BrowserPhotoImport(ctx, id)
@@ -1005,7 +1010,7 @@ func handleWebPhotoPlan(
 		}
 		if !found {
 			sources[id] = nil
-			return nil, nil
+			return nil, errBrowserPhotoImportNotFound
 		}
 		sources[id] = &item
 		return &item, nil
@@ -1015,6 +1020,9 @@ func handleWebPhotoPlan(
 	if begin.Recovering {
 		var err error
 		requested, err = loadSource(requestedSourceID)
+		if errors.Is(err, errBrowserPhotoImportNotFound) {
+			err = nil
+		}
 		if err != nil {
 			return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
 		}
@@ -1067,8 +1075,8 @@ func handleWebPhotoPlan(
 			requestedPrefix := "browser:" + requestedSourceID + "/"
 			adoptedPrefix := "browser:" + sourceID.String() + "/"
 			for index, original := range paths {
-				if strings.HasPrefix(original, requestedPrefix) {
-					paths[index] = adoptedPrefix + strings.TrimPrefix(original, requestedPrefix)
+				if suffix, ok := strings.CutPrefix(original, requestedPrefix); ok {
+					paths[index] = adoptedPrefix + suffix
 				}
 			}
 		}
@@ -1079,6 +1087,9 @@ func handleWebPhotoPlan(
 	var recovered *store.BrowserPhotoImport
 	if begin.Recovering {
 		item, err := loadSource(sourceID.String())
+		if errors.Is(err, errBrowserPhotoImportNotFound) {
+			err = nil
+		}
 		if err != nil {
 			return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
 		}
@@ -1090,8 +1101,8 @@ func handleWebPhotoPlan(
 		recoveredPrefix := "browser:" + recovered.SourceID + "/"
 		for _, group := range groups {
 			for _, index := range group {
-				if strings.HasPrefix(paths[index], recoveredPrefix) {
-					selected[strings.TrimPrefix(paths[index], recoveredPrefix)] = index
+				if name, ok := strings.CutPrefix(paths[index], recoveredPrefix); ok {
+					selected[name] = index
 				}
 			}
 		}
@@ -1124,6 +1135,9 @@ func handleWebPhotoPlan(
 				var recorded bool
 				if ok {
 					item, err := loadSource(source)
+					if errors.Is(err, errBrowserPhotoImportNotFound) {
+						err = nil
+					}
 					if err != nil {
 						return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
 					}
