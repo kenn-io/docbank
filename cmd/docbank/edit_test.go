@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/packagetest"
 	"go.kenn.io/docbank/internal/pdfiumtest"
+	"go.kenn.io/docbank/internal/sqlitetest"
 )
 
 func TestEditCreatesVersionAndSkipsUnchangedContent(t *testing.T) {
@@ -297,6 +298,7 @@ func TestEditUnchangedRejectsConcurrentReplacement(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
+	sqlitetest.DisableSync.Store(true)
 	pdfiumtest.ShareCompiledCode()
 	if os.Getenv("DOCBANK_EDIT_TEST_ORPHAN") == "1" {
 		os.Exit(runEditTestOrphan())
