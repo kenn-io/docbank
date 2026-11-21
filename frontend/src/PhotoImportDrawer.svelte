@@ -7,7 +7,6 @@
   import DrawerShell from "./DrawerShell.svelte";
   import "./toolForm.css";
   import { APIError } from "./api-transport.js";
-  import { formatDate } from "./format.js";
   import {
     UploadChannelError,
     getBrowserPhotoImport,
@@ -68,7 +67,6 @@
   type Recovery = {
     sourceID: string;
     folder: string;
-    startedAt: string;
     groups: number;
     pickerKind: PickerKind;
   };
@@ -177,7 +175,6 @@
             : recovery.pickerKind === "folder"
               ? "Import from a folder"
               : "Import of chosen files",
-          recovery.startedAt && `started ${formatDate(recovery.startedAt)}`,
           recovery.groups > 0 &&
             `${recovery.groups} group${recovery.groups === 1 ? "" : "s"} already in the vault`,
         ]
@@ -242,7 +239,6 @@
     recovery = {
       sourceID: saved?.sourceID ?? found!.source_id,
       folder: pickerKind === "folder" ? (found?.folder ?? "") : "",
-      startedAt: found?.started_at ?? "",
       groups: found?.groups ?? 0,
       pickerKind,
     };

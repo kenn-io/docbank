@@ -1715,7 +1715,7 @@ it("finishes a recorded folder import after a lost session by sending only the m
     .parentElement!;
   expect(browserImports).toHaveBeenCalledWith("session", "", expect.any(AbortSignal));
   expect(section.querySelector("p")!.textContent).toMatch(
-    /^Folder “Trip” · started .+ · 2 groups already in the vault$/,
+    /^Folder “Trip” · 2 groups already in the vault$/,
   );
   expect(screen.getByRole("button", { name: "Dismiss" })).toBeTruthy();
   // The vault does not record the original destination, so recovery waits for one.
@@ -1952,7 +1952,7 @@ it.each([false, true])(
     render(PhotoImportDrawer, props);
     const section = (await screen.findByRole("heading", { name: "Interrupted import found" }))
       .parentElement!;
-    expect(section.querySelector("p")!.textContent).toMatch(/^Folder “Trip” · started /);
+    expect(section.querySelector("p")!.textContent).toBe("Folder “Trip” · 2 groups already in the vault");
     const destination = screen.getByLabelText<HTMLInputElement>("Destination");
     expect(destination.value).toBe(saved ? "/photos" : "");
     await fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
@@ -2074,7 +2074,7 @@ it("keeps a fresh import closed until a failed recovery lookup succeeds", async 
   expect(browserImports).toHaveBeenLastCalledWith("session", "", expect.any(AbortSignal));
   expect(screen.queryByText(/Could not check the vault/)).toBeNull();
   expect(section.querySelector("p")!.textContent).toMatch(
-    /^Folder “Trip” · started .+ · 2 groups already in the vault$/,
+    /^Folder “Trip” · 2 groups already in the vault$/,
   );
   // Without a checkpoint the destination is unknown, so recovery still waits for one.
   expect(screen.getByLabelText<HTMLInputElement>("Destination").value).toBe("");
