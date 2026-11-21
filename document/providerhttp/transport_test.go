@@ -11,7 +11,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
-	"errors"
 	"io"
 	"math/big"
 	"net"
@@ -20,11 +19,9 @@ import (
 	"net/http/httptest"
 	"net/http/httptrace"
 	"net/netip"
-	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 
@@ -164,35 +161,9 @@ func TestEgressRevalidatesDNSOnEachConnection(t *testing.T) {
 }
 
 func TestEgressFallsBackAcrossApprovedDNSAnswers(t *testing.T) {
-	ipv6, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp6", "[::1]:0")
-	ipv6Available := err == nil
-	if ipv6Available {
-		require.NoError(t, ipv6.Close())
-	}
-
-	var listener, first net.Listener
-	var port uint16
-	for range 10 {
-		listener, err = (&net.ListenConfig{}).Listen(t.Context(), "tcp4", "127.0.0.1:0")
-		require.NoError(t, err)
-		_, port = endpoint(t, listener.Addr())
-		if !ipv6Available {
-			break
-		}
-		first, err = (&net.ListenConfig{}).Listen(t.Context(), "tcp6", net.JoinHostPort("::1", strconv.Itoa(int(port))))
-		if err == nil {
-			break
-		}
-		require.NoError(t, listener.Close())
-		// Windows reports WSAEADDRINUSE (10048) rather than EADDRINUSE.
-		if !errors.Is(err, syscall.EADDRINUSE) && (runtime.GOOS != "windows" || !errors.Is(err, syscall.Errno(10048))) {
-			require.NoError(t, err)
-		}
-	}
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp4", "127.0.0.1:0")
 	require.NoError(t, err)
-	if first != nil {
-		t.Cleanup(func() { _ = first.Close() })
-	}
+	_, port := endpoint(t, listener.Addr())
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, "fallback")
 	}))
@@ -215,9 +186,6 @@ func TestEgressFallsBackAcrossApprovedDNSAnswers(t *testing.T) {
 	}})
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://provider.invalid:"+strconv.Itoa(int(port)), nil)
 	require.NoError(t, err)
-	if first != nil {
-		require.NoError(t, first.Close())
-	}
 	response, err := (&http.Client{Transport: transport}).Do(request)
 	require.NoError(t, err)
 	body, err := io.ReadAll(response.Body)
