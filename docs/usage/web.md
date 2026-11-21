@@ -411,7 +411,8 @@ To tag multiple files on the current page, check their boxes and choose
 **Tag selected…** in the selection dock. Pick a tag, choose **Add** or
 **Remove**, and press **Apply** to run one atomic, revision-checked operation
 on at most 1,000 documents. You can also type a new name and choose
-**Create “name”** to create the tag and apply it to every selected document.
+**Create “name”** to create the tag and select it in the dialog, then choose
+**Add** and press **Apply** to assign it to every selected document.
 Page selection never includes folders or undisplayed query results.
 
 If the result is uncertain, choose **Check tag results** to inspect each
@@ -540,11 +541,11 @@ definitions, and expiry limits.
 
 Open the **Searches** page at `/searches` to run, rename, or delete a saved
 search. You can also open **Run report** and **Recent reports** there. Create
-new searches from **Advanced → Save…**. Choose **Rename** to edit the name and
-description fields, or **Edit as JSON** to view the complete definition, then
-choose **Save changes** to update it or **Save as new** to keep a copy. The
-list paginates in groups of 100. Choose **New highlight list** to create
-reusable highlights.
+new searches from **Advanced → Save…**. Choose **Rename** to open the editor
+for the name and description fields, where you can expand **Edit as JSON** to
+view the complete definition. Choose **Save changes** to update it or
+**Save as new** to keep a copy. The list paginates in groups of 100. Choose
+**New highlight list** to create reusable highlights.
 
 **Keep query draft** keeps the complete query in the tab and URL fragment. The
 fragment contains query text and filters, so treat copied URLs as private,
