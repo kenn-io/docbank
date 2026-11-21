@@ -1,4 +1,4 @@
-import { expect, type Locator } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { stripTypeScriptTypes } from "node:module";
 
@@ -52,4 +52,14 @@ export async function expectReadableTone(
   if (tone === "success") expect(g > r && g > b, report).toBe(true);
   else if (tone === "warning") expect(r > b + 40 && g > b, report).toBe(true);
   else expect(r > g && r > b, report).toBe(true);
+}
+
+export async function expectReadableTones(page: Page, cases: [Locator, "success" | "warning" | "danger"][]) {
+  for (const theme of ["light", "dark"] as const) {
+    await page.evaluate((value) => {
+      localStorage.setItem("docbank-theme", value);
+      document.documentElement.classList.toggle("dark", value === "dark");
+    }, theme);
+    for (const [text, tone] of cases) await expectReadableTone(text, theme, tone);
+  }
 }

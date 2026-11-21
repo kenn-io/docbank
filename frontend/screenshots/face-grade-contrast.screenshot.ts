@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import path from "node:path";
 import { photoFixture, repository } from "./photo-fixture.js";
-import { expectReadableTone } from "./tone-contrast.js";
+import { expectReadableTones } from "./tone-contrast.js";
 
 test("keeps face grades readable in both themes", async ({ page }) => {
   await mkdir(path.join(repository, ".superpowers"), { recursive: true });
@@ -19,15 +19,7 @@ test("keeps face grades readable in both themes", async ({ page }) => {
     await cull.getByRole("button", { name: "Show Synthetic-photo-00003.jpg", exact: true }).click();
     const grades = cull.getByRole("region", { name: "Face closeups" }).locator(".grade");
     await expect(grades).toHaveText(["green", "yellow", "red"]);
-    for (const theme of ["light", "dark"] as const) {
-      await page.evaluate((value) => {
-        localStorage.setItem("docbank-theme", value);
-        document.documentElement.classList.toggle("dark", value === "dark");
-      }, theme);
-      await expectReadableTone(grades.nth(0), theme, "success");
-      await expectReadableTone(grades.nth(1), theme, "warning");
-      await expectReadableTone(grades.nth(2), theme, "danger");
-    }
+    await expectReadableTones(page, [[grades.nth(0), "success"], [grades.nth(1), "warning"], [grades.nth(2), "danger"]]);
   } finally {
     await fixture.dispose();
   }
