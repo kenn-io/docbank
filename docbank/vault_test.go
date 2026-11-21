@@ -1011,6 +1011,51 @@ func TestVaultCreateConcurrent(t *testing.T) {
 	})
 }
 
+func TestVaultMkdirPathCreatesDirectory(t *testing.T) {
+	t.Parallel()
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+
+	parent, err := vault.MkdirPath(t.Context(), "/cases")
+	require.NoError(t, err)
+	assert.Equal(t, "/cases", parent.Path)
+	created, err := vault.MkdirPath(t.Context(), "/cases/acme")
+	require.NoError(t, err)
+	assert.Equal(t, "/cases/acme", created.Path)
+	assert.Equal(t, "acme", created.Node.Name)
+	assert.Equal(t, &parent.Node.ID, created.Node.ParentID)
+	stat, err := vault.Stat(t.Context(), created.Path)
+	require.NoError(t, err)
+	assert.Equal(t, created.Node, stat)
+
+	filed, err := vault.Put(t.Context(), "/cases/acme/brief.txt", strings.NewReader("brief\n"), PutOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, &created.Node.ID, filed.Node.ParentID, "a file put beneath the new directory lands in it")
+}
+
+func TestVaultMkdirPathRejectsExistingNameAndMissingParent(t *testing.T) {
+	t.Parallel()
+	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	_, err = vault.MkdirPath(t.Context(), "/cases")
+	require.NoError(t, err)
+	_, err = vault.Put(t.Context(), "/notes.txt", strings.NewReader("notes\n"), PutOptions{})
+	require.NoError(t, err)
+
+	_, err = vault.MkdirPath(t.Context(), "/cases")
+	require.ErrorIs(t, err, ErrExists)
+	_, err = vault.MkdirPath(t.Context(), "/notes.txt")
+	require.ErrorIs(t, err, ErrExists)
+	_, err = vault.MkdirPath(t.Context(), "/missing/child")
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = vault.MkdirPath(t.Context(), "relative")
+	require.ErrorIs(t, err, ErrInvalidName)
+	_, err = vault.Stat(t.Context(), "/missing")
+	require.ErrorIs(t, err, ErrNotFound, "a failed create leaves no parent behind")
+}
+
 func TestVaultMovePathReturnsCanonicalReceipt(t *testing.T) {
 	t.Parallel()
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})

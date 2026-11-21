@@ -880,6 +880,29 @@ func provenanceStringPtr(value *time.Time) *string {
 	return &result
 }
 
+// MkdirPath creates one directory at an absolute virtual path and returns it
+// with its canonical path. The parent must already exist; it is resolved in
+// the same transaction that creates the directory, so a concurrent ancestor
+// move cannot redirect it. An existing node at the path returns ErrExists.
+func (v *Vault) MkdirPath(ctx context.Context, virtualPath string) (MutationReceipt, error) {
+	if err := v.begin(ctx); err != nil {
+		return MutationReceipt{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	if err := v.mutation.Lock(ctx); err != nil {
+		return MutationReceipt{}, err
+	}
+	defer v.mutation.Unlock()
+	if err := ctx.Err(); err != nil {
+		return MutationReceipt{}, err
+	}
+	node, canonicalPath, err := v.metadata.MkdirPath(ctx, virtualPath)
+	if err != nil {
+		return MutationReceipt{}, err
+	}
+	return MutationReceipt{Node: fromStoreNode(node), Path: canonicalPath}, nil
+}
+
 // MovePath renames or reparents one live path and returns its canonical new
 // path. A positive IfRevision must match the source node exactly.
 func (v *Vault) MovePath(

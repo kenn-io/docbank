@@ -954,6 +954,10 @@ Always call `Walker.Close`, including after `io.EOF`. Repeated calls are safe.
 It releases the read transaction, dedicated connection, and vault lease.
 `Vault.Close` waits for all walkers and content readers to close.
 
+`MkdirPath` creates one directory beneath an existing parent and returns it
+with its canonical path, matching the daemon's `POST /api/v1/path/mkdir`. An
+existing node at that path returns `ErrExists`.
+
 `MovePath`, `TrashPath`, and `Restore` return the resulting node and canonical
 path. Their optional positive `IfRevision` rejects stale mutations.
 `IfRevision == 0` is unconditional. `Restore` accepts photo members inside trashed folders and recovers their group, those folders, and their other contents. `EmptyTrash` uses `MaxRoots` as a batch target, finishing complete photo groups even when they exceed it. Zero uses `DefaultTrashEmptyMaxRoots`, and
