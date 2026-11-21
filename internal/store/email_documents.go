@@ -95,13 +95,7 @@ func (s *Store) publishEmailDocumentsTx(
 				if err != nil {
 					return err
 				}
-				media := "application/octet-stream"
-				if p.Media.Declared != nil {
-					media = *p.Media.Declared
-				} else if p.Media.Detected != nil {
-					media = *p.Media.Detected
-				}
-				created, err := s.createFileWithReceiptTx(ctx, tx, dir.ID, name, p.Payload.SHA256, p.Payload.Size, media)
+				created, err := s.createFileWithReceiptTx(ctx, tx, dir.ID, name, p.Payload.SHA256, p.Payload.Size, emailDocumentMediaType(p.Media))
 				if errors.Is(err, ErrExists) {
 					return fmt.Errorf("%w: operation %s cannot create %q because the name already exists; "+
 						"use a new operation ID or explicitly reuse the existing child", ErrEmailDocumentConflict, request.OperationID, name)
@@ -306,4 +300,18 @@ func (s *Store) RemoveEmailDocumentPublication(ctx context.Context, operationID,
 		_, err = tx.ExecContext(ctx, `DELETE FROM email_document_publications WHERE operation_id=$1`, operationID)
 		return err
 	})
+}
+
+// emailDocumentMediaType keeps a specific declared type. A missing or generic
+// application/octet-stream label, which many mail programs send for any file,
+// gives way to the detected type so the child opens as what it is.
+func emailDocumentMediaType(media document.EmailMediaV1) string {
+	const generic = "application/octet-stream"
+	if media.Declared != nil && *media.Declared != generic {
+		return *media.Declared
+	}
+	if media.Detected != nil {
+		return *media.Detected
+	}
+	return generic
 }
