@@ -50,7 +50,7 @@
       >Discard…</Button
     >
   {/if}
-  {#if error}<span class="error" role="alert">{error}</span>{/if}
+  {#if error}<span class="error" data-kit-tone="danger" role="alert">{error}</span>{/if}
 </div>
 
 <style>
@@ -61,6 +61,9 @@
     border-bottom: 1px solid var(--border-muted);
     background: color-mix(in srgb, var(--accent-amber, var(--accent-blue)) 8%, var(--bg-surface));
     color: var(--text-primary);
+  }
+  .tag-run-notice .error {
+    color: var(--kit-tone-ink);
   }
   .tag-run-notice > span:first-child {
     margin-inline-end: var(--space-2);

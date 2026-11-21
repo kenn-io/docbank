@@ -318,7 +318,7 @@ jobs:
           kit-retry 3 5 node frontend/node_modules/@playwright/test/cli.js install chromium
 
       - name: Qualify browser workflow with both SQLite builds
-        run: make report-export-browser-test
+        run: make report-export-browser-test theme-contrast-browser-test
 
       - name: Upload Playwright report-export results
         if: always()
@@ -326,6 +326,15 @@ jobs:
         with:
           name: playwright-report-export-attempt-${{ github.run_attempt }}
           path: frontend/test-results/playwright/report-export-*.json
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Upload Playwright theme contrast results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: playwright-theme-contrast-attempt-${{ github.run_attempt }}
+          path: frontend/test-results/playwright/theme-contrast*.json
           retention-days: 14
           if-no-files-found: ignore
 

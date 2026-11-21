@@ -11,6 +11,7 @@ import {
   type WorkspaceQueryCreateRequestFacetsItem,
 } from "../src/generated/docbank.js";
 import type { SnapshotPage } from "../src/snapshots.js";
+import { renderedContrast, WCAG_AA_TEXT } from "./tone-contrast.js";
 
 const exec = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -103,25 +104,7 @@ async function capture(page: Page, testInfo: TestInfo, name: string, theme: "lig
     if (name.startsWith("from-query") && theme === "dark")
       await expect(row.locator(".col-modified")).toBeVisible();
     const chip = row.locator(".roles .kit-chip").first();
-    const contrast = await chip.evaluate((element) => {
-      const color = (value: string) =>
-        value
-          .match(/[\d.]+/g)!
-          .slice(0, 3)
-          .map(Number);
-      const luminance = (rgb: number[]) =>
-        rgb
-          .map((v) => {
-            const channel = v / 255;
-            return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
-          })
-          .reduce((sum, value, i) => sum + value * [0.2126, 0.7152, 0.0722][i]!, 0);
-      const style = getComputedStyle(element);
-      const a = luminance(color(style.color));
-      const b = luminance(color(style.backgroundColor));
-      return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
-    });
-    expect(contrast).toBeGreaterThanOrEqual(4.5);
+    expect((await renderedContrast(chip)).ratio).toBeGreaterThanOrEqual(WCAG_AA_TEXT);
   }
   if (
     name.startsWith("from-query") &&

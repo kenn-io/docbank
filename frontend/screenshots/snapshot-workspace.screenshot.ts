@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import { expect, test, type Page } from "@playwright/test";
 import type { SnapshotPage as QuerySnapshotPage } from "../src/snapshots.js";
+import { expectReadableTone } from "./tone-contrast.js";
 
 const execFileAsync = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -247,6 +248,18 @@ test("retries an interrupted send from an already-open recovery tab", async ({ p
     });
     await other.goto(snapshotURL);
     await runSnapshot(other);
+    await other.route("**/api/v1/audit/status", (route) => route.fulfill({ status: 500, body: "Unavailable" }));
+    await resumeRetained(other);
+    const noticeError = other.locator(".tag-run-notice").getByRole("alert");
+    await expect(noticeError).toBeVisible();
+    for (const theme of ["light", "dark"] as const) {
+      await other.evaluate((value) => {
+        localStorage.setItem("docbank-theme", value);
+        document.documentElement.classList.toggle("dark", value === "dark");
+      }, theme);
+      await expectReadableTone(noticeError, theme, "danger");
+    }
+    await other.unroute("**/api/v1/audit/status");
     await resumeRetained(other);
     const otherRecovery = other.getByRole("dialog", { name: "Tag all results" });
     await expect(otherRecovery.getByRole("button", { name: "Apply", exact: true })).toBeVisible();

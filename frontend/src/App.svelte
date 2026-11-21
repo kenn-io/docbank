@@ -4331,7 +4331,7 @@
       </TopBar>
 
       {#if photoMode && uploadBannerVisible}
-        <div class="banner error">
+        <div class="banner error" data-kit-tone="danger">
           <UploadChannelNotice
             state={uploadConnectionState}
             message={uploadChannelError}
@@ -4638,7 +4638,9 @@
                 </div>
               </div>
               {#if snapshot.state.error}
-                <div class="banner error" role="alert">{snapshot.state.error.message}</div>
+                <div class="banner error" data-kit-tone="danger" role="alert">
+                  {snapshot.state.error.message}
+                </div>
               {/if}
               {#if snapshot.retained && !snapshot.recoveryAction && !snapshot.actionsOpen}
                 <TagRunNotice
@@ -4909,10 +4911,10 @@
               </div>
 
               {#if error}
-                <div class="banner error" role="alert">{error}</div>
+                <div class="banner error" data-kit-tone="danger" role="alert">{error}</div>
               {/if}
               {#if uploadBannerVisible}
-                <div class="banner error">
+                <div class="banner error" data-kit-tone="danger">
                   <UploadChannelNotice
                     state={uploadConnectionState}
                     message={uploadChannelError}
@@ -4941,7 +4943,12 @@
                 </div>
               {/if}
               {#if shortcutError}
-                <div class="banner error" role="alert" aria-label="Keyboard shortcut error">
+                <div
+                  class="banner error"
+                  data-kit-tone="danger"
+                  role="alert"
+                  aria-label="Keyboard shortcut error"
+                >
                   {shortcutError}
                 </div>
               {/if}

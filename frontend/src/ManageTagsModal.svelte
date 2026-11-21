@@ -170,7 +170,7 @@
       <p class="bounded">Showing the first {catalog.length} of {catalogTotal} tags.</p>
     {/if}
 
-    {#if failure}<p class="failure" role="alert">{failure}</p>{/if}
+    {#if failure}<p class="failure" data-kit-tone="danger" role="alert">{failure}</p>{/if}
   </div>
   {#snippet footer()}
     <Button surface="soft" disabled={pendingTagID !== ""} onclick={close}>Done</Button>
@@ -245,9 +245,9 @@
   }
 
   .failure {
-    border: 1px solid color-mix(in srgb, var(--accent-red) 35%, transparent);
-    background: color-mix(in srgb, var(--accent-red) 8%, transparent);
-    color: var(--accent-red);
+    border: 1px solid var(--kit-tone-border);
+    background: var(--kit-tone-band-bg);
+    color: var(--kit-tone-ink);
   }
 
   @media (max-width: 640px) {

@@ -60,7 +60,7 @@ override GOFLAGS += -trimpath
 endif
 export GOFLAGS
 
-.PHONY: build homebrew install clean test test-v openapi generate-api generate-photo-policy frontend frontend-test frontend-dev report-export-browser-test photo-map-browser-test photo-tabs-browser-test docs-screenshots fmt lint lint-ci check-timing-suppressions tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy help
+.PHONY: build homebrew install clean test test-v openapi generate-api generate-photo-policy frontend frontend-test frontend-dev report-export-browser-test theme-contrast-browser-test photo-map-browser-test photo-tabs-browser-test docs-screenshots fmt lint lint-ci check-timing-suppressions tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy help
 
 build: frontend
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o bin/ ./cmd/docbank
@@ -157,6 +157,10 @@ frontend-dev:
 
 report-export-browser-test: frontend
 	node frontend/screenshots/report-export.run.mjs
+
+theme-contrast-browser-test: build
+	DOCBANK_PLAYWRIGHT_SUITE=theme-contrast node frontend/node_modules/@playwright/test/cli.js test face-grade-contrast.screenshot.ts tag-error-contrast.screenshot.ts --config frontend/screenshots/playwright.config.ts --project chromium
+	DOCBANK_PLAYWRIGHT_SUITE=theme-contrast-snapshot DOCBANK_SNAPSHOT_SCREENSHOT_DIR="$(CURDIR)/.superpowers" node frontend/node_modules/@playwright/test/cli.js test snapshot-workspace.screenshot.ts --config frontend/screenshots/playwright.config.ts --project chromium -g 'retries an interrupted send'
 
 .PHONY: bates-recovery-browser-test
 bates-recovery-browser-test: frontend

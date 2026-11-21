@@ -455,7 +455,8 @@ body .app-shell .breadcrumbs .kit-menu__trigger:hover {
 }
 
 .banner.error {
-  background: color-mix(in srgb, var(--accent-red) 7%, var(--bg-surface));
+  background: var(--kit-tone-band-bg);
+  color: var(--kit-tone-ink);
 }
 
 .browser .kit-table-wrapper {

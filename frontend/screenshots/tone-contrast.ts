@@ -6,14 +6,9 @@ import { stripTypeScriptTypes } from "node:module";
 const source = await readFile(new URL(import.meta.resolve("@kenn-io/kit-ui/utils/color-contrast")), "utf8");
 const { contrastRatio, relativeLuminance, WCAG_AA_TEXT }: typeof import("@kenn-io/kit-ui/utils/color-contrast") =
   await import(`data:text/javascript,${encodeURIComponent(stripTypeScriptTypes(source))}`);
+export { WCAG_AA_TEXT };
 
-// Checks the text color the browser actually paints against the surface
-// behind it, so a tone that reads too faintly in either theme fails.
-export async function expectReadableTone(
-  text: Locator,
-  theme: "light" | "dark",
-  tone: "success" | "warning" | "danger",
-) {
+export async function renderedContrast(text: Locator) {
   const { ink, surface } = await text.evaluate((element) => {
     const canvas = document.createElement("canvas");
     canvas.width = canvas.height = 1;
@@ -40,9 +35,19 @@ export async function expectReadableTone(
     return { ink: pixel(), surface };
   });
   const hex = (rgb: number[]) => `#${rgb.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+  return { ink, surface, ratio: contrastRatio(hex(ink), hex(surface)), luminance: relativeLuminance(hex(surface)) };
+}
+
+// Checks the text color the browser paints against the surface behind it.
+export async function expectReadableTone(
+  text: Locator,
+  theme: "light" | "dark",
+  tone: "success" | "warning" | "danger",
+) {
+  const { ink, surface, ratio, luminance } = await renderedContrast(text);
   const report = `${tone} ink rgb(${ink}) on ${theme} surface rgb(${surface})`;
-  expect(relativeLuminance(hex(surface)) > 0.5, report).toBe(theme === "light");
-  expect(contrastRatio(hex(ink), hex(surface)), report).toBeGreaterThanOrEqual(WCAG_AA_TEXT);
+  expect(luminance > 0.5, report).toBe(theme === "light");
+  expect(ratio, report).toBeGreaterThanOrEqual(WCAG_AA_TEXT);
   const [r, g, b] = ink;
   if (tone === "success") expect(g > r && g > b, report).toBe(true);
   else if (tone === "warning") expect(r > b + 40 && g > b, report).toBe(true);
