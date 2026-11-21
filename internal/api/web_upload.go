@@ -914,7 +914,7 @@ func handleWebPhotoPlan(
 		}
 	}
 	if problem == nil && recovered != nil {
-		if recovered.Destination == "" || path.Clean(begin.Destination) != recovered.Destination {
+		if begin.InferredSource && (recovered.Destination == "" || path.Clean(begin.Destination) != recovered.Destination) {
 			problem = NewError(http.StatusConflict, "photo_import_destination", "Choose the destination containing the recorded files.")
 		}
 		selected := make(map[string]int, len(begin.Files))
@@ -991,7 +991,7 @@ func handleWebPhotoPlan(
 					for _, item := range imports {
 						if item.SourceID == source {
 							hash = item.Members[name]
-							if hash != "" && (item.Destination == "" || item.Destination != path.Clean(begin.Destination)) {
+							if begin.InferredSource && hash != "" && (item.Destination == "" || item.Destination != path.Clean(begin.Destination)) {
 								return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, NewError(http.StatusConflict, "photo_import_destination", "Choose the destination containing the recorded files.")) == nil
 							}
 							break

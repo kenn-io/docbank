@@ -969,9 +969,11 @@ func TestBrowserPhotoRecoveryPlan(t *testing.T) {
 
 	reconnected := browserUploadSocket(t, ts)
 	plan["destination"] = "/elsewhere"
+	plan["inferred_source"] = true
 	require.NoError(t, wsjson.Write(t.Context(), reconnected, plan))
 	require.Equal(t, "photo_import_destination", readPhotoResponse(t, reconnected).Code)
 	plan["destination"] = "/photos"
+	plan["inferred_source"] = false
 	require.NoError(t, wsjson.Write(t.Context(), reconnected, plan))
 	resumed := readPhotoResponse(t, reconnected)
 	require.Equal(t, "photo_import_plan", resumed.Type)
@@ -1005,6 +1007,50 @@ func TestBrowserPhotoRecoveryPlan(t *testing.T) {
 	require.NoError(t, wsjson.Write(t.Context(), reconnected, plan))
 	ambiguous := readPhotoResponse(t, reconnected)
 	require.Equal(t, "photo_import_ambiguous", ambiguous.Code)
+}
+
+func TestBrowserPhotoRecoveryMovedMember(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, nil)
+	conn := browserUploadSocket(t, ts)
+	files := []map[string]any{
+		{"relative_path": "Card/one.xmp", "size": 3, "expected_hash": testHash("one")},
+		{"relative_path": "Card/two.xmp", "size": 3, "expected_hash": testHash("two")},
+		{"relative_path": "Card/three.xmp", "size": 5, "expected_hash": testHash("three")},
+	}
+	plan := map[string]any{"type": "plan_photo_import", "request_id": "plan", "destination": "/photos", "source_id": "20000000-0000-4000-8000-000000000001", "files": files}
+	require.NoError(t, wsjson.Write(t.Context(), conn, plan))
+	initial := readPhotoResponse(t, conn)
+	for group, members := range initial.Groups {
+		if members[0] < 2 {
+			content := []byte([]string{"one", "two"}[members[0]])
+			require.Equal(t, "added", uploadBrowserPhoto(t, conn, initial.ImportID, group, files[members[0]], content).Receipt.Status)
+		}
+	}
+	node, err := catalog.NodeByPath(t.Context(), "/photos/one.xmp")
+	require.NoError(t, err)
+	archive, err := catalog.Mkdir(t.Context(), catalog.RootID(), "archive")
+	require.NoError(t, err)
+	_, _, err = catalog.Move(t.Context(), node.ID, archive.ID, node.Name, node.Revision)
+	require.NoError(t, err)
+
+	reconnected := browserUploadSocket(t, ts)
+	plan["recovering"] = true
+	plan["inferred_source"] = true
+	require.NoError(t, wsjson.Write(t.Context(), reconnected, plan))
+	require.Equal(t, "photo_import_destination", readPhotoResponse(t, reconnected).Code)
+	plan["inferred_source"] = false
+	require.NoError(t, wsjson.Write(t.Context(), reconnected, plan))
+	resumed := readPhotoResponse(t, reconnected)
+	require.Equal(t, "photo_import_plan", resumed.Type)
+	require.Len(t, resumed.Present, 2)
+	for group, members := range resumed.Groups {
+		if members[0] == 2 {
+			require.Equal(t, "added", uploadBrowserPhoto(t, reconnected, resumed.ImportID, group, files[2], []byte("three")).Receipt.Status)
+		}
+	}
+	_, err = catalog.NodeByPath(t.Context(), "/photos/three.xmp")
+	require.NoError(t, err)
 }
 
 func TestBrowserPhotoRecoveryContinuedFolder(t *testing.T) {
