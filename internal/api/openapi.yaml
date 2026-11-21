@@ -2401,6 +2401,38 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    BrowserPhotoImport:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/BrowserPhotoImport.json
+          format: uri
+          readOnly: true
+          type: string
+        destination:
+          type: string
+        folder:
+          type: string
+        groups:
+          format: int64
+          type: integer
+        source_id:
+          type: string
+        started_at:
+          type: string
+      required:
+        - source_id
+        - folder
+        - started_at
+        - groups
+        - destination
+      type: object
+      x-go-type: store.BrowserPhotoImport
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     CancelExportJobRequest:
       additionalProperties: false
       properties:
@@ -30106,6 +30138,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Undo photo fields and keywords if their revisions still match
+  /api/v1/photos/browser-imports:
+    get:
+      operationId: getBrowserPhotoImport
+      parameters:
+        - explode: false
+          in: query
+          name: source_id
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrowserPhotoImport"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Find a recorded browser photo import
   /api/v1/photos/checkouts:
     get:
       operationId: listPhotoCheckouts

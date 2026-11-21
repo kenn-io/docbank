@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"uuid"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -36,6 +37,23 @@ func NewPhotoImportRunner(d Deps) ingest.PhotoImportRunner {
 }
 
 func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
+	huma.Register(api, huma.Operation{
+		OperationID: "getBrowserPhotoImport", Method: http.MethodGet,
+		Path: "/api/v1/photos/browser-imports", Summary: "Find a recorded browser photo import",
+	}, func(ctx context.Context, in *struct {
+		SourceID string `query:"source_id"`
+	}) (*struct{ Body *store.BrowserPhotoImport }, error) {
+		if in.SourceID != "" {
+			if _, err := uuid.Parse(in.SourceID); err != nil {
+				return nil, NewError(http.StatusUnprocessableEntity, "validation", "invalid source_id")
+			}
+		}
+		item, err := d.Store.BrowserPhotoImport(ctx, in.SourceID)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		return &struct{ Body *store.BrowserPhotoImport }{Body: item}, nil
+	})
 	runnerDeps := d
 	runnerDeps.Gate = g
 	huma.Register(api, huma.Operation{

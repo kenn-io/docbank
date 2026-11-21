@@ -10522,6 +10522,57 @@ func (c *Client) UndoPhotoAuthored(ctx context.Context, options *UndoPhotoAuthor
 	return responseParser(ctx, resp)
 }
 
+// GetBrowserPhotoImport Find a recorded browser photo import
+func (c *Client) GetBrowserPhotoImport(ctx context.Context, options *GetBrowserPhotoImportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetBrowserPhotoImportResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"source_id": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/photos/browser-imports",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetBrowserPhotoImportResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetBrowserPhotoImportResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetBrowserPhotoImportResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetBrowserPhotoImportErrorResponse](resp, "GetBrowserPhotoImportErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/browser-imports")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ListPhotoCheckouts List photo checkouts
 func (c *Client) ListPhotoCheckouts(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListPhotoCheckoutsResponse, error) {
 	var err error
@@ -23716,6 +23767,37 @@ func (o *UndoPhotoAuthoredRequestOptions) GetHeader() (map[string]string, error)
 	return nil, nil
 }
 
+// GetBrowserPhotoImportRequestOptions is the options needed to make a request to GetBrowserPhotoImport.
+type GetBrowserPhotoImportRequestOptions struct {
+	Query *GetBrowserPhotoImportQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetBrowserPhotoImportRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetBrowserPhotoImportRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetBrowserPhotoImportRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetBrowserPhotoImportRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CreatePhotoCheckoutRequestOptions is the options needed to make a request to CreatePhotoCheckout.
 type CreatePhotoCheckoutRequestOptions struct {
 	Body *CreatePhotoCheckoutBody
@@ -29216,6 +29298,10 @@ type ReadPhotoPreviewQuery struct {
 	FaceID   *uuid.UUID `json:"face_id,omitempty"`
 }
 
+type GetBrowserPhotoImportQuery struct {
+	SourceID *string `json:"source_id,omitempty"`
+}
+
 type GetPhotoCheckoutQuery struct {
 	After *uuid.UUID `json:"after,omitempty"`
 	Limit *int64     `json:"limit,omitempty"`
@@ -30353,6 +30439,10 @@ type UndoPhotoAuthoredResponse = store.PhotoAuthoredReceipt
 
 type UndoPhotoAuthoredErrorResponse = Error
 
+type GetBrowserPhotoImportResponse = store.BrowserPhotoImport
+
+type GetBrowserPhotoImportErrorResponse = Error
+
 type ListPhotoCheckoutsResponse = api.PhotoCheckoutList
 
 type ListPhotoCheckoutsErrorResponse = Error
@@ -31190,6 +31280,8 @@ type BatesReserveRequest = api.BatesReserveRequest
 type BlobStore = api.BlobStore
 
 type BlobStorePreview = api.BlobStorePreview
+
+type BrowserPhotoImport = store.BrowserPhotoImport
 
 type CancelExportJobRequest struct {
 	// Schema A URL to the JSON Schema for this object.

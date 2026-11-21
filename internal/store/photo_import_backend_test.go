@@ -9,6 +9,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func checkBrowserPhotoRecovery(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	t.Parallel()
+	s := open(t)
+	ctx := t.Context()
+	const source = "20000000-0000-4000-8000-000000000001"
+	run, err := s.BeginIngest(ctx, "photo-import", "browser: Card")
+	require.NoError(t, err)
+	for _, name := range []string{"Card/first.JPG", "Card/first.XMP", "Card/other.XMP"} {
+		member := photoImportTestMember("browser:"+source+"/"+name, "", fakeHash(name), "")
+		_, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(member))
+		require.NoError(t, err)
+	}
+	result, err := s.BrowserPhotoImport(ctx, "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, source, result.SourceID)
+	require.Equal(t, "Card", result.Folder)
+	require.Equal(t, 2, result.Groups)
+	require.Equal(t, "/", result.Destination)
+	require.Equal(t, fakeHash("Card/other.XMP"), result.Members["Card/other.XMP"])
+}
+
 func checkBrowserPhotoStandaloneSidecarReplay(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	t.Parallel()

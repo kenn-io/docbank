@@ -86,6 +86,7 @@ type webUploadMessage struct {
 	ImportID      string              `json:"import_id,omitzero"`
 	Files         []webPhotoFile      `json:"files,omitzero"`
 	Groups        [][]int             `json:"groups,omitzero"`
+	Present       []int               `json:"present,omitzero"`
 	Unsupported   []int               `json:"unsupported,omitzero"`
 	SkipReasons   map[int]string      `json:"skip_reasons,omitzero"`
 	Destination   string              `json:"destination,omitzero"`
@@ -858,6 +859,69 @@ func handleWebPhotoPlan(
 	if problem == nil {
 		needed, problem = unhashedBrowserPhotos(ctx, d.Store, begin.Files, groups)
 	}
+	var recovered *store.BrowserPhotoImport
+	if problem == nil && begin.SourceID != nil {
+		var err error
+		recovered, err = d.Store.BrowserPhotoImport(ctx, begin.SourceID.String())
+		if err != nil {
+			problem = uploadError(err)
+		}
+	}
+	if problem == nil && recovered != nil {
+		selected := make(map[string]int, len(begin.Files))
+		for _, group := range groups {
+			for _, index := range group {
+				selected[begin.Files[index].RelativePath] = index
+			}
+		}
+		for name, hash := range recovered.Members {
+			index, ok := selected[name]
+			if !ok || hash == "" {
+				problem = NewError(http.StatusConflict, "photo_import_changed", "The recorded import differs from this selection. Choose the original folder.")
+				break
+			}
+			if begin.Files[index].ExpectedHash == "" {
+				needed = append(needed, index)
+			} else if begin.Files[index].ExpectedHash != hash {
+				problem = NewError(http.StatusConflict, "photo_import_changed", "The recorded import differs from this selection. Choose the original folder.")
+				break
+			}
+		}
+		imports, err := d.Store.BrowserPhotoImports(ctx)
+		if err != nil {
+			problem = uploadError(err)
+		}
+		for _, candidate := range imports {
+			if candidate.SourceID == recovered.SourceID || len(candidate.Members) == 0 {
+				continue
+			}
+			possible := true
+			for name, hash := range candidate.Members {
+				index, ok := selected[name]
+				if !ok || hash == "" || begin.Files[index].ExpectedHash != "" && begin.Files[index].ExpectedHash != hash {
+					possible = false
+					break
+				}
+			}
+			if !possible {
+				continue
+			}
+			unhashed := false
+			for name := range candidate.Members {
+				index := selected[name]
+				if begin.Files[index].ExpectedHash == "" {
+					needed = append(needed, index)
+					unhashed = true
+				}
+			}
+			if !unhashed {
+				problem = NewError(http.StatusConflict, "photo_import_ambiguous", "This selection matches more than one recorded import.")
+				break
+			}
+		}
+		slices.Sort(needed)
+		needed = slices.Compact(needed)
+	}
 	if problem != nil {
 		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, problem) == nil
 	}
@@ -887,7 +951,25 @@ func handleWebPhotoPlan(
 		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(resolveErr)) == nil
 	}
 	for i, index := range indexes {
-		paths[index] = resolved[i]
+		if recovered == nil {
+			paths[index] = resolved[i]
+		}
+	}
+	var present []int
+	if recovered != nil {
+		for i, group := range groups {
+			matched := true
+			for _, index := range group {
+				file := begin.Files[index]
+				if hash, ok := recovered.Members[file.RelativePath]; !ok || hash != file.ExpectedHash {
+					matched = false
+					break
+				}
+			}
+			if matched {
+				present = append(present, i)
+			}
+		}
 	}
 	photoImport := &webPhotoImport{
 		paths: paths,
@@ -895,7 +977,7 @@ func handleWebPhotoPlan(
 	}
 	err := wsjson.Write(ctx, conn, webUploadMessage{
 		Type: "photo_import_plan", RequestID: begin.RequestID, ImportID: photoImport.id,
-		Groups: groups, Unsupported: unsupported, SkipReasons: skipReasons,
+		Groups: groups, Present: present, Unsupported: unsupported, SkipReasons: skipReasons,
 	})
 	return photoImport, err == nil
 }

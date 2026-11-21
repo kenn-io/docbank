@@ -374,6 +374,7 @@ type photoSocketResponse struct {
 	Type        string         `json:"type"`
 	Status      int            `json:"status"`
 	Groups      [][]int        `json:"groups"`
+	Present     []int          `json:"present"`
 	Unsupported []int          `json:"unsupported"`
 	Indexes     []int          `json:"indexes"`
 	SkipReasons map[int]string `json:"skip_reasons"`
@@ -912,6 +913,75 @@ func TestBrowserPhotoLoneSidecarSelections(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, children, 2)
 	assert.Equal(t, children[0].BlobHash, children[1].BlobHash)
+}
+
+func TestBrowserPhotoRecoveryPlan(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, nil)
+	conn := browserUploadSocket(t, ts)
+	const source = "20000000-0000-4000-8000-000000000001"
+	empty, emptyBody := get(t, ts, "/api/v1/photos/browser-imports", nil)
+	require.Equal(t, http.StatusOK, empty.StatusCode, emptyBody)
+	require.JSONEq(t, "null", emptyBody)
+	files := []map[string]any{
+		{"relative_path": "Card/one.xmp", "size": len("one"), "expected_hash": testHash("one")},
+		{"relative_path": "Card/two.xmp", "size": len("two"), "expected_hash": testHash("two")},
+	}
+	plan := map[string]any{"type": "plan_photo_import", "request_id": "plan", "destination": "/photos", "source_id": source, "files": files}
+	require.NoError(t, wsjson.Write(t.Context(), conn, plan))
+	initial := readPhotoResponse(t, conn)
+	require.Equal(t, "photo_import_plan", initial.Type)
+	firstGroup, secondGroup := 0, 1
+	if initial.Groups[0][0] != 0 {
+		firstGroup, secondGroup = 1, 0
+	}
+	member := map[string]any{"expected_hash": testHash("one")}
+	first := uploadBrowserPhoto(t, conn, initial.ImportID, firstGroup, member, []byte("one"))
+	require.Equal(t, "added", first.Receipt.Status)
+	response, body := get(t, ts, "/api/v1/photos/browser-imports", nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var summary struct {
+		SourceID    string `json:"source_id"`
+		Folder      string `json:"folder"`
+		Groups      int    `json:"groups"`
+		Destination string `json:"destination"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &summary))
+	require.Equal(t, source, summary.SourceID)
+	require.Equal(t, "Card", summary.Folder)
+	require.Equal(t, 1, summary.Groups)
+	require.Equal(t, "/photos", summary.Destination)
+
+	reconnected := browserUploadSocket(t, ts)
+	require.NoError(t, wsjson.Write(t.Context(), reconnected, plan))
+	resumed := readPhotoResponse(t, reconnected)
+	require.Equal(t, "photo_import_plan", resumed.Type)
+	require.Equal(t, []int{firstGroup}, resumed.Present)
+	second := uploadBrowserPhoto(t, reconnected, resumed.ImportID, secondGroup, map[string]any{"expected_hash": testHash("two")}, []byte("two"))
+	require.Equal(t, "added", second.Receipt.Status)
+	destination, err := catalog.NodeByPath(t.Context(), "/photos")
+	require.NoError(t, err)
+	children, err := catalog.Children(t.Context(), destination.ID)
+	require.NoError(t, err)
+	require.Len(t, children, 2)
+
+	files[0]["expected_hash"] = testHash("different")
+	require.NoError(t, wsjson.Write(t.Context(), reconnected, plan))
+	changed := readPhotoResponse(t, reconnected)
+	require.Equal(t, "photo_import_changed", changed.Code)
+
+	files[0]["expected_hash"] = testHash("one")
+	plan["source_id"] = "20000000-0000-4000-8000-000000000002"
+	plan["files"] = files[:1]
+	require.NoError(t, wsjson.Write(t.Context(), reconnected, plan))
+	other := readPhotoResponse(t, reconnected)
+	require.Equal(t, "photo_import_plan", other.Type)
+	require.Equal(t, "added", uploadBrowserPhoto(t, reconnected, other.ImportID, 0, member, []byte("one")).Receipt.Status)
+	plan["source_id"] = source
+	plan["files"] = files
+	require.NoError(t, wsjson.Write(t.Context(), reconnected, plan))
+	ambiguous := readPhotoResponse(t, reconnected)
+	require.Equal(t, "photo_import_ambiguous", ambiguous.Code)
 }
 
 func TestBrowserUploadBoundsAuthentication(t *testing.T) {

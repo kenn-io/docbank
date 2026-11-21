@@ -3,7 +3,7 @@ import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { localFilePath } from "./localFiles.js";
-import { APIError } from "./api-transport.js";
+import { APIError, sessionJSON } from "./api-transport.js";
 import { randomUUID } from "./crypto.js";
 import { type BrowserSession } from "./browser-session.js";
 import { photoImportContentHashExtensions } from "./generated/photoSourceExtensions.js";
@@ -14,6 +14,26 @@ const uploadSocketPath = "/api/daemon/web-upload";
 const uploadProofDomain = "docbank-web-upload-v1\u0000";
 const uploadHandshakeTimeoutMs = 10_000;
 const uploadResponseTimeoutMs = 60_000;
+
+export interface BrowserPhotoImport {
+  source_id: string;
+  folder: string;
+  started_at: string;
+  groups: number;
+  destination: string;
+}
+
+export function getBrowserPhotoImport(
+  session: string,
+  sourceID = "",
+  signal?: AbortSignal,
+): Promise<BrowserPhotoImport | null> {
+  const query = sourceID ? `?source_id=${encodeURIComponent(sourceID)}` : "";
+  return sessionJSON(`/api/v1/photos/browser-imports${query}`, {
+    session,
+    signal,
+  });
+}
 
 export interface TransferProgress {
   submitted?: boolean;
@@ -96,6 +116,7 @@ export function validateUploadReceipt(
 export interface PhotoImportPlan {
   import_id: string;
   groups: number[][];
+  present: number[];
   unsupported: number[];
   skip_reasons?: Record<number, string>;
   // Hashes the server asked for before planning; every other file hashes with its group.
@@ -172,6 +193,7 @@ interface UploadMessage {
   import_id?: string;
   files?: { relative_path: string; size: number; modified_time?: number }[];
   groups?: number[][];
+  present?: number[];
   unsupported?: number[];
   skip_reasons?: Record<number, string>;
   destination?: string;
@@ -423,6 +445,15 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
         throw this.protocolError();
       if (plan.groups.some((group) => !Array.isArray(group) || !group.length))
         throw this.protocolError();
+      const present = plan.present ?? [];
+      if (
+        !Array.isArray(present) ||
+        new Set(present).size !== present.length ||
+        present.some(
+          (index) => !Number.isInteger(index) || index < 0 || index >= plan.groups!.length,
+        )
+      )
+        throw this.protocolError();
       const indexes = [...plan.groups.flat(), ...plan.unsupported];
       if (
         indexes.length !== files.length ||
@@ -433,6 +464,7 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
       return {
         import_id: plan.import_id,
         groups: plan.groups,
+        present,
         unsupported: plan.unsupported,
         skip_reasons: plan.skip_reasons,
         hashes,

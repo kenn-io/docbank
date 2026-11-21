@@ -463,6 +463,7 @@ it("plans on the server and streams each photo member between ready and end", as
   ).toEqual({
     import_id: "import-1",
     groups: [[0, 1], [2]],
+    present: [],
     unsupported: [3],
     skip_reasons: { 3: "Unsupported type" },
     hashes: new Map(),
