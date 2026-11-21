@@ -226,7 +226,7 @@ body .app-shell .search-controls .kit-button--outline.kit-button--neutral {
   align-items: center;
   gap: var(--space-5);
   width: 100%;
-  min-height: 34px;
+  min-height: var(--nav-item-height);
   padding: var(--space-3) var(--space-4);
   border: 0;
   border-radius: var(--radius-md);

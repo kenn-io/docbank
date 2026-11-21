@@ -5747,7 +5747,8 @@
     font-size: var(--font-size-xs);
   }
   .album-item {
-    min-height: 30px;
+    min-height: var(--nav-subitem-height);
+    padding-block: var(--space-1);
     padding-left: calc(var(--space-4) + 16px + var(--space-5));
     font-size: var(--font-size-sm);
   }
