@@ -11,16 +11,20 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"io"
 	"math/big"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"net/netip"
+	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -160,28 +164,46 @@ func TestEgressRevalidatesDNSOnEachConnection(t *testing.T) {
 }
 
 func TestEgressFallsBackAcrossApprovedDNSAnswers(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	var listener, first net.Listener
+	var port uint16
+	var err error
+	for range 10 {
+		listener, err = (&net.ListenConfig{}).Listen(t.Context(), "tcp4", "127.0.0.1:0")
+		require.NoError(t, err)
+		_, port = endpoint(t, listener.Addr())
+		first, err = (&net.ListenConfig{}).Listen(t.Context(), "tcp6", net.JoinHostPort("::1", strconv.Itoa(int(port))))
+		if err == nil {
+			break
+		}
+		require.NoError(t, listener.Close())
+		// Windows reports WSAEADDRINUSE (10048) rather than EADDRINUSE.
+		if !errors.Is(err, syscall.EADDRINUSE) && !(runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(10048))) {
+			require.NoError(t, err)
+		}
+	}
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = first.Close() })
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, "fallback")
 	}))
+	require.NoError(t, server.Listener.Close())
+	server.Listener = listener
+	server.Start()
 	defer server.Close()
-	_, port := endpoint(t, server.Listener.Addr())
-	first, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp6", net.JoinHostPort("::1", strconv.Itoa(int(port))))
-	if err != nil {
-		probe, probeErr := (&net.ListenConfig{}).Listen(t.Context(), "tcp6", "[::1]:0")
-		if probeErr != nil {
-			t.Skipf("IPv6 loopback unavailable: %v", probeErr)
-		}
-		require.NoError(t, probe.Close())
-		require.NoError(t, err)
-	}
-	t.Cleanup(func() { _ = first.Close() })
 	resolver := &recordingResolver{answers: [][]netip.Addr{{
 		netip.MustParseAddr("::1"),
 		netip.MustParseAddr("127.0.0.1"),
 	}}}
 	transport := newHTTPTransport(t, port, resolver, netip.MustParsePrefix("::1/128"))
 
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://provider.invalid:"+strconv.Itoa(int(port)), nil)
+	var mu sync.Mutex
+	var attempts []string
+	ctx := httptrace.WithClientTrace(t.Context(), &httptrace.ClientTrace{ConnectStart: func(_, address string) {
+		mu.Lock()
+		defer mu.Unlock()
+		attempts = append(attempts, address)
+	}})
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://provider.invalid:"+strconv.Itoa(int(port)), nil)
 	require.NoError(t, err)
 	require.NoError(t, first.Close())
 	response, err := (&http.Client{Transport: transport}).Do(request)
@@ -191,6 +213,9 @@ func TestEgressFallsBackAcrossApprovedDNSAnswers(t *testing.T) {
 	require.NoError(t, response.Body.Close())
 	assert.Equal(t, "fallback", string(body))
 	assert.Equal(t, []string{"provider.invalid"}, resolver.hosts())
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, []string{net.JoinHostPort("::1", strconv.Itoa(int(port))), listener.Addr().String()}, attempts)
 }
 
 func TestEgressRejectsUnapprovedDestinationBeforeResolution(t *testing.T) {
