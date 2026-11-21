@@ -1006,7 +1006,6 @@ func TestBrowserPhotoRecoveryPlan(t *testing.T) {
 	}
 	require.NotEqual(t, -1, trashedFirstGroup)
 	require.Contains(t, trashed.Present, trashedFirstGroup)
-
 }
 
 func TestBrowserPhotoRecoveryContinuedFolder(t *testing.T) {
