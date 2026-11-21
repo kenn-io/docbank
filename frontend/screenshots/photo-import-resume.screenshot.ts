@@ -4,6 +4,90 @@ import path from "node:path";
 import type { PhotoBrowsePage } from "../src/generated/docbank.js";
 import { photoFixture, repository } from "./photo-fixture.js";
 
+test("recovers a folder after losing the browser profile", async () => {
+  test.setTimeout(180_000);
+  await mkdir(path.join(repository, ".superpowers"), { recursive: true });
+  const workspace = await mkdtemp(path.join(repository, ".superpowers", "import-folder-"));
+  const folder = path.join(workspace, "Camera");
+  await mkdir(folder);
+  const fixture = photoFixture(workspace);
+  let browser = await chromium.launchPersistentContext(path.join(workspace, "first-profile"));
+  try {
+    const canvasPage = await browser.newPage();
+    for (const [index, name] of ["one", "two", "three"].entries()) {
+      const data = await canvasPage.evaluate((value) => {
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 64;
+        const context = canvas.getContext("2d")!;
+        context.fillStyle = `rgb(${80 + value * 40},120,160)`;
+        context.fillRect(0, 0, 64, 64);
+        return canvas.toDataURL("image/jpeg").split(",")[1]!;
+      }, index);
+      await writeFile(path.join(folder, `${name}.jpg`), Buffer.from(data, "base64"));
+    }
+    await canvasPage.close();
+    const open = async () => {
+      const url = new URL(await fixture.run("web", "--no-browser"));
+      url.pathname = "/photos";
+      const page = await browser.newPage();
+      await page.goto(url.href);
+      await page.getByRole("button", { name: "Add photos", exact: true }).first().click();
+      await expect(page.getByRole("button", { name: "Choose folder", exact: true })).toBeEnabled();
+      return page;
+    };
+    const first = await open();
+    await first.evaluate(() => {
+      const send = WebSocket.prototype.send;
+      WebSocket.prototype.send = function (data) {
+        if (
+          typeof data === "string" &&
+          JSON.parse(data).type === "begin_photo_group" &&
+          JSON.parse(data).group === 1
+        ) {
+          (window as unknown as { releaseGroup: () => void }).releaseGroup = () =>
+            send.call(this, data);
+        } else send.call(this, data);
+      };
+    });
+    await first.getByLabel("Choose photo folder").setInputFiles(folder);
+    await first.getByRole("button", { name: "Add 3 groups", exact: true }).click();
+    await expect
+      .poll(() =>
+        first.evaluate(() => typeof (window as unknown as { releaseGroup?: unknown }).releaseGroup),
+      )
+      .toBe("function");
+    await first.getByRole("button", { name: "Stop after this group", exact: true }).click();
+    await first.evaluate(() => (window as unknown as { releaseGroup: () => void }).releaseGroup());
+    await expect(first.getByText("Added: 2", { exact: true })).toBeVisible();
+    await browser.close();
+    await fixture.run("daemon", "stop");
+    browser = await chromium.launchPersistentContext(path.join(workspace, "new-profile"));
+    const resumed = await open();
+    const recovery = resumed.getByRole("region", { name: "Interrupted import found" });
+    await expect(recovery).toContainText("Camera");
+    await expect(recovery).toContainText("2 groups already in the vault");
+    await resumed.screenshot({
+      path: path.join(repository, ".superpowers", "photo-import-folder-offer.png"),
+      animations: "disabled",
+    });
+    const chooserPromise = resumed.waitForEvent("filechooser");
+    await recovery.getByRole("button", { name: "Choose the same folder…", exact: true }).click();
+    await (await chooserPromise).setFiles(folder);
+    await expect(
+      recovery.getByRole("button", { name: "Add 1 remaining group", exact: true }),
+    ).toBeVisible();
+    await resumed.screenshot({
+      path: path.join(repository, ".superpowers", "photo-import-folder-recovery.png"),
+      animations: "disabled",
+    });
+    await recovery.getByRole("button", { name: "Add 1 remaining group", exact: true }).click();
+    await expect(resumed.getByText("Added: 1", { exact: true })).toBeVisible();
+  } finally {
+    await browser.close();
+    await fixture.dispose();
+  }
+});
+
 test("resumes the complete selection and source after a daemon and browser restart", async () => {
   test.setTimeout(180_000);
   await mkdir(path.join(repository, ".superpowers"), { recursive: true });
@@ -156,7 +240,8 @@ test("resumes the complete selection and source after a daemon and browser resta
     await resumed.page.getByLabel("Choose photo files").setInputFiles(files);
     await resumed.page.getByRole("button", { name: "Add 1 remaining group", exact: true }).click();
     await expect(resumed.page.getByText("Added: 1", { exact: true })).toBeVisible();
-    await expect(resumed.page.getByText("Already in vault: 2", { exact: true })).toBeVisible();
+    await expect(recovery).toContainText("2 groups already in the vault");
+    await expect(resumed.page.getByText("Already in vault: 2", { exact: true })).toHaveCount(0);
     expect(plans).toHaveLength(2);
     expect(plans[1]).toBe(plans[0]);
     // Wait for real source metadata before opening the final Library view.
