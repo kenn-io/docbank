@@ -1362,6 +1362,9 @@ it.each([
       "current-source",
       expect.any(AbortSignal),
       expect.any(Function),
+      undefined,
+      false,
+      true,
     );
   },
 );
@@ -1650,6 +1653,8 @@ it("retains a selection when the channel changes during checkpoint save", async 
     expect.anything(),
     expect.anything(),
     expect.anything(),
+    false,
+    true,
   );
   expect(screen.queryByText(/changed in another tab/)).toBeNull();
 });
@@ -1667,6 +1672,25 @@ const recorded = {
   started_at: "2026-11-18T14:02:00Z",
   groups: 2,
 };
+
+it("offers the next recorded folder after the first is dismissed", async () => {
+  const older = { ...recorded, source_id: "20000000-0000-4000-8000-000000000002", folder: "Older" };
+  browserImports.mockImplementation(async (_session, _source, _signal, excluded = []) =>
+    excluded.includes(recorded.source_id) ? older : recorded,
+  );
+  render(PhotoImportDrawer, {
+    channel: { planPhotoImport: vi.fn(), uploadPhotoGroup: vi.fn() },
+    vaultID: "older-import",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  expect(await screen.findByText(/Folder “Trip”/)).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+  expect(await screen.findByText(/Folder “Older”/)).toBeTruthy();
+  expect(screen.getAllByRole("heading", { name: "Interrupted import found" })).toHaveLength(1);
+});
 
 it("finishes a recorded folder import after a lost session by sending only the missing group", async () => {
   browserImports.mockResolvedValue(recorded);
@@ -1733,6 +1757,9 @@ it("finishes a recorded folder import after a lost session by sending only the m
     recorded.source_id,
     expect.any(AbortSignal),
     expect.any(Function),
+    undefined,
+    true,
+    true,
   );
   expect(savedImports.get("lost-session")?.sourceID).toBe(recorded.source_id);
   await fireEvent.click(add);
@@ -1853,6 +1880,9 @@ it.each(["folder", "files"] as const)(
       recorded.source_id,
       expect.any(AbortSignal),
       expect.any(Function),
+      undefined,
+      kind === "folder",
+      true,
     );
     expect(savedImports.get("general-picker")?.sourceID).toBe(recorded.source_id);
     expect(section.querySelector("p")!.textContent).toMatch(/ · 2 groups already in the vault$/);
@@ -2060,5 +2090,8 @@ it("resumes a saved checkpoint under its own ID when its summary lookup fails", 
     "saved-source",
     expect.any(AbortSignal),
     expect.any(Function),
+    undefined,
+    false,
+    true,
   );
 });

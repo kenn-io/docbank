@@ -281,7 +281,23 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		}
 		sourceIDs, ok := values["source_id"]
 		if !ok {
-			return r.URL.RawQuery == ""
+			if r.URL.RawQuery == "" {
+				return true
+			}
+			excluded, ok := values["exclude"]
+			if !ok || len(excluded) != 1 {
+				return false
+			}
+			ids := strings.Split(excluded[0], ",")
+			if len(ids) > 20 {
+				return false
+			}
+			for _, id := range ids {
+				if _, err := uuid.Parse(id); err != nil {
+					return false
+				}
+			}
+			return true
 		}
 		if len(sourceIDs) != 1 {
 			return false

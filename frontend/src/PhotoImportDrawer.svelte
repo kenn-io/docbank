@@ -225,8 +225,14 @@
     retryLookup = undefined;
     let found = null;
     try {
+      const excluded = saved ? [] : settled.values();
       found =
-        (await getBrowserPhotoImport(session, saved?.sourceID ?? "", lifecycle.signal)) ?? null;
+        (await getBrowserPhotoImport(
+          session,
+          saved?.sourceID ?? "",
+          lifecycle.signal,
+          ...(excluded.length ? [excluded] : []),
+        )) ?? null;
     } catch (cause) {
       if (obsolete() || destroyed) return;
       if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
@@ -248,8 +254,8 @@
       groups: found?.groups ?? 0,
       pickerKind,
     };
-    // The vault does not record where an import went, so without a checkpoint the person chooses again.
-    destination = saved?.destination ?? "";
+    // The shared current parent is a continuation destination, not a record of the original selection.
+    destination = saved?.destination ?? found?.destination ?? "";
   }
 
   function recover(): void {
@@ -291,6 +297,7 @@
       return;
     }
     if (recovered) clearSelection();
+    await findRecovery(undefined, () => false);
   }
 
   async function choose(files: File[], kind: PickerKind): Promise<void> {
@@ -371,6 +378,21 @@
             manifestHash: digest,
             pickerKind,
           };
+      const recoveryArgs: [Map<File, string>?, boolean?, boolean?] = reconnect
+        ? [
+            new Map(
+              previousItems
+                .flatMap((item) =>
+                  item.files.map((file, index) => [file, item.hashes[index]] as const),
+                )
+                .filter(([, hash]) => !!hash),
+            ),
+            false,
+            true,
+          ]
+        : recovery
+          ? [undefined, !checkpoint, true]
+          : [];
       const plan = await planChannel.planPhotoImport(
         files,
         target,
@@ -379,17 +401,7 @@
         (progress) => {
           hashProgress = progress;
         },
-        ...(reconnect
-          ? ([
-              new Map(
-                previousItems
-                  .flatMap((item) =>
-                    item.files.map((file, index) => [file, item.hashes[index]] as const),
-                  )
-                  .filter(([, hash]) => !!hash),
-              ),
-            ] as const)
-          : ([] as const)),
+        ...recoveryArgs,
       );
       hashProgress = undefined;
       if (

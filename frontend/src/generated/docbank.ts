@@ -1254,6 +1254,7 @@ export interface BlobStorePreview {
 export interface BrowserPhotoImport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  destination: string;
   folder: string;
   groups: number;
   source_id: string;
@@ -10301,6 +10302,7 @@ export type UnhidePhotoAssetHeaders = {
 
 export type GetBrowserPhotoImportParams = {
 source_id?: string;
+exclude?: string;
 };
 
 export type GetPhotoCheckoutParams = {

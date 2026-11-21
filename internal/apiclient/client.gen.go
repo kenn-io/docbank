@@ -10527,6 +10527,7 @@ func (c *Client) GetBrowserPhotoImport(ctx context.Context, options *GetBrowserP
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
+		"exclude":   {Style: "form", Explode: &[]bool{false}[0]},
 		"source_id": {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
@@ -29300,6 +29301,7 @@ type ReadPhotoPreviewQuery struct {
 
 type GetBrowserPhotoImportQuery struct {
 	SourceID *string `json:"source_id,omitempty"`
+	Exclude  *string `json:"exclude,omitempty"`
 }
 
 type GetPhotoCheckoutQuery struct {

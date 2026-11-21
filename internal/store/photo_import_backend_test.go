@@ -24,15 +24,21 @@ func checkBrowserPhotoRecovery(t *testing.T, open func(*testing.T) *Store) {
 	}
 	node, err := s.NodeByPath(ctx, "/other.XMP")
 	require.NoError(t, err)
-	_, _, err = s.ReplaceContent(ctx, node.ID, node.Revision, fakeHash("edited"), 4, "application/rdf+xml")
+	node, _, err = s.ReplaceContent(ctx, node.ID, node.Revision, fakeHash("edited"), 4, "application/rdf+xml")
 	require.NoError(t, err)
-	result, found, err := s.BrowserPhotoImport(ctx, "")
+	_, _, err = s.Trash(ctx, node.ID, node.Revision)
+	require.NoError(t, err)
+	result, found, err := s.BrowserPhotoImport(ctx, "", nil)
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, source, result.SourceID)
 	require.Equal(t, "Card", result.Folder)
+	require.Equal(t, "/", result.Destination)
 	require.Equal(t, 2, result.Groups)
 	require.Equal(t, fakeHash("Card/other.XMP"), result.Members["Card/other.XMP"])
+	_, found, err = s.BrowserPhotoImport(ctx, "", []string{source})
+	require.NoError(t, err)
+	require.False(t, found)
 }
 
 func checkBrowserPhotoStandaloneSidecarReplay(t *testing.T, open func(*testing.T) *Store) {

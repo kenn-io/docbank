@@ -85,6 +85,7 @@ export function settledPhotoImports(vaultID: string) {
     }
   }
   return {
+    values: read,
     has: (sourceID: string) => read().includes(sourceID),
     add(sourceID: string) {
       try {

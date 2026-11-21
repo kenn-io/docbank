@@ -82,37 +82,39 @@ type webPhotoReceipt struct {
 }
 
 type webUploadMessage struct {
-	SourceID      *uuid.UUID          `json:"source_id,omitzero"`
-	ImportID      string              `json:"import_id,omitzero"`
-	Files         []webPhotoFile      `json:"files,omitzero"`
-	Groups        [][]int             `json:"groups,omitzero"`
-	Present       []int               `json:"present,omitzero"`
-	Unsupported   []int               `json:"unsupported,omitzero"`
-	SkipReasons   map[int]string      `json:"skip_reasons,omitzero"`
-	Destination   string              `json:"destination,omitzero"`
-	Group         int                 `json:"group,omitzero"`
-	Hashes        []string            `json:"hashes,omitzero"`
-	Indexes       []int               `json:"indexes,omitzero"`
-	PhotoReceipt  *webPhotoReceipt    `json:"photo_group_receipt,omitempty"`
-	ContainerID   string              `json:"container_id,omitzero"`
-	ChunkIndex    int                 `json:"chunk_index,omitzero"`
-	ChunkReceipt  *store.MailboxChunk `json:"chunk_receipt,omitempty"`
-	Type          string              `json:"type"`
-	Token         string              `json:"token,omitzero"`
-	Nonce         string              `json:"nonce,omitzero"`
-	Proof         string              `json:"proof,omitzero"`
-	RequestID     string              `json:"request_id,omitzero"`
-	ParentID      int64               `json:"parent_id,omitzero"`
-	Name          string              `json:"name,omitzero"`
-	MIMEType      string              `json:"mime_type,omitzero"`
-	ExpectedHash  string              `json:"expected_hash,omitzero"`
-	ExpectedSize  int64               `json:"expected_size,omitzero"`
-	CheckExisting bool                `json:"check_existing,omitzero"`
-	VerifiedSize  int64               `json:"verified_size,omitzero"`
-	Receipt       *UploadReceipt      `json:"receipt,omitempty"`
-	Status        int                 `json:"status,omitzero"`
-	Code          string              `json:"code,omitzero"`
-	Detail        string              `json:"detail,omitzero"`
+	SourceID       *uuid.UUID          `json:"source_id,omitzero"`
+	ImportID       string              `json:"import_id,omitzero"`
+	Files          []webPhotoFile      `json:"files,omitzero"`
+	Groups         [][]int             `json:"groups,omitzero"`
+	Present        []int               `json:"present,omitzero"`
+	Unsupported    []int               `json:"unsupported,omitzero"`
+	SkipReasons    map[int]string      `json:"skip_reasons,omitzero"`
+	Destination    string              `json:"destination,omitzero"`
+	Group          int                 `json:"group,omitzero"`
+	Hashes         []string            `json:"hashes,omitzero"`
+	Indexes        []int               `json:"indexes,omitzero"`
+	PhotoReceipt   *webPhotoReceipt    `json:"photo_group_receipt,omitempty"`
+	ContainerID    string              `json:"container_id,omitzero"`
+	ChunkIndex     int                 `json:"chunk_index,omitzero"`
+	ChunkReceipt   *store.MailboxChunk `json:"chunk_receipt,omitempty"`
+	Type           string              `json:"type"`
+	Token          string              `json:"token,omitzero"`
+	Nonce          string              `json:"nonce,omitzero"`
+	Proof          string              `json:"proof,omitzero"`
+	RequestID      string              `json:"request_id,omitzero"`
+	ParentID       int64               `json:"parent_id,omitzero"`
+	Name           string              `json:"name,omitzero"`
+	MIMEType       string              `json:"mime_type,omitzero"`
+	ExpectedHash   string              `json:"expected_hash,omitzero"`
+	ExpectedSize   int64               `json:"expected_size,omitzero"`
+	CheckExisting  bool                `json:"check_existing,omitzero"`
+	InferredSource bool                `json:"inferred_source,omitzero"`
+	Recovering     bool                `json:"recovering,omitzero"`
+	VerifiedSize   int64               `json:"verified_size,omitzero"`
+	Receipt        *UploadReceipt      `json:"receipt,omitempty"`
+	Status         int                 `json:"status,omitzero"`
+	Code           string              `json:"code,omitzero"`
+	Detail         string              `json:"detail,omitzero"`
 }
 
 type webUploadRequest struct {
@@ -860,15 +862,25 @@ func handleWebPhotoPlan(
 		needed, problem = unhashedBrowserPhotos(ctx, d.Store, begin.Files, groups)
 	}
 	var recovered *store.BrowserPhotoImport
+	var imports []*store.BrowserPhotoImport
 	if problem == nil && begin.SourceID != nil {
-		item, found, err := d.Store.BrowserPhotoImport(ctx, begin.SourceID.String())
+		var err error
+		imports, err = d.Store.BrowserPhotoImports(ctx)
 		if err != nil {
 			problem = uploadError(err)
-		} else if found {
-			recovered = &item
+		} else {
+			for _, item := range imports {
+				if item.SourceID == begin.SourceID.String() {
+					recovered = item
+					break
+				}
+			}
 		}
 	}
 	if problem == nil && recovered != nil {
+		if recovered.Destination == "" || path.Clean(begin.Destination) != recovered.Destination {
+			problem = NewError(http.StatusConflict, "photo_import_destination", "Choose the destination containing the recorded files.")
+		}
 		selected := make(map[string]int, len(begin.Files))
 		for _, group := range groups {
 			for _, index := range group {
@@ -876,6 +888,9 @@ func handleWebPhotoPlan(
 			}
 		}
 		for name, hash := range recovered.Members {
+			if problem != nil {
+				break
+			}
 			index, ok := selected[name]
 			if !ok || hash == "" {
 				problem = NewError(http.StatusConflict, "photo_import_changed", "The recorded import differs from this selection. Choose the original folder.")
@@ -888,11 +903,10 @@ func handleWebPhotoPlan(
 				break
 			}
 		}
-		imports, err := d.Store.BrowserPhotoImports(ctx)
-		if err != nil {
-			problem = uploadError(err)
-		}
 		for _, candidate := range imports {
+			if problem != nil || !begin.InferredSource {
+				break
+			}
 			if candidate.SourceID == recovered.SourceID || len(candidate.Members) == 0 {
 				continue
 			}
@@ -939,7 +953,7 @@ func handleWebPhotoPlan(
 	for i, file := range begin.Files {
 		paths[i] = "browser:" + sourceID.String() + "/" + file.RelativePath
 	}
-	if recovered == nil {
+	{
 		var members []store.PhotoImportMember
 		var indexes []int
 		for _, group := range groups {
@@ -953,24 +967,47 @@ func handleWebPhotoPlan(
 			return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(resolveErr)) == nil
 		}
 		for i, index := range indexes {
-			paths[index] = resolved[i]
+			if recovered == nil || recovered.Members[begin.Files[index].RelativePath] == "" {
+				paths[index] = resolved[i]
+			}
 		}
 	}
 	var present []int
-	if recovered != nil {
+	if recovered != nil || begin.Recovering {
 		for i, group := range groups {
 			matched := true
 			for _, index := range group {
 				file := begin.Files[index]
-				if hash, ok := recovered.Members[file.RelativePath]; !ok || hash != file.ExpectedHash {
+				source, name, ok := strings.Cut(strings.TrimPrefix(paths[index], "browser:"), "/")
+				var hash string
+				if ok {
+					for _, item := range imports {
+						if item.SourceID == source {
+							hash = item.Members[name]
+							if hash != "" && (item.Destination == "" || item.Destination != path.Clean(begin.Destination)) {
+								return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, NewError(http.StatusConflict, "photo_import_destination", "Choose the destination containing the recorded files.")) == nil
+							}
+							break
+						}
+					}
+				}
+				if hash != "" && file.ExpectedHash == "" {
+					needed = append(needed, index)
+				}
+				if hash == "" || hash != file.ExpectedHash {
 					matched = false
-					break
 				}
 			}
 			if matched {
 				present = append(present, i)
 			}
 		}
+	}
+	if len(needed) > 0 {
+		slices.Sort(needed)
+		return nil, wsjson.Write(ctx, conn, webUploadMessage{
+			Type: "photo_import_hashes_needed", RequestID: begin.RequestID, Indexes: slices.Compact(needed),
+		}) == nil
 	}
 	photoImport := &webPhotoImport{
 		paths: paths,

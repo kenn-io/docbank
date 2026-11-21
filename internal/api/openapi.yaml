@@ -2411,6 +2411,8 @@ components:
           format: uri
           readOnly: true
           type: string
+        destination:
+          type: string
         folder:
           type: string
         groups:
@@ -2425,6 +2427,7 @@ components:
         - folder
         - started_at
         - groups
+        - destination
       type: object
       x-go-type: store.BrowserPhotoImport
       x-go-type-import:
@@ -30142,6 +30145,11 @@ paths:
         - explode: false
           in: query
           name: source_id
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: exclude
           schema:
             type: string
       responses:

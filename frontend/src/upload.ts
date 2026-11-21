@@ -20,14 +20,19 @@ export interface BrowserPhotoImport {
   folder: string;
   started_at: string;
   groups: number;
+  destination: string;
 }
 
 export function getBrowserPhotoImport(
   session: string,
   sourceID = "",
   signal?: AbortSignal,
+  excluded: string[] = [],
 ): Promise<BrowserPhotoImport | null> {
-  const query = sourceID ? `?source_id=${encodeURIComponent(sourceID)}` : "";
+  const params = new URLSearchParams();
+  if (sourceID) params.set("source_id", sourceID);
+  if (excluded.length) params.set("exclude", excluded.join(","));
+  const query = params.size ? `?${params}` : "";
   return sessionJSON(`/api/v1/photos/browser-imports${query}`, {
     session,
     signal,
@@ -136,6 +141,8 @@ export function photoImportDeclaration(
   sourceID = declarationUUID,
   requestID = declarationUUID,
   hashes?: ReadonlyMap<File, string>,
+  inferredSource = false,
+  recovering = false,
 ) {
   const tooLarge = () =>
     new Error(
@@ -147,6 +154,8 @@ export function photoImportDeclaration(
     source_id: sourceID,
     request_id: requestID,
     destination,
+    inferred_source: inferredSource,
+    recovering,
     files: files.map((file) => ({
       relative_path: localFilePath(file),
       size: file.size,
@@ -170,6 +179,8 @@ export interface PhotoImportTransport {
     signal: AbortSignal,
     onprogress: (progress: TransferProgress) => void,
     knownHashes?: Map<File, string>,
+    inferredSource?: boolean,
+    recovering?: boolean,
   ): Promise<PhotoImportPlan>;
   // An empty entry in hashes is a file not hashed yet. The upload hashes it
   // first and fills in its entry, so a retry reuses the hash.
@@ -395,6 +406,8 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     signal: AbortSignal,
     onprogress: (progress: TransferProgress) => void,
     knownHashes?: Map<File, string>,
+    inferredSource = false,
+    recovering = false,
   ): Promise<PhotoImportPlan> {
     if (this.busy) throw new UploadChannelError("Another browser upload is already active.");
     throwIfAborted(signal);
@@ -402,7 +415,17 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     const requestID = randomUUID();
     const hashes = new Map(knownHashes);
     try {
-      this.send(photoImportDeclaration(files, destination, sourceID, requestID, hashes));
+      this.send(
+        photoImportDeclaration(
+          files,
+          destination,
+          sourceID,
+          requestID,
+          hashes,
+          inferredSource,
+          recovering,
+        ),
+      );
       let plan = await this.nextMessage();
       this.requireMessage(plan, requestID);
       this.throwProblem(plan);
@@ -429,7 +452,17 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
           );
           processed += files[index].size;
         }
-        this.send(photoImportDeclaration(files, destination, sourceID, requestID, hashes));
+        this.send(
+          photoImportDeclaration(
+            files,
+            destination,
+            sourceID,
+            requestID,
+            hashes,
+            inferredSource,
+            recovering,
+          ),
+        );
         plan = await this.nextMessage();
         this.requireMessage(plan, requestID);
         this.throwProblem(plan);
