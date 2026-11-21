@@ -941,16 +941,14 @@ func TestBrowserPhotoRecoveryPlan(t *testing.T) {
 	response, body := get(t, ts, "/api/v1/photos/browser-imports", nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var summary struct {
-		SourceID    string `json:"source_id"`
-		Folder      string `json:"folder"`
-		Groups      int    `json:"groups"`
-		Destination string `json:"destination"`
+		SourceID string `json:"source_id"`
+		Folder   string `json:"folder"`
+		Groups   int    `json:"groups"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(body), &summary))
 	require.Equal(t, source, summary.SourceID)
 	require.Equal(t, "Card", summary.Folder)
 	require.Equal(t, 1, summary.Groups)
-	require.Equal(t, "/photos", summary.Destination)
 
 	reconnected := browserUploadSocket(t, ts)
 	require.NoError(t, wsjson.Write(t.Context(), reconnected, plan))

@@ -9,12 +9,11 @@ import (
 
 // BrowserPhotoImport describes recorded members of one browser selection.
 type BrowserPhotoImport struct {
-	SourceID    string            `json:"source_id"`
-	Folder      string            `json:"folder"`
-	StartedAt   string            `json:"started_at"`
-	Groups      int               `json:"groups"`
-	Destination string            `json:"destination"`
-	Members     map[string]string `json:"-"`
+	SourceID  string            `json:"source_id"`
+	Folder    string            `json:"folder"`
+	StartedAt string            `json:"started_at"`
+	Groups    int               `json:"groups"`
+	Members   map[string]string `json:"-"`
 }
 
 // BrowserPhotoImport finds a browser source from its committed provenance.
@@ -33,7 +32,7 @@ func (s *Store) BrowserPhotoImport(ctx context.Context, sourceID string) (*Brows
 
 // BrowserPhotoImports returns committed browser sources, newest first.
 func (s *Store) BrowserPhotoImports(ctx context.Context) ([]*BrowserPhotoImport, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT i.started_at,i.source_desc,p.original_path,cv.blob_hash,live.blob_hash,n.parent_id
+	rows, err := s.db.QueryContext(ctx, `SELECT i.started_at,i.source_desc,p.original_path,cv.blob_hash,live.blob_hash
 		FROM ingests i JOIN provenance p ON p.ingest_id=i.id
 		JOIN nodes n ON n.id=p.node_id AND n.trashed_at IS NULL
 		JOIN provenance_version_bindings b ON b.provenance_identity=p.identity
@@ -47,12 +46,10 @@ func (s *Store) BrowserPhotoImports(ctx context.Context) ([]*BrowserPhotoImport,
 	defer func() { _ = rows.Close() }()
 	var imports []*BrowserPhotoImport
 	byID := map[string]*BrowserPhotoImport{}
-	parents := map[string]int64{}
 	groups := map[string]map[string]bool{}
 	for rows.Next() {
 		var started, desc, original, hash, current string
-		var parentID int64
-		if err := rows.Scan(&started, &desc, &original, &hash, &current, &parentID); err != nil {
+		if err := rows.Scan(&started, &desc, &original, &hash, &current); err != nil {
 			return nil, err
 		}
 		if !strings.HasPrefix(original, "browser:") || !strings.HasPrefix(desc, "browser: ") {
@@ -69,7 +66,6 @@ func (s *Store) BrowserPhotoImports(ctx context.Context) ([]*BrowserPhotoImport,
 		if result == nil {
 			result = &BrowserPhotoImport{SourceID: id, Folder: strings.TrimPrefix(desc, "browser: "), StartedAt: started, Members: map[string]string{}}
 			byID[id] = result
-			parents[id] = parentID
 			groups[id] = map[string]bool{}
 			imports = append(imports, result)
 		}
@@ -89,10 +85,6 @@ func (s *Store) BrowserPhotoImports(ctx context.Context) ([]*BrowserPhotoImport,
 	}
 	for _, result := range imports {
 		result.Groups = len(groups[result.SourceID])
-		result.Destination, err = s.Path(ctx, parents[result.SourceID])
-		if err != nil {
-			return nil, err
-		}
 	}
 	return imports, nil
 }

@@ -20,7 +20,6 @@ export interface BrowserPhotoImport {
   folder: string;
   started_at: string;
   groups: number;
-  destination: string;
 }
 
 export function getBrowserPhotoImport(
