@@ -9,6 +9,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func checkBrowserPhotoStandaloneSidecarReplay(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	t.Parallel()
+	s := open(t)
+	ctx := t.Context()
+	group := photoImportTestGroup(photoImportTestMember("browser:20000000-0000-4000-8000-000000000001/Card/capture.xmp", PhotoRoleSidecar, fakeHash("sidecar"), "application/rdf+xml"))
+	group.CreateOnly = true
+	firstRun, err := s.BeginIngest(ctx, "photo-import", "browser: Card")
+	require.NoError(t, err)
+	first, err := s.IngestPhotoGroup(ctx, firstRun, group)
+	require.NoError(t, err)
+	require.True(t, first.Added)
+	require.Len(t, first.Nodes, 1)
+
+	resumedRun, err := s.BeginIngest(ctx, "photo-import", "browser: Card")
+	require.NoError(t, err)
+	replayed, err := s.IngestPhotoGroup(ctx, resumedRun, group)
+	require.NoError(t, err)
+	require.True(t, replayed.Skipped)
+	require.Len(t, replayed.Nodes, 1)
+	require.Equal(t, first.Nodes[0].ID, replayed.Nodes[0].ID)
+	children, err := s.Children(ctx, s.RootID())
+	require.NoError(t, err)
+	require.Len(t, children, 1)
+}
+
 func checkPhotoImportEmbeddedObservation(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	t.Parallel()
