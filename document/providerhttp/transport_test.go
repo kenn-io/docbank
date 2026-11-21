@@ -161,16 +161,11 @@ func TestEgressRevalidatesDNSOnEachConnection(t *testing.T) {
 }
 
 func TestEgressFallsBackAcrossApprovedDNSAnswers(t *testing.T) {
-	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp4", "127.0.0.1:0")
-	require.NoError(t, err)
-	_, port := endpoint(t, listener.Addr())
-	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, "fallback")
 	}))
-	require.NoError(t, server.Listener.Close())
-	server.Listener = listener
-	server.Start()
 	defer server.Close()
+	_, port := endpoint(t, server.Listener.Addr())
 	resolver := &recordingResolver{answers: [][]netip.Addr{{
 		netip.MustParseAddr("::1"),
 		netip.MustParseAddr("127.0.0.1"),
@@ -195,7 +190,7 @@ func TestEgressFallsBackAcrossApprovedDNSAnswers(t *testing.T) {
 	assert.Equal(t, []string{"provider.invalid"}, resolver.hosts())
 	mu.Lock()
 	defer mu.Unlock()
-	assert.Equal(t, []string{net.JoinHostPort("::1", strconv.Itoa(int(port))), listener.Addr().String()}, attempts)
+	assert.Equal(t, []string{net.JoinHostPort("::1", strconv.Itoa(int(port))), server.Listener.Addr().String()}, attempts)
 }
 
 func TestEgressRejectsUnapprovedDestinationBeforeResolution(t *testing.T) {
