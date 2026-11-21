@@ -3,7 +3,7 @@ import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { localFilePath } from "./localFiles.js";
-import { APIError, sessionJSON } from "./api-transport.js";
+import { APIError } from "./api-transport.js";
 import { randomUUID } from "./crypto.js";
 import { type BrowserSession } from "./browser-session.js";
 import { photoImportContentHashExtensions } from "./generated/photoSourceExtensions.js";
@@ -14,30 +14,6 @@ const uploadSocketPath = "/api/daemon/web-upload";
 const uploadProofDomain = "docbank-web-upload-v1\u0000";
 const uploadHandshakeTimeoutMs = 10_000;
 const uploadResponseTimeoutMs = 60_000;
-
-export interface BrowserPhotoImport {
-  source_id: string;
-  folder: string;
-  started_at: string;
-  groups: number;
-  destination: string;
-}
-
-export function getBrowserPhotoImport(
-  session: string,
-  sourceID = "",
-  signal?: AbortSignal,
-  excluded: string[] = [],
-): Promise<BrowserPhotoImport | null> {
-  const params = new URLSearchParams();
-  if (sourceID) params.set("source_id", sourceID);
-  if (excluded.length) params.set("exclude", excluded.join(","));
-  const query = params.size ? `?${params}` : "";
-  return sessionJSON(`/api/v1/photos/browser-imports${query}`, {
-    session,
-    signal,
-  });
-}
 
 export interface TransferProgress {
   submitted?: boolean;
@@ -120,7 +96,7 @@ export function validateUploadReceipt(
 export interface PhotoImportPlan {
   import_id: string;
   groups: number[][];
-  present: number[];
+  present?: number[];
   unsupported: number[];
   skip_reasons?: Record<number, string>;
   // Hashes the server asked for before planning; every other file hashes with its group.
@@ -141,7 +117,6 @@ export function photoImportDeclaration(
   sourceID = declarationUUID,
   requestID = declarationUUID,
   hashes?: ReadonlyMap<File, string>,
-  inferredSource = false,
   recovering = false,
 ) {
   const tooLarge = () =>
@@ -154,7 +129,6 @@ export function photoImportDeclaration(
     source_id: sourceID,
     request_id: requestID,
     destination,
-    inferred_source: inferredSource,
     recovering,
     files: files.map((file) => ({
       relative_path: localFilePath(file),
@@ -179,7 +153,6 @@ export interface PhotoImportTransport {
     signal: AbortSignal,
     onprogress: (progress: TransferProgress) => void,
     knownHashes?: Map<File, string>,
-    inferredSource?: boolean,
     recovering?: boolean,
   ): Promise<PhotoImportPlan>;
   // An empty entry in hashes is a file not hashed yet. The upload hashes it
@@ -406,7 +379,6 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     signal: AbortSignal,
     onprogress: (progress: TransferProgress) => void,
     knownHashes?: Map<File, string>,
-    inferredSource = false,
     recovering = false,
   ): Promise<PhotoImportPlan> {
     if (this.busy) throw new UploadChannelError("Another browser upload is already active.");
@@ -416,15 +388,7 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     const hashes = new Map(knownHashes);
     try {
       this.send(
-        photoImportDeclaration(
-          files,
-          destination,
-          sourceID,
-          requestID,
-          hashes,
-          inferredSource,
-          recovering,
-        ),
+        photoImportDeclaration(files, destination, sourceID, requestID, hashes, recovering),
       );
       let plan = await this.nextMessage();
       this.requireMessage(plan, requestID);
@@ -453,15 +417,7 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
           processed += files[index].size;
         }
         this.send(
-          photoImportDeclaration(
-            files,
-            destination,
-            sourceID,
-            requestID,
-            hashes,
-            inferredSource,
-            recovering,
-          ),
+          photoImportDeclaration(files, destination, sourceID, requestID, hashes, recovering),
         );
         plan = await this.nextMessage();
         this.requireMessage(plan, requestID);
@@ -484,10 +440,19 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
         indexes.some((index) => !Number.isInteger(index) || index < 0 || index >= files.length)
       )
         throw this.protocolError();
+      const present = plan.present ?? [];
+      if (
+        !Array.isArray(present) ||
+        new Set(present).size !== present.length ||
+        present.some(
+          (index) => !Number.isInteger(index) || index < 0 || index >= plan.groups!.length,
+        )
+      )
+        throw this.protocolError();
       return {
         import_id: plan.import_id,
         groups: plan.groups,
-        present: plan.present ?? [],
+        present,
         unsupported: plan.unsupported,
         skip_reasons: plan.skip_reasons,
         hashes,

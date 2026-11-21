@@ -2404,30 +2404,20 @@ components:
     BrowserPhotoImport:
       additionalProperties: false
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          examples:
-            - https://example.com/schemas/BrowserPhotoImport.json
-          format: uri
-          readOnly: true
-          type: string
-        destination:
-          type: string
         folder:
           type: string
+        folder_selection:
+          type: boolean
         groups:
           format: int64
           type: integer
         source_id:
           type: string
-        started_at:
-          type: string
       required:
         - source_id
         - folder
-        - started_at
         - groups
-        - destination
+        - folder_selection
       type: object
       x-go-type: store.BrowserPhotoImport
       x-go-type-import:
@@ -7908,6 +7898,19 @@ components:
           type: boolean
       required:
         - run
+      type: object
+    GetBrowserPhotoImportResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/GetBrowserPhotoImportResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        import:
+          $ref: "#/components/schemas/BrowserPhotoImport"
       type: object
     GroupPhotoStacksRequest:
       additionalProperties: false
@@ -30147,17 +30150,12 @@ paths:
           name: source_id
           schema:
             type: string
-        - explode: false
-          in: query
-          name: exclude
-          schema:
-            type: string
       responses:
         "200":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BrowserPhotoImport"
+                $ref: "#/components/schemas/GetBrowserPhotoImportResponse"
           description: OK
         default:
           content:

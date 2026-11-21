@@ -9,13 +9,13 @@
   import { APIError } from "./api-transport.js";
   import {
     UploadChannelError,
-    getBrowserPhotoImport,
     photoImportDeclaration,
     type PhotoImportTransport,
     type PhotoGroupReceipt,
     type TransferProgress,
   } from "./upload.js";
 
+  import { getBrowserPhotoImport } from "./generated/docbank.js";
   import LocalFilePicker from "./LocalFilePicker.svelte";
   import { localFilePath, type PickerKind } from "./localFiles.js";
   import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
@@ -73,6 +73,7 @@
   let confirmation = $state<PhotoCullConfirmation>();
   let checkpoint = $state<PhotoImportCheckpoint>();
   let recovery = $state<Recovery>();
+  let recoveredImport = $state(false);
   let pickerKind: "files" | "folder" = "files";
   // Only "Choose the same …" resumes the offered import; the regular picker starts a new one.
   let recoveryRequested = false;
@@ -98,6 +99,7 @@
     storageNotice = "";
     checkpoint = undefined;
     recovery = undefined;
+    recoveredImport = false;
     controller?.abort();
     items = [];
     unsupported = [];
@@ -212,7 +214,7 @@
     lifecycle.abort();
   });
 
-  // A saved checkpoint names its import; without one, the daemon's latest recorded folder import stands in.
+  // A saved checkpoint names its import; otherwise the latest recorded import is offered.
   // Until that lookup answers, a fresh import could take a new ID and add an interrupted import's sidecars again.
   async function findRecovery(
     saved: PhotoImportCheckpoint | undefined,
@@ -222,14 +224,12 @@
     retryLookup = undefined;
     let found = null;
     try {
-      const excluded = saved ? [] : settled.values();
-      found =
-        (await getBrowserPhotoImport(
+      found = (
+        await getBrowserPhotoImport(saved ? { source_id: saved.sourceID } : undefined, {
           session,
-          saved?.sourceID ?? "",
-          lifecycle.signal,
-          ...(excluded.length ? [excluded] : []),
-        )) ?? null;
+          signal: lifecycle.signal,
+        })
+      ).import;
     } catch (cause) {
       if (obsolete() || destroyed) return;
       if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
@@ -242,16 +242,17 @@
     if (obsolete() || destroyed) return;
     checkpointReady = true;
     if (items.length || planning || running) return;
-    if (!saved && (!found || settled.has(found.source_id))) return;
-    const pickerKind = saved && saved.pickerKind !== "folder" ? "files" : "folder";
+    if (!saved && (!found || settled.get() === found.source_id)) return;
+    const pickerKind = (saved ? saved.pickerKind === "folder" : found!.folder_selection)
+      ? "folder"
+      : "files";
     recovery = {
       sourceID: saved?.sourceID ?? found!.source_id,
       folder: pickerKind === "folder" ? (found?.folder ?? "") : "",
       groups: found?.groups ?? 0,
       pickerKind,
     };
-    // The shared current parent is a continuation destination, not a record of the original selection.
-    destination = saved?.destination ?? found?.destination ?? "";
+    destination = saved?.destination ?? "";
   }
 
   function recover(): void {
@@ -262,6 +263,7 @@
 
   function clearSelection(): void {
     items = [];
+    recoveredImport = false;
     for (const state of Object.keys(counts) as Item["state"][]) counts[state] = 0;
     unsupported = [];
     selectedFiles = [];
@@ -277,11 +279,9 @@
         if (!useSessionOnly(cause)) throw cause;
       }
     }
-    if (recovery) settled.add(recovery.sourceID);
-    if (sourceID) settled.add(sourceID);
+    settled.set(recovery?.sourceID ?? sourceID);
     checkpoint = undefined;
     recovery = undefined;
-    if (!destination.trim()) destination = "/";
   }
 
   async function dismiss(): Promise<void> {
@@ -294,11 +294,10 @@
       return;
     }
     if (recovered) clearSelection();
-    await findRecovery(undefined, () => false);
   }
 
   async function choose(files: File[], kind: PickerKind): Promise<void> {
-    if (!files.length || running || planning || !checkpointReady || needsDestination) return;
+    if (!files.length || running || planning || !checkpointReady) return;
     try {
       photoImportDeclaration(files, destination);
     } catch (cause) {
@@ -327,8 +326,7 @@
   }
 
   async function plan(validated = false, reconnect = false): Promise<void> {
-    if (!selectedFiles.length || running || planning || !checkpointReady || needsDestination)
-      return;
+    if (!selectedFiles.length || running || planning || !checkpointReady) return;
     if (!validated) {
       try {
         photoImportDeclaration(selectedFiles, destination);
@@ -377,7 +375,7 @@
             manifestHash: digest,
             pickerKind,
           };
-      const recoveryArgs: [Map<File, string>?, boolean?, boolean?] = reconnect
+      const recoveryArgs: [Map<File, string>?, boolean?] = reconnect
         ? [
             new Map(
               previousItems
@@ -386,11 +384,10 @@
                 )
                 .filter(([, hash]) => !!hash),
             ),
-            false,
             true,
           ]
         : resumed
-          ? [undefined, !checkpoint, true]
+          ? [undefined, true]
           : [];
       const plan = await planChannel.planPhotoImport(
         files,
@@ -419,6 +416,7 @@
       if (!reconnect) checkpoint = plan.groups.length ? next : undefined;
       // A new import replaced the offered one's saved progress, so it is no longer offered here.
       if (!resumed) recovery = undefined;
+      recoveredImport = Boolean(resumed);
       plannedDestination = target;
       sourceID = nextSourceID;
       plannedChannel = planChannel;
@@ -465,7 +463,7 @@
   function useSessionOnly(cause: unknown): boolean {
     if (!photoImportStorageUnavailable(cause)) return false;
     sessionOnly = true;
-    storageNotice = "Only folder imports can resume after this drawer closes.";
+    storageNotice = "Import progress is not saved in this browser.";
     return true;
   }
 
@@ -475,8 +473,7 @@
   }
 
   async function start(): Promise<void> {
-    if (running || planning || disabledReason || !checkpointReady || !pending || needsDestination)
-      return;
+    if (running || planning || disabledReason || !checkpointReady || !pending) return;
     const runChannel = channel;
     if (plannedDestination !== destination || plannedChannel !== runChannel || counts.unconfirmed) {
       await plan(false, plannedDestination === destination && Boolean(sourceID));
@@ -601,9 +598,10 @@
       >{stopping ? "Stopping after this group" : "Stop after this group"}</Button
     >{/if}
   {#if pending}<Button
+      size={recovering ? "sm" : undefined}
       tone="info"
       surface="solid"
-      disabled={!checkpointReady || running || planning || needsDestination || !!disabledReason}
+      disabled={!checkpointReady || running || planning || !!disabledReason}
       onclick={() => void start()}
       >Add {pending}{recovering ? " remaining" : ""} group{pending === 1 ? "" : "s"}</Button
     >{/if}
@@ -622,7 +620,7 @@
       {/if}
     </div>{/if}
   <ul class:photo-import-recovery-list={recovering}>
-    {#each items.filter((item) => !(recovering && item.state === "skipped")) as item}
+    {#each items.filter((item) => !((recovering || recoveredImport) && item.state === "skipped")) as item}
       <li class:photo-import-skipped={item.state === "skipped"}>
         <strong>{item.files.map(localFilePath).join(", ")}</strong>
         {#if item.state !== "ready"}<span>{labels[item.state]}</span>{/if}
@@ -640,32 +638,6 @@
   </ul>
 {/snippet}
 
-{#snippet destinationField()}
-  <label for="photo-destination"
-    >Destination<TextInput
-      id="photo-destination"
-      ariaLabel="Destination"
-      bind:value={destination}
-      onchange={() => {
-        if (!items.length && destination !== plannedDestination) void plan();
-      }}
-      disabled={!checkpointReady || running || planning || started}
-      block
-    /></label
-  >
-{/snippet}
-
-{#snippet photoPicker()}
-  <LocalFilePicker
-    bind:this={picker}
-    disabled={!checkpointReady || running || planning || needsDestination || !!disabledReason}
-    filesLabel="Choose photo files"
-    folderLabel="Choose photo folder"
-    onchoose={choose}
-    onopen={() => (recoveryRequested = false)}
-  />
-{/snippet}
-
 <DrawerShell
   title="Add photos"
   closeLabel="Close add photos"
@@ -677,8 +649,24 @@
     class:photo-import-planned={items.length > 0 && !recovery}
     class:photo-import-recovery={recovery}
   >
+    <label for="photo-destination"
+      >Destination<TextInput
+        id="photo-destination"
+        ariaLabel="Destination"
+        bind:value={destination}
+        onchange={() => {
+          if (!items.length && destination !== plannedDestination) void plan();
+        }}
+        disabled={!checkpointReady || running || planning}
+        readonly={started}
+        block
+      /></label
+    >
     {#if recovery}
-      <section class="tool-section" aria-labelledby="photo-recovery-heading">
+      <section
+        class="tool-section photo-import-recovery-section"
+        aria-labelledby="photo-recovery-heading"
+      >
         <h3 id="photo-recovery-heading">Interrupted import found</h3>
         {#if error}<p role="alert">{error}</p>{/if}
         {#if recovering}
@@ -686,19 +674,16 @@
             <p>{recoverySummary}</p>
             {@render selection()}
           </div>
-          <p>
-            Adding to {plannedDestination === "/" ? "the vault root" : plannedDestination}
-          </p>
         {:else}
           <p>{recoverySummary}</p>
+          {#if needsDestination}<p>Choose the original destination for this import.</p>{/if}
         {/if}
-        <div class="tool-actions">
-          {#if !running}<Button disabled={planning} onclick={() => void dismiss()}>Dismiss</Button
-            >{/if}
+        <div class="tool-actions tool-actions--start">
           {#if recovering}
             {@render addActions()}
           {:else}
             <Button
+              size="sm"
               tone="info"
               surface="solid"
               disabled={!checkpointReady ||
@@ -710,6 +695,12 @@
               >Choose the same {recovery.pickerKind === "folder" ? "folder" : "files"}…</Button
             >
           {/if}
+          {#if !running}<Button
+              size="sm"
+              surface="soft"
+              disabled={planning}
+              onclick={() => void dismiss()}>Dismiss</Button
+            >{/if}
         </div>
         {#if recovering && running}<p class="tool-muted">
             Keep this tab open until the import finishes.
@@ -733,10 +724,6 @@
         <p role="status">{vaultID ? "Loading saved import…" : "Waiting for vault identity…"}</p>
       {/if}
       {#if storageNotice}<p role="status">{storageNotice}</p>{/if}
-      {#if !recovering}{@render destinationField()}{/if}
-      {#if recovering}<p>
-          New photos will also go to {destination === "/" ? "the vault root" : destination}.
-        </p>{/if}
       {#if planning}
         <p role="status">{hashProgress ? "Hashing" : "Planning"}</p>
         {#if hashProgress}<progress
@@ -746,7 +733,14 @@
           ></progress>{/if}
       {/if}
       <div class="controls">
-        {@render photoPicker()}
+        <LocalFilePicker
+          bind:this={picker}
+          disabled={!checkpointReady || running || planning || needsDestination || !!disabledReason}
+          filesLabel="Choose photo files"
+          folderLabel="Choose photo folder"
+          onchoose={choose}
+          onopen={() => (recoveryRequested = false)}
+        />
       </div>
       {#if !recovery && !disabledReason && !error && running}<p class="tool-muted">
           Keep this tab open until the import finishes.
@@ -773,9 +767,7 @@
     gap: var(--space-2);
     flex-wrap: wrap;
   }
-  .tool-body.photo-import-planned {
-    gap: var(--space-5);
-  }
+  .tool-body.photo-import-planned,
   .tool-body.photo-import-recovery {
     gap: var(--space-5);
   }
@@ -786,6 +778,17 @@
   .photo-import-recovery-plan {
     display: grid;
     gap: var(--space-3);
+  }
+  .photo-import-recovery-section {
+    gap: var(--space-3);
+  }
+  .photo-import-recovery-section .tool-actions {
+    gap: var(--space-2);
+  }
+  .photo-import-recovery-list li {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
   }
   p {
     margin: 0;
@@ -809,15 +812,6 @@
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     overflow-wrap: anywhere;
-  }
-  .photo-import-recovery-list li {
-    padding: var(--space-3) 0;
-    border: 0;
-    border-bottom: 1px solid var(--border-default);
-    border-radius: 0;
-  }
-  .photo-import-recovery-list li:last-child {
-    border-bottom: 0;
   }
   li > strong {
     font-weight: var(--font-weight-normal, 400);

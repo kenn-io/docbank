@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -42,19 +41,22 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 		Path: "/api/v1/photos/browser-imports", Summary: "Find a recorded browser photo import",
 	}, func(ctx context.Context, in *struct {
 		SourceID string `query:"source_id"`
-		Exclude  string `query:"exclude"`
-	}) (*struct{ Body *store.BrowserPhotoImport }, error) {
-		var excluded []string
-		if in.Exclude != "" {
-			excluded = strings.Split(in.Exclude, ",")
+	}) (*struct {
+		Body struct {
+			Import *store.BrowserPhotoImport `json:"import,omitempty"`
 		}
-		item, found, err := d.Store.BrowserPhotoImport(ctx, in.SourceID, excluded)
+	}, error) {
+		item, found, err := d.Store.BrowserPhotoImport(ctx, in.SourceID)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		out := &struct{ Body *store.BrowserPhotoImport }{}
+		out := &struct {
+			Body struct {
+				Import *store.BrowserPhotoImport `json:"import,omitempty"`
+			}
+		}{}
 		if found {
-			out.Body = &item
+			out.Body.Import = &item
 		}
 		return out, nil
 	})

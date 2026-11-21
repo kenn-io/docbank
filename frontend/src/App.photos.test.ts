@@ -70,7 +70,7 @@ const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) =>
     return (
       photoMetadataResponse(url, init) ??
       (url.endsWith("/photos/browser-imports")
-        ? Promise.resolve(Response.json(null))
+        ? Promise.resolve(Response.json({}))
         : url.endsWith("/photos/assets/query") &&
             JSON.parse(String(init?.body ?? "{}")).facets?.length
           ? Promise.resolve(Response.json({ items: [], total: 0, facets: [] }))
@@ -2764,7 +2764,6 @@ it("refreshes Documents, Library, and album counts after adding photos", async (
   vi.spyOn(VerifiedUploadChannel.prototype, "planPhotoImport").mockResolvedValue({
     import_id: "import-1",
     groups: [[0]],
-    present: [],
     unsupported: [],
   });
   let imported = false;
@@ -2859,7 +2858,6 @@ it.each(["search", "tag", "snapshot"] as const)(
     vi.spyOn(VerifiedUploadChannel.prototype, "planPhotoImport").mockResolvedValue({
       import_id: "import-1",
       groups: [[0]],
-      present: [],
       unsupported: [],
     });
     const upload = vi

@@ -640,6 +640,20 @@ it.each([
   expect(socket.closed).toBe(true);
 });
 
+it.each([[[2]], [[0, 0]], [[-1]]])("rejects invalid present group indexes %j", async (present) => {
+  const { socket, channel } = await photoChannel();
+  socket.present = present;
+  await expect(
+    channel.planPhotoImport(
+      photoSelectionFiles(),
+      "/photos",
+      "20000000-0000-4000-8000-000000000001",
+      new AbortController().signal,
+      vi.fn(),
+    ),
+  ).rejects.toThrow(/invalid response/);
+});
+
 it("rejects a second hash request that names only hashed files", async () => {
   const { socket, channel } = await photoChannel();
   socket.needHashes = [1];

@@ -10523,11 +10523,10 @@ func (c *Client) UndoPhotoAuthored(ctx context.Context, options *UndoPhotoAuthor
 }
 
 // GetBrowserPhotoImport Find a recorded browser photo import
-func (c *Client) GetBrowserPhotoImport(ctx context.Context, options *GetBrowserPhotoImportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetBrowserPhotoImportResponse, error) {
+func (c *Client) GetBrowserPhotoImport(ctx context.Context, options *GetBrowserPhotoImportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetBrowserPhotoImportResponseJSON, error) {
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
-		"exclude":   {Style: "form", Explode: &[]bool{false}[0]},
 		"source_id": {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
@@ -10542,16 +10541,16 @@ func (c *Client) GetBrowserPhotoImport(ctx context.Context, options *GetBrowserP
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(_ context.Context, resp *runtime.Response) (*GetBrowserPhotoImportResponse, error) {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetBrowserPhotoImportResponseJSON, error) {
 		switch resp.StatusCode {
 
 		case 200:
 
-			target := new(GetBrowserPhotoImportResponse)
+			target := new(GetBrowserPhotoImportResponseJSON)
 			if err := json.Unmarshal(resp.Content, target); err != nil {
 				return nil, &runtime.ResponseDecodeError{
 					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
-					ContentLength: len(resp.Content), TargetType: "GetBrowserPhotoImportResponse", Body: resp.Content, Err: err,
+					ContentLength: len(resp.Content), TargetType: "GetBrowserPhotoImportResponseJSON", Body: resp.Content, Err: err,
 				}
 			}
 
@@ -29301,7 +29300,6 @@ type ReadPhotoPreviewQuery struct {
 
 type GetBrowserPhotoImportQuery struct {
 	SourceID *string `json:"source_id,omitempty"`
-	Exclude  *string `json:"exclude,omitempty"`
 }
 
 type GetPhotoCheckoutQuery struct {
@@ -30441,7 +30439,7 @@ type UndoPhotoAuthoredResponse = store.PhotoAuthoredReceipt
 
 type UndoPhotoAuthoredErrorResponse = Error
 
-type GetBrowserPhotoImportResponse = store.BrowserPhotoImport
+type GetBrowserPhotoImportResponseJSON = GetBrowserPhotoImportResponse
 
 type GetBrowserPhotoImportErrorResponse = Error
 
@@ -31654,6 +31652,12 @@ type GcRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string `json:"$schema,omitempty"`
 	Run    bool    `json:"run"`
+}
+
+type GetBrowserPhotoImportResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string             `json:"$schema,omitempty"`
+	Import *BrowserPhotoImport `json:"import,omitempty"`
 }
 
 type GroupPhotoStacksRequest = api.GroupPhotoStacksRequest

@@ -1252,13 +1252,10 @@ export interface BlobStorePreview {
 }
 
 export interface BrowserPhotoImport {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  destination: string;
   folder: string;
+  folder_selection: boolean;
   groups: number;
   source_id: string;
-  started_at: string;
 }
 
 export interface CancelExportJobRequest {
@@ -3611,6 +3608,12 @@ export interface GcRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   run: boolean;
+}
+
+export interface GetBrowserPhotoImportResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  import?: BrowserPhotoImport;
 }
 
 export interface GroupPhotoStacksRequest {
@@ -10302,7 +10305,6 @@ export type UnhidePhotoAssetHeaders = {
 
 export type GetBrowserPhotoImportParams = {
 source_id?: string;
-exclude?: string;
 };
 
 export type GetPhotoCheckoutParams = {
@@ -18345,9 +18347,9 @@ export const getGetBrowserPhotoImportUrl = (params?: GetBrowserPhotoImportParams
 /**
  * @summary Find a recorded browser photo import
  */
-export const getBrowserPhotoImport = async (params?: GetBrowserPhotoImportParams, options?: Parameters<typeof sessionJSON>[1]): Promise<BrowserPhotoImport> => {
+export const getBrowserPhotoImport = async (params?: GetBrowserPhotoImportParams, options?: Parameters<typeof sessionJSON>[1]): Promise<GetBrowserPhotoImportResponse> => {
 
-  return sessionJSON<BrowserPhotoImport>(getGetBrowserPhotoImportUrl(params),
+  return sessionJSON<GetBrowserPhotoImportResponse>(getGetBrowserPhotoImportUrl(params),
   {
     ...options,
     method: 'GET'

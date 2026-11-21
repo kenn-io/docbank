@@ -272,28 +272,10 @@ func (r *webSessionRegistry) waitRevocations() {
 
 func webSessionRequestAllowed(r *http.Request) bool {
 	if r.URL.Path == "/api/v1/photos/browser-imports" {
-		if r.Method != http.MethodGet {
-			return false
-		}
 		values, err := url.ParseQuery(r.URL.RawQuery)
-		if err != nil || len(values) > 1 {
-			return false
-		}
-		for key, entries := range values {
-			if (key != "source_id" && key != "exclude") || len(entries) != 1 {
-				return false
-			}
-			ids := []string{entries[0]}
-			if key == "exclude" {
-				ids = strings.Split(entries[0], ",")
-			}
-			for _, id := range ids {
-				if _, err := uuid.Parse(id); err != nil {
-					return false
-				}
-			}
-		}
-		return true
+		_, invalid := uuid.Parse(values.Get("source_id"))
+		return r.Method == http.MethodGet && err == nil &&
+			(len(values) == 0 || len(values) == 1 && len(values["source_id"]) == 1 && invalid == nil)
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/v1/redaction/") {
 		return redactionBrowserRequestAllowed(r)
