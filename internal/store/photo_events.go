@@ -23,6 +23,7 @@ var photoUnwatchedTables = map[string][]string{
 	"Photos never reads these storage operations": {
 		"storage_operations", "storage_operation_stores", "storage_operation_cleanup",
 	},
+	"Photos never reads saved browser imports": {"browser_photo_imports", "browser_photo_import_groups"},
 }
 
 // The triggers use UPSERT because an outer statement's conflict policy, such as OR REPLACE, overrides OR IGNORE in a trigger body.

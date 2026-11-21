@@ -590,10 +590,11 @@ func (r PhotoImportRunner) Run(ctx context.Context, operationID string) error {
 // uploads; each Mtimes entry is a canonical UTC RFC3339Nano original modified
 // time, empty when the browser didn't report one.
 type PhotoGroupCommit struct {
-	Run         store.IngestRun
-	Destination *store.IngestDirectoryPlan
-	Paths       []string
-	Mtimes      []string
+	Run          store.IngestRun
+	Destination  *store.IngestDirectoryPlan
+	Paths        []string
+	Mtimes       []string
+	BrowserGroup *store.BrowserPhotoGroupRef
 }
 
 // CommitPhotoGroup grants authority to verified browser members in one
@@ -618,6 +619,6 @@ func (ing *Ingester) CommitPhotoGroup(
 		}
 	}
 	return ing.Store.IngestPhotoGroup(ctx, commit.Run, store.PhotoImportGroup{
-		DestinationPlan: commit.Destination, Members: members, CreateOnly: true,
+		DestinationPlan: commit.Destination, Members: members, CreateOnly: true, BrowserGroup: commit.BrowserGroup,
 	})
 }
