@@ -399,7 +399,7 @@
   }
 
   .notice {
-    color: var(--accent-green);
+    color: var(--success-ink);
   }
 
   .failure {

@@ -528,7 +528,7 @@
     color: var(--text-primary);
   }
   button.selected {
-    background: color-mix(in srgb, var(--accent-blue) 10%, var(--bg-surface));
+    background: var(--selection-bg);
   }
   button:focus-visible {
     outline: 2px solid var(--accent-blue);

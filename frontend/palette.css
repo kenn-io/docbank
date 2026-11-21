@@ -1,12 +1,15 @@
 /*
  * Docbank's workspace dimensions and type scale, plus colors derived from
  * kit-ui's theme for application-specific elements.
+ * This file sits outside src/ because kit-ui-check guards component styles.
  */
 :root {
   --folder-ink: var(--accent-blue);
   --folder-fill: color-mix(in srgb, var(--accent-blue) 15%, var(--bg-surface));
   --selection-bg: color-mix(in srgb, var(--accent-blue) 10%, var(--bg-surface));
   --nav-active-bg: color-mix(in srgb, var(--accent-blue) 12%, var(--bg-surface));
+  --warning-ink: color-mix(in srgb, var(--accent-amber) 72%, var(--text-primary));
+  --success-ink: color-mix(in srgb, var(--accent-green) 72%, var(--text-primary));
 
   --radius-sm: 4px;
   --radius-md: 6px;

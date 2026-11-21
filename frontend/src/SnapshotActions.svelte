@@ -394,7 +394,7 @@
     font-size: var(--font-size-sm);
   }
   .status.done {
-    color: var(--accent-green);
+    color: var(--success-ink);
   }
   .alert {
     color: var(--accent-red);

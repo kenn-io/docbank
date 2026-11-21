@@ -485,7 +485,7 @@
     color: var(--accent-red);
   }
   .warning {
-    color: var(--accent-amber);
+    color: var(--warning-ink);
   }
   .profile {
     display: flex;

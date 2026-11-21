@@ -144,10 +144,10 @@
     background: currentColor;
   }
   .grade[data-grade="green"] {
-    color: var(--accent-green);
+    color: var(--success-ink);
   }
   .grade[data-grade="yellow"] {
-    color: var(--accent-amber);
+    color: var(--warning-ink);
   }
   .grade[data-grade="red"] {
     color: var(--accent-red);

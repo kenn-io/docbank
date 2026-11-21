@@ -435,7 +435,7 @@
     color: var(--accent-red);
   }
   .state[data-state="Paused"] {
-    color: var(--accent-amber);
+    color: var(--warning-ink);
   }
   .error {
     margin: 0;

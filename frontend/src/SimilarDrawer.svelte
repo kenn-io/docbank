@@ -208,7 +208,7 @@
     color: var(--accent-red);
   }
   .warning {
-    color: var(--accent-amber);
+    color: var(--warning-ink);
   }
   .results {
     display: grid;

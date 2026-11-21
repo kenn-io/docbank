@@ -25,7 +25,7 @@
     white-space: nowrap;
   }
   .proposal.keep {
-    color: var(--accent-green);
+    color: var(--success-ink);
     border-color: var(--accent-green);
   }
   .proposal.compact {
