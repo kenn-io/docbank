@@ -3,9 +3,17 @@ import { readFile } from "node:fs/promises";
 import { stripTypeScriptTypes } from "node:module";
 
 // Node does not strip TypeScript in node_modules; kit-ui exports its source.
-const source = await readFile(new URL(import.meta.resolve("@kenn-io/kit-ui/utils/color-contrast")), "utf8");
-const { contrastRatio, relativeLuminance, WCAG_AA_TEXT }: typeof import("@kenn-io/kit-ui/utils/color-contrast") =
-  await import(`data:text/javascript,${encodeURIComponent(stripTypeScriptTypes(source))}`);
+const source = await readFile(
+  new URL(import.meta.resolve("@kenn-io/kit-ui/utils/color-contrast")),
+  "utf8",
+);
+const {
+  contrastRatio,
+  relativeLuminance,
+  WCAG_AA_TEXT,
+}: typeof import("@kenn-io/kit-ui/utils/color-contrast") = await import(
+  `data:text/javascript,${encodeURIComponent(stripTypeScriptTypes(source))}`
+);
 export { WCAG_AA_TEXT };
 
 export async function renderedContrast(text: Locator) {
@@ -35,7 +43,12 @@ export async function renderedContrast(text: Locator) {
     return { ink: pixel(), surface };
   });
   const hex = (rgb: number[]) => `#${rgb.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
-  return { ink, surface, ratio: contrastRatio(hex(ink), hex(surface)), luminance: relativeLuminance(hex(surface)) };
+  return {
+    ink,
+    surface,
+    ratio: contrastRatio(hex(ink), hex(surface)),
+    luminance: relativeLuminance(hex(surface)),
+  };
 }
 
 // Checks the text color the browser paints against the surface behind it.
@@ -54,7 +67,10 @@ export async function expectReadableTone(
   else expect(r > g && r > b, report).toBe(true);
 }
 
-export async function expectReadableTones(page: Page, cases: [Locator, "success" | "warning" | "danger"][]) {
+export async function expectReadableTones(
+  page: Page,
+  cases: [Locator, "success" | "warning" | "danger"][],
+) {
   for (const theme of ["light", "dark"] as const) {
     await page.evaluate((value) => {
       localStorage.setItem("docbank-theme", value);

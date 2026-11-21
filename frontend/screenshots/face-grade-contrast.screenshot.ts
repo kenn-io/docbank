@@ -19,7 +19,11 @@ test("keeps face grades readable in both themes", async ({ page }) => {
     await cull.getByRole("button", { name: "Show Synthetic-photo-00003.jpg", exact: true }).click();
     const grades = cull.getByRole("region", { name: "Face closeups" }).locator(".grade");
     await expect(grades).toHaveText(["green", "yellow", "red"]);
-    await expectReadableTones(page, [[grades.nth(0), "success"], [grades.nth(1), "warning"], [grades.nth(2), "danger"]]);
+    await expectReadableTones(page, [
+      [grades.nth(0), "success"],
+      [grades.nth(1), "warning"],
+      [grades.nth(2), "danger"],
+    ]);
   } finally {
     await fixture.dispose();
   }

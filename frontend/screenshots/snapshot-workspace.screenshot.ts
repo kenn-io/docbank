@@ -249,7 +249,9 @@ test("retries an interrupted send from an already-open recovery tab", async ({ p
     await other.goto(snapshotURL);
     await runSnapshot(other);
     // Reuse the retained run to check its error before testing the retry.
-    await other.route("**/api/v1/audit/status", (route) => route.fulfill({ status: 500, body: "Unavailable" }));
+    await other.route("**/api/v1/audit/status", (route) =>
+      route.fulfill({ status: 500, body: "Unavailable" }),
+    );
     await resumeRetained(other);
     const noticeError = other.locator(".tag-run-notice").getByRole("alert");
     await expect(noticeError).toBeVisible();

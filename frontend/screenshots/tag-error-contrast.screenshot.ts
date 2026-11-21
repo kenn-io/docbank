@@ -29,13 +29,17 @@ test("keeps tag errors readable in both themes", async ({ page }) => {
     await page.getByRole("cell", { name: "synthetic.txt", exact: true }).click();
     await page.getByRole("button", { name: "Add tag", exact: true }).click();
     const manage = page.getByRole("dialog", { name: "Manage tags for synthetic.txt" });
-    await page.route("**/api/v1/nodes/*/tags/*", (route) => route.fulfill({ status: 500, body: "Unavailable" }));
+    await page.route("**/api/v1/nodes/*/tags/*", (route) =>
+      route.fulfill({ status: 500, body: "Unavailable" }),
+    );
     await manage.getByRole("combobox", { name: "Tag to assign" }).fill("reviewed");
     await manage.getByRole("option", { name: "reviewed (0)" }).click();
     const assignError = manage.getByRole("alert");
     await expect(assignError).toBeVisible();
     await expectReadableTones(page, [[assignError, "danger"]]);
-    await page.route("**/api/v1/path?*", (route) => route.fulfill({ status: 500, body: "Unavailable" }));
+    await page.route("**/api/v1/path?*", (route) =>
+      route.fulfill({ status: 500, body: "Unavailable" }),
+    );
     await page.goto("about:blank");
     await page.goto(await fixture.run("web", "--no-browser"));
     const banner = page.locator(".banner.error[role=alert]");
