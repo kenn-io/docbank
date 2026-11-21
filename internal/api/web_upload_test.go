@@ -1011,13 +1011,14 @@ func TestBrowserPhotoRecoveryContinuedFolder(t *testing.T) {
 	t.Parallel()
 	ts, catalog := newTestServer(t, nil)
 	conn := browserUploadSocket(t, ts)
-	photo := map[string]any{"relative_path": "Card/A/one.jpg", "size": 3, "expected_hash": testHash("one")}
+	photo := map[string]any{"relative_path": "Previous/A/one.jpg", "size": 3, "expected_hash": testHash("one")}
 	sidecar := map[string]any{"relative_path": "Card/A/loose.xmp", "size": 4, "expected_hash": testHash("side")}
 	other := map[string]any{"relative_path": "Card/B/other.xmp", "size": 5, "expected_hash": testHash("other")}
 	plan := map[string]any{"type": "plan_photo_import", "request_id": "plan", "destination": "/photos", "source_id": "20000000-0000-4000-8000-000000000001", "files": []map[string]any{photo}}
 	require.NoError(t, wsjson.Write(t.Context(), conn, plan))
 	initial := readPhotoResponse(t, conn)
 	require.Equal(t, "added", uploadBrowserPhoto(t, conn, initial.ImportID, 0, photo, []byte("one")).Receipt.Status)
+	photo["relative_path"] = "Card/A/one.jpg"
 	plan["source_id"] = "20000000-0000-4000-8000-000000000002"
 	plan["files"] = []map[string]any{photo, sidecar, other}
 	require.NoError(t, wsjson.Write(t.Context(), conn, plan))
@@ -1037,6 +1038,12 @@ func TestBrowserPhotoRecoveryContinuedFolder(t *testing.T) {
 	require.Equal(t, "photo_import_hashes_needed", needed.Type)
 	require.Equal(t, []int{1}, needed.Indexes)
 	sidecar["expected_hash"] = testHash("side")
+	plan["source_id"] = "20000000-0000-4000-8000-000000000001"
+	require.NoError(t, wsjson.Write(t.Context(), reconnected, plan))
+	guessed := readPhotoResponse(t, reconnected)
+	require.Equal(t, "photo_import_plan", guessed.Type)
+	require.Len(t, guessed.Present, 2)
+	plan["source_id"] = "20000000-0000-4000-8000-000000000002"
 	require.NoError(t, wsjson.Write(t.Context(), reconnected, plan))
 	resumed := readPhotoResponse(t, reconnected)
 	require.Equal(t, "photo_import_plan", resumed.Type)

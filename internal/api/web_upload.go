@@ -877,66 +877,7 @@ func handleWebPhotoPlan(
 			}
 		}
 	}
-	if problem == nil && recovered != nil {
-		if recovered.Destination == "" || path.Clean(begin.Destination) != recovered.Destination {
-			problem = NewError(http.StatusConflict, "photo_import_destination", "Choose the destination containing the recorded files.")
-		}
-		selected := make(map[string]int, len(begin.Files))
-		for _, group := range groups {
-			for _, index := range group {
-				selected[begin.Files[index].RelativePath] = index
-			}
-		}
-		for name, hash := range recovered.Members {
-			if problem != nil {
-				break
-			}
-			index, ok := selected[name]
-			if !ok || hash == "" {
-				problem = NewError(http.StatusConflict, "photo_import_changed", "The recorded import differs from this selection. Choose the original folder.")
-				break
-			}
-			if begin.Files[index].ExpectedHash == "" {
-				needed = append(needed, index)
-			} else if begin.Files[index].ExpectedHash != hash {
-				problem = NewError(http.StatusConflict, "photo_import_changed", "The recorded import differs from this selection. Choose the original folder.")
-				break
-			}
-		}
-		for _, candidate := range imports {
-			if problem != nil || !begin.InferredSource {
-				break
-			}
-			if candidate.SourceID == recovered.SourceID || len(candidate.Members) == 0 {
-				continue
-			}
-			possible := true
-			for name, hash := range candidate.Members {
-				index, ok := selected[name]
-				if !ok || hash == "" || begin.Files[index].ExpectedHash != "" && begin.Files[index].ExpectedHash != hash {
-					possible = false
-					break
-				}
-			}
-			if !possible {
-				continue
-			}
-			unhashed := false
-			for name := range candidate.Members {
-				index := selected[name]
-				if begin.Files[index].ExpectedHash == "" {
-					needed = append(needed, index)
-					unhashed = true
-				}
-			}
-			if !unhashed {
-				problem = NewError(http.StatusConflict, "photo_import_ambiguous", "This selection matches more than one recorded import.")
-				break
-			}
-		}
-		slices.Sort(needed)
-		needed = slices.Compact(needed)
-	}
+
 	if problem != nil {
 		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, problem) == nil
 	}
@@ -972,6 +913,72 @@ func handleWebPhotoPlan(
 			}
 		}
 	}
+	if problem == nil && recovered != nil {
+		if recovered.Destination == "" || path.Clean(begin.Destination) != recovered.Destination {
+			problem = NewError(http.StatusConflict, "photo_import_destination", "Choose the destination containing the recorded files.")
+		}
+		selected := make(map[string]int, len(begin.Files))
+		selectedNames := make(map[string]int, len(begin.Files))
+		for _, group := range groups {
+			for _, index := range group {
+				selected[paths[index]] = index
+				selectedNames[begin.Files[index].RelativePath] = index
+			}
+		}
+		for name, hash := range recovered.Members {
+			if problem != nil {
+				break
+			}
+			index, ok := selected["browser:"+recovered.SourceID+"/"+name]
+			if !ok || hash == "" {
+				problem = NewError(http.StatusConflict, "photo_import_changed", "The recorded import differs from this selection. Choose the original folder.")
+				break
+			}
+			if begin.Files[index].ExpectedHash == "" {
+				needed = append(needed, index)
+			} else if begin.Files[index].ExpectedHash != hash {
+				problem = NewError(http.StatusConflict, "photo_import_changed", "The recorded import differs from this selection. Choose the original folder.")
+				break
+			}
+		}
+		for _, candidate := range imports {
+			if problem != nil || !begin.InferredSource {
+				break
+			}
+			if candidate.SourceID == recovered.SourceID || len(candidate.Members) == 0 {
+				continue
+			}
+			possible := true
+			for name, hash := range candidate.Members {
+				index, ok := selectedNames[name]
+				if !ok || hash == "" || begin.Files[index].ExpectedHash != "" && begin.Files[index].ExpectedHash != hash {
+					possible = false
+					break
+				}
+			}
+			if !possible {
+				continue
+			}
+			unhashed := false
+			for name := range candidate.Members {
+				index := selectedNames[name]
+				if begin.Files[index].ExpectedHash == "" {
+					needed = append(needed, index)
+					unhashed = true
+				}
+			}
+			if !unhashed {
+				problem = NewError(http.StatusConflict, "photo_import_ambiguous", "This selection matches more than one recorded import.")
+				break
+			}
+		}
+		slices.Sort(needed)
+		needed = slices.Compact(needed)
+	}
+	if problem != nil {
+		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, problem) == nil
+	}
+
 	var present []int
 	if recovered != nil || begin.Recovering {
 		for i, group := range groups {
