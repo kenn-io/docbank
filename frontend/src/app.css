@@ -270,6 +270,12 @@ body .app-shell .search-controls .kit-button--outline.kit-button--neutral {
   color: var(--accent-blue);
 }
 
+@media (hover: none), (pointer: coarse) {
+  .nav-item {
+    min-height: max(44px, var(--nav-item-height));
+  }
+}
+
 .nav-scrim {
   display: none;
 }

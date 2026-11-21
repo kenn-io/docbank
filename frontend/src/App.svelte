@@ -5752,6 +5752,11 @@
     padding-left: calc(var(--space-4) + 16px + var(--space-5));
     font-size: var(--font-size-sm);
   }
+  @media (hover: none), (pointer: coarse) {
+    .album-item {
+      min-height: max(44px, var(--nav-subitem-height));
+    }
+  }
   .album-drop {
     outline: 2px solid var(--accent-blue);
     outline-offset: -2px;
