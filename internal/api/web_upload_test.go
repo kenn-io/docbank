@@ -1274,6 +1274,61 @@ func TestBrowserPhotoRecoveryMatching(t *testing.T) {
 	}
 }
 
+func TestBrowserPhotoRecoveryCheckpointContinuedPhotoChanged(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	conn := browserUploadSocket(t, ts)
+	plan := map[string]any{"type": "plan_photo_import", "request_id": "plan", "destination": "/photos"}
+	file := func(name, content string) map[string]any {
+		return map[string]any{"relative_path": name, "size": len(content), "expected_hash": testHash(content)}
+	}
+	add := func(source, name, content string) {
+		f := file(name, content)
+		plan["source_id"], plan["files"] = source, []map[string]any{f}
+		require.NoError(t, wsjson.Write(t.Context(), conn, plan))
+		p := readPhotoResponse(t, conn)
+		require.Equal(t, "added", uploadBrowserPhoto(t, conn, p.ImportID, 0, f, []byte(content)).Receipt.Status)
+	}
+	add("20000000-0000-4000-8000-000000000071", "Old/A/photo.jpg", "old")
+	add("20000000-0000-4000-8000-000000000072", "Other/A/photo.jpg", "new")
+	plan["source_id"] = "20000000-0000-4000-8000-000000000073"
+	files := []map[string]any{file("Card/A/photo.jpg", "old"), file("Card/B/extra.xmp", "extra")}
+	plan["files"] = files
+	require.NoError(t, wsjson.Write(t.Context(), conn, plan))
+	p := readPhotoResponse(t, conn)
+	for i, group := range p.Groups {
+		if group[0] == 0 {
+			require.Equal(t, "skipped", uploadBrowserPhoto(t, conn, p.ImportID, i, files[0], []byte("old")).Receipt.Status)
+		} else if group[0] == 1 {
+			require.Equal(t, "added", uploadBrowserPhoto(t, conn, p.ImportID, i, files[1], []byte("extra")).Receipt.Status)
+		}
+	}
+	files[0] = file("Card/A/photo.jpg", "new")
+	plan["recovering"], plan["checkpointed"] = true, true
+	require.NoError(t, wsjson.Write(t.Context(), conn, plan))
+	require.Equal(t, "photo_import_changed", readPhotoResponse(t, conn).Code)
+}
+
+func TestBrowserPhotoRecoveryCheckpointDuplicateSidecar(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	conn := browserUploadSocket(t, ts)
+	f := map[string]any{"relative_path": "Card/file.xmp", "size": 4, "expected_hash": testHash("same")}
+	plan := map[string]any{"type": "plan_photo_import", "request_id": "plan", "destination": "/photos", "files": []map[string]any{f}}
+	for _, source := range []string{"20000000-0000-4000-8000-000000000074", "20000000-0000-4000-8000-000000000075"} {
+		plan["source_id"] = source
+		require.NoError(t, wsjson.Write(t.Context(), conn, plan))
+		p := readPhotoResponse(t, conn)
+		uploadBrowserPhoto(t, conn, p.ImportID, 0, f, []byte("same"))
+	}
+	plan["source_id"] = "20000000-0000-4000-8000-000000000074"
+	plan["recovering"], plan["checkpointed"] = true, true
+	require.NoError(t, wsjson.Write(t.Context(), conn, plan))
+	p := readPhotoResponse(t, conn)
+	require.Equal(t, "photo_import_plan", p.Type, "%s: %s", p.Code, p.Detail)
+	require.Len(t, p.Present, 1)
+}
+
 func TestBrowserPhotoRecoveryContinuedTrashedPhoto(t *testing.T) {
 	t.Parallel()
 	ts, catalog := newTestServer(t, nil)

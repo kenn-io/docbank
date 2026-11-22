@@ -874,7 +874,7 @@ func recoverBrowserPhotos(
 	var selected []string
 	for _, group := range groups {
 		for _, index := range group {
-			if store.ClassifyPhotoSource(files[index].RelativePath).Kind != store.PhotoSourceSidecar {
+			if !checkpointed && store.ClassifyPhotoSource(files[index].RelativePath).Kind != store.PhotoSourceSidecar {
 				continue
 			}
 			name := files[index].RelativePath
@@ -896,7 +896,24 @@ func recoverBrowserPhotos(
 			name, _ = strings.CutPrefix(name, candidate.Folder+"/")
 		}
 		index, ok := byPath[name]
-		if ok && candidate.FolderSelection == folderSelection && candidate.BlobHash == files[index].ExpectedHash {
+		if !ok || candidate.FolderSelection != folderSelection {
+			continue
+		}
+		if store.ClassifyPhotoSource(files[index].RelativePath).Kind != store.PhotoSourceSidecar {
+			// A continued photo may have no path under the checkpoint source.
+			// Conflicting history cannot identify which bytes it had there.
+			if checkpointed && (offered == nil || offered.Members[files[index].RelativePath] == "") && candidate.BlobHash != files[index].ExpectedHash {
+				return requested, nil, changed
+			}
+			continue
+		}
+		if checkpointed && offered != nil && offered.Members[files[index].RelativePath] == files[index].ExpectedHash {
+			paths[index] = "browser:" + requested.String() + "/" + files[index].RelativePath
+			matched[requested.String()] = true
+			recorded[index] = true
+			continue
+		}
+		if candidate.BlobHash == files[index].ExpectedHash {
 			if recorded[index] && paths[index] != "browser:"+candidate.SourceID+"/"+candidate.RelativePath {
 				return requested, nil, changed
 			}
@@ -914,7 +931,7 @@ func recoverBrowserPhotos(
 			name, _ = strings.CutPrefix(name, candidate.Folder+"/")
 		}
 		index, ok := byPath[name]
-		if ok && !recorded[index] && matched[candidate.SourceID] && candidate.FolderSelection == folderSelection {
+		if ok && store.ClassifyPhotoSource(files[index].RelativePath).Kind == store.PhotoSourceSidecar && !recorded[index] && matched[candidate.SourceID] && candidate.FolderSelection == folderSelection {
 			path := "browser:" + candidate.SourceID + "/" + candidate.RelativePath
 			if previous := unmatchedPaths[index]; previous != "" && previous != path {
 				return requested, nil, changed
