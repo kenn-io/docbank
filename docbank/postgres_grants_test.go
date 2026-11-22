@@ -60,7 +60,10 @@ func TestGrantRuntimePostgres(t *testing.T) {
 	runtime := connect(runtimeRole)
 
 	catalog := PostgresCatalog{Schema: "documents", SchemaOwner: ownerRole}
-	_, err := InitializePostgres(ctx, owner, catalog, filepath.Join(t.TempDir(), "vault"))
+	root := filepath.Join(t.TempDir(), "vault")
+	release := pgtest.ReserveSchemaInstall(t)
+	_, err := InitializePostgres(ctx, owner, catalog, root)
+	release()
 	require.NoError(t, err)
 	require.ErrorContains(t, GrantPostgresRuntime(ctx, owner, catalog, runtimeRole), "TEMPORARY")
 	exec(admin, "GRANT TEMPORARY ON DATABASE "+quotedDatabase+" TO "+quotedRuntime)
