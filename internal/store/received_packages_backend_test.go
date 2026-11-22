@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/canonical"
+
+	"go.kenn.io/docbank/internal/pgstoretest"
 )
 
 func checkReceivedPackageStagingAndRetention(t *testing.T, newStore func(*testing.T) *Store) {
@@ -150,7 +152,7 @@ func checkReceivedPackagePublicationRollbackPostgres(t *testing.T) {
 				return err
 			}
 			// The last update fails after the snapshot/package or cleanup writes.
-			_, err = setup.ExecContext(t.Context(), "REVOKE UPDATE(state) ON documents.package_import_jobs FROM "+role)
+			err = pgstoretest.RevokeColumnUpdates(t.Context(), setup, role, "package_import_jobs", "state")
 			require.NoError(t, err)
 			require.ErrorContains(t, finish(), "permission denied")
 			after, err := s.Package(t.Context(), job.PackageID)
@@ -163,7 +165,7 @@ func checkReceivedPackagePublicationRollbackPostgres(t *testing.T) {
 			require.NoError(t, err)
 			_, err = s.CollectionSnapshot(t.Context(), snapshotID)
 			require.ErrorIs(t, err, ErrNotFound)
-			_, err = setup.ExecContext(t.Context(), "GRANT UPDATE(state) ON documents.package_import_jobs TO "+role)
+			_, err = setup.ExecContext(t.Context(), "GRANT UPDATE ON documents.package_import_jobs TO "+role)
 			require.NoError(t, err)
 			require.NoError(t, finish())
 			after, err = s.Package(t.Context(), job.PackageID)

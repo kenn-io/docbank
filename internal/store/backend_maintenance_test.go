@@ -15,7 +15,7 @@ type backendMaintenance struct {
 // Descriptive ownership inventory, grouped by effect. The named contract
 // suites exercise the ported effects through native operations.
 var backendMaintenanceEffects = []backendMaintenance{
-	{"checksums", "content_checksums.go; INSERT-only runtime grant", "checksums contracts; no UPDATE path", `
+	{"checksums", "content_checksums.go", "checksums contracts; no UPDATE path", `
  blob_checksums_immutable_update`},
 	{"provenance", "ingest.go, provenance.go and provenance_bindings.go", "imports/sources contracts; immutable inserts and same-node predecessor validation", `
  ingests_immutable_update provenance_immutable_update provenance_same_node_insert
@@ -57,22 +57,22 @@ var backendMaintenanceEffects = []backendMaintenance{
  photo_authored_fts_insert photo_authored_fts_update photo_authored_fts_delete
  photo_suggestion_fts_insert photo_suggestion_fts_update photo_suggestion_fts_delete
  tag_fts_insert tag_fts_update tag_fts_delete`},
-	{"processing authority", "consent.go; INSERT-only grants and revocations; setup owns incarnation", "renditions and metadata-import contracts; a restored vault keeps fresh incarnation authority", `
+	{"processing authority", "consent.go; setup owns incarnation", "renditions and metadata-import contracts; a restored vault keeps fresh incarnation authority", `
  current_processing_incarnation_immutable_update current_processing_incarnation_immutable_delete
  processing_incarnations_immutable_update processing_incarnations_immutable_delete
  processing_consent_grants_immutable_update processing_consent_grants_immutable_delete
  processing_consent_revocations_immutable_update processing_consent_revocations_immutable_delete`},
-	{"metadata and event evidence", "source_metadata.go and document_events.go; INSERT-only publication grants", "metadata-events contracts; retained evidence is never rewritten", `
+	{"metadata and event evidence", "source_metadata.go and document_events.go", "metadata-events contracts; retained evidence is never rewritten", `
  source_metadata_generations_immutable_update document_event_generations_immutable_update
  document_events_immutable_update document_event_actors_immutable_update document_event_primaries_immutable_update`},
-	{"document-person generations", "document_people.go; INSERT-only generation grants", "document-people contracts; publication replaces heads without rewriting retained attribution", `
+	{"document-person generations", "document_people.go", "document-people contracts; publication replaces heads without rewriting retained attribution", `
  document_people_generations_immutable_update`},
-	{"visual preview records", "visual_preview.go; INSERT-only generation grants", "visual-evidence contracts; active heads may change without rewriting retained generations", `
+	{"visual preview records", "visual_preview.go", "visual-evidence contracts; active heads may change without rewriting retained generations", `
  visual_preview_generations_immutable_update`},
-	{"media source and input authority", "media_sources.go, media_runtime.go and media_artifacts.go; INSERT-only grants", "media contracts; first binding and revocation update occurrences without rewriting source or input records", `
+	{"media source and input authority", "media_sources.go, media_runtime.go and media_artifacts.go", "media contracts; first binding and revocation update occurrences without rewriting source or input records", `
  media_sources_immutable_update media_source_versions_immutable_update
  media_input_artifacts_immutable_update`},
-	{"embedding records", "embedding_catalog.go; runtime has no UPDATE grant", "embeddings contracts; immutable records may be collected after roots expire", `
+	{"embedding records", "embedding_catalog.go", "embeddings contracts; immutable records may be collected after roots expire", `
  embedding_vector_spaces_immutable_update embedding_input_generations_immutable_update
  embedding_generation_inputs_immutable_update embedding_vector_sets_immutable_update
  embedding_vector_rows_immutable_update embedding_sets_immutable_update`},
@@ -82,21 +82,21 @@ var backendMaintenanceEffects = []backendMaintenance{
  vector_source_visual_preview_generations_insert vector_source_visual_preview_generations_delete
  vector_source_photo_files_insert vector_source_photo_files_update vector_source_photo_files_delete
  vector_source_photo_assets_update vector_source_nodes_update`},
-	{"rendition records", "processing_catalog.go and search.go; runtime has no UPDATE grant", "renditions contracts; cleanup may delete immutable records", `
+	{"rendition records", "processing_catalog.go and search.go", "renditions contracts; cleanup may delete immutable records", `
  processing_profiles_immutable_update rendition_builds_immutable_update
  rendition_artifacts_immutable_update rendition_units_immutable_update
  rendition_lexical_segments_immutable_update rendition_attachments_immutable_update`},
-	{"sealed snapshots and Bates publication", "packages.go, packages_stream.go and bates*.go; INSERT-only identity grants", "sealed-delivery contracts; Store enforces monotone ranges and one-way publication; PostgreSQL column grants alone do not enforce transitions", `
+	{"sealed snapshots and Bates publication", "packages.go, packages_stream.go and bates*.go", "sealed-delivery contracts; Store enforces monotone ranges and one-way publication", `
  collection_snapshots_immutable_update collection_snapshot_members_immutable_update
  collection_snapshot_representations_immutable_update
  bates_artifacts_immutable_update bates_artifact_pages_immutable_update
  bates_namespaces_immutable_update bates_namespace_cursors_monotone
  bates_allocations_transition_guard bates_page_labels_immutable_update
  package_volumes_immutable_update`},
-	{"received package transitions", "package_import*.go; INSERT-only record, label and receipt grants; column-specific package/job updates", "received-packages contracts; Store fences leases and fills snapshot/completion once; PostgreSQL permits direct SQL rewrites of those columns; SQLite receipts block updates, not deletion", `
+	{"received package transitions", "package_import*.go", "received-packages contracts; Store fences leases and fills snapshot/completion once", `
  packages_transition_guard package_records_immutable_update
  package_labels_immutable_update package_import_receipts_immutable_update`},
-	{"batch tag receipts", "batch_tag.go; runtime INSERT-only grants", "organization contracts; committed receipts survive tag deletion", `batch_tag_receipts_immutable_update batch_tag_receipts_immutable_delete`},
+	{"batch tag receipts", "batch_tag.go", "organization contracts; committed receipts survive tag deletion", `batch_tag_receipts_immutable_update batch_tag_receipts_immutable_delete`},
 }
 
 func printBackendMaintenance() {

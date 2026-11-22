@@ -67,34 +67,24 @@ func TestGrantRuntimePostgres(t *testing.T) {
 	require.NoError(t, err)
 	require.ErrorContains(t, GrantPostgresRuntime(ctx, owner, catalog, runtimeRole), "TEMPORARY")
 	exec(admin, "GRANT TEMPORARY ON DATABASE "+quotedDatabase+" TO "+quotedRuntime)
+	exec(owner, "CREATE SCHEMA unrelated; CREATE TABLE unrelated.data (id INT)")
 	require.NoError(t, GrantPostgresRuntime(ctx, owner, catalog, runtimeRole))
 
-	// Simulate privileges narrower in this build than in an earlier install.
-	exec(owner, "GRANT UPDATE ON documents.vault_metadata TO "+quotedRuntime)
-	exec(owner, "GRANT UPDATE(content_version_id) ON documents.document_event_heads TO "+quotedRuntime)
-	exec(owner, "GRANT CREATE ON SCHEMA documents TO "+quotedRuntime)
-	exec(runtime, "UPDATE documents.vault_metadata SET schema_version=schema_version")
+	// The embedded application can write workflow data.
 	exec(runtime, "UPDATE documents.document_event_heads SET content_version_id=content_version_id")
-	exec(owner, "CREATE SCHEMA other; GRANT USAGE ON SCHEMA other TO "+quotedRuntime)
 
-	require.NoError(t, GrantPostgresRuntime(ctx, owner, catalog, runtimeRole))
-	require.NoError(t, GrantPostgresRuntime(ctx, owner, catalog, runtimeRole))
-	exec(runtime, "UPDATE documents.document_event_heads SET published_at=published_at")
 	exec(runtime, "CREATE TEMP TABLE scratch (id int)")
 	for _, query := range []string{
 		"UPDATE documents.vault_metadata SET schema_version=schema_version",
-		"UPDATE documents.document_event_heads SET content_version_id=content_version_id",
+		"DELETE FROM documents.vault_metadata",
 		"CREATE TABLE documents.forbidden (id int)",
+		"SELECT * FROM unrelated.data",
 	} {
 		_, err := runtime.ExecContext(ctx, query)
 		var pgErr *pgconn.PgError
 		require.ErrorAs(t, err, &pgErr)
 		require.Equal(t, "42501", pgErr.Code)
 	}
-	var otherUsage bool
-	require.NoError(t, runtime.QueryRowContext(ctx, "SELECT has_schema_privilege('other','USAGE')").Scan(&otherUsage))
-	require.True(t, otherUsage)
-
 	// Use a restricted runtime connection that has real catalog privileges.
 	require.ErrorContains(t, GrantPostgresRuntime(ctx, runtime, catalog, runtimeRole), "schema owner session")
 	missing := PostgresCatalog{Schema: "missing", SchemaOwner: ownerRole}

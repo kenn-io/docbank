@@ -49,11 +49,11 @@ func SetupPostgres(ctx context.Context, owner *sql.DB, catalog PostgresCatalog) 
 // GrantPostgresRuntime applies this build's catalog privileges to an existing
 // dedicated runtime login. Call it after initialization, or after SetupPostgres
 // for a fresh restore target or an upgrade. The pool must authenticate as
-// catalog.SchemaOwner. In one transaction it replaces the owner's direct
-// schema, table (including column), sequence, and routine grants to the login.
+// catalog.SchemaOwner. The function grants ordinary table access and routine
+// execution in this catalog in one transaction.
+// The owner retains schema changes and writes to the catalog identity.
 // The database operator supplies database privileges, including TEMPORARY,
-// which this function checks. Grants through PUBLIC or other roles are the
-// operator's responsibility.
+// which this function checks. The operator manages any additional privileges.
 func GrantPostgresRuntime(ctx context.Context, owner *sql.DB, catalog PostgresCatalog, runtimeRole string) error {
 	if owner == nil {
 		return errors.New("docbank PostgreSQL runtime grants require a schema-owner connection")

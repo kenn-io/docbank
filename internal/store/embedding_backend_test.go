@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+
+	"go.kenn.io/docbank/internal/pgstoretest"
 )
 
 func checkImageEmbeddingPublicationPostgres(t *testing.T) {
@@ -79,7 +81,7 @@ func checkEmbeddingPublicationPostgres(t *testing.T) {
 				VectorSpaceID: work.VectorSpaceID, ProcessingProfileFingerprint: profile.Fingerprint,
 				PublishedAt: at.Format(timestampLayout), FencingToken: claim.Epoch}
 			// Completion follows head publication; losing its grant must roll back both.
-			_, err = setup.ExecContext(ctx, "REVOKE UPDATE(state) ON documents.embedding_jobs FROM "+role)
+			err = pgstoretest.RevokeColumnUpdates(ctx, setup, role, "embedding_jobs", "state")
 			require.NoError(t, err)
 			receipt := EmbeddingAttemptReceipt{AttemptID: job.ID}
 			require.ErrorContains(t, s.PublishEmbeddingWork(ctx, claim, work, head, prior, receipt, at), "permission denied")
@@ -89,7 +91,7 @@ func checkEmbeddingPublicationPostgres(t *testing.T) {
 			status, err := s.EmbeddingJobByID(ctx, job.ID)
 			require.NoError(t, err)
 			require.Equal(t, "running", status.State)
-			_, err = setup.ExecContext(ctx, "GRANT UPDATE(state) ON documents.embedding_jobs TO "+role)
+			_, err = setup.ExecContext(ctx, "GRANT UPDATE ON documents.embedding_jobs TO "+role)
 			require.NoError(t, err)
 			require.NoError(t, s.PublishEmbeddingWork(ctx, claim, work, head, prior, receipt, at))
 			status, err = s.EmbeddingJobByID(ctx, job.ID)

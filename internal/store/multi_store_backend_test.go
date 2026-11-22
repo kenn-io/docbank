@@ -14,6 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
+
+	"go.kenn.io/docbank/internal/pgstoretest"
 )
 
 func multiStoreOperation(t *testing.T, s *Store, plan PlacementPlan, kind string) StorageOperation {
@@ -77,7 +79,7 @@ func checkMultiStorePhysicalRoundTripPostgres(t *testing.T) {
 	var role string
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT current_user`).Scan(&role))
 	role = pgx.Identifier{role}.Sanitize()
-	_, err = setup.ExecContext(ctx, "REVOKE UPDATE(live_entries,live_stored_bytes,live_raw_bytes,max_live_stored_len,max_live_raw_len) ON documents.blob_packs FROM "+role)
+	err = pgstoretest.RevokeColumnUpdates(ctx, setup, role, "blob_packs", "live_entries", "live_stored_bytes", "live_raw_bytes", "max_live_stored_len", "max_live_raw_len")
 	require.NoError(t, err)
 	_, err = s.CommitPlacement(ctx, operation.ID, plan.Request, plan.Hashes[0], moved.Destination)
 	require.ErrorContains(t, err, "permission denied")
@@ -88,7 +90,7 @@ func checkMultiStorePhysicalRoundTripPostgres(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, usage, 1)
 	require.EqualValues(t, 1, usage[0].LiveEntries)
-	_, err = setup.ExecContext(ctx, "GRANT UPDATE(live_entries,live_stored_bytes,live_raw_bytes,max_live_stored_len,max_live_raw_len) ON documents.blob_packs TO "+role)
+	_, err = setup.ExecContext(ctx, "GRANT UPDATE ON documents.blob_packs TO "+role)
 	require.NoError(t, err)
 	committed, err := s.CommitPlacement(ctx, operation.ID, plan.Request, plan.Hashes[0], moved.Destination)
 	require.NoError(t, err)
@@ -234,7 +236,7 @@ func checkStorageRepairRollbackPostgres(t *testing.T) {
 	var role string
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT current_user`).Scan(&role))
 	role = pgx.Identifier{role}.Sanitize()
-	_, err = setup.ExecContext(ctx, "REVOKE UPDATE(receipt_json) ON documents.storage_operations FROM "+role)
+	err = pgstoretest.RevokeColumnUpdates(ctx, setup, role, "storage_operations", "receipt_json")
 	require.NoError(t, err)
 	repaired := backup
 	repaired.StoreID = packstore.StoreID(s.primaryStoreID)
@@ -250,7 +252,7 @@ func checkStorageRepairRollbackPostgres(t *testing.T) {
 	stillRunning, err := s.StorageOperation(ctx, op.ID)
 	require.NoError(t, err)
 	require.Equal(t, StorageOperationRunning, stillRunning.State)
-	_, err = setup.ExecContext(ctx, "GRANT UPDATE(receipt_json) ON documents.storage_operations TO "+role)
+	_, err = setup.ExecContext(ctx, "GRANT UPDATE ON documents.storage_operations TO "+role)
 	require.NoError(t, err)
 	require.NoError(t, s.CommitStorageRecovery(ctx, op.ID, plan, repaired, `{"repaired":true}`, deadline))
 	finished, err := s.StorageOperation(ctx, op.ID)

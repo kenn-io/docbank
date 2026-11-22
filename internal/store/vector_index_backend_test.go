@@ -8,6 +8,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/docbank/internal/pgstoretest"
 )
 
 func checkVectorIndexPublicationRollbackPostgres(t *testing.T) {
@@ -30,13 +32,13 @@ func checkVectorIndexPublicationRollbackPostgres(t *testing.T) {
 
 	var role string
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT current_user`).Scan(&role))
-	_, err = setup.ExecContext(t.Context(), "REVOKE UPDATE(lease_expires_at) ON documents.vector_index_build_jobs FROM "+pgx.Identifier{role}.Sanitize())
+	err = pgstoretest.RevokeColumnUpdates(t.Context(), setup, pgx.Identifier{role}.Sanitize(), "vector_index_build_jobs", "lease_expires_at")
 	require.NoError(t, err)
 	require.ErrorContains(t, s.PublishVectorIndexGeneration(t.Context(), claim, candidate.ID, now.Add(time.Second)), "permission denied")
 	active, err := s.ActiveVectorIndexGeneration(t.Context(), source.VectorSpaceID)
 	require.NoError(t, err)
 	require.Equal(t, prior, active)
-	_, err = setup.ExecContext(t.Context(), "GRANT UPDATE(lease_expires_at) ON documents.vector_index_build_jobs TO "+pgx.Identifier{role}.Sanitize())
+	_, err = setup.ExecContext(t.Context(), "GRANT UPDATE ON documents.vector_index_build_jobs TO "+pgx.Identifier{role}.Sanitize())
 	require.NoError(t, err)
 	require.NoError(t, s.PublishVectorIndexGeneration(t.Context(), claim, candidate.ID, now.Add(time.Second)))
 	active, err = s.ActiveVectorIndexGeneration(t.Context(), source.VectorSpaceID)
@@ -98,7 +100,7 @@ func checkVectorReaderInvalidationRollbackPostgres(t *testing.T) {
 	require.Equal(t, source.ManifestChecksum, memoVectorSourceChecksum(t, s, source.VectorSpaceID))
 	var role string
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT current_user`).Scan(&role))
-	_, err := setup.ExecContext(t.Context(), "REVOKE UPDATE(revision) ON documents.vector_membership_epochs FROM "+pgx.Identifier{role}.Sanitize())
+	err := pgstoretest.RevokeColumnUpdates(t.Context(), setup, pgx.Identifier{role}.Sanitize(), "vector_membership_epochs", "revision")
 	require.NoError(t, err)
 	version, err := s.ContentVersionByID(t.Context(), record.ContentVersionID)
 	require.NoError(t, err)
@@ -110,7 +112,7 @@ func checkVectorReaderInvalidationRollbackPostgres(t *testing.T) {
 	require.Nil(t, node.TrashedAt)
 	require.Equal(t, revision, s.WriteRevision())
 	require.Equal(t, source.ManifestChecksum, memoVectorSourceChecksum(t, s, source.VectorSpaceID))
-	_, err = setup.ExecContext(t.Context(), "GRANT UPDATE(revision) ON documents.vector_membership_epochs TO "+pgx.Identifier{role}.Sanitize())
+	_, err = setup.ExecContext(t.Context(), "GRANT UPDATE ON documents.vector_membership_epochs TO "+pgx.Identifier{role}.Sanitize())
 	require.NoError(t, err)
 	_, _, err = s.Trash(t.Context(), version.NodeID, UnconditionalRev)
 	require.NoError(t, err)

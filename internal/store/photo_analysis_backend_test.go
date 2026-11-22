@@ -9,8 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+
+	"go.kenn.io/docbank/internal/pgstoretest"
 )
 
 func faceDetectionResult(t *testing.T, faces ...document.FaceObservation) *document.RenditionResult {
@@ -142,7 +145,7 @@ func checkPhotoSuggestionResponseRollbackPostgres(t *testing.T) {
 	require.NoError(t, err)
 	var role string
 	require.NoError(t, s.db.QueryRowContext(ctx, "SELECT current_user").Scan(&role))
-	_, err = setup.ExecContext(ctx, fmt.Sprintf(`REVOKE UPDATE(caption) ON documents.photo_suggestions FROM %q`, role))
+	err = pgstoretest.RevokeColumnUpdates(ctx, setup, pgx.Identifier{role}.Sanitize(), "photo_suggestions", "caption")
 	require.NoError(t, err)
 	request := PhotoSuggestionResponse{AssetID: proposal.AssetID, AssetRevision: proposal.AssetRevision, SourceRevision: proposal.SourceRevision, NodeRevision: proposal.NodeRevision, Response: "accepted", Caption: true, Tags: []string{"Coast"}}
 	_, err = s.RespondPhotoSuggestion(ctx, proposal.ID, request)
@@ -157,7 +160,7 @@ func checkPhotoSuggestionResponseRollbackPostgres(t *testing.T) {
 	changes, _, err := s.VaultChanges(ctx, checkpoint, 500)
 	require.NoError(t, err)
 	require.Empty(t, changes)
-	_, err = setup.ExecContext(ctx, fmt.Sprintf(`GRANT UPDATE(caption) ON documents.photo_suggestions TO %q`, role))
+	_, err = setup.ExecContext(ctx, fmt.Sprintf(`GRANT UPDATE ON documents.photo_suggestions TO %q`, role))
 	require.NoError(t, err)
 	accepted, err := s.RespondPhotoSuggestion(ctx, proposal.ID, request)
 	require.NoError(t, err)
