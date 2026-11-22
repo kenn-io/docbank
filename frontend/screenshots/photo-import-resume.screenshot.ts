@@ -129,9 +129,10 @@ test("resumes the complete selection and source after a daemon and browser resta
     browser = await chromium.launchPersistentContext(profile);
     const resumed = await open();
     expect(resumed.url.origin).not.toBe(first.url.origin);
-    await expect(
-      resumed.page.getByRole("button", { name: "Resume import", exact: true }),
-    ).toBeVisible();
+    const recovery = resumed.page.getByRole("region", { name: "Interrupted import found" });
+    // The checkpoint keeps its destination; the vault reports the two groups that landed.
+    await expect(recovery).toContainText("2 groups already in the vault");
+    await expect(resumed.page.getByLabel("Destination", { exact: true })).toHaveValue("/");
     await resumed.page.screenshot({
       path: path.join(repository, ".superpowers", "photo-import-resume.png"),
       animations: "disabled",
@@ -143,7 +144,7 @@ test("resumes the complete selection and source after a daemon and browser resta
     await writeFile(files[2]!, modified);
     await utimes(files[2]!, times.atime, times.mtime);
     const chooserPromise = resumed.page.waitForEvent("filechooser");
-    await resumed.page.getByRole("button", { name: "Resume import", exact: true }).click();
+    await resumed.page.getByRole("button", { name: "Choose the same files…", exact: true }).click();
     const chooser = await chooserPromise;
     expect(await chooser.element().getAttribute("webkitdirectory")).toBeNull();
     await chooser.setFiles(files);
@@ -151,10 +152,12 @@ test("resumes the complete selection and source after a daemon and browser resta
     expect(plans).toHaveLength(1);
     await writeFile(files[2]!, original);
     await utimes(files[2]!, times.atime, times.mtime);
-    await resumed.page.getByRole("button", { name: "Resume import", exact: true }).click();
+    await resumed.page.getByRole("button", { name: "Choose the same files…", exact: true }).click();
     await resumed.page.getByLabel("Choose photo files").setInputFiles(files);
-    await resumed.page.getByRole("button", { name: "Add 3 groups", exact: true }).click();
+    await expect(recovery).toContainText("2 of 3 groups already in the vault");
+    await resumed.page.getByRole("button", { name: "Add 1 remaining group", exact: true }).click();
     await expect(resumed.page.getByText("Added: 1", { exact: true })).toBeVisible();
+    await expect(recovery).toHaveCount(0);
     await expect(resumed.page.getByText("Already in vault: 2", { exact: true })).toBeVisible();
     expect(plans).toHaveLength(2);
     expect(plans[1]).toBe(plans[0]);
@@ -210,7 +213,7 @@ test("resumes the complete selection and source after a daemon and browser resta
       completed.page.getByRole("button", { name: "Choose files", exact: true }),
     ).toBeEnabled();
     await expect(
-      completed.page.getByRole("button", { name: "Resume import", exact: true }),
+      completed.page.getByRole("heading", { name: "Interrupted import found", exact: true }),
     ).toHaveCount(0);
     await completed.page.getByLabel("Choose photo files").setInputFiles(files);
     await expect(

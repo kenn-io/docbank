@@ -128,6 +128,29 @@ func TestWebSessionPhotoGroupingAndCheckpointMethods(t *testing.T) {
 	}
 }
 
+func TestWebSessionAllowsBrowserPhotoImportLookup(t *testing.T) {
+	t.Parallel()
+	path := "/api/v1/photos/browser-imports"
+	validSource := "11111111-1111-4111-8111-111111111111"
+	for _, test := range []struct {
+		method string
+		path   string
+		allow  bool
+	}{
+		{http.MethodGet, path, true},
+		{http.MethodGet, path + "?source_id=" + validSource, true},
+		{http.MethodPost, path, false},
+		{http.MethodGet, path + "?source_id=invalid", false},
+		{http.MethodGet, path + "?source_id=" + validSource + "&extra=1", false},
+		{http.MethodGet, path + "?source_id=" + validSource + "&source_id=" + validSource, false},
+		{http.MethodGet, path + "/extra", false},
+	} {
+		require.Equal(t, test.allow,
+			webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), test.method, test.path, nil)),
+			test.method+" "+test.path)
+	}
+}
+
 func TestWebPages(t *testing.T) {
 	t.Parallel()
 	mux := http.NewServeMux()

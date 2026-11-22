@@ -38,6 +38,8 @@ export class DaemonSocket extends EventTarget {
   needHashes: number[] = [];
   // Further requests the daemon makes after those hashes arrive, one per declaration.
   followUps: number[][] = [];
+  present: number[] | undefined;
+  planSourceID = "";
   frames: (string | ArrayBuffer)[] = [];
 
   constructor() {
@@ -86,7 +88,9 @@ export class DaemonSocket extends EventTarget {
         type: "photo_import_plan",
         request_id: message.request_id,
         import_id: "import-1",
+        source_id: this.planSourceID || undefined,
         groups: [[0, 1], [2]],
+        present: this.present,
         unsupported: [3],
         skip_reasons: { 3: "Unsupported type" },
       });

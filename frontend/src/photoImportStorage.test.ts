@@ -94,3 +94,18 @@ it("loads the saved digest and picker kind and sends only the expected identity 
     expected: { sourceID: checkpoint.sourceID, revision: checkpoint.revision },
   });
 });
+
+it("remembers the latest settled import per vault and ignores unavailable writes", async () => {
+  const { settledPhotoImports } = await import("./photoImportStorage.js");
+  localStorage.clear();
+  const vault = settledPhotoImports("vault-a");
+  vault.set("source-a");
+  vault.set("source-b");
+  expect(vault.get()).toBe("source-b");
+  expect(settledPhotoImports("vault-b").get()).toBeNull();
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new DOMException("Full", "QuotaExceededError");
+  });
+  expect(() => settledPhotoImports("vault-b").set("source")).not.toThrow();
+  localStorage.clear();
+});

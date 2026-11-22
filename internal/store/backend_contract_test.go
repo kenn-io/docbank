@@ -1699,6 +1699,7 @@ var backendSuites = []backendSuite{
 		}},
 	}},
 	{name: "photo-import", postgres: "native operations", scope: "Grouped RAW/JPEG/sidecar ingestion, source replay, explicit pairing, browser continuation and import progress; excludes authored editing and XMP publication.", scenarios: []backendScenario{
+		{"BrowserPhotoRecovery", func(t *testing.T) { t.Helper(); checkBrowserPhotoRecovery(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkBrowserPhotoRecovery(t, newPostgresQueryStore) }},
 		{"PhotoImportRollback", nil, checkPhotoImportRollbackPostgres},
 		{"PhotoImportAcceptedSidecar", nil, checkPhotoImportAcceptedSidecarPostgres},
 		{"PhotoImportEmbeddedObservation", func(t *testing.T) { t.Helper(); checkPhotoImportEmbeddedObservation(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportEmbeddedObservation(t, newPostgresQueryStore) }},

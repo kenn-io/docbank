@@ -95,7 +95,9 @@ export function validateUploadReceipt(
 
 export interface PhotoImportPlan {
   import_id: string;
+  source_id?: string;
   groups: number[][];
+  present?: number[];
   unsupported: number[];
   skip_reasons?: Record<number, string>;
   // Hashes the server asked for before planning; every other file hashes with its group.
@@ -116,6 +118,8 @@ export function photoImportDeclaration(
   sourceID = declarationUUID,
   requestID = declarationUUID,
   hashes?: ReadonlyMap<File, string>,
+  recovering = false,
+  checkpointed = false,
 ) {
   const tooLarge = () =>
     new Error(
@@ -127,6 +131,8 @@ export function photoImportDeclaration(
     source_id: sourceID,
     request_id: requestID,
     destination,
+    recovering,
+    checkpointed,
     files: files.map((file) => ({
       relative_path: localFilePath(file),
       size: file.size,
@@ -150,6 +156,8 @@ export interface PhotoImportTransport {
     signal: AbortSignal,
     onprogress: (progress: TransferProgress) => void,
     knownHashes?: Map<File, string>,
+    recovering?: boolean,
+    checkpointed?: boolean,
   ): Promise<PhotoImportPlan>;
   // An empty entry in hashes is a file not hashed yet. The upload hashes it
   // first and fills in its entry, so a retry reuses the hash.
@@ -170,8 +178,10 @@ export function photoImportNeedsContentHash(file: File): boolean {
 
 interface UploadMessage {
   import_id?: string;
+  source_id?: string;
   files?: { relative_path: string; size: number; modified_time?: number }[];
   groups?: number[][];
+  present?: number[];
   unsupported?: number[];
   skip_reasons?: Record<number, string>;
   destination?: string;
@@ -374,6 +384,8 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     signal: AbortSignal,
     onprogress: (progress: TransferProgress) => void,
     knownHashes?: Map<File, string>,
+    recovering = false,
+    checkpointed = false,
   ): Promise<PhotoImportPlan> {
     if (this.busy) throw new UploadChannelError("Another browser upload is already active.");
     throwIfAborted(signal);
@@ -381,7 +393,17 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     const requestID = randomUUID();
     const hashes = new Map(knownHashes);
     try {
-      this.send(photoImportDeclaration(files, destination, sourceID, requestID, hashes));
+      this.send(
+        photoImportDeclaration(
+          files,
+          destination,
+          sourceID,
+          requestID,
+          hashes,
+          recovering,
+          checkpointed,
+        ),
+      );
       let plan = await this.nextMessage();
       this.requireMessage(plan, requestID);
       this.throwProblem(plan);
@@ -408,7 +430,17 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
           );
           processed += files[index].size;
         }
-        this.send(photoImportDeclaration(files, destination, sourceID, requestID, hashes));
+        this.send(
+          photoImportDeclaration(
+            files,
+            destination,
+            sourceID,
+            requestID,
+            hashes,
+            recovering,
+            checkpointed,
+          ),
+        );
         plan = await this.nextMessage();
         this.requireMessage(plan, requestID);
         this.throwProblem(plan);
@@ -417,6 +449,7 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
         plan.type !== "photo_import_plan" ||
         typeof plan.import_id !== "string" ||
         !plan.import_id ||
+        (plan.source_id !== undefined && (typeof plan.source_id !== "string" || !plan.source_id)) ||
         !Array.isArray(plan.groups) ||
         !Array.isArray(plan.unsupported)
       )
@@ -430,9 +463,20 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
         indexes.some((index) => !Number.isInteger(index) || index < 0 || index >= files.length)
       )
         throw this.protocolError();
+      const present = plan.present ?? [];
+      if (
+        !Array.isArray(present) ||
+        new Set(present).size !== present.length ||
+        present.some(
+          (index) => !Number.isInteger(index) || index < 0 || index >= plan.groups!.length,
+        )
+      )
+        throw this.protocolError();
       return {
         import_id: plan.import_id,
+        source_id: plan.source_id,
         groups: plan.groups,
+        present,
         unsupported: plan.unsupported,
         skip_reasons: plan.skip_reasons,
         hashes,

@@ -36,6 +36,30 @@ func NewPhotoImportRunner(d Deps) ingest.PhotoImportRunner {
 }
 
 func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
+	huma.Register(api, huma.Operation{
+		OperationID: "getBrowserPhotoImport", Method: http.MethodGet,
+		Path: "/api/v1/photos/browser-imports", Summary: "Find a recorded browser photo import",
+	}, func(ctx context.Context, in *struct {
+		SourceID string `query:"source_id"`
+	}) (*struct {
+		Body struct {
+			Import *store.BrowserPhotoImport `json:"import,omitempty"`
+		}
+	}, error) {
+		item, found, err := d.Store.BrowserPhotoImport(ctx, in.SourceID)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		out := &struct {
+			Body struct {
+				Import *store.BrowserPhotoImport `json:"import,omitempty"`
+			}
+		}{}
+		if found {
+			out.Body.Import = &item
+		}
+		return out, nil
+	})
 	runnerDeps := d
 	runnerDeps.Gate = g
 	huma.Register(api, huma.Operation{

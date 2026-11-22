@@ -295,10 +295,11 @@ func checkPhotoImportLoneSidecarWaitsForItsImage(t *testing.T, open func(*testin
 	t.Parallel()
 	s := open(t)
 	ctx := t.Context()
-	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+	const source = "20000000-0000-4000-8000-000000000001"
+	run, err := s.BeginIngest(ctx, "photo-import", "browser: Card")
 	require.NoError(t, err)
-	root := filepath.Join(t.TempDir(), "camera")
-	xmp := photoImportTestMember(filepath.Join(root, "IMG.XMP"), PhotoRoleSidecar, fakeHash("lone-xmp"), "application/rdf+xml")
+	root := "browser:" + source + "/Card"
+	xmp := photoImportTestMember(root+"/IMG.XMP", PhotoRoleSidecar, fakeHash("lone-xmp"), "application/rdf+xml")
 	alone, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(xmp))
 	require.NoError(t, err)
 	assert.True(t, alone.Added)
@@ -310,7 +311,16 @@ func checkPhotoImportLoneSidecarWaitsForItsImage(t *testing.T, open func(*testin
 	require.NoError(t, err)
 	assert.True(t, again.Skipped)
 
-	jpeg := photoImportTestMember(filepath.Join(root, "IMG.JPG"), PhotoRoleImage, fakeHash("lone-jpeg"), "image/jpeg")
+	resumedRun, err := s.BeginIngest(ctx, "photo-import", "browser: Card")
+	require.NoError(t, err)
+	replay := photoImportTestGroup(xmp)
+	replay.CreateOnly = true
+	replayed, err := s.IngestPhotoGroup(ctx, resumedRun, replay)
+	require.NoError(t, err)
+	require.True(t, replayed.Skipped)
+	require.Len(t, replayed.Nodes, 1)
+	require.Equal(t, alone.Nodes[0].ID, replayed.Nodes[0].ID)
+	jpeg := photoImportTestMember(root+"/IMG.JPG", PhotoRoleImage, fakeHash("lone-jpeg"), "image/jpeg")
 	paired, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(jpeg, xmp))
 	require.NoError(t, err)
 	require.Len(t, paired.Asset.Files, 2)

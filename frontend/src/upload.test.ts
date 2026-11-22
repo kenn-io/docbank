@@ -463,6 +463,7 @@ it("plans on the server and streams each photo member between ready and end", as
   ).toEqual({
     import_id: "import-1",
     groups: [[0, 1], [2]],
+    present: [],
     unsupported: [3],
     skip_reasons: { 3: "Unsupported type" },
     hashes: new Map(),
@@ -568,6 +569,29 @@ it("hashes only the files the daemon asks for before it plans", async () => {
   channel.close();
 });
 
+it("returns the source selected by the daemon's recovery plan", async () => {
+  const { socket, channel } = await photoChannel();
+  socket.planSourceID = "20000000-0000-4000-8000-000000000011";
+  const plan = await channel.planPhotoImport(
+    photoSelectionFiles(),
+    "/photos",
+    "20000000-0000-4000-8000-000000000012",
+    new AbortController().signal,
+    vi.fn(),
+    undefined,
+    true,
+    true,
+  );
+  expect(plan.source_id).toBe("20000000-0000-4000-8000-000000000011");
+  const declaration = socket.frames
+    .filter((frame): frame is string => typeof frame === "string")
+    .map((frame) => JSON.parse(frame))
+    .find((frame) => frame.type === "plan_photo_import");
+  expect(declaration.recovering).toBe(true);
+  expect(declaration.checkpointed).toBe(true);
+  channel.close();
+});
+
 it("reuses a selected file hash when planning on a new channel", async () => {
   const { socket, channel } = await photoChannel();
   const files = photoSelectionFiles();
@@ -637,6 +661,20 @@ it.each([
     ),
   ).rejects.toThrow(/invalid response/);
   expect(socket.closed).toBe(true);
+});
+
+it.each([[[2]], [[0, 0]], [[-1]]])("rejects invalid present group indexes %j", async (present) => {
+  const { socket, channel } = await photoChannel();
+  socket.present = present;
+  await expect(
+    channel.planPhotoImport(
+      photoSelectionFiles(),
+      "/photos",
+      "20000000-0000-4000-8000-000000000001",
+      new AbortController().signal,
+      vi.fn(),
+    ),
+  ).rejects.toThrow(/invalid response/);
 });
 
 it("rejects a second hash request that names only hashed files", async () => {

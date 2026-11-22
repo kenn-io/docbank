@@ -1251,6 +1251,13 @@ export interface BlobStorePreview {
   takeover: boolean;
 }
 
+export interface BrowserPhotoImport {
+  folder: string;
+  folder_selection: boolean;
+  groups: number;
+  source_id: string;
+}
+
 export interface CancelExportJobRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -3601,6 +3608,12 @@ export interface GcRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   run: boolean;
+}
+
+export interface GetBrowserPhotoImportResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  import?: BrowserPhotoImport;
 }
 
 export interface GroupPhotoStacksRequest {
@@ -10288,6 +10301,10 @@ export type TrashPhotoAssetHeaders = {
 
 export type UnhidePhotoAssetHeaders = {
 'If-Match': string;
+};
+
+export type GetBrowserPhotoImportParams = {
+source_id?: string;
 };
 
 export type GetPhotoCheckoutParams = {
@@ -18305,6 +18322,37 @@ export const undoPhotoAuthored = async (receiptId: string, options?: Parameters<
   {
     ...options,
     method: 'POST'
+
+
+  }
+);}
+
+
+
+export const getGetBrowserPhotoImportUrl = (params?: GetBrowserPhotoImportParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/photos/browser-imports?${stringifiedParams}` : `/api/v1/photos/browser-imports`
+}
+
+/**
+ * @summary Find a recorded browser photo import
+ */
+export const getBrowserPhotoImport = async (params?: GetBrowserPhotoImportParams, options?: Parameters<typeof sessionJSON>[1]): Promise<GetBrowserPhotoImportResponse> => {
+
+  return sessionJSON<GetBrowserPhotoImportResponse>(getGetBrowserPhotoImportUrl(params),
+  {
+    ...options,
+    method: 'GET'
 
 
   }

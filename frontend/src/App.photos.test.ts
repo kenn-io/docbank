@@ -69,9 +69,12 @@ const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) =>
   vi.stubGlobal("fetch", (url: string, init: RequestInit) => {
     return (
       photoMetadataResponse(url, init) ??
-      (url.endsWith("/photos/assets/query") && JSON.parse(String(init?.body ?? "{}")).facets?.length
-        ? Promise.resolve(Response.json({ items: [], total: 0, facets: [] }))
-        : fetcher(url, init))
+      (url.endsWith("/photos/browser-imports")
+        ? Promise.resolve(Response.json({}))
+        : url.endsWith("/photos/assets/query") &&
+            JSON.parse(String(init?.body ?? "{}")).facets?.length
+          ? Promise.resolve(Response.json({ items: [], total: 0, facets: [] }))
+          : fetcher(url, init))
     );
   });
 };

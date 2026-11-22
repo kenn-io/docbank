@@ -71,3 +71,24 @@ export function photoImportStorage(vaultID: string, session: string) {
     },
   };
 }
+
+// Remembers the latest import dismissed or finished in this browser.
+export function settledPhotoImports(vaultID: string) {
+  const key = `docbank.photoImportSettled.${vaultID}`;
+  return {
+    get(): string | null {
+      try {
+        return localStorage.getItem(key);
+      } catch {
+        return null;
+      }
+    },
+    set(sourceID: string) {
+      try {
+        localStorage.setItem(key, sourceID);
+      } catch {
+        /* Browser storage is optional. */
+      }
+    },
+  };
+}

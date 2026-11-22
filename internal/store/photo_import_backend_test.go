@@ -4,10 +4,86 @@ import (
 	"database/sql"
 	"strings"
 	"testing"
+	"uuid"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 )
+
+func checkBrowserPhotoRecovery(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	t.Parallel()
+	s := open(t)
+	ctx := t.Context()
+	const source = "20000000-0000-4000-8000-000000000001"
+	_, found, err := s.BrowserPhotoImport(ctx, "")
+	require.NoError(t, err)
+	require.False(t, found)
+	run, err := s.BeginIngest(ctx, "photo-import", "browser: Card")
+	require.NoError(t, err)
+	image := photoImportTestMember("browser:"+source+"/Card/first.JPG", PhotoRoleImage, fakeHash("Card/first.JPG"), "image/jpeg")
+	sidecar := photoImportTestMember("browser:"+source+"/Card/first.XMP", PhotoRoleSidecar, fakeHash("Card/first.XMP"), "application/rdf+xml")
+	_, err = s.IngestPhotoGroup(ctx, run, photoImportTestGroup(image, sidecar))
+	require.NoError(t, err)
+	other := photoImportTestMember("browser:"+source+"/Card/other.XMP", PhotoRoleSidecar, fakeHash("Card/other.XMP"), "application/rdf+xml")
+	_, err = s.IngestPhotoGroup(ctx, run, photoImportTestGroup(other))
+	require.NoError(t, err)
+	result, found, err := s.BrowserPhotoImport(ctx, source)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "Card", result.Folder)
+	require.True(t, result.FolderSelection)
+	require.Equal(t, 2, result.Groups)
+	require.Equal(t, fakeHash("Card/other.XMP"), result.Members["Card/other.XMP"])
+	paths, err := s.BrowserPhotoImportPaths(ctx, []string{"other.XMP"})
+	require.NoError(t, err)
+	require.Empty(t, paths)
+	paths, err = s.BrowserPhotoImportPaths(ctx, []string{"Card/other.XMP"})
+	require.NoError(t, err)
+	require.Contains(t, paths, BrowserPhotoImportMember{
+		SourceID:     uuid.MustParse(source),
+		RelativePath: "Card/other.XMP", BlobHash: fakeHash("Card/other.XMP"),
+	})
+	node, err := s.NodeByPath(ctx, "/other.XMP")
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, node.ID, node.Revision)
+	require.NoError(t, err)
+	result, found, err = s.BrowserPhotoImport(ctx, source)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, 2, result.Groups)
+	require.Equal(t, fakeHash("Card/other.XMP"), result.Members["Card/other.XMP"])
+	looseRun, err := s.BeginIngest(ctx, "photo-import", "browser: Choose files")
+	require.NoError(t, err)
+	const looseID = "20000000-0000-4000-8000-000000000002"
+	loose := photoImportTestMember("browser:"+looseID+"/loose.XMP", "", fakeHash("loose"), "")
+	_, err = s.IngestPhotoGroup(ctx, looseRun, photoImportTestGroup(loose))
+	require.NoError(t, err)
+	looseResult, found, err := s.BrowserPhotoImport(ctx, looseID)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.False(t, looseResult.FolderSelection)
+	require.Equal(t, 1, looseResult.Groups)
+	paths, err = s.BrowserPhotoImportPaths(ctx, []string{"loose.XMP"})
+	require.NoError(t, err)
+	require.Contains(t, paths, BrowserPhotoImportMember{
+		SourceID:     uuid.MustParse(looseID),
+		RelativePath: "loose.XMP", BlobHash: fakeHash("loose"),
+	})
+	latest, found, err := s.BrowserPhotoImport(ctx, "")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, looseID, latest.SourceID)
+	conflicting := photoImportTestMember("browser:"+looseID+"/loose.XMP", PhotoRoleSidecar, fakeHash("changed"), "application/rdf+xml")
+	group := photoImportTestGroup(conflicting)
+	group.CreateOnly = true
+	_, err = s.IngestPhotoGroup(ctx, looseRun, group)
+	require.NoError(t, err)
+	looseResult, found, err = s.BrowserPhotoImport(ctx, looseID)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Empty(t, looseResult.Members["loose.XMP"])
+}
 
 func checkPhotoImportEmbeddedObservation(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
