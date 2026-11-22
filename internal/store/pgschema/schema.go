@@ -21,7 +21,7 @@ import (
 var schemaSQL string
 
 // Config names an application's dedicated schema and its setup role. The
-// operator provisions roles and grants; this package never creates roles or
+// operator provisions roles; this package never creates roles or
 // shares ownership with a runtime credential.
 type Config struct {
 	Schema      string
@@ -80,13 +80,8 @@ func setup(ctx context.Context, db *sql.DB, c Config, chain []migration, upgrade
 	if user != c.SchemaOwner {
 		return uuid.Nil(), errors.New("postgres metadata setup requires the schema owner role")
 	}
-	// Locks are database-local. Include the schema so unrelated vault setups do
-	// not block one another. Read state in a NEW statement after acquiring it.
-	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('docbank:metadata:' || $1, 0))`, c.Schema); err != nil {
-		if ctx.Err() != nil {
-			return uuid.Nil(), ctx.Err()
-		}
-		return uuid.Nil(), fmt.Errorf("lock postgres metadata setup: %w", err)
+	if err := lockSchemaSetup(ctx, tx, c.Schema); err != nil {
+		return uuid.Nil(), err
 	}
 	var owner string
 	err = tx.QueryRowContext(ctx, `SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname=$1`, c.Schema).Scan(&owner)
@@ -222,6 +217,18 @@ func validate(ctx context.Context, db *sql.DB, c Config, chain []migration) (uui
 		return uuid.Nil(), err
 	}
 	return installed.id, nil
+}
+
+func lockSchemaSetup(ctx context.Context, tx *sql.Tx, schema string) error {
+	// Locks are database-local. Include the schema so unrelated vault setups do
+	// not block one another. Read state in a NEW statement after acquiring it.
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('docbank:metadata:' || $1, 0))`, schema); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("lock postgres metadata setup: %w", err)
+	}
+	return nil
 }
 
 func validateEncoding(ctx context.Context, tx *sql.Tx) error {
