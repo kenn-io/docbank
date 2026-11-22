@@ -587,6 +587,7 @@ it("returns the source selected by the daemon's recovery plan", async () => {
     .filter((frame): frame is string => typeof frame === "string")
     .map((frame) => JSON.parse(frame))
     .find((frame) => frame.type === "plan_photo_import");
+  expect(declaration.recovering).toBe(true);
   expect(declaration.checkpointed).toBe(true);
   channel.close();
 });

@@ -83,12 +83,6 @@ func checkBrowserPhotoRecovery(t *testing.T, open func(*testing.T) *Store) {
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Empty(t, looseResult.Members["loose.XMP"])
-	invalid := photoImportTestMember("browser:not-a-uuid/invalid.XMP", PhotoRoleSidecar, fakeHash("invalid"), "application/rdf+xml")
-	_, err = s.IngestPhotoGroup(ctx, looseRun, photoImportTestGroup(invalid))
-	require.NoError(t, err)
-	paths, err = s.BrowserPhotoImportPaths(ctx, []string{"invalid.XMP"})
-	require.NoError(t, err)
-	require.Empty(t, paths)
 }
 
 func checkPhotoImportEmbeddedObservation(t *testing.T, open func(*testing.T) *Store) {

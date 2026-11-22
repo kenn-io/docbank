@@ -889,20 +889,23 @@ func recoverBrowserPhotos(
 	if err != nil {
 		return requested, nil, err
 	}
-	unmatchedPaths := map[int]string{}
 	for _, candidate := range candidates {
-		name := candidate.RelativePath
+		name, continued := candidate.RelativePath, false
 		if candidate.FolderSelection {
-			name, _ = strings.CutPrefix(name, candidate.Folder+"/")
+			var direct bool
+			if name, direct = strings.CutPrefix(name, candidate.Folder+"/"); !direct && candidate.Folder == folder {
+				// An earlier import of this folder continued another folder here.
+				_, name, continued = strings.Cut(name, "/")
+			}
 		}
 		index, ok := byPath[name]
 		if !ok || candidate.FolderSelection != folderSelection {
 			continue
 		}
-		if store.ClassifyPhotoSource(files[index].RelativePath).Kind != store.PhotoSourceSidecar {
+		if continued || store.ClassifyPhotoSource(files[index].RelativePath).Kind != store.PhotoSourceSidecar {
 			// A continued photo may have no path under the checkpoint source.
-			// Conflicting history cannot identify which bytes it had there.
-			if checkpointed && (offered == nil || offered.Members[files[index].RelativePath] == "") && candidate.BlobHash != files[index].ExpectedHash {
+			// Its earlier continuation records which bytes it had there.
+			if continued && checkpointed && (offered == nil || offered.Members[files[index].RelativePath] == "") && candidate.BlobHash != files[index].ExpectedHash {
 				return requested, nil, changed
 			}
 			continue
@@ -914,9 +917,6 @@ func recoverBrowserPhotos(
 			continue
 		}
 		if candidate.BlobHash == files[index].ExpectedHash {
-			if recorded[index] && paths[index] != "browser:"+candidate.SourceID+"/"+candidate.RelativePath {
-				return requested, nil, changed
-			}
 			paths[index] = "browser:" + candidate.SourceID + "/" + candidate.RelativePath
 			matched[candidate.SourceID] = true
 			recorded[index] = true
@@ -932,15 +932,8 @@ func recoverBrowserPhotos(
 		}
 		index, ok := byPath[name]
 		if ok && store.ClassifyPhotoSource(files[index].RelativePath).Kind == store.PhotoSourceSidecar && !recorded[index] && matched[candidate.SourceID] && candidate.FolderSelection == folderSelection {
-			path := "browser:" + candidate.SourceID + "/" + candidate.RelativePath
-			if previous := unmatchedPaths[index]; previous != "" && previous != path {
-				return requested, nil, changed
-			}
-			unmatchedPaths[index] = path
+			return requested, nil, changed
 		}
-	}
-	for index, path := range unmatchedPaths {
-		paths[index] = path
 	}
 	sourceID := requested
 	if len(matched) == 1 && !checkpointed {

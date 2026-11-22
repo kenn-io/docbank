@@ -95,7 +95,7 @@ it("loads the saved digest and picker kind and sends only the expected identity 
   });
 });
 
-it("remembers the latest settled import per vault and tolerates unavailable storage", async () => {
+it("remembers the latest settled import per vault and ignores unavailable writes", async () => {
   const { settledPhotoImports } = await import("./photoImportStorage.js");
   localStorage.clear();
   const vault = settledPhotoImports("vault-a");
