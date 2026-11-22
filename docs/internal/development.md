@@ -459,260 +459,20 @@ to assume the owner role, and lack schema `CREATE` and identity-table write
 privileges. Validation checks the current role and every role the session login
 can assume, including indirect memberships. `NOINHERIT` alone does not prevent
 `SET ROLE`; PostgreSQL's [role privilege checks](https://www.postgresql.org/docs/16/functions-info.html#FUNCTIONS-INFO-ACCESS-TABLE)
-resolve those grants. The operator provisions roles and grants schema `USAGE`
-and identity `SELECT` explicitly. Neither function creates roles or changes
-grants. `Validate` checks identity and role separation; it does not
+resolve those grants. The operator provisions both roles. `Setup` and
+`Validate` leave role grants alone. `Validate` checks identity and role
+separation; it does not
 qualify the remaining store operations. Callers own connection lifetimes and
 deadlines. Schema setup does not grant ownership of blob roots or permit
 multiple vault writers.
 
-For the current catalog queries, provision the runtime role separately and
-grant the following privileges after setup. This example uses schema
-`documents` and an existing role `docbank_runtime`:
-
-```sql
-GRANT USAGE ON SCHEMA documents TO docbank_runtime;
-GRANT SELECT ON ALL TABLES IN SCHEMA documents TO docbank_runtime;
-GRANT INSERT, DELETE, UPDATE(lifecycle) ON documents.blob_stores TO docbank_runtime;
-GRANT INSERT ON documents.storage_operation_stores TO docbank_runtime;
-GRANT INSERT, DELETE ON documents.storage_operation_cleanup TO docbank_runtime;
-GRANT SELECT, INSERT, UPDATE, DELETE
-    ON documents.nodes, documents.blobs, documents.content_versions
-    TO docbank_runtime;
-GRANT SELECT, INSERT ON documents.blob_checksums TO docbank_runtime;
-GRANT SELECT ON documents.audit_records, documents.audit_authority,
-    documents.audit_scopes, documents.audit_baselines, documents.audit_memberships
-    TO docbank_runtime;
-GRANT INSERT ON documents.audit_records, documents.audit_authority,
-    documents.audit_scopes, documents.audit_baselines, documents.audit_memberships
-    TO docbank_runtime;
-GRANT UPDATE(operation_sequence_high_water, allocation_entry_count, allocation_head)
-    ON documents.audit_authority TO docbank_runtime;
-GRANT UPDATE(entry_count, chain_head) ON documents.audit_scopes TO docbank_runtime;
-GRANT SELECT, UPDATE(high_water) ON documents.node_allocation TO docbank_runtime;
-GRANT SELECT, INSERT, DELETE ON documents.vault_changes TO docbank_runtime;
-GRANT INSERT ON documents.collection_snapshots,
-    documents.collection_snapshot_members, documents.collection_snapshot_representations,
-    documents.packages, documents.package_volumes, documents.bates_namespaces,
-    documents.bates_namespace_cursors, documents.bates_allocations,
-    documents.bates_page_labels, documents.bates_artifacts, documents.bates_artifact_pages
-    TO docbank_runtime;
-GRANT UPDATE(next_sequence) ON documents.bates_namespace_cursors TO docbank_runtime;
-GRANT UPDATE(state, committed_at) ON documents.bates_allocations TO docbank_runtime;
-GRANT INSERT, DELETE ON documents.package_preflights TO docbank_runtime;
-GRANT INSERT ON documents.package_records, documents.package_labels,
-    documents.package_import_receipts, documents.package_import_jobs TO docbank_runtime;
-GRANT UPDATE(state, snapshot_id, completed_at) ON documents.packages TO docbank_runtime;
-GRANT UPDATE(state, epoch, token, claim_owner, lease_expires_at, updated_at)
-    ON documents.package_import_jobs TO docbank_runtime;
-GRANT INSERT, DELETE, UPDATE(canonical_json, state, expires_at)
-    ON documents.export_sources TO docbank_runtime;
-GRANT INSERT ON documents.export_chunks, documents.export_members,
-    documents.export_documents, documents.export_role_roots TO docbank_runtime;
-GRANT INSERT, DELETE, UPDATE(canonical_json, expires_at)
-    ON documents.export_plans TO docbank_runtime;
-GRANT INSERT, DELETE, UPDATE(canonical_json, state, expires_at, epoch, token, archive_name)
-    ON documents.export_jobs TO docbank_runtime;
-GRANT SELECT, INSERT, DELETE ON documents.photo_xmp_unsettled TO docbank_runtime;
-GRANT INSERT, UPDATE, DELETE ON documents.blob_locations TO docbank_runtime;
-GRANT INSERT, UPDATE ON documents.blob_pack_entries TO docbank_runtime;
-GRANT INSERT, DELETE, UPDATE(scan_hash) ON documents.blob_packs TO docbank_runtime;
-GRANT INSERT, DELETE ON documents.gc_loose_retirements,
-    documents.derivative_pack_purge_pending TO docbank_runtime;
-GRANT DELETE ON documents.blob_pack_entries, documents.rendition_blob_staging,
-    documents.derivative_blob_purge_pending TO docbank_runtime;
-GRANT UPDATE(live_entries, live_stored_bytes, live_raw_bytes,
-    max_live_stored_len, max_live_raw_len) ON documents.blob_packs TO docbank_runtime;
-GRANT INSERT, UPDATE(next_attempt_at) ON documents.text_extraction_queue TO docbank_runtime;
-GRANT INSERT ON documents.text_searchable_versions TO docbank_runtime;
-GRANT INSERT, UPDATE(extractor_version, status, error, attempts, text, extracted_at, search_text)
-    ON documents.extracted_text TO docbank_runtime;
-GRANT INSERT, UPDATE(hidden_at, excluded_at, display_file_id,
-    display_override_file_id, representative_rank, revision, updated_at)
-    ON documents.photo_assets TO docbank_runtime;
-GRANT INSERT, DELETE ON documents.photo_change_receipts TO docbank_runtime;
-GRANT INSERT, UPDATE(asset_id, role, sidecar_of_file_id, source_provenance_identity,
-    revision, rating, flag, label, caption, creator, copyright, rotation,
-    confirmed_fields, flag_owner)
-    ON documents.photo_files TO docbank_runtime;
-GRANT INSERT, DELETE ON documents.photo_timeline TO docbank_runtime;
-GRANT INSERT, UPDATE(original_path, original_mtime, folder_key)
-    ON documents.photo_source_claims TO docbank_runtime;
-GRANT INSERT, DELETE ON documents.ingests TO docbank_runtime;
-GRANT INSERT ON documents.provenance, documents.provenance_version_bindings
-    TO docbank_runtime;
-GRANT INSERT, UPDATE, DELETE ON documents.collection_labels TO docbank_runtime;
-GRANT INSERT, UPDATE ON documents.watch_sources, documents.push_sources
-    TO docbank_runtime;
-GRANT INSERT, DELETE ON documents.watch_source_absences TO docbank_runtime;
-GRANT DELETE ON documents.document_event_heads, documents.document_event_generations,
-    documents.document_people_heads, documents.document_people TO docbank_runtime;
-GRANT INSERT, UPDATE(revision, reason) ON documents.document_event_dirty
-    TO docbank_runtime;
-GRANT UPDATE(publication_epoch, updated_at)
-    ON documents.document_event_state, documents.document_people_state
-    TO docbank_runtime;
-GRANT DELETE ON documents.rendition_heads, documents.rendition_attachments,
-    documents.rendition_job_waiters, documents.email_attachments,
-    documents.embedding_jobs, documents.embedding_heads, documents.embedding_sets,
-    documents.photo_files TO docbank_runtime;
-GRANT DELETE, UPDATE(state, phase, claim_owner, lease_expires_at, claim_epoch,
-    available_at, selected_waiter_id, authorization_grant_id,
-    authorization_incarnation_id, authorization_revocation_fence,
-    provider_started, provider_resume_handle, execution_snapshot_json,
-    lexical_generation_id, failure_code, updated_at)
-    ON documents.rendition_jobs TO docbank_runtime;
-GRANT UPDATE(state, failure_code, updated_at)
-    ON documents.rendition_job_waiters TO docbank_runtime;
-GRANT INSERT, DELETE, UPDATE(root_kind, target_kind, target_id, fencing_token,
-    recorded_at, expires_at, active, released_at)
-    ON documents.current_rendition_roots TO docbank_runtime;
-GRANT INSERT, DELETE, UPDATE(name, revision, assignment_count) ON documents.tags TO docbank_runtime;
-GRANT INSERT, DELETE ON documents.node_tags TO docbank_runtime;
-GRANT INSERT ON documents.batch_tag_receipts TO docbank_runtime;
-GRANT INSERT, DELETE, UPDATE(name, description, payload, fingerprint, revision, updated_at, photo_scope)
-    ON documents.saved_queries TO docbank_runtime;
-GRANT INSERT ON documents.saved_query_runs TO docbank_runtime;
-GRANT INSERT, DELETE ON documents.term_report_history TO docbank_runtime;
-GRANT UPDATE(binding_epoch) ON documents.document_people_state TO docbank_runtime;
-GRANT INSERT, DELETE, UPDATE(display_name, display_name_folded, state, revision,
-    updated_at, key_face_id) ON documents.persons TO docbank_runtime;
-GRANT INSERT, DELETE, UPDATE(person_id) ON documents.person_identities TO docbank_runtime;
-GRANT INSERT, UPDATE(person_id, uid_kind, uid_state, last_seen_revision,
-    display_name_snapshot, updated_at) ON documents.person_external_identities TO docbank_runtime;
-GRANT INSERT, UPDATE(surviving_uid, observed_at)
-    ON documents.person_external_uid_aliases TO docbank_runtime;
-GRANT INSERT, UPDATE(surviving_person_id, reason, retired_at)
-    ON documents.person_aliases TO docbank_runtime;
-GRANT INSERT ON documents.person_merges, documents.person_splits TO docbank_runtime;
-GRANT INSERT, UPDATE(person_id, raw_label, raw_label_folded, basis, source_ref,
-    revision, recorded_at, retired_at) ON documents.custodian_assignments TO docbank_runtime;
-GRANT INSERT, DELETE, UPDATE(person_id, action, note, revision, photo_mark)
-    ON documents.person_document_assertions TO docbank_runtime;
-GRANT INSERT, DELETE, UPDATE(suggested_person_id, state, decided_person_id, decided_at, revision)
-    ON documents.person_match_candidates TO docbank_runtime;
-GRANT INSERT, DELETE ON documents.person_candidate_faces TO docbank_runtime;
-GRANT UPDATE(assertion_id) ON documents.photo_faces TO docbank_runtime;
-GRANT INSERT ON documents.source_metadata_generations, documents.document_event_generations,
-    documents.document_events, documents.document_event_actors, documents.document_event_primaries
-    TO docbank_runtime;
-GRANT INSERT, UPDATE(generation_id, published_at)
-    ON documents.source_metadata_heads TO docbank_runtime;
-GRANT INSERT, DELETE ON documents.photo_technical_metadata TO docbank_runtime;
-GRANT INSERT, UPDATE(projection_recipe)
-    ON documents.photo_technical_metadata_state TO docbank_runtime;
-GRANT INSERT, UPDATE(deriver_fingerprint, input_epoch)
-    ON documents.document_event_state TO docbank_runtime;
-GRANT INSERT, UPDATE(generation_id, input_epoch, published_at)
-    ON documents.document_event_heads TO docbank_runtime;
-GRANT INSERT, UPDATE(input_epoch, input_revision, inputs_sha256, state, diagnostic_json, attempted_at)
-    ON documents.document_event_attempts TO docbank_runtime;
-GRANT INSERT, UPDATE(state, scanned, published, failed, unavailable, updated_at, finished_at)
-    ON documents.document_event_builds TO docbank_runtime;
-GRANT INSERT ON documents.document_people_generations, documents.document_people TO docbank_runtime;
-GRANT INSERT, UPDATE(event_generation_id, inputs_sha256, generation_id, unresolved_actors,
-    suppressed_actors, candidate_overflow, resolver_fingerprint, binding_epoch, node_revision,
-    edge_count, state, failure_reason, published_at)
-    ON documents.document_people_heads TO docbank_runtime;
-GRANT UPDATE(resolver_fingerprint) ON documents.document_people_state TO docbank_runtime;
-GRANT INSERT, UPDATE(state, scanned, published, failed, updated_at, finished_at)
-    ON documents.document_people_builds TO docbank_runtime;
-GRANT INSERT ON documents.processing_consent_grants, documents.processing_consent_revocations,
-    documents.processing_profiles, documents.rendition_builds, documents.rendition_artifacts,
-    documents.rendition_units, documents.rendition_lexical_segments,
-    documents.rendition_attachments, documents.rendition_jobs, documents.rendition_job_waiters,
-    documents.rendition_lexical_heads, documents.rendition_lexical_superseded TO docbank_runtime;
-GRANT INSERT ON documents.rendition_blob_staging TO docbank_runtime;
-GRANT INSERT, UPDATE(attachment_id, published_at) ON documents.rendition_heads TO docbank_runtime;
-GRANT UPDATE(provider_attempts) ON documents.rendition_jobs TO docbank_runtime;
-GRANT UPDATE(attachment_id) ON documents.rendition_job_waiters TO docbank_runtime;
-GRANT INSERT ON documents.embedding_vector_spaces, documents.embedding_input_generations,
-    documents.embedding_generation_inputs, documents.embedding_vector_sets,
-    documents.embedding_vector_rows, documents.embedding_sets TO docbank_runtime;
-GRANT INSERT, UPDATE(embedding_set_id, vector_space_id, profile_fingerprint,
-    published_at, fencing_token) ON documents.embedding_heads TO docbank_runtime;
-GRANT INSERT, UPDATE(failure_code, failed_at, fencing_token, attachment_id)
-    ON documents.embedding_failures TO docbank_runtime;
-GRANT INSERT, UPDATE(state, claim_owner, claim_epoch, claim_count, lease_expires_at,
-    available_at, failure_code, receipt_json, updated_at)
-    ON documents.embedding_jobs TO docbank_runtime;
-GRANT INSERT, DELETE ON documents.vector_index_generations TO docbank_runtime;
-GRANT INSERT, DELETE, UPDATE(generation_id, source_manifest_checksum)
-    ON documents.vector_index_heads TO docbank_runtime;
-GRANT INSERT, UPDATE(source_manifest_checksum, owner, fencing_token, lease_expires_at)
-    ON documents.vector_index_build_jobs TO docbank_runtime;
-GRANT INSERT, DELETE ON documents.vector_index_reader_leases TO docbank_runtime;
-GRANT INSERT, UPDATE (revision) ON documents.vector_membership_epochs TO docbank_runtime;
-GRANT INSERT, DELETE ON documents.vector_index_unavailable_coverage TO docbank_runtime;
-GRANT INSERT ON documents.page_documents, documents.page_frames,
-    documents.page_recipes, documents.page_images, documents.email_generations,
-    documents.email_part_artifacts, documents.email_attachments,
-    documents.email_body_results, documents.email_document_publications,
-    documents.email_document_relations TO docbank_runtime;
-GRANT INSERT, UPDATE(state, results_json, failure_code, epoch, token, updated_at)
-    ON documents.page_render_jobs TO docbank_runtime;
-GRANT INSERT, UPDATE(attachment_id, published_at)
-    ON documents.email_heads TO docbank_runtime;
-GRANT DELETE ON documents.email_document_publications TO docbank_runtime;
-GRANT INSERT ON documents.media_sources, documents.media_source_versions,
-    documents.media_input_artifacts, documents.media_occurrences,
-    documents.media_operations TO docbank_runtime;
-GRANT UPDATE(source_version_id, visible, revoked_at)
-    ON documents.media_occurrences TO docbank_runtime;
-GRANT UPDATE(receipt_json, updated_at, receipt_source_version_id, receipt_operation_state) ON documents.media_operations TO docbank_runtime;
-GRANT INSERT, DELETE, UPDATE(passcode_hash)
-    ON documents.photo_hidden_credentials TO docbank_runtime;
-GRANT INSERT, DELETE ON documents.photo_hidden_failures TO docbank_runtime;
-GRANT INSERT, DELETE, UPDATE(locked_until)
-    ON documents.photo_hidden_lockout TO docbank_runtime;
-GRANT INSERT, UPDATE(preference, revision, updated_at, burst_gap_seconds,
-    backup_interval_seconds, backup_keep_last, hidden_unlock_lifetime_seconds,
-    representative_sequence)
-    ON documents.photo_library_settings TO docbank_runtime;
-GRANT INSERT, DELETE, UPDATE(state, focus, blur, brightness, color_red,
-    color_green, color_blue, framing, aesthetics, face_reports_json, face_inputs)
-    ON documents.photo_quality_signals TO docbank_runtime;
-GRANT INSERT, UPDATE(name, starred, revision, cover_asset_id, updated_at, deleted_at)
-    ON documents.photo_sets TO docbank_runtime;
-GRANT INSERT, DELETE ON documents.photo_set_members TO docbank_runtime;
-GRANT INSERT, DELETE, UPDATE(state, cursor, total_objects, completed_objects,
-    copied_objects, copied_bytes, cancel_requested, error, receipt_json,
-    updated_at, finished_at, retention_until)
-    ON documents.storage_operations TO docbank_runtime;
-GRANT INSERT ON documents.photo_description_explicit_waiters,
-  documents.photo_face_scans TO docbank_runtime;
-GRANT INSERT, DELETE, UPDATE(producer_fingerprint, caption, tags_json, visible_text,
-  rotation, dismissed, awaiting, caption_resolved, resolved_tags_json)
-  ON documents.photo_suggestions TO docbank_runtime;
-GRANT INSERT, DELETE, UPDATE(x, y, width, height, roll, facing, eyes_open, smile,
-  detector_fingerprint, revision) ON documents.photo_faces TO docbank_runtime;
-GRANT INSERT, UPDATE(last_operation_id, destination, destination_identity, state,
-    destination_reserved, error, retention_released, retired_at, retirement_requested)
-    ON documents.photo_checkouts TO docbank_runtime;
-GRANT INSERT, UPDATE(published, base_held, observed_identity, observed_hash,
-    observed_size, observed_mtime, observed_since, working_state, version_id,
-    blob_hash, size) ON documents.photo_checkout_entries TO docbank_runtime;
-GRANT INSERT ON documents.visual_preview_generations TO docbank_runtime;
-GRANT INSERT, UPDATE(generation_id, published_at)
-    ON documents.visual_preview_heads TO docbank_runtime;
-GRANT DELETE ON documents.embedding_input_generations, documents.embedding_vector_sets,
-    documents.embedding_vector_spaces, documents.embedding_failures,
-    documents.email_heads, documents.email_part_artifacts, documents.email_generations,
-    documents.email_body_results, documents.rendition_builds, documents.rendition_artifacts,
-    documents.rendition_units, documents.rendition_lexical_segments,
-    documents.rendition_lexical_index, documents.rendition_lexical_heads,
-    documents.rendition_lexical_generations, documents.rendition_lexical_generation_manifests,
-    documents.rendition_lexical_stream_builds,
-    documents.text_searchable_versions, documents.extracted_text,
-    documents.text_extraction_queue TO docbank_runtime;
-GRANT INSERT ON documents.derivative_blob_purge_pending,
-    documents.rendition_lexical_generations, documents.rendition_lexical_stream_builds,
-    documents.rendition_lexical_generation_manifests, documents.rendition_lexical_index
-    TO docbank_runtime;
-GRANT UPDATE(generation_id) ON documents.rendition_lexical_heads TO docbank_runtime;
-GRANT INSERT, UPDATE(purged_at, active, superseded_at, superseding_build_id)
-    ON documents.derivative_purge_suppressions TO docbank_runtime;
-```
+The schema owner calls `docbank.GrantPostgresRuntime` after installation or
+upgrade. The call runs
+[the canonical runtime grants](../../internal/store/pgschema/runtime_grants.sql)
+in one transaction under the schema setup lock. PostgreSQL removes existing
+column grants when it revokes the corresponding table privileges. The Store,
+backup, and processing fixtures use the same grant step. Catalog changes that
+affect runtime access must update that SQL with the operation that needs it.
 
 Checksum rows are inserted or compared with the existing value, never updated;
 deleting the owning blob cascades to its checksum. Pin every runtime connection's
@@ -749,7 +509,7 @@ version 1 schema and seed rows. It checks the installed objects and required
 rows. SQLite layout and portable metadata versions have their own history.
 
 Back up and close the vault before running owner setup on a newer build.
-Apply the current runtime grants before reopening. Recover with a compatible
+Call `docbank.GrantPostgresRuntime` before reopening. Recover with a compatible
 backup and binary. For fingerprint-only development builds, recreate
 disposable catalogs. Preserve any data you need in a portable backup from the
 matching build and restore it into a fresh numbered catalog.

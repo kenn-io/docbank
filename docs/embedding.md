@@ -28,18 +28,28 @@ For a fresh vault, call `InitializePostgres` with a caller-owned `*sql.DB`
 connected as the schema owner, a `PostgresCatalog` with the schema and owner
 names, and a new vault directory under an existing parent. It installs the
 catalog if needed and publishes a private root with the matching primary
-ownership marker. Apply the runtime grants. Repeating initialization on the
-same bound and closed root returns its existing vault ID. An existing catalog
-must already be at the current schema version.
+ownership marker. Call `GrantPostgresRuntime(ctx, owner, catalog, runtimeRole)`
+with the separate runtime login's name before opening. The schema owner replaces
+its direct catalog grants in one transaction, including column grants. Repeat
+the call after an upgrade to remove privileges the new build no longer needs.
+
+The database operator provides the login and its database privileges. Docbank
+checks that the login has `TEMPORARY` for paged tree walks. If the database
+revokes that privilege from `PUBLIC`, grant it to the runtime login on the
+vault database before calling `GrantPostgresRuntime`. The operator also
+controls access inherited from other roles and from `PUBLIC`.
+
+Repeating initialization on the same bound and closed root returns its existing
+vault ID. An existing catalog must already be at the current schema version.
 
 If initialization reports that it installed a directory before an error, keep
 the directory and retry at that path to verify the binding. If the catalog
 reports `ErrPostgresPrimaryUnbound`, use a fresh directory. A retry commits its
 own ownership epoch and keeps the earlier attempt fenced.
 
-For a restore, prepare a pristine catalog with `SetupPostgres`, apply the
-runtime grants, and call `repository.RestorePostgres` with the owner pool, the
-same catalog, and a `*pgx.ConnConfig` for the runtime login. Pass the saved
+For a restore, prepare a pristine catalog with `SetupPostgres` and
+`GrantPostgresRuntime`. Call `repository.RestorePostgres` with the owner pool,
+the same catalog, and a `*pgx.ConnConfig` for the runtime login. Pass the saved
 snapshot ID, a new target directory, and any protected roots. The backup can
 come from SQLite or PostgreSQL. A catalog with a bound root is ineligible as a
 restore destination, including when the vault has no documents.
@@ -56,9 +66,9 @@ the root lock until `Close`. Use `CreateBackup` to capture a portable snapshot.
 
 Before upgrading, stop writes, capture and verify a portable backup, and
 close the vault.
-Call `SetupPostgres` with the new build and the owner connection, apply its
-runtime grants, then reopen. For data written by a fingerprint-only development
-build, restore a portable backup into a fresh numbered catalog.
+Run `SetupPostgres` and `GrantPostgresRuntime` with the new build and the
+owner connection, then reopen. For data written by a fingerprint-only
+development build, restore a portable backup into a fresh numbered catalog.
 
 ## Run native MCP reads
 
