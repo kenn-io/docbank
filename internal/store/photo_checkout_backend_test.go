@@ -9,6 +9,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/docbank/internal/pgstoretest"
 )
 
 func checkoutForCommit(t *testing.T, s *Store) (PhotoCheckout, PhotoCheckoutEntry, Node) {
@@ -99,7 +101,7 @@ func checkPhotoCheckoutCommitRollbackPostgres(t *testing.T) {
 	require.NoError(t, err)
 	var role string
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT current_user`).Scan(&role))
-	_, err = setup.ExecContext(ctx, "REVOKE UPDATE(version_id) ON documents.photo_checkout_entries FROM "+pgx.Identifier{role}.Sanitize())
+	err = pgstoretest.RevokeColumnUpdates(ctx, setup, pgx.Identifier{role}.Sanitize(), "photo_checkout_entries", "version_id")
 	require.NoError(t, err)
 	hash := browseHash("rejected checkout edit")
 	require.ErrorContains(t, s.CommitPhotoCheckoutEntry(ctx, c, e, hash, 23, "image/jpeg", BlobPhysical{Encoding: "raw", StoredBytes: 23}), "permission denied")
@@ -118,7 +120,7 @@ func checkPhotoCheckoutCommitRollbackPostgres(t *testing.T) {
 	op, err := s.StorageOperation(ctx, c.LastOperationID)
 	require.NoError(t, err)
 	require.Zero(t, op.CopiedObjects)
-	_, err = setup.ExecContext(ctx, "GRANT UPDATE(version_id) ON documents.photo_checkout_entries TO "+pgx.Identifier{role}.Sanitize())
+	_, err = setup.ExecContext(ctx, "GRANT UPDATE ON documents.photo_checkout_entries TO "+pgx.Identifier{role}.Sanitize())
 	require.NoError(t, err)
 	require.NoError(t, s.CommitPhotoCheckoutEntry(ctx, c, e, hash, 23, "image/jpeg", BlobPhysical{Encoding: "raw", StoredBytes: 23}))
 	checkRetentionMetadata(t, s)
@@ -236,7 +238,7 @@ func checkPhotoCheckoutPublicationRecoveryPostgres(t *testing.T) {
 	require.NoError(t, err)
 	var role string
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT current_user`).Scan(&role))
-	_, err = setup.ExecContext(ctx, "REVOKE UPDATE(published) ON documents.photo_checkout_entries FROM "+pgx.Identifier{role}.Sanitize())
+	err = pgstoretest.RevokeColumnUpdates(ctx, setup, pgx.Identifier{role}.Sanitize(), "photo_checkout_entries", "published")
 	require.NoError(t, err)
 	called := false
 	err = s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) {
@@ -252,7 +254,7 @@ func checkPhotoCheckoutPublicationRecoveryPostgres(t *testing.T) {
 	intent, err := s.StorageOperation(ctx, op.ID)
 	require.NoError(t, err)
 	require.Equal(t, entries[0].FileID, intent.Cursor)
-	_, err = setup.ExecContext(ctx, "GRANT UPDATE(published) ON documents.photo_checkout_entries TO "+pgx.Identifier{role}.Sanitize())
+	_, err = setup.ExecContext(ctx, "GRANT UPDATE ON documents.photo_checkout_entries TO "+pgx.Identifier{role}.Sanitize())
 	require.NoError(t, err)
 	require.NoError(t, s.FinishPhotoCheckout(ctx, c.ID, op.ID, StorageOperationFailed, "{}", "recording copy failed", time.Now().Add(time.Hour)))
 	changed, _, err := s.ReplaceContent(ctx, node.ID, node.Revision, browseHash("new copy"), 23, "image/jpeg")

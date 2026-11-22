@@ -8,6 +8,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/docbank/internal/pgstoretest"
 )
 
 func checkPreviewBatchRecipes(t *testing.T, open func(*testing.T) *Store) {
@@ -60,7 +62,7 @@ func checkVisualPreviewPublicationRollbackPostgres(t *testing.T) {
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT current_user`).Scan(&role))
 	role = pgx.Identifier{role}.Sanitize()
 	// Fail the head write after the output blob and generation have been inserted.
-	_, err = setup.ExecContext(ctx, "REVOKE UPDATE(generation_id,published_at) ON documents.visual_preview_heads FROM "+role)
+	err = pgstoretest.RevokeColumnUpdates(ctx, setup, role, "visual_preview_heads", "generation_id", "published_at")
 	require.NoError(t, err)
 	_, err = s.PublishVisualPreview(ctx, node.CurrentVersionID, next, physical)
 	require.ErrorContains(t, err, "permission denied")
@@ -72,7 +74,7 @@ func checkVisualPreviewPublicationRollbackPostgres(t *testing.T) {
 	var count int
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM visual_preview_generations`).Scan(&count))
 	require.Equal(t, 1, count)
-	_, err = setup.ExecContext(ctx, "GRANT UPDATE(generation_id,published_at) ON documents.visual_preview_heads TO "+role)
+	_, err = setup.ExecContext(ctx, "GRANT UPDATE ON documents.visual_preview_heads TO "+role)
 	require.NoError(t, err)
 	second, err := s.PublishVisualPreview(ctx, node.CurrentVersionID, next, physical)
 	require.NoError(t, err)

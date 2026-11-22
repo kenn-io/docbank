@@ -29,9 +29,11 @@ connected as the schema owner, a `PostgresCatalog` with the schema and owner
 names, and a new vault directory under an existing parent. It installs the
 catalog if needed and publishes a private root with the matching primary
 ownership marker. Call `GrantPostgresRuntime(ctx, owner, catalog, runtimeRole)`
-with the separate runtime login's name before opening. The schema owner replaces
-its direct catalog grants in one transaction, including column grants. Repeat
-the call after an upgrade to remove privileges the new build no longer needs.
+with the embedded application's runtime login before opening. The schema owner
+replaces its direct grants on that catalog in one transaction. The login can
+read and write catalog data and execute its routines. Setup and restore retain
+control of the catalog identity and schema changes. Repeat the call after an
+upgrade to apply the grants to the current schema.
 
 The database operator provides the login and its database privileges. Docbank
 checks that the login has `TEMPORARY` for paged tree walks. If the database

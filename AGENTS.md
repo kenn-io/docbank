@@ -330,6 +330,7 @@ release, from a breaking change to `feat` to `fix`.
   Logical PostgreSQL import uses the schema owner and a pristine target. Never
   grant runtime credentials identity writes for restore; verify physical bytes
   before publishing a restored vault.
+  Scope runtime grants to catalog access. Keep workflow rules in Go.
   PostgreSQL retained history starts at numbered migration 1. Update the
   canonical DDL and add one forward migration for each schema change, including
   indexes and defaults. A port that changes only Go or queries needs none.

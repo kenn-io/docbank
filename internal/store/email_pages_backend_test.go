@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+
+	"go.kenn.io/docbank/internal/pgstoretest"
 )
 
 func checkEmailPublicationBeginFailurePostgres(t *testing.T) {
@@ -133,7 +135,7 @@ func checkPagePublicationRollbackPostgres(t *testing.T) {
 	var role string
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT current_user`).Scan(&role))
 	// The final job result fails after recipe, blob and image insertion.
-	_, err = setup.ExecContext(ctx, "REVOKE UPDATE (results_json) ON documents.page_render_jobs FROM "+pgx.Identifier{role}.Sanitize())
+	err = pgstoretest.RevokeColumnUpdates(ctx, setup, pgx.Identifier{role}.Sanitize(), "page_render_jobs", "results_json")
 	require.NoError(t, err)
 	require.ErrorContains(t, s.PublishPageImage(ctx, claim, image, recipe, &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 10}), "permission denied")
 	after, err := s.PageInventory(ctx, request.Binding())
@@ -142,7 +144,7 @@ func checkPagePublicationRollbackPostgres(t *testing.T) {
 	var blobs int
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM blobs WHERE hash=$1`, image.SHA256).Scan(&blobs))
 	require.Zero(t, blobs)
-	_, err = setup.ExecContext(ctx, "GRANT UPDATE (results_json) ON documents.page_render_jobs TO "+pgx.Identifier{role}.Sanitize())
+	_, err = setup.ExecContext(ctx, "GRANT UPDATE ON documents.page_render_jobs TO "+pgx.Identifier{role}.Sanitize())
 	require.NoError(t, err)
 	for _, frame := range frames {
 		require.NoError(t, s.PublishPageImage(ctx, claim, pageStoreImage(t, frame, recipe), recipe, &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 10}))

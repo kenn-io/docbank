@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document/bundle"
+
+	"go.kenn.io/docbank/internal/pgstoretest"
 )
 
 func exportPlanFixture(t *testing.T, s *Store, owner string) bundle.Plan {
@@ -153,14 +155,14 @@ func checkExportPlanRollbackPostgres(t *testing.T) {
 	var role string
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT current_user`).Scan(&role))
 	role = pgx.Identifier{role}.Sanitize()
-	_, err = setup.ExecContext(ctx, "REVOKE UPDATE(canonical_json) ON documents.export_plans FROM "+role)
+	err = pgstoretest.RevokeColumnUpdates(ctx, setup, role, "export_plans", "canonical_json")
 	require.NoError(t, err)
 	_, err = s.CreateExportPlan(ctx, "owner", request)
 	require.ErrorContains(t, err, "permission denied")
 	var retained int
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM export_plans)+(SELECT count(*) FROM export_documents)+(SELECT count(*) FROM export_role_roots)`).Scan(&retained))
 	require.Zero(t, retained)
-	_, err = setup.ExecContext(ctx, "GRANT UPDATE(canonical_json) ON documents.export_plans TO "+role)
+	_, err = setup.ExecContext(ctx, "GRANT UPDATE ON documents.export_plans TO "+role)
 	require.NoError(t, err)
 	_, err = s.CreateExportPlan(ctx, "owner", request)
 	require.NoError(t, err)
@@ -271,7 +273,7 @@ func checkExportFinishRollbackPostgres(t *testing.T) {
 	var role, deadline string
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT current_user,expires_at FROM export_plans WHERE id=$1`, plan.ID).Scan(&role, &deadline))
 	role = pgx.Identifier{role}.Sanitize()
-	_, err = setup.ExecContext(ctx, "REVOKE UPDATE(archive_name) ON documents.export_jobs FROM "+role)
+	err = pgstoretest.RevokeColumnUpdates(ctx, setup, role, "export_jobs", "archive_name")
 	require.NoError(t, err)
 	receipt := bundle.Receipt{Format: bundle.Format, PlanFingerprint: plan.Fingerprint, SHA256: fakeHash("e5"), Size: 100, Entries: plan.ArchiveEntries()}
 	require.ErrorContains(t, s.FinishExportJob(ctx, claim, &receipt, job.ID+".zip", ""), "permission denied")
@@ -282,7 +284,7 @@ func checkExportFinishRollbackPostgres(t *testing.T) {
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT expires_at FROM export_plans WHERE id=$1`, plan.ID).Scan(&retained))
 	require.Equal(t, deadline, retained)
 	require.NoError(t, s.CheckExportClaim(ctx, claim))
-	_, err = setup.ExecContext(ctx, "GRANT UPDATE(archive_name) ON documents.export_jobs TO "+role)
+	_, err = setup.ExecContext(ctx, "GRANT UPDATE ON documents.export_jobs TO "+role)
 	require.NoError(t, err)
 	require.NoError(t, s.FinishExportJob(ctx, claim, &receipt, job.ID+".zip", ""))
 	checkRetentionMetadata(t, s)
