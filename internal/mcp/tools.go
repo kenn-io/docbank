@@ -34,7 +34,7 @@ func catalogInstructions(options ServerOptions) string {
 		instructions += " start_processing requires a reviewed plan and prior operator consent."
 	}
 	if options.AllowPackageWrites {
-		instructions += " Package writes can preflight local sources, import packages, assign or resolve custodians, and publish or export Bates PDFs. Bates reservation does not stamp or publish files. Reviewed PDF publication requires an operator-created allocation; MCP cannot grant original-retention consent."
+		instructions += " Package writes can preflight local sources, import packages, assign or resolve custodians, prepare PDFs for review, and publish or export Bates PDFs. Bates reservation does not stamp or publish files. Reviewed PDF publication requires an operator-created allocation; MCP cannot grant original-retention consent."
 	}
 	if options.AllowPhotoEdits {
 		instructions += " Photo edits change one asset at an expected revision."
@@ -203,7 +203,7 @@ func toolCatalog(options ServerOptions) []*sdkmcp.Tool {
 		definitions = append(definitions, preflightLoadFilePackageToolDefinition, packageImportToolDefinition,
 			resolvePackageCustodianToolDefinition, assignPackageCustodianToolDefinition,
 			ensureBatesNamespaceToolDefinition, reserveBatesRangeToolDefinition, publishBatesExportToolDefinition, publishNumberedPDFToolDefinition,
-			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition, recipientPackageTool)
+			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition, recipientPackageTool, prepareNativePDFTool)
 	}
 	if options.AllowPhotoEdits {
 		definitions = append(definitions, photoWriteToolDefinitions...)
@@ -266,6 +266,8 @@ func registerToolCatalog(
 		case ensureBatesNamespaceToolDefinition.name, reserveBatesRangeToolDefinition.name,
 			publishBatesExportToolDefinition.name, publishNumberedPDFToolDefinition.name, exportBatesFileToolDefinition.name:
 			handler = batesWriteToolHandler(lease, tool.Name, output, logger)
+		case prepareNativePDFTool.name:
+			handler = prepareNativePDFHandler(lease, output, logger)
 		case recipientPackageTool.name:
 			handler = recipientPackageHandler(lease, output, logger)
 		case exportLoadFilePackageToolDefinition.name:
@@ -482,8 +484,13 @@ func stableDomainError(err error) (string, int) {
 	if full, ok := errors.AsType[*reviewedBatesError](err); ok {
 		return full.code, 0
 	}
+	if preparation, ok := errors.AsType[preparationError](err); ok {
+		return string(preparation), 0
+	}
 	var scope *daemonconn.SourceFenceScopeTooLargeError
 	switch {
+	case errors.Is(err, errPreparationLocalIO):
+		return preparationLocalIO, 0
 	case errors.As(err, &scope):
 		return "scope_too_large", scope.ObservedScopeCount
 	case errors.Is(err, store.ErrInvalidSearchScope):
@@ -609,6 +616,9 @@ func stableDomainError(err error) (string, int) {
 }
 
 func domainErrorMessage(code string) string {
+	if message, ok := preparationMessages[code]; ok {
+		return message
+	}
 	if message, ok := answerErrorMessages[code]; ok {
 		return message
 	}
@@ -821,7 +831,7 @@ func sanitizedRPCError(_ error) *jsonrpc.Error {
 
 func logOperationError(logger *slog.Logger, operation string, err error) {
 	code, _ := stableDomainError(err)
-	if errors.Is(err, errExportLocalIO) || errors.Is(err, errReportLocalIO) || (code == "bates_local_io" || code == recipientPackageLocalIOCode) {
+	if errors.Is(err, errExportLocalIO) || errors.Is(err, errReportLocalIO) || (code == "bates_local_io" || code == recipientPackageLocalIOCode) || errors.Is(err, errPreparationLocalIO) {
 		logger.Error("MCP operation failed", "operation", operation,
 			"error_code", code, "error", err)
 		return
