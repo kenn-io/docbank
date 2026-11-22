@@ -11,12 +11,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/mcp"
 	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/redactiontest"
@@ -105,6 +107,7 @@ func TestNativePDFPreparationCLI(t *testing.T) {
 	require.Equal(t, result.Map, old.Map)
 	_, err = runCLI(t, "redaction", "prepare", "/inbox/native.pdf")
 	require.Equal(t, exitGeneral, commandExitCode(err, true))
+	qualifyMCPHistoricalPreparation(t)
 	stop()
 	assertNoProcessingJobs(t, home, "preparation must not enqueue processing")
 	// Only the daemon-returned map supplies geometry and evidence to resolution.
@@ -126,4 +129,85 @@ func TestNativePDFPreparationCLI(t *testing.T) {
 	verifyRedactionPDF(t, saved, sidecar, artifact)
 	require.Equal(t, "[REDACTED] KEEP SECRET", strings.Join(strings.Fields(readRedactionPDFText(t, saved)), " "))
 	assertRedactionPixels(t, saved, original, fixture)
+}
+
+func qualifyMCPHistoricalPreparation(t *testing.T) {
+	t.Helper()
+	const path = "/inbox/gap.pdf"
+	// This glyph has visible ink but maps to whitespace, leaving an ordered gap.
+	pdf := redactiontest.FontPDF("BT /F1 24 Tf 72 720 Td (A) Tj ET", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding /ToUnicode 6 0 R >>", "1 begincodespacerange <00> <FF> endcodespacerange 1 beginbfchar <41> <0020> endbfchar")
+	file := filepath.Join(t.TempDir(), "gap.pdf")
+	require.NoError(t, os.WriteFile(file, pdf, 0600))
+	_, err := runCLI(t, "add", file, "--dest", "/inbox")
+	require.NoError(t, err)
+	stat, err := runCLI(t, "stat", path, "--json")
+	require.NoError(t, err)
+	var node api.Node
+	require.NoError(t, json.Unmarshal([]byte(stat), &node))
+	replacement := writeSourceFile(t, "new-current.txt", "current text is not the historical PDF")
+	_, err = runCLI(t, "put", replacement, path)
+	require.NoError(t, err)
+
+	agent := startWorkflowMCP(t, mcp.ServerOptions{AllowPackageWrites: true})
+	defer agent.stop(t)
+	var info api.VaultIdentity
+	require.NoError(t, json.Unmarshal(agent.call(t, "get_vault_info", map[string]any{}), &info))
+	var versions struct {
+		Items []struct {
+			ContentVersionID string `json:"content_version_id"`
+			BlobHash         string `json:"blob_hash"`
+			Size             int64  `json:"size"`
+			IsCurrent        bool   `json:"is_current"`
+		} `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal(agent.call(t, "list_document_versions", map[string]any{"node_id": node.ID}), &versions))
+	require.Len(t, versions.Items, 2)
+	var historicalVersionFound bool
+	for _, version := range versions.Items {
+		if version.ContentVersionID == node.CurrentVersionID {
+			require.False(t, version.IsCurrent)
+			require.Equal(t, node.BlobHash, version.BlobHash)
+			require.Equal(t, node.Size, version.Size)
+			historicalVersionFound = true
+		} else {
+			require.True(t, version.IsCurrent)
+		}
+	}
+	require.True(t, historicalVersionFound)
+	f := nativeRedactionFiles{dir: t.TempDir()}
+	f.preparation = filepath.Join(f.dir, "PRIVATE-preparation.json")
+	f.masks = filepath.Join(f.dir, "masks.json")
+	f.review = filepath.Join(f.dir, "review.json")
+	raw := agent.call(t, "prepare_native_pdf", map[string]any{"vault_id": info.VaultID, "node_id": node.ID,
+		"content_version_id": node.CurrentVersionID, "blob_hash": node.BlobHash, "size": node.Size, "destination_path": f.preparation})
+	var receipt struct {
+		State            string `json:"state"`
+		ContentVersionID string `json:"content_version_id"`
+		SHA256           string `json:"sha256"`
+		Pages            []struct {
+			Ordered   int `json:"ordered_gaps"`
+			Unordered int `json:"unordered_gaps"`
+		} `json:"pages"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &receipt))
+	require.Equal(t, "published", receipt.State, string(raw))
+	require.Equal(t, node.CurrentVersionID, receipt.ContentVersionID)
+	require.Len(t, receipt.Pages, 1)
+	require.Equal(t, 1, receipt.Pages[0].Ordered)
+	require.Zero(t, receipt.Pages[0].Unordered)
+	saved, err := os.ReadFile(f.preparation)
+	require.NoError(t, err)
+	require.Equal(t, redactionPDFHash(saved), receipt.SHA256)
+	require.NoError(t, json.Unmarshal(saved, &f.prep))
+	uncovered := processing.RedactionMask{ID: uuid.New(), Selector: redaction.Selector{Kind: "rectangle", MapSHA256: f.prep.Map.SHA256,
+		Boxes: []redaction.Box{{Page: 1, FrameSHA256: f.prep.Map.Pages[0].FrameSHA256, X0: 30000, Y0: 30000, X1: 31000, Y1: 31000}}}}
+	masks, err := json.Marshal([]processing.RedactionMask{uncovered})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(f.masks, masks, 0600))
+	_, err = runCLI(t, "redaction", "resolve", f.preparation, f.masks, "--json")
+	require.ErrorContains(t, err, "mapping_incomplete")
+	review := f.resolve(t, []processing.RedactionMask{{ID: uuid.New(), Selector: redaction.Selector{Kind: "page", MapSHA256: f.prep.Map.SHA256, Pages: []int{1}}}})
+	text, err := redaction.Text(review.Resolved)
+	require.NoError(t, err)
+	require.Equal(t, "[REDACTED]\f", string(text))
 }

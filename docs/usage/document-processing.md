@@ -122,7 +122,8 @@ text. `--json` returns the complete `native-pdf-preparation/v1` envelope,
 **including unredacted text**. Treat any saved JSON like the original document.
 Agents can use the same JSON command or authenticated
 `POST /api/v1/redaction/prepare`. The browser uses the same preparation in its
-[PDF review editor](#review-a-pdf-in-the-browser); no MCP tool is exposed.
+[PDF review editor](#review-a-pdf-in-the-browser). Local MCP agents can
+[save a preparation for the same resolver](mcp.md#prepare-a-retained-pdf-for-review).
 
 Preparation returns coverage gaps for inspection. Every ordered gap must be
 fully masked, and an unordered gap requires masking its whole page, before the

@@ -168,7 +168,8 @@ environment. Printing configuration leaves the listener's startup to you.
 Both transports have the fixed read catalog described below.
 `--allow-processing` adds only guarded processing start.
 `--allow-package-writes` permits load-file preflight, import, custodian changes,
-Bates exports, reviewed recipient ZIPs and publication of an operator-reserved reviewed PDF. `--allow-photo-edits` permits photo asset mutations.
+Bates exports, reviewed recipient ZIPs, PDF preparation and publication of an
+operator-reserved reviewed PDF. `--allow-photo-edits` permits photo asset mutations.
 `--allow-export-writes` enables native export jobs and local downloads.
 `--allow-report-writes` enables frozen report creation, revision, local delivery,
 and explicit release. `--allow-kata-writes` permits quoting verified passages
@@ -260,9 +261,8 @@ fields are rejected. Every successful tool result contains both structured
 content and its JSON text representation. The complete result, including
 resource links, is capped at 1 MiB.
 
-Tests enforce a 150,000-byte default catalog budget and a 235,000-byte budget
-with all six write flags enabled, set from baseline measurements of 135,667 and
-213,288 bytes, respectively.
+Tests cap the default catalog at 150,000 bytes and the catalog with all write
+flags enabled at 237,000 bytes.
 They measure compact JSON of the complete client-decoded `tools/list` result
 with HTML escaping disabled to match the SDK, including output schemas,
 metadata, and cache fields; a larger catalog requires a reviewed budget edit.
@@ -773,6 +773,27 @@ identities, including at most 64 embedding job IDs, and does not poll. An
 initial `processing_outcome_unknown` result contains no job ID, so its outcome
 cannot be reconciled through MCP. Do not retry it blindly, because MCP has no
 job lookup for that case.
+
+## Prepare a retained PDF for review
+
+With `--allow-package-writes`, `prepare_native_pdf` saves the same preparation
+JSON as `docbank redaction prepare --json`. Use `get_vault_info` for `vault_id`
+and `list_document_versions` for `node_id`, `content_version_id`, `blob_hash`
+and `size`. Supply the version explicitly, even for the current PDF.
+`destination_path` is an absolute path on the MCP host, outside the Docbank
+data directory. Choose a new file name such as `PRIVATE-preparation.json`.
+
+The result gives the saved file's size and SHA-256, its source and map
+identities, and each page's UTF-8 byte span and coverage-gap counts. The file
+contains unredacted text. Handle it like the original PDF and use it with
+explicit masks in [the CLI resolver](document-processing.md#review-and-render-a-native-pdf).
+Ordered gaps need covering masks. Unordered gaps need whole-page masks.
+
+Preparation uses the daemon's configured Linux amd64 page runtime and its
+60-second request deadline. Refresh the selection after
+`redaction_selection_changed`. After a lost reply, inspect the destination
+before retrying. `published_durability_unknown` and `cleanup_failed` describe
+problems after saving. The destination still names the saved file.
 
 ## Publish a reserved numbered PDF
 

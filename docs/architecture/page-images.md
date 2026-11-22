@@ -165,6 +165,12 @@ a bare `aligned-text/v1` map cannot identify the meaning of that digest. The
 service and client check source, frame, evidence and map bindings. Client checks
 establish response consistency, not independent verification of source pixels.
 
+The opt-in MCP preparation tool binds the exact vault, live node and retained
+version before calling the same daemon endpoint on its own connection. It
+rebuilds the map from the returned observations before saving the private
+envelope. MCP replies contain the saved identity and bounded page summaries.
+The full map and source text stay in the local file for the existing resolver.
+
 Preparation shares one slot with resolve and render, with no queue. Shutdown cancels admitted
 work and waits for cleanup. Limits are 8 KiB requests, 64 MiB originals, the
 entire 1–16-page PDF, 8 MiB retained evidence, a 15 MiB result and a 16 MiB client
