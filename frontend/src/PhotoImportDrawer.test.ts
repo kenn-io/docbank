@@ -1597,7 +1597,7 @@ it("retains a selection when the channel changes during checkpoint save", async 
   releaseSave();
   await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
   await waitFor(() => expect(replacement.uploadPhotoGroup).toHaveBeenCalledOnce());
-  expect(replacement.planPhotoImport.mock.calls[0]?.[2]).toBe(sourceID);
+  expect(vi.mocked(replacement.planPhotoImport).mock.calls[0]?.[2]).toBe(sourceID);
   expect(screen.queryByText(/changed in another tab/)).toBeNull();
 });
 
@@ -1994,7 +1994,7 @@ it("resumes a saved checkpoint under its own ID when its summary lookup fails", 
     target: { files: selected },
   });
   await screen.findByText("Stop after planning");
-  expect(channel.planPhotoImport.mock.calls[0]?.slice(0, 3)).toEqual([
+  expect(vi.mocked(channel.planPhotoImport).mock.calls[0]?.slice(0, 3)).toEqual([
     selected,
     "/photos",
     "saved-source",
