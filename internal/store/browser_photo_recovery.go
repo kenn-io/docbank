@@ -3,10 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"uuid"
 )
@@ -100,40 +98,21 @@ func (s *Store) BrowserPhotoImport(ctx context.Context, sourceID string) (Browse
 func (s *Store) BrowserPhotoImportPaths(
 	ctx context.Context, relativePaths []string,
 ) ([]BrowserPhotoImportMember, error) {
-	patterns := make([]string, 0, len(relativePaths))
-	seen := make(map[string]bool, len(relativePaths))
+	selected := make(map[string]bool, len(relativePaths))
 	for _, relativePath := range relativePaths {
-		if relativePath == "" {
-			continue
-		}
-		pattern := "browser:%/" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(relativePath)
-		if s.postgresSchema == "" {
-			pattern = "browser:*/" + strings.NewReplacer("[", "[[]", "*", "[*]", "?", "[?]").Replace(relativePath)
-		}
-		if !seen[pattern] {
-			patterns = append(patterns, pattern)
-			seen[pattern] = true
+		if relativePath != "" {
+			selected[relativePath] = true
 		}
 	}
-	if len(patterns) == 0 {
+	if len(selected) == 0 {
 		return nil, nil
 	}
-	slices.Sort(patterns)
-	encoded, err := json.Marshal(patterns)
-	if err != nil {
-		return nil, err
-	}
-	pathMatch := "p.original_path LIKE convert_to(paths.value,'UTF8') ESCAPE decode('5c','hex')"
-	if s.postgresSchema == "" {
-		pathMatch = "p.original_path GLOB paths.value"
-	}
 	rows, err := s.db.QueryContext(ctx, `SELECT p.original_path,i.source_desc,cv.blob_hash
-		FROM provenance p JOIN ingests i ON i.id=p.ingest_id JOIN nodes n ON n.id=p.node_id
+		FROM provenance p JOIN ingests i ON i.id=p.ingest_id
 		JOIN provenance_version_bindings b ON b.provenance_identity=p.identity
 		JOIN content_versions cv ON cv.version_id=b.content_version_id
 		WHERE i.source_kind='photo-import' AND i.source_desc LIKE 'browser: %'
-		AND EXISTS (SELECT 1 FROM (`+s.jsonArrayRowsSQL()+`) paths WHERE `+pathMatch+`)
-		AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)`, string(encoded))
+		AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)`)
 	if err != nil {
 		return nil, fmt.Errorf("finding browser photo import paths: %w", err)
 	}
@@ -144,8 +123,27 @@ func (s *Store) BrowserPhotoImportPaths(
 		if err := rows.Scan(&original, &description, &hash); err != nil {
 			return nil, err
 		}
-		id, relativePath, ok := strings.Cut(strings.TrimPrefix(original, "browser:"), "/")
+		original, ok := strings.CutPrefix(original, "browser:")
+		if !ok {
+			continue
+		}
+		id, relativePath, ok := strings.Cut(original, "/")
 		if _, err := uuid.Parse(id); !ok || err != nil {
+			continue
+		}
+		match := false
+		for suffix := relativePath; ; {
+			if selected[suffix] {
+				match = true
+				break
+			}
+			_, next, ok := strings.Cut(suffix, "/")
+			if !ok {
+				break
+			}
+			suffix = next
+		}
+		if !match {
 			continue
 		}
 		folder := strings.TrimPrefix(description, "browser: ")
