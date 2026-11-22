@@ -37,7 +37,7 @@ func TestMCPPrepareNativePDF(t *testing.T) {
 	const sourceText = "SECRET KEEP SECRET"
 	require.Equal(t, sourceText, original.Map.Text)
 	const vaultID = "00000000-0000-4000-8000-000000000056"
-	for _, scenario := range []string{"saved", "disabled", "wrong vault", "wrong hash", "stale revision", "changed response selection", "malformed response", "changed map", "destination conflict"} {
+	for _, scenario := range []string{"saved", "disabled", "wrong vault", "wrong hash", "stale revision", "invalid preparation", "changed response selection", "malformed response", "changed map", "destination conflict"} {
 		t.Run(scenario, func(t *testing.T) {
 			prep := original
 			prep.Selection.Revision++
@@ -87,6 +87,10 @@ func TestMCPPrepareNativePDF(t *testing.T) {
 						w.Header().Set("Content-Type", "application/problem+json")
 						w.WriteHeader(http.StatusConflict)
 						assert.NoError(t, json.MarshalWrite(w, api.NewError(409, "redaction_selection_changed", sourceText)))
+					case "invalid preparation":
+						w.Header().Set("Content-Type", "application/problem+json")
+						w.WriteHeader(http.StatusUnprocessableEntity)
+						assert.NoError(t, json.MarshalWrite(w, api.NewError(422, "invalid_redaction_preparation", sourceText)))
 					case "changed response selection":
 						reply := prep
 						reply.Selection.Revision++
@@ -116,6 +120,12 @@ func TestMCPPrepareNativePDF(t *testing.T) {
 			if scenario == "disabled" {
 				require.EqualValues(t, jsonrpc.CodeInvalidParams, decodeWireError(t, response).Code)
 				require.Zero(t, requests.Load())
+				require.NoFileExists(t, destination)
+				return
+			}
+			if scenario == "invalid preparation" {
+				require.EqualValues(t, jsonrpc.CodeInvalidParams, decodeWireError(t, response).Code)
+				require.EqualValues(t, 1, preparations.Load())
 				require.NoFileExists(t, destination)
 				return
 			}

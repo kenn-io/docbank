@@ -198,6 +198,9 @@ func qualifyMCPHistoricalPreparation(t *testing.T) {
 	saved, err := os.ReadFile(f.preparation)
 	require.NoError(t, err)
 	require.Equal(t, redactionPDFHash(saved), receipt.SHA256)
+	cli, err := runCLI(t, "redaction", "prepare", path, "--version", node.CurrentVersionID, "--json")
+	require.NoError(t, err)
+	require.True(t, bytes.Equal([]byte(cli), saved), "MCP and CLI must save identical preparation JSON")
 	require.NoError(t, json.Unmarshal(saved, &f.prep))
 	uncovered := processing.RedactionMask{ID: uuid.New(), Selector: redaction.Selector{Kind: "rectangle", MapSHA256: f.prep.Map.SHA256,
 		Boxes: []redaction.Box{{Page: 1, FrameSHA256: f.prep.Map.Pages[0].FrameSHA256, X0: 30000, Y0: 30000, X1: 31000, Y1: 31000}}}}

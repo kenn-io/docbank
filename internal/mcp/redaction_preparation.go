@@ -134,6 +134,7 @@ func prepareNativePDF(ctx context.Context, lease *daemonLease, raw []byte, logge
 	if err != nil {
 		return prepareNativePDFOutput{}, preparationError(preparationIntegrity)
 	}
+	data = append(data, '\n') // Match the CLI's JSON output.
 	if len(data) > preparationFileLimit {
 		return prepareNativePDFOutput{}, preparationError(preparationLimit)
 	}
@@ -236,6 +237,9 @@ func preparationRequestError(ctx context.Context, err error) error {
 		return refusal
 	}
 	code, _ := daemonconn.ProblemCode(err)
+	if code == "invalid_redaction_preparation" {
+		return invalidToolArgumentsError()
+	}
 	if _, known := preparationMessages[code]; known || code == "not_found" {
 		return preparationError(code)
 	}
