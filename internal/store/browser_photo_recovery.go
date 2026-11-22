@@ -20,11 +20,9 @@ type BrowserPhotoImport struct {
 
 // BrowserPhotoImportMember describes one current browser provenance path.
 type BrowserPhotoImportMember struct {
-	SourceID        string
-	Folder          string
-	FolderSelection bool
-	RelativePath    string
-	BlobHash        string
+	SourceID     uuid.UUID
+	RelativePath string
+	BlobHash     string
 }
 
 // BrowserPhotoImport finds a browser source from its committed provenance.
@@ -92,9 +90,8 @@ func (s *Store) BrowserPhotoImport(ctx context.Context, sourceID string) (Browse
 	return result, result.Groups > 0, nil
 }
 
-// BrowserPhotoImportPaths finds recorded members by their path beneath a
-// selected folder. The returned hashes let callers confirm the source before
-// continuing it.
+// BrowserPhotoImportPaths finds current browser provenance at exact selected
+// relative paths.
 func (s *Store) BrowserPhotoImportPaths(
 	ctx context.Context, relativePaths []string,
 ) ([]BrowserPhotoImportMember, error) {
@@ -107,7 +104,7 @@ func (s *Store) BrowserPhotoImportPaths(
 	if len(selected) == 0 {
 		return nil, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT p.original_path,i.source_desc,cv.blob_hash
+	rows, err := s.db.QueryContext(ctx, `SELECT p.original_path,cv.blob_hash
 		FROM provenance p JOIN ingests i ON i.id=p.ingest_id
 		JOIN provenance_version_bindings b ON b.provenance_identity=p.identity
 		JOIN content_versions cv ON cv.version_id=b.content_version_id
@@ -119,8 +116,8 @@ func (s *Store) BrowserPhotoImportPaths(
 	defer func() { _ = rows.Close() }()
 	var members []BrowserPhotoImportMember
 	for rows.Next() {
-		var original, description, hash string
-		if err := rows.Scan(&original, &description, &hash); err != nil {
+		var original, hash string
+		if err := rows.Scan(&original, &hash); err != nil {
 			return nil, err
 		}
 		original, ok := strings.CutPrefix(original, "browser:")
@@ -128,28 +125,15 @@ func (s *Store) BrowserPhotoImportPaths(
 			continue
 		}
 		id, relativePath, ok := strings.Cut(original, "/")
-		if _, err := uuid.Parse(id); !ok || err != nil {
+		sourceID, err := uuid.Parse(id)
+		if !ok || err != nil {
 			continue
 		}
-		match := false
-		for suffix := relativePath; ; {
-			if selected[suffix] {
-				match = true
-				break
-			}
-			_, next, ok := strings.Cut(suffix, "/")
-			if !ok {
-				break
-			}
-			suffix = next
-		}
-		if !match {
+		if !selected[relativePath] {
 			continue
 		}
-		folder := strings.TrimPrefix(description, "browser: ")
 		members = append(members, BrowserPhotoImportMember{
-			SourceID: id, Folder: folder, FolderSelection: folder != "Choose files",
-			RelativePath: relativePath, BlobHash: hash,
+			SourceID: sourceID, RelativePath: relativePath, BlobHash: hash,
 		})
 	}
 	if err := rows.Err(); err != nil {

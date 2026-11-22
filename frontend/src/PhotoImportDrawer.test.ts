@@ -1881,14 +1881,24 @@ it("names a saved import with nothing in the vault yet without a zero count", as
   );
 });
 
-it("keeps the interrupted import offered when a different folder is chosen for it", async () => {
+it("keeps a checkpointed import offered when a selected file has changed", async () => {
+  const selected = tripFolder();
+  const { photoImportManifest } = await import("./photoImportStorage.js");
+  savedImports.set("wrong-folder", {
+    sourceID: recorded.source_id,
+    revision: "saved",
+    destination: "/photos",
+    manifestVersion: 2,
+    manifestHash: photoImportManifest(selected).digest,
+    pickerKind: "folder",
+  });
   browserImports.mockResolvedValue(recorded);
   const channel: PhotoImportTransport = {
     planPhotoImport: vi
       .fn()
       .mockRejectedValue(
         new APIError(
-          "The recorded import differs from this selection. Choose the original folder.",
+          "A selected file has different bytes from this import. Start a new import to save it.",
           409,
           "photo_import_changed",
         ),
@@ -1904,20 +1914,21 @@ it("keeps the interrupted import offered when a different folder is chosen for i
     onauthfailure: vi.fn(),
   });
   await screen.findByRole("heading", { name: "Interrupted import found" });
-  await fireEvent.input(screen.getByLabelText("Destination"), {
-    target: { value: "/photos" },
-  });
   await fireEvent.click(screen.getByRole("button", { name: "Choose the same folder…" }));
   await fireEvent.change(screen.getByLabelText("Choose photo folder"), {
-    target: { files: tripFolder() },
+    target: { files: selected },
   });
-  await screen.findByText(/The recorded import differs from this selection/);
+  await screen.findByText(/A selected file has different bytes from this import/);
   expect(screen.getByRole("button", { name: "Choose the same folder…" })).toHaveProperty(
     "disabled",
     false,
   );
   expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
-  expect(savedImports.has("wrong-folder")).toBe(false);
+  expect(savedImports.get("wrong-folder")?.sourceID).toBe(recorded.source_id);
+  expect(vi.mocked(channel.planPhotoImport).mock.calls[0]?.slice(1, 3)).toEqual([
+    "/photos",
+    recorded.source_id,
+  ]);
 });
 
 it("keeps a fresh import closed until a failed recovery lookup succeeds", async () => {

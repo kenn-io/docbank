@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"strings"
 	"testing"
+	"uuid"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
@@ -36,14 +37,13 @@ func checkBrowserPhotoRecovery(t *testing.T, open func(*testing.T) *Store) {
 	require.Equal(t, fakeHash("Card/other.XMP"), result.Members["Card/other.XMP"])
 	paths, err := s.BrowserPhotoImportPaths(ctx, []string{"other.XMP"})
 	require.NoError(t, err)
+	require.Empty(t, paths)
+	paths, err = s.BrowserPhotoImportPaths(ctx, []string{"Card/other.XMP"})
+	require.NoError(t, err)
 	require.Contains(t, paths, BrowserPhotoImportMember{
-		SourceID: source, Folder: "Card", FolderSelection: true,
+		SourceID:     uuid.MustParse(source),
 		RelativePath: "Card/other.XMP", BlobHash: fakeHash("Card/other.XMP"),
 	})
-	paths, err = s.BrowserPhotoImportPaths(ctx, []string{"Card/other.XMP", "missing.XMP"})
-	require.NoError(t, err)
-	require.Len(t, paths, 1)
-	require.Equal(t, "Card/other.XMP", paths[0].RelativePath)
 	node, err := s.NodeByPath(ctx, "/other.XMP")
 	require.NoError(t, err)
 	_, _, err = s.Trash(ctx, node.ID, node.Revision)
@@ -67,7 +67,7 @@ func checkBrowserPhotoRecovery(t *testing.T, open func(*testing.T) *Store) {
 	paths, err = s.BrowserPhotoImportPaths(ctx, []string{"loose.XMP"})
 	require.NoError(t, err)
 	require.Contains(t, paths, BrowserPhotoImportMember{
-		SourceID: looseID, Folder: "Choose files", FolderSelection: false,
+		SourceID:     uuid.MustParse(looseID),
 		RelativePath: "loose.XMP", BlobHash: fakeHash("loose"),
 	})
 	latest, found, err := s.BrowserPhotoImport(ctx, "")

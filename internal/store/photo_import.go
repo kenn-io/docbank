@@ -260,9 +260,9 @@ func (s *Store) browserPhotoSizeCandidatesSQL() string {
 }
 
 // ResolveBrowserPhotoPaths continues a selected directory only when its matching
-// photo content identifies one canonical browser folder. Recovery also considers
-// retained provenance for trashed content. Members without a hash never match.
-func (s *Store) ResolveBrowserPhotoPaths(ctx context.Context, members []PhotoImportMember, recovering bool) ([]string, error) {
+// current photo content identifies one canonical browser folder. Members without
+// a hash never match.
+func (s *Store) ResolveBrowserPhotoPaths(ctx context.Context, members []PhotoImportMember) ([]string, error) {
 	hashes := make([]string, 0, len(members))
 	for _, member := range members {
 		if member.BlobHash != "" {
@@ -273,19 +273,9 @@ func (s *Store) ResolveBrowserPhotoPaths(ctx context.Context, members []PhotoImp
 	if err != nil {
 		return nil, err
 	}
-	query := `
- SELECT cv.blob_hash, c.original_path` + browserPhotoSourceSQL() + `
- AND cv.blob_hash IN (SELECT value FROM (` + s.jsonArrayRowsSQL() + `) hashes)`
-	if recovering {
-		query = `SELECT cv.blob_hash, p.original_path FROM provenance p
- JOIN ingests i ON i.id=p.ingest_id
- JOIN provenance_version_bindings b ON b.provenance_identity=p.identity
- JOIN content_versions cv ON cv.version_id=b.content_version_id
- WHERE i.source_kind='photo-import' AND i.source_desc LIKE 'browser: %'
- AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
- AND cv.blob_hash IN (SELECT value FROM (` + s.jsonArrayRowsSQL() + `) hashes)`
-	}
-	rows, err := s.db.QueryContext(ctx, query, string(encoded))
+	rows, err := s.db.QueryContext(ctx, `
+ SELECT cv.blob_hash, c.original_path`+browserPhotoSourceSQL()+`
+ AND cv.blob_hash IN (SELECT value FROM (`+s.jsonArrayRowsSQL()+`) hashes)`, string(encoded))
 	if err != nil {
 		return nil, fmt.Errorf("finding browser photo provenance: %w", err)
 	}
@@ -296,7 +286,7 @@ func (s *Store) ResolveBrowserPhotoPaths(ctx context.Context, members []PhotoImp
 		if err := rows.Scan(&hash, &original); err != nil {
 			return nil, err
 		}
-		if !strings.HasPrefix(original, "browser:") || recovering && ClassifyPhotoSource(original).Kind == PhotoSourceSidecar {
+		if !strings.HasPrefix(original, "browser:") {
 			continue
 		}
 		if folders[hash] == nil {
