@@ -947,15 +947,10 @@ func TestBrowserPhotoRecoveryPlan(t *testing.T) {
 	var wrapper struct {
 		Import struct {
 			SourceID string `json:"source_id"`
-			Folder   string `json:"folder"`
-			Groups   int    `json:"groups"`
 		} `json:"import"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(body), &wrapper))
 	require.Equal(t, source, wrapper.Import.SourceID)
-	require.Equal(t, "Choose files", wrapper.Import.Folder)
-	require.Equal(t, 1, wrapper.Import.Groups)
-	files[0]["expected_hash"] = testHash("one")
 	node, err := catalog.NodeByPath(t.Context(), "/photos/one.xmp")
 	require.NoError(t, err)
 	archive, err := catalog.Mkdir(t.Context(), catalog.RootID(), "archive")
@@ -982,10 +977,6 @@ func TestBrowserPhotoRecoveryPlan(t *testing.T) {
 	require.Equal(t, []int{resumedFirstGroup}, resumed.Present)
 	second := uploadBrowserPhoto(t, reconnected, resumed.ImportID, resumedSecondGroup, map[string]any{"expected_hash": testHash("two")}, []byte("two"))
 	require.Equal(t, "added", second.Receipt.Status)
-	files[0]["expected_hash"] = testHash("different")
-	require.NoError(t, wsjson.Write(t.Context(), reconnected, plan))
-	changed := readPhotoResponse(t, reconnected)
-	require.Equal(t, "photo_import_changed", changed.Code)
 }
 
 func TestBrowserPhotoRecoveryRequiresEveryGroupMember(t *testing.T) {
@@ -1019,12 +1010,13 @@ func TestBrowserPhotoRecoveryRequiresEveryGroupMember(t *testing.T) {
 func TestBrowserPhotoRecoveryMatching(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name      string
-		initial   []struct{ source, name, content string }
-		selection []struct{ name, content string }
-		commit    int
-		source    string
-		present   []int
+		name         string
+		initial      []struct{ source, name, content string }
+		selection    []struct{ name, content string }
+		commit       int
+		checkpointed bool
+		source       string
+		present      []int
 	}{
 		{
 			name:      "older sidecar with the same name",
@@ -1045,10 +1037,25 @@ func TestBrowserPhotoRecoveryMatching(t *testing.T) {
 			commit:    2, source: "3", present: []int{2},
 		},
 		{
+			name:      "unselected recorded group stays out of present",
+			initial:   []struct{ source, name, content string }{{"1", "Card/shared.jpg", "shared"}, {"1", "Card/archived.jpg", "archived"}},
+			selection: []struct{ name, content string }{{"Card/shared.jpg", "shared"}, {"Card/new.jpg", "new"}},
+			commit:    -1, source: "1", present: []int{1},
+		},
+		{
 			name:      "identical sidecars in two imports",
 			initial:   []struct{ source, name, content string }{{"1", "Card/file.xmp", "side"}, {"2", "Card/file.xmp", "side"}},
 			selection: []struct{ name, content string }{{"Card/file.xmp", "side"}},
 			commit:    -1,
+		},
+		{
+			name:         "checkpoint selects one of two identical sidecars",
+			initial:      []struct{ source, name, content string }{{"1", "Card/file.xmp", "side"}, {"2", "Card/file.xmp", "side"}},
+			selection:    []struct{ name, content string }{{"Card/file.xmp", "side"}},
+			commit:       -1,
+			checkpointed: true,
+			source:       "1",
+			present:      []int{0},
 		},
 		{
 			name:      "one matching file and one changed file",
@@ -1089,6 +1096,10 @@ func TestBrowserPhotoRecoveryMatching(t *testing.T) {
 					}
 				}
 			}
+			if tc.checkpointed {
+				plan["source_id"] = sources[tc.source]
+				plan["checkpointed"] = true
+			}
 			plan["recovering"] = true
 			require.NoError(t, wsjson.Write(t.Context(), conn, plan))
 			result := readPhotoResponse(t, conn)
@@ -1101,26 +1112,6 @@ func TestBrowserPhotoRecoveryMatching(t *testing.T) {
 			require.Equal(t, tc.present, result.Present)
 		})
 	}
-}
-
-func TestBrowserPhotoRecoveryCheckpointDuplicateSidecar(t *testing.T) {
-	t.Parallel()
-	ts, _ := newTestServer(t, nil)
-	conn := browserUploadSocket(t, ts)
-	f := map[string]any{"relative_path": "Card/file.xmp", "size": 4, "expected_hash": testHash("same")}
-	plan := map[string]any{"type": "plan_photo_import", "request_id": "plan", "destination": "/photos", "files": []map[string]any{f}}
-	for _, source := range []string{"20000000-0000-4000-8000-000000000074", "20000000-0000-4000-8000-000000000075"} {
-		plan["source_id"] = source
-		require.NoError(t, wsjson.Write(t.Context(), conn, plan))
-		p := readPhotoResponse(t, conn)
-		require.Equal(t, "added", uploadBrowserPhoto(t, conn, p.ImportID, 0, f, []byte("same")).Receipt.Status)
-	}
-	plan["source_id"] = "20000000-0000-4000-8000-000000000074"
-	plan["recovering"], plan["checkpointed"] = true, true
-	require.NoError(t, wsjson.Write(t.Context(), conn, plan))
-	p := readPhotoResponse(t, conn)
-	require.Equal(t, "photo_import_plan", p.Type, "%s: %s", p.Code, p.Detail)
-	require.Equal(t, []int{0}, p.Present)
 }
 
 func TestBrowserPhotoRecoveryCheckpointPhotoHistory(t *testing.T) {

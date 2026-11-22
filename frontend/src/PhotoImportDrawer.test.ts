@@ -1525,6 +1525,16 @@ it("replans on a replacement channel and skips an unconfirmed group the vault ho
   await fireEvent.click(screen.getByRole("button", { name: "Add 2 groups" }));
   await waitFor(() => expect(replacement.uploadPhotoGroup).toHaveBeenCalledOnce());
   await screen.findByText("Already in vault: 1");
+  expect(replacement.planPhotoImport).toHaveBeenLastCalledWith(
+    expect.any(Array),
+    "/",
+    expect.any(String),
+    expect.any(AbortSignal),
+    expect.any(Function),
+    expect.any(Map),
+    true,
+    true,
+  );
   expect(replacement.uploadPhotoGroup).toHaveBeenCalledWith(
     "second",
     1,
@@ -1850,18 +1860,32 @@ it.each([true, false])("dismisses an interrupted import with checkpoint=%s", asy
   expect(screen.getByRole("button", { name: "Choose folder" })).toBeTruthy();
 });
 
-it("names a saved import with nothing in the vault yet without a zero count", async () => {
-  savedImports.set("nothing-landed", {
+it.each([
+  ["null", "files"],
+  ["rejected", "folder"],
+] as const)("shows saved import progress after a %s summary lookup", async (lookup, pickerKind) => {
+  const { photoImportManifest } = await import("./photoImportStorage.js");
+  const selected = pickerKind === "files" ? [files()[0]] : tripFolder();
+  savedImports.set("saved-summary", {
     sourceID: "saved-source",
     revision: "saved",
     destination: "/photos",
     manifestVersion: 2,
-    manifestHash: "a".repeat(64),
-    pickerKind: "files",
+    manifestHash: photoImportManifest(selected).digest,
+    pickerKind,
   });
+  if (lookup === "rejected")
+    browserImports.mockRejectedValueOnce(new APIError("Daemon unavailable", 503, "unavailable"));
+  else browserImports.mockResolvedValueOnce(null);
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi
+      .fn()
+      .mockRejectedValue(new APIError("Stop after planning", 500, "internal")),
+    uploadPhotoGroup: vi.fn(),
+  };
   render(PhotoImportDrawer, {
-    channel: { planPhotoImport: vi.fn(), uploadPhotoGroup: vi.fn() },
-    vaultID: "nothing-landed",
+    channel,
+    vaultID: "saved-summary",
     session: "session",
     onclose: vi.fn(),
     oncomplete: vi.fn(),
@@ -1873,18 +1897,35 @@ it("names a saved import with nothing in the vault yet without a zero count", as
     { source_id: "saved-source" },
     { session: "session", signal: expect.any(AbortSignal) },
   );
-  expect(section.querySelector("p")!.textContent).toBe("Import of chosen files");
-  expect(screen.getByLabelText<HTMLInputElement>("Destination").value).toBe("/photos");
-  expect(screen.getByRole("button", { name: "Choose the same files…" })).toHaveProperty(
-    "disabled",
-    false,
+  expect(section.querySelector("p")!.textContent).toBe(
+    pickerKind === "files" ? "Import of chosen files" : "Import from a folder",
   );
+  expect(screen.getByLabelText<HTMLInputElement>("Destination").value).toBe("/photos");
+  expect(
+    screen.getByRole("button", {
+      name: pickerKind === "files" ? "Choose the same files…" : "Choose the same folder…",
+    }),
+  ).toHaveProperty("disabled", false);
+  expect(screen.queryByText(/Could not check the vault/)).toBeNull();
+  if (lookup === "rejected") {
+    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Choose the same folder…" }));
+    await fireEvent.change(screen.getByLabelText("Choose photo folder"), {
+      target: { files: selected },
+    });
+    await screen.findByText("Stop after planning");
+    expect(vi.mocked(channel.planPhotoImport).mock.calls[0]?.slice(0, 3)).toEqual([
+      selected,
+      "/photos",
+      "saved-source",
+    ]);
+  }
 });
 
 it("keeps a checkpointed import offered when a selected file has changed", async () => {
   const selected = tripFolder();
   const { photoImportManifest } = await import("./photoImportStorage.js");
-  savedImports.set("wrong-folder", {
+  savedImports.set("changed-checkpoint", {
     sourceID: recorded.source_id,
     revision: "saved",
     destination: "/photos",
@@ -1907,7 +1948,7 @@ it("keeps a checkpointed import offered when a selected file has changed", async
   };
   render(PhotoImportDrawer, {
     channel,
-    vaultID: "wrong-folder",
+    vaultID: "changed-checkpoint",
     session: "session",
     onclose: vi.fn(),
     oncomplete: vi.fn(),
@@ -1924,7 +1965,7 @@ it("keeps a checkpointed import offered when a selected file has changed", async
     false,
   );
   expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
-  expect(savedImports.get("wrong-folder")?.sourceID).toBe(recorded.source_id);
+  expect(savedImports.get("changed-checkpoint")?.sourceID).toBe(recorded.source_id);
   expect(vi.mocked(channel.planPhotoImport).mock.calls[0]?.slice(1, 3)).toEqual([
     "/photos",
     recorded.source_id,
