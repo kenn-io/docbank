@@ -119,6 +119,7 @@ export function photoImportDeclaration(
   requestID = declarationUUID,
   hashes?: ReadonlyMap<File, string>,
   recovering = false,
+  checkpointed = false,
 ) {
   const tooLarge = () =>
     new Error(
@@ -131,6 +132,7 @@ export function photoImportDeclaration(
     request_id: requestID,
     destination,
     recovering,
+    checkpointed,
     files: files.map((file) => ({
       relative_path: localFilePath(file),
       size: file.size,
@@ -155,6 +157,7 @@ export interface PhotoImportTransport {
     onprogress: (progress: TransferProgress) => void,
     knownHashes?: Map<File, string>,
     recovering?: boolean,
+    checkpointed?: boolean,
   ): Promise<PhotoImportPlan>;
   // An empty entry in hashes is a file not hashed yet. The upload hashes it
   // first and fills in its entry, so a retry reuses the hash.
@@ -382,6 +385,7 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     onprogress: (progress: TransferProgress) => void,
     knownHashes?: Map<File, string>,
     recovering = false,
+    checkpointed = false,
   ): Promise<PhotoImportPlan> {
     if (this.busy) throw new UploadChannelError("Another browser upload is already active.");
     throwIfAborted(signal);
@@ -390,7 +394,15 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     const hashes = new Map(knownHashes);
     try {
       this.send(
-        photoImportDeclaration(files, destination, sourceID, requestID, hashes, recovering),
+        photoImportDeclaration(
+          files,
+          destination,
+          sourceID,
+          requestID,
+          hashes,
+          recovering,
+          checkpointed,
+        ),
       );
       let plan = await this.nextMessage();
       this.requireMessage(plan, requestID);
@@ -419,7 +431,15 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
           processed += files[index].size;
         }
         this.send(
-          photoImportDeclaration(files, destination, sourceID, requestID, hashes, recovering),
+          photoImportDeclaration(
+            files,
+            destination,
+            sourceID,
+            requestID,
+            hashes,
+            recovering,
+            checkpointed,
+          ),
         );
         plan = await this.nextMessage();
         this.requireMessage(plan, requestID);

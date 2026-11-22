@@ -1194,6 +1194,86 @@ func TestBrowserPhotoRecoveryContinuedSubset(t *testing.T) {
 	require.Len(t, recovered.Present, 1)
 }
 
+func TestBrowserPhotoRecoveryMatching(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		initial   []struct{ source, name, content string }
+		selection []struct{ name, content string }
+		commit    int
+		want      string
+		present   int
+	}{
+		{
+			name:      "older sidecar with the same name",
+			initial:   []struct{ source, name, content string }{{"1", "Card/file.xmp", "old"}, {"2", "Card/file.xmp", "new"}},
+			selection: []struct{ name, content string }{{"Card/file.xmp", "old"}},
+			commit:    -1, want: "photo_import_plan", present: 1,
+		},
+		{
+			name:      "checkpointed photo changed to another import",
+			initial:   []struct{ source, name, content string }{{"1", "Card/photo.jpg", "old"}, {"2", "Card/photo.jpg", "new"}},
+			selection: []struct{ name, content string }{{"Card/photo.jpg", "new"}},
+			commit:    -2, want: "photo_import_changed",
+		},
+		{
+			name:      "renamed folder with changed sidecar",
+			initial:   []struct{ source, name, content string }{{"1", "Old/A/photo.jpg", "photo"}, {"1", "Old/B/file.xmp", "old"}},
+			selection: []struct{ name, content string }{{"Card/A/photo.jpg", "photo"}, {"Card/B/file.xmp", "new"}},
+			commit:    -1, want: "photo_import_changed",
+		},
+		{
+			name:      "multiple continued folders",
+			initial:   []struct{ source, name, content string }{{"1", "Old/A/photo.jpg", "photo"}, {"2", "Earlier/B/other.jpg", "other"}},
+			selection: []struct{ name, content string }{{"Card/A/photo.jpg", "photo"}, {"Card/B/other.jpg", "other"}, {"Card/C/new.xmp", "side"}},
+			commit:    2, want: "photo_import_plan", present: 3,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts, _ := newTestServer(t, nil)
+			conn := browserUploadSocket(t, ts)
+			sources := map[string]string{"1": "20000000-0000-4000-8000-000000000061", "2": "20000000-0000-4000-8000-000000000062"}
+			plan := map[string]any{"type": "plan_photo_import", "request_id": "plan", "destination": "/photos"}
+			for _, item := range tc.initial {
+				file := map[string]any{"relative_path": item.name, "size": len(item.content), "expected_hash": testHash(item.content)}
+				plan["source_id"] = sources[item.source]
+				plan["files"] = []map[string]any{file}
+				require.NoError(t, wsjson.Write(t.Context(), conn, plan))
+				initial := readPhotoResponse(t, conn)
+				require.Equal(t, "added", uploadBrowserPhoto(t, conn, initial.ImportID, 0, file, []byte(item.content)).Receipt.Status)
+			}
+			files := make([]map[string]any, len(tc.selection))
+			for i, item := range tc.selection {
+				files[i] = map[string]any{"relative_path": item.name, "size": len(item.content), "expected_hash": testHash(item.content)}
+			}
+			plan["files"] = files
+			if tc.commit == -2 {
+				plan["source_id"] = sources["1"]
+				plan["checkpointed"] = true
+			}
+			if tc.commit >= 0 {
+				plan["source_id"] = "20000000-0000-4000-8000-000000000063"
+				require.NoError(t, wsjson.Write(t.Context(), conn, plan))
+				initial := readPhotoResponse(t, conn)
+				for group, members := range initial.Groups {
+					if members[0] == tc.commit {
+						require.Equal(t, "added", uploadBrowserPhoto(t, conn, initial.ImportID, group, files[tc.commit], []byte(tc.selection[tc.commit].content)).Receipt.Status)
+					}
+				}
+			}
+			plan["recovering"] = true
+			require.NoError(t, wsjson.Write(t.Context(), conn, plan))
+			result := readPhotoResponse(t, conn)
+			if tc.want == "photo_import_plan" {
+				require.Equal(t, tc.want, result.Type, "%s: %s", result.Code, result.Detail)
+				require.Len(t, result.Present, tc.present)
+			} else {
+				require.Equal(t, tc.want, result.Code)
+			}
+		})
+	}
+}
+
 func TestBrowserPhotoRecoveryContinuedTrashedPhoto(t *testing.T) {
 	t.Parallel()
 	ts, catalog := newTestServer(t, nil)

@@ -1320,6 +1320,7 @@ it.each([
       expect.any(Function),
       undefined,
       true,
+      true,
     );
   },
 );
@@ -1605,6 +1606,7 @@ it("retains a selection when the channel changes during checkpoint save", async 
     expect.anything(),
     expect.anything(),
     true,
+    true,
   );
   expect(screen.queryByText(/changed in another tab/)).toBeNull();
 });
@@ -1710,6 +1712,7 @@ it("finishes a recorded folder import after a lost session by sending only the m
     expect.any(Function),
     undefined,
     true,
+    false,
   );
   expect(savedImports.get("lost-session")?.sourceID).toBe(adoptedSourceID);
   await fireEvent.click(add);
@@ -2008,6 +2011,7 @@ it("resumes a saved checkpoint under its own ID when its summary lookup fails", 
     expect.any(AbortSignal),
     expect.any(Function),
     undefined,
+    true,
     true,
   );
 });

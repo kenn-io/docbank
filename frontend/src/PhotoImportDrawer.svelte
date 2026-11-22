@@ -372,7 +372,7 @@
             manifestHash: digest,
             pickerKind,
           };
-      const recoveryArgs: [Map<File, string>?, boolean?] = reconnect
+      const recoveryArgs: [Map<File, string>?, boolean?, boolean?] = reconnect
         ? [
             new Map(
               previousItems
@@ -382,9 +382,10 @@
                 .filter(([, hash]) => !!hash),
             ),
             true,
+            true,
           ]
         : resumed
-          ? [undefined, true]
+          ? [undefined, true, Boolean(checkpoint)]
           : [];
       const plan = await planChannel.planPhotoImport(
         files,

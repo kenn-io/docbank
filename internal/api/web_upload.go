@@ -109,6 +109,7 @@ type webUploadMessage struct {
 	ExpectedSize  int64               `json:"expected_size,omitzero"`
 	CheckExisting bool                `json:"check_existing,omitzero"`
 	Recovering    bool                `json:"recovering,omitzero"`
+	Checkpointed  bool                `json:"checkpointed,omitzero"`
 	VerifiedSize  int64               `json:"verified_size,omitzero"`
 	Receipt       *UploadReceipt      `json:"receipt,omitempty"`
 	Status        int                 `json:"status,omitzero"`
@@ -814,7 +815,7 @@ func browserPhotoSelectionFolder(files []webPhotoFile) (string, bool) {
 // returns the source and the groups whose every member it records with the
 // same bytes. Recovery hashes every member before this runs.
 func recoverBrowserPhotos(
-	ctx context.Context, st *store.Store, files []webPhotoFile, groups [][]int, paths []string, requested uuid.UUID,
+	ctx context.Context, st *store.Store, files []webPhotoFile, groups [][]int, paths []string, requested uuid.UUID, checkpointed bool,
 ) (uuid.UUID, []int, error) {
 	changed := NewError(http.StatusConflict, "photo_import_changed", "The recorded import differs from this selection. Choose the original folder.")
 	sources := map[string]*store.BrowserPhotoImport{}
@@ -843,15 +844,24 @@ func recoverBrowserPhotos(
 	if err != nil {
 		return requested, nil, err
 	}
+	if checkpointed && offered != nil {
+		for _, group := range groups {
+			for _, index := range group {
+				if hash, ok := offered.Members[files[index].RelativePath]; ok && hash != files[index].ExpectedHash {
+					return requested, nil, changed
+				}
+			}
+		}
+	}
 	matched := map[string]bool{}
 	recorded := map[int]bool{}
 	for _, group := range groups {
 		for _, index := range group {
-			source, _, ok, err := recordedHash(paths[index])
+			source, hash, ok, err := recordedHash(paths[index])
 			if err != nil {
 				return requested, nil, err
 			}
-			if ok {
+			if ok && hash == files[index].ExpectedHash {
 				matched[source] = true
 				recorded[index] = true
 			}
@@ -864,7 +874,7 @@ func recoverBrowserPhotos(
 	var selected []string
 	for _, group := range groups {
 		for _, index := range group {
-			if recorded[index] || store.ClassifyPhotoSource(files[index].RelativePath).Kind != store.PhotoSourceSidecar {
+			if store.ClassifyPhotoSource(files[index].RelativePath).Kind != store.PhotoSourceSidecar {
 				continue
 			}
 			name := files[index].RelativePath
@@ -879,6 +889,7 @@ func recoverBrowserPhotos(
 	if err != nil {
 		return requested, nil, err
 	}
+	unmatchedPaths := map[int]string{}
 	for _, candidate := range candidates {
 		name := candidate.RelativePath
 		if candidate.FolderSelection {
@@ -886,17 +897,40 @@ func recoverBrowserPhotos(
 		}
 		index, ok := byPath[name]
 		if ok && candidate.FolderSelection == folderSelection && candidate.BlobHash == files[index].ExpectedHash {
+			if recorded[index] && paths[index] != "browser:"+candidate.SourceID+"/"+candidate.RelativePath {
+				return requested, nil, changed
+			}
 			paths[index] = "browser:" + candidate.SourceID + "/" + candidate.RelativePath
 			matched[candidate.SourceID] = true
+			recorded[index] = true
 		}
 	}
-	if len(matched) > 1 || offered != nil && len(matched) == 0 {
+	if offered != nil && len(matched) == 0 {
 		return requested, nil, changed
 	}
+	for _, candidate := range candidates {
+		name := candidate.RelativePath
+		if candidate.FolderSelection {
+			name, _ = strings.CutPrefix(name, candidate.Folder+"/")
+		}
+		index, ok := byPath[name]
+		if ok && !recorded[index] && matched[candidate.SourceID] && candidate.FolderSelection == folderSelection {
+			path := "browser:" + candidate.SourceID + "/" + candidate.RelativePath
+			if previous := unmatchedPaths[index]; previous != "" && previous != path {
+				return requested, nil, changed
+			}
+			unmatchedPaths[index] = path
+		}
+	}
+	for index, path := range unmatchedPaths {
+		paths[index] = path
+	}
 	sourceID := requested
-	for source := range matched {
-		if sourceID, err = uuid.Parse(source); err != nil {
-			return requested, nil, changed
+	if len(matched) == 1 && !checkpointed {
+		for source := range matched {
+			if sourceID, err = uuid.Parse(source); err != nil {
+				return requested, nil, changed
+			}
 		}
 	}
 	if sourceID != requested {
@@ -1024,7 +1058,7 @@ func handleWebPhotoPlan(
 	var present []int
 	if begin.Recovering {
 		var err error
-		sourceID, present, err = recoverBrowserPhotos(ctx, d.Store, begin.Files, groups, paths, sourceID)
+		sourceID, present, err = recoverBrowserPhotos(ctx, d.Store, begin.Files, groups, paths, sourceID, begin.Checkpointed)
 		if err != nil {
 			return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
 		}

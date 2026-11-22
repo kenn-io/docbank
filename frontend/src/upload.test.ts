@@ -580,8 +580,14 @@ it("returns the source selected by the daemon's recovery plan", async () => {
     vi.fn(),
     undefined,
     true,
+    true,
   );
   expect(plan.source_id).toBe("20000000-0000-4000-8000-000000000011");
+  const declaration = socket.frames
+    .filter((frame): frame is string => typeof frame === "string")
+    .map((frame) => JSON.parse(frame))
+    .find((frame) => frame.type === "plan_photo_import");
+  expect(declaration.checkpointed).toBe(true);
   channel.close();
 });
 
