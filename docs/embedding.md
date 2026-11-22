@@ -591,12 +591,16 @@ Then call `PublishEmailDocuments` with a
 node/version/hash/size, the returned generation and attachment IDs, and a
 destination directory ID with its current revision. No host filesystem path
 is accepted. This operation does not run automatically on import.
+Create a new destination with `MkdirPath`.
 
 Publication verifies retained payload bytes and creates ordinary file documents
 for the full known attachment inventory in one transaction. Inline resources
 are included, but body alternatives and multipart containers are excluded. An
 attached email becomes a child email, whose own attachments can be published
 separately. An explicitly attached single-part root also becomes a child.
+Each child takes its declared media type. A part declared as
+`application/octet-stream`, or with no declared type, takes the type Docbank
+detected from its bytes.
 Parts inside encrypted containers stay encrypted relations without child files.
 The receipt says whether the MIME inventory is `complete` or `partial`. It
 records unavailable, unsupported, failed, or encrypted parts and does not
@@ -953,6 +957,10 @@ the node IDs sharing one path and advances to the next name.
 Always call `Walker.Close`, including after `io.EOF`. Repeated calls are safe.
 It releases the read transaction, dedicated connection, and vault lease.
 `Vault.Close` waits for all walkers and content readers to close.
+
+`MkdirPath` creates one directory beneath an existing parent and returns it
+with its canonical path, matching the daemon's `POST /api/v1/path/mkdir`. An
+existing node at that path returns `ErrExists`.
 
 `MovePath`, `TrashPath`, and `Restore` return the resulting node and canonical
 path. Their optional positive `IfRevision` rejects stale mutations.

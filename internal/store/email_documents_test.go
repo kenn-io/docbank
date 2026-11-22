@@ -115,6 +115,33 @@ func checkEmailDocumentsAtomicStaleDestinationAndExplicitReuse(t *testing.T, ope
 	checkRetentionMetadata(t, s)
 }
 
+// Mail programs often label a file application/octet-stream. Its child then
+// takes the detected type, so a viewer can open it; a specific declared type
+// stays as sent.
+func TestEmailDocumentsGenericDeclaredTypeUsesDetectedType(t *testing.T) {
+	t.Parallel()
+	const pdf = "%PDF-1.4\nSynthetic attachment\n%%EOF\n"
+	const raw = "Content-Type: multipart/mixed; boundary=mixed\n\n" +
+		"--mixed\nContent-Type: text/plain\n\nSynthetic body\n" +
+		"--mixed\nContent-Type: application/octet-stream\nContent-Disposition: attachment; filename=generic.pdf\n\n" + pdf +
+		"--mixed\nContent-Type: text/csv\nContent-Disposition: attachment; filename=table.csv\n\n" + pdf +
+		"--mixed--\n"
+	s := newTestStore(t)
+	f := newEmailSourceFixture(t, s, "generic.eml", strings.ReplaceAll(raw, "\n", "\r\n"))
+	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
+	require.NoError(t, err)
+	receipt, err := s.PublishEmailDocuments(t.Context(), attachmentRequest(t, s, view, "generic-media"))
+	require.NoError(t, err)
+	media := map[string]string{}
+	for _, rel := range receipt.Relations {
+		require.NotNil(t, rel.Child, rel.PartPath)
+		child, err := s.NodeByID(t.Context(), rel.Child.NodeID)
+		require.NoError(t, err)
+		media[rel.Filename] = child.MimeType
+	}
+	require.Equal(t, map[string]string{"generic.pdf": "application/pdf", "table.csv": "text/csv"}, media)
+}
+
 func TestEmailDocumentsEncryptedAncestry(t *testing.T) {
 	t.Parallel()
 	const encrypted = "Content-Type: multipart/encrypted; boundary=encrypted; protocol=\"application/pgp-encrypted\"\n\n" +
