@@ -467,14 +467,12 @@ deadlines. Schema setup does not grant ownership of blob roots or permit
 multiple vault writers.
 
 The schema owner calls `docbank.GrantPostgresRuntime` for the embedded
-application's runtime login after installation or upgrade. The call replaces
-direct grants on the selected catalog in one transaction under the schema setup
-lock. It grants schema usage, ordinary reads and writes on its tables, and
-access to its routines. It reserves schema changes and writes to
-`vault_metadata` for the owner. PostgreSQL removes older column grants with
-their table privileges. The Store, backup, and processing fixtures use the
-same grant step. Go owns workflow rules, including which records each operation
-may change.
+application's runtime login after installation or upgrade. The call grants
+schema usage, ordinary reads and writes on its tables, and access to its routines
+in one transaction under the schema setup lock. It reserves schema changes and
+writes to `vault_metadata` for the owner. The Store, backup, and processing
+fixtures use the same grant step. Go owns workflow rules, including which
+records each operation may change.
 
 Checksum rows are inserted or compared with the existing value, never updated;
 deleting the owning blob cascades to its checksum. Pin every runtime connection's

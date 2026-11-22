@@ -67,21 +67,12 @@ func TestGrantRuntimePostgres(t *testing.T) {
 	require.NoError(t, err)
 	require.ErrorContains(t, GrantPostgresRuntime(ctx, owner, catalog, runtimeRole), "TEMPORARY")
 	exec(admin, "GRANT TEMPORARY ON DATABASE "+quotedDatabase+" TO "+quotedRuntime)
-	require.NoError(t, GrantPostgresRuntime(ctx, owner, catalog, runtimeRole))
-
-	// Workflow tables use ordinary data privileges, including columns that
-	// previously required their own grant.
-	exec(runtime, "UPDATE documents.document_event_heads SET content_version_id=content_version_id")
-	// Reapplying grants removes older privileges at the owner boundary.
-	exec(owner, "GRANT UPDATE(schema_version) ON documents.vault_metadata TO "+quotedRuntime)
-	exec(owner, "GRANT CREATE ON SCHEMA documents TO "+quotedRuntime)
-	exec(runtime, "UPDATE documents.vault_metadata SET schema_version=schema_version")
-	exec(owner, "CREATE SCHEMA other; CREATE TABLE other.data (id INT); GRANT USAGE ON SCHEMA other TO "+quotedRuntime)
 	exec(owner, "CREATE SCHEMA unrelated; CREATE TABLE unrelated.data (id INT)")
+	require.NoError(t, GrantPostgresRuntime(ctx, owner, catalog, runtimeRole))
 
-	require.NoError(t, GrantPostgresRuntime(ctx, owner, catalog, runtimeRole))
-	require.NoError(t, GrantPostgresRuntime(ctx, owner, catalog, runtimeRole))
-	exec(runtime, "UPDATE documents.document_event_heads SET published_at=published_at")
+	// The embedded application can write workflow data.
+	exec(runtime, "UPDATE documents.document_event_heads SET content_version_id=content_version_id")
+
 	exec(runtime, "CREATE TEMP TABLE scratch (id int)")
 	for _, query := range []string{
 		"UPDATE documents.vault_metadata SET schema_version=schema_version",
@@ -94,14 +85,6 @@ func TestGrantRuntimePostgres(t *testing.T) {
 		require.ErrorAs(t, err, &pgErr)
 		require.Equal(t, "42501", pgErr.Code)
 	}
-	_, err = runtime.ExecContext(ctx, "SELECT * FROM other.data")
-	var denied *pgconn.PgError
-	require.ErrorAs(t, err, &denied)
-	require.Equal(t, "42501", denied.Code)
-	exec(owner, "GRANT SELECT ON other.data TO "+quotedRuntime)
-	require.NoError(t, GrantPostgresRuntime(ctx, owner, catalog, runtimeRole))
-	exec(runtime, "SELECT * FROM other.data")
-
 	// Use a restricted runtime connection that has real catalog privileges.
 	require.ErrorContains(t, GrantPostgresRuntime(ctx, runtime, catalog, runtimeRole), "schema owner session")
 	missing := PostgresCatalog{Schema: "missing", SchemaOwner: ownerRole}

@@ -14,7 +14,7 @@ import (
 //go:embed runtime_grants.sql
 var runtimeGrantsSQL string
 
-// GrantRuntime replaces the schema owner's direct grants to a dedicated runtime login.
+// GrantRuntime applies catalog access for a dedicated runtime login.
 func GrantRuntime(ctx context.Context, db *sql.DB, c Config, role string) error {
 	if err := c.Validate(); err != nil {
 		return err
