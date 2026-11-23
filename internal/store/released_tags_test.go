@@ -39,14 +39,23 @@ func releaseTagNames(output []byte) []string {
 }
 
 func TestReleaseTagNamesPrereleaseOrder(t *testing.T) {
-	assert.Equal(t, []string{"v0.20.0-rc.1", "v0.20.0"}, releaseTagNames([]byte("v0.20.0\nv0.20.0-rc.1\n")))
+	const fixture = "CREATE TABLE item (id INTEGER);"
+	schemas := map[string]string{
+		"v0.20.0-rc.1": fixture,
+		"v0.20.0":      fixture + " CREATE INDEX idx ON item(id);",
+	}
+	var tags []releaseTag
+	for _, name := range releaseTagNames([]byte("v0.20.0\nv0.20.0-rc.1\n")) {
+		tags = append(tags, releaseTag{name, "const currentStorageSchemaVersion = 50", schemas[name]})
+	}
+	assert.Empty(t, releaseTagProblems(t, tags, []int{50}, map[int]string{50: fixture}))
 }
 
 func TestReleaseTagSchemas(t *testing.T) {
 	if os.Getenv("DOCBANK_RELEASE_SCHEMAS") == "" {
 		t.Skip("DOCBANK_RELEASE_SCHEMAS is unset")
 	}
-	output, err := exec.CommandContext(t.Context(), "git", "tag", "-l", "v[0-9]*", "--sort=v:refname").CombinedOutput()
+	output, err := exec.CommandContext(t.Context(), "git", "tag", "-l", "v[0-9]*").CombinedOutput()
 	require.NoErrorf(t, err, "list release tags: %s", output)
 	names := releaseTagNames(output)
 	require.Contains(t, names, firstSupportedReleaseTag, "release tags must include the first supported release; fetch full tag history")
@@ -146,8 +155,8 @@ func TestReleaseTagSchemasRules(t *testing.T) {
 		{"missing fixture", []releaseTag{tag("v0.15.0", 29, base)}, []string{"no fixture"}},
 		{"missing version", []releaseTag{{"v0.10.0", "", base}}, []string{"no storage schema version"}},
 		{"missing version after boundary", []releaseTag{{"v0.9.1", "", base}}, []string{"no storage schema version"}},
-		{"v1", []releaseTag{{"v0.9.0", "", base}}, nil},
-		{"v1 mismatch", []releaseTag{{"v0.9.0", "", "CREATE TABLE other (id INTEGER);"}}, []string{"exact fixture", "changed or missing table item"}},
+		{"v1", []releaseTag{{firstSupportedReleaseTag, "", base}}, nil},
+		{"v1 mismatch", []releaseTag{{firstSupportedReleaseTag, "", "CREATE TABLE other (id INTEGER);"}}, []string{"exact fixture", "changed or missing table item"}},
 		{"v2 mismatch", []releaseTag{tag("v0.10.0", 2, base+index)}, []string{"exact fixture"}},
 		{"v2 later index", []releaseTag{tag("v0.10.0", 2, base), tag("v0.10.1", 2, base+index)}, nil},
 		{"v2 table change", []releaseTag{tag("v0.10.0", 2, base), tag("v0.10.1", 2, strings.Replace(base, "id INTEGER", "id TEXT", 1))}, []string{"v0.10.1", "changed or missing table item"}},
