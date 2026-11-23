@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Fails when a release tag's storage schema has no upgrade path or fixture.
 # Every tagged schema version must appear in releasedStorageSchemaVersions,
-# and every tag from schema 3 onward must match an exact released-schema
-# fixture byte for byte. Tags before v0.10.0 have no explicit schema version;
+# and the first tag to ship each schema from version 3 onward must match an
+# exact released-schema fixture byte for byte. Later tags at the same version
+# may add only non-unique indexes; TestReleasedSchemaFixturesMatchVersions
+# enforces that against the version's fixture while the version is current. Tags before v0.10.0 have no explicit schema version;
 # every later tag must declare one. Requires full tag history (fetch-depth: 0).
 set -euo pipefail
 
@@ -25,6 +27,7 @@ if [[ -z $tags ]]; then
 fi
 
 failed=0
+fixtured_versions=,
 for tag in $tags; do
 	version=$(git show "$tag:internal/store/store.go" 2>/dev/null |
 		sed -nE 's/^const currentStorageSchemaVersion = ([0-9]+).*/\1/p')
@@ -40,9 +43,10 @@ for tag in $tags; do
 		echo "error: $tag ships storage schema $version, which is missing from releasedStorageSchemaVersions" >&2
 		failed=1
 	fi
-	if ((version < 3)); then
+	if ((version < 3)) || [[ $fixtured_versions == *",$version,"* ]]; then
 		continue
 	fi
+	fixtured_versions+="$version,"
 	matched=0
 	for fixture in "$fixtures_dir"/schema-v*.sql; do
 		if git show "$tag:internal/store/schema.sql" | cmp -s - "$fixture"; then
