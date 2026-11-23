@@ -50,6 +50,42 @@ jobs:
             docs:
               # Keep document/**: make docs-build runs its bridge contract tests.
               - '!{README.md,AGENTS.md,CLAUDE.md,cmd/**,docbank/**,internal/**,mcp/**,report/**,sqlite/**}'
+            release-commands:
+              - .github/workflows/ci.yml
+              - .github/workflows/actions.lock
+              - README.md
+              - scripts/install.sh
+              - scripts/install.ps1
+              - scripts/docs/**
+              - docs/**
+              - website/**
+
+  release-commands:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'release-commands')) }}
+    name: Released commands
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: List published files
+        id: files
+        run: |
+          {
+            echo 'files<<EOF'
+            printf '%s\n' README.md scripts/install.sh scripts/install.ps1 website/index.md website/guide.md
+            python3 -c 'import sys; from pathlib import Path; sys.path.insert(0, "docs/scripts"); from check_markdown_sources import public_markdown; print("\n".join(str(p.relative_to(Path.cwd())) for p in public_markdown() if p.name != "changelog.md"))'
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+      - uses: kenn-io/actions/release-commands@main
+        with:
+          files: ${{ steps.files.outputs.files }}
+          binaries: docbank
+          asset: docbank_*[0-9]_linux_amd64.tar.gz
+          repository: kenn-io/docbank
 
   # Merge groups skip PostgreSQL, pure-Go SQLite, macOS, and Windows. Every PR
   # runs them before it can be queued; see

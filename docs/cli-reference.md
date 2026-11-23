@@ -77,7 +77,7 @@ See [Configuration](configuration.md). Virtual paths are absolute, separated by
 `/`, and case-sensitive. Errors go to stderr and return a nonzero exit code.
 Parsing errors, such as unknown commands or flags, wrong argument counts, or
 missing required flags, include usage or a help command. An unknown child of a
-command group, such as `docbank tag bogus`, fails with exit `2`, while the bare
+command group fails with exit `2`, while the bare
 `docbank tag` still shows help and succeeds. Errors include a next-step hint,
 or a command suggestion when Cobra can identify a likely typo. Hints name
 canonical CLI commands and flags, even when you invoke an older spelling, and

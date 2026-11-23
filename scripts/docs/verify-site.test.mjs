@@ -104,6 +104,29 @@ test("accepts complete routes, Markdown peers, links, and assets", async (t) => 
 });
 
 
+for (const [name, html, markdown, error] of [
+  ["missing example", "<p><code>docbank next</code></p>", "# Guide\n", /guide\/index\.html: example.*missing from guide\.md/],
+  ["note only in Markdown", "<p><code>docbank next</code></p>", "Not in the latest release yet\n\n`docbank next`\n", /unreleased note only in guide\.md/],
+  ["note only in HTML", "<p>Not in the latest release yet</p><p><code>docbank next</code></p>", "`docbank next`\n", /unreleased note only in guide\/index\.html/],
+  ["matching notes", "<p>Not in the latest release yet</p><p><code>docbank next</code></p>", "Not in the latest release yet\n\n`docbank next`\n", null],
+  ["notes in example paragraph", "<p>Not in the latest release yet: <code>docbank next</code></p>", "Not in the latest release yet: `docbank next`\n", null],
+  ["notes in list item", "<ul><li>Not in the latest release yet: <code>docbank next</code></li></ul>", "- Not in the latest release yet: `docbank next`\n", null],
+  ["orphan note", "<p>Not in the latest release yet</p><p>Other text</p>", "# Guide\n", /put the unreleased note directly above an example/],
+  ["note with prose only", "<p>Not in the latest release yet: coming soon</p>", "# Guide\n", /put the unreleased note directly above an example/],
+  ["note before list", "<p>Not in the latest release yet</p><ul><li><code>docbank next</code></li></ul>", "Not in the latest release yet\n\n- `docbank next`\n", /put the unreleased note directly above an example/],
+  ["entities and pre", "<pre><code>docbank a &amp;&amp; docbank b</code></pre>", "```sh\ndocbank a && docbank b\n```\n", null],
+]) {
+  test(`website examples: ${name}`, async (t) => {
+    const input = await fixture(t);
+    await write(input.site, "guide/index.html", page({ canonical: "https://docbank.ai/guide/", body: html }));
+    await write(input.site, "guide.md", markdown);
+    await write(input.sources.website, "guide.md", markdown);
+    if (error) await assert.rejects(() => verifySite(input), error);
+    else await verifySite(input);
+  });
+}
+
+
 test("accepts the generated 404 page without a canonical peer", async (t) => {
   const input = await fixture(t);
   const notFound = page({

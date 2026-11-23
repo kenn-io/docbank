@@ -905,6 +905,8 @@ Create a directory with five synthetic native seed files named `doc`, `ppt`,
 content. Each seed's extractable text must include its exact sentinel phrase
 from `mistral.ProbeFixtureSentinel`, or the probe records `sentinel_missing`:
 
+<!-- release-commands: expected-failure -->
+
 | Seed | Sentinel phrase |
 | --- | --- |
 | `doc` | `docbank probe doc cedar 7319` |

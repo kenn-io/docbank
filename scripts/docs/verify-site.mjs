@@ -1,5 +1,7 @@
 import { lstat, readFile, readdir } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 
 export const canonicalOrigin = "https://docbank.ai";
@@ -150,6 +152,103 @@ async function compareSource(site, relative, source, errors) {
 }
 
 
+// The docs build already uses uv for Python. Its HTML parser handles entities,
+// nested tags, and omitted closing tags without requiring frontend packages.
+const htmlExamples = `
+import json, sys
+from html import unescape
+from html.parser import HTMLParser
+
+class Parser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.root = {'tag': '', 'children': []}
+        self.stack = [self.root]
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ('p', 'li') and self.stack[-1]['tag'] == tag:
+            self.stack.pop()
+        node = {'tag': tag, 'children': []}
+        self.stack[-1]['children'].append(node)
+        if tag not in ('area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'):
+            self.stack.append(node)
+
+    def handle_endtag(self, tag):
+        for i in range(len(self.stack) - 1, 0, -1):
+            if self.stack[i]['tag'] == tag:
+                del self.stack[i:]
+                break
+
+    def handle_data(self, text):
+        self.stack[-1]['children'].append(text)
+
+def text(node):
+    if isinstance(node, str):
+        return node
+    return ''.join(map(text, node['children']))
+
+def norm(value):
+    return ' '.join(value.split())
+
+def contains_example(node):
+    return isinstance(node, dict) and (node['tag'] in ('code', 'pre') or any(contains_example(c) for c in node['children']))
+
+note = 'Not in the latest release yet'
+examples = []
+orphans = 0
+def walk(node, own=False, previous=False, in_example=False):
+    global orphans
+    if isinstance(node, str):
+        return
+    tag = node['tag']
+    if tag in ('p', 'li'):
+        own = norm(text(node)).startswith(note)
+    if tag in ('code', 'pre') and not in_example:
+        examples.append({'text': norm(text(node)), 'noted': own or previous})
+        in_example = True
+    children = [c for c in node['children'] if isinstance(c, dict)]
+    for i, child in enumerate(children):
+        prior = children[i - 1] if i else None
+        noted = prior is not None and prior['tag'] == 'p' and norm(text(prior)) == note
+        if child['tag'] == 'p' and norm(text(child)).startswith(note) and not contains_example(child):
+            following = children[i + 1] if i + 1 < len(children) else None
+            if norm(text(child)) != note or following is None or following['tag'] not in ('p', 'pre') or not contains_example(following):
+                orphans += 1
+        walk(child, own, previous or noted, in_example)
+
+source = json.load(sys.stdin)
+parser = Parser()
+parser.feed(source['html'])
+walk(parser.root)
+print(json.dumps({'examples': examples, 'orphans': orphans, 'markdown': unescape(source['markdown'])}))
+`;
+
+function compareWebsiteExamples(html, markdown, htmlName, markdownName, errors) {
+  const docs = fileURLToPath(new URL("../../docs", import.meta.url));
+  const parsed = JSON.parse(execFileSync("uv", ["run", "--project", docs, "--frozen", "--no-dev", "python", "-c", htmlExamples], { input: JSON.stringify({ html, markdown }), encoding: "utf8" }));
+  const normalize = (value) => value.replace(/\s+/g, " ").trim();
+  const blocks = parsed.markdown.split(/\r?\n\s*\r?\n/).map(normalize);
+  const note = "Not in the latest release yet";
+  const matched = new Set();
+  for (const example of parsed.examples) {
+    if (!example.text) continue;
+    const candidates = blocks.flatMap((block, i) => block.includes(example.text) ? [i] : []);
+    if (candidates.length === 0) {
+      errors.push(`${htmlName}: example ${JSON.stringify(example.text)} is missing from ${markdownName}`);
+      continue;
+    }
+    for (const index of candidates) matched.add(index);
+    const noted = (i) => blocks[i].replace(/^[-*+]\s+|^\d+[.)]\s+/, "").startsWith(note) || (i > 0 && blocks[i - 1] === note);
+    if (!candidates.some((i) => noted(i) === example.noted)) {
+      errors.push(`${htmlName} and ${markdownName}: ${JSON.stringify(example.text)} has an unreleased note only in ${example.noted ? htmlName : markdownName}`);
+    }
+  }
+  if (parsed.orphans || blocks.some((block, i) => block.startsWith(note) && !matched.has(i) && (block !== note || !matched.has(i + 1) || /^(?:[-*+]\s|\d+[.)]\s|\|)/.test(blocks[i + 1] ?? "")))) {
+    errors.push(`${htmlName} and ${markdownName}: put the unreleased note directly above an example`);
+  }
+}
+
+
 export async function verifySite({ site, sources }) {
   const errors = [];
   const files = await filesUnder(site);
@@ -228,6 +327,13 @@ export async function verifySite({ site, sources }) {
     if (!fileSet.has(rendered)) errors.push(`${relative}: missing HTML route ${rendered}`);
     if (relative === "index.md" || relative === "guide.md") {
       await compareSource(site, relative, path.join(sources.website, relative), errors);
+      if (fileSet.has(rendered)) {
+        const [html, markdown] = await Promise.all([
+          readFile(path.join(site, ...rendered.split("/")), "utf8"),
+          readFile(path.join(site, relative), "utf8"),
+        ]);
+        compareWebsiteExamples(html, markdown, rendered, relative, errors);
+      }
     } else if (relative.startsWith("docs/")) {
       const sourceRelative = relative.slice("docs/".length);
       await compareSource(site, relative, path.join(sources.docs, sourceRelative), errors);
