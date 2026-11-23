@@ -371,14 +371,16 @@ func TestReleasedSchemaFixturesMatchVersions(t *testing.T) {
 
 func assertCompatibleReleasedSchema(t *testing.T, released, candidate *sql.DB, message string) {
 	t.Helper()
-	assert.Equal(t, releasedSchemaCatalog(t, released, false), releasedSchemaCatalog(t, candidate, false), message)
 	before := releasedSchemaCatalog(t, released, true)
 	after := releasedSchemaCatalog(t, candidate, true)
 	for name, object := range before {
 		assert.Equalf(t, object, after[name], "%s: changed or missing %s", message, name)
 	}
 	for name, object := range after {
-		if _, existed := before[name]; existed || object[0] != "index" {
+		if _, existed := before[name]; existed {
+			continue
+		}
+		if !assert.Equalf(t, "index", object[0], "%s: added %s", message, name) {
 			continue
 		}
 		var unique bool

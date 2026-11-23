@@ -12,7 +12,10 @@ trap 'find "$scratch" -depth -delete' EXIT
 for tag in $tags; do
 	mkdir -p "$scratch/$tag"
 	for file in store.go schema.sql; do
-		git show "$tag:internal/store/$file" >"$scratch/$tag/$file" 2>/dev/null || find "$scratch/$tag/$file" -delete
+		entry=$(git ls-tree "$tag" -- "internal/store/$file")
+		if [[ -n $entry ]]; then
+			git show "$tag:internal/store/$file" >"$scratch/$tag/$file"
+		fi
 	done
 	printf '%s\n' "$tag" >>"$scratch/order"
 done

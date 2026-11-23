@@ -56,13 +56,17 @@ func checkReleaseTags(t *testing.T, dir string, versions []int, fixtures map[int
 			if version < 3 {
 				return
 			}
-			baseline, ok := previous[version]
-			if !ok {
+			baseline, seen := previous[version]
+			if !seen {
+				var ok bool
 				baseline, ok = fixtures[version]
 				require.Truef(t, ok, "%s storage schema %d has no fixture", tag, version)
 			}
 			schema, err := os.ReadFile(filepath.Join(dir, tag, "schema.sql"))
 			require.NoErrorf(t, err, "%s storage schema %d", tag, version)
+			if !seen {
+				require.Truef(t, string(schema) == baseline, "%s storage schema %d differs from its exact fixture", tag, version)
+			}
 			passed := true
 			for _, driver := range v090UpgradeDrivers() {
 				if !t.Run(driver.name, func(t *testing.T) {
@@ -95,12 +99,13 @@ func TestReleaseTagSchemasRules(t *testing.T) {
 		fail     bool
 	}{
 		{"first", []string{"v0.15.0"}, []string{base}, nil, false},
-		{"first index", []string{"v0.15.0"}, []string{base + index}, nil, false},
-		{"comments", []string{"v0.15.0"}, []string{"-- comment\n" + base + "\n-- comment"}, nil, false},
-		{"unique", []string{"v0.15.0"}, []string{base + " CREATE UNIQUE INDEX idx ON item(id);"}, nil, true},
-		{"table changed", []string{"v0.15.0"}, []string{strings.Replace(base, "id INTEGER", "id TEXT", 1)}, nil, true},
-		{"missing object", []string{"v0.15.0"}, []string{"CREATE TABLE item (id INTEGER);"}, nil, true},
+		{"first index", []string{"v0.15.0"}, []string{base + index}, nil, true},
+		{"comments", []string{"v0.15.0"}, []string{"-- comment\n" + base + "\n-- comment"}, nil, true},
+		{"unique", []string{"v0.15.0", "v0.15.1"}, []string{base, base + " CREATE UNIQUE INDEX idx ON item(id);"}, nil, true},
+		{"table changed", []string{"v0.15.0", "v0.15.1"}, []string{base, strings.Replace(base, "id INTEGER", "id TEXT", 1)}, nil, true},
+		{"missing object", []string{"v0.15.0", "v0.15.1"}, []string{base, "CREATE TABLE item (id INTEGER);"}, nil, true},
 		{"later index", []string{"v0.15.0", "v0.15.1"}, []string{base, base + index}, nil, false},
+		{"added table", []string{"v0.15.0", "v0.15.1"}, []string{base, base + " CREATE TABLE extra (id INTEGER);"}, nil, true},
 		{"trigger changed", []string{"v0.15.0", "v0.15.1"}, []string{base, strings.Replace(base, "SELECT 1", "SELECT 2", 1)}, nil, true},
 		{"trigger in comment", []string{"v0.15.0", "v0.15.1"}, []string{base, strings.Replace(base, "SELECT 1", "SELECT 2", 1) + " -- " + base}, nil, true},
 		{"index removed", []string{"v0.15.0", "v0.15.1", "v0.15.2"}, []string{base, base + index, base}, nil, true},
@@ -131,6 +136,9 @@ func TestReleaseTagSchemasRules(t *testing.T) {
 			cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestReleaseTagSchemasRules$")
 			cmd.Env = append(slices.Clone(os.Environ()), "DOCBANK_RELEASE_RULES_DIR="+dir)
 			output, err := cmd.CombinedOutput()
+			if tc.name == "comments" {
+				require.Contains(t, string(output), "differs from its exact fixture")
+			}
 			if (err != nil) != tc.fail {
 				t.Fatalf("unexpected result: %v\n%s", err, output)
 			}
