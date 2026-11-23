@@ -28,8 +28,8 @@ const (
 
 // releasedStorageSchemaVersions lists the storage schema of every public
 // release. Each version older than the current schema needs a cutover adapter.
-// Add a release's version here when it ships; scripts/check-released-schemas.sh
-// fails CI when a release tag's schema is missing.
+// Add a release's version here when it ships. TestReleaseTagSchemas, run by
+// scripts/check-released-schemas.sh, fails CI when a release version is missing.
 var releasedStorageSchemaVersions = []int{1, 2, 3, 28, 29, 41, 48}
 
 // Metadata JSONL does not carry unfinished storage work. Cutovers copy these

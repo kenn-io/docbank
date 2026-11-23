@@ -264,14 +264,18 @@ Every release's storage schema version belongs in
 `releasedStorageSchemaVersions` in `internal/store/upgrade.go`. The first
 release to ship a version saves its exact `schema.sql` as
 `internal/store/testdata/schema-<tag>.sql` and registers it in
-`releasedSchemaFixtures`. A later release at the same version, which may only
-add non-unique indexes, needs no new fixture. Three checks enforce this:
+`releasedSchemaFixtures` for versions 28 and up. Versions 1 to 3 are registered
+in `released_tags_test.go`; their upgrade tests use dedicated fixtures. A later
+release at the same version may only add non-unique indexes and needs no new
+fixture. Three checks enforce this:
 
-- `scripts/check-released-schemas.sh` runs in CI against every release tag. It
-  fails when a tag's schema version is unlisted, when the first tag to ship a
-  version has no exact `schema.sql` fixture, or when a later tag at that
-  version changes anything that the fixture or an earlier tag at that version
-  shipped. A later tag may only add non-unique indexes.
+- Run `bash scripts/check-released-schemas.sh` to check every release tag, as CI
+  does. It runs `TestReleaseTagSchemas` on each tag from v0.9.0, the first
+  supported release. It uses the catalog comparison shared with
+  `TestReleasedSchemaFixturesMatchVersions`. The first tag at each version
+  must match its fixture byte for byte. Later tags may only add non-unique
+  indexes. The script requires Go and full tag history. To run the same check
+  directly, use `DOCBANK_RELEASE_SCHEMAS=1 go test -tags fts5 ./internal/store -run '^TestReleaseTagSchemas$' -count=1`.
 - `TestReleasedSchemaFixturesMatchVersions` requires a bump when a released table,
   trigger, view, or index changes, or when a unique index is added.
   New non-unique indexes need no bump because startup creates them in place.

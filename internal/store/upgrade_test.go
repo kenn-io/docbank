@@ -25,8 +25,8 @@ import (
 //go:embed testdata/schema-v0.9.0.sql
 var schemaV090SQL string
 
-//go:embed testdata/schema-v0.10.0-physical.sql
-var schemaV0100PhysicalSQL string
+//go:embed testdata/schema-v0.10.0.sql
+var schemaV0100SQL string
 
 //go:embed testdata/schema-v0.11.0-addition.sql
 var schemaV0110AdditionSQL string
@@ -1282,9 +1282,7 @@ func createV2Fixture(
 		Access: docsqlite.Create, TransactionMode: docsqlite.Immediate,
 	})
 	require.NoError(t, err)
-	_, err = db.ExecContext(t.Context(), schemaV090SQL)
-	require.NoError(t, err)
-	_, err = db.ExecContext(t.Context(), schemaV0100PhysicalSQL)
+	_, err = db.ExecContext(t.Context(), schemaV0100SQL)
 	require.NoError(t, err)
 	if layoutAddition != "" {
 		_, err = db.ExecContext(t.Context(), layoutAddition)
