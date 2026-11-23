@@ -25,6 +25,9 @@ import (
 //go:embed testdata/schema-v0.9.0.sql
 var schemaV090SQL string
 
+//go:embed testdata/schema-v0.10.0.sql
+var schemaV0100SQL string
+
 //go:embed testdata/schema-v0.10.0-physical.sql
 var schemaV0100PhysicalSQL string
 

@@ -371,29 +371,42 @@ func TestReleasedSchemaFixturesMatchVersions(t *testing.T) {
 
 func assertCompatibleReleasedSchema(t *testing.T, released, candidate *sql.DB, message string) {
 	t.Helper()
+	assert.Empty(t, releasedSchemaChanges(t, released, candidate), message)
+}
+
+func releasedSchemaChanges(t *testing.T, released, candidate *sql.DB) []string {
+	t.Helper()
 	before := releasedSchemaCatalog(t, released, true)
 	after := releasedSchemaCatalog(t, candidate, true)
-	for name, object := range before {
-		assert.Equalf(t, object, after[name], "%s: changed or missing %s", message, name)
+	var changes []string
+	for key, object := range before {
+		if after[key] != object {
+			changes = append(changes, fmt.Sprintf("changed or missing %s %s", key[0], key[1]))
+		}
 	}
-	for name, object := range after {
-		if _, existed := before[name]; existed {
+	for key, object := range after {
+		if _, existed := before[key]; existed {
 			continue
 		}
-		if !assert.Equalf(t, "index", object[0], "%s: added %s", message, name) {
+		if key[0] != "index" {
+			changes = append(changes, fmt.Sprintf("added %s %s", key[0], key[1]))
 			continue
 		}
 		var unique bool
-		require.NoError(t, candidate.QueryRowContext(t.Context(), `SELECT "unique" FROM pragma_index_list(?) WHERE name=?`, object[1], name).Scan(&unique))
-		assert.Falsef(t, unique, "%s: added unique index %s", message, name)
+		require.NoError(t, candidate.QueryRowContext(t.Context(), `SELECT "unique" FROM pragma_index_list(?) WHERE name=?`, object[1], key[1]).Scan(&unique))
+		if unique {
+			changes = append(changes, fmt.Sprintf("added unique index %s", key[1]))
+		}
 	}
+	slices.Sort(changes)
+	return changes
 }
 
-func releasedSchemaCatalog(t *testing.T, db *sql.DB, indexes bool) map[string][3]string {
+func releasedSchemaCatalog(t *testing.T, db *sql.DB, indexes bool) map[[2]string][3]string {
 	t.Helper()
-	catalog := make(map[string][3]string)
+	catalog := make(map[[2]string][3]string)
 	for _, row := range releasedSchemaCatalogRows(t, db, indexes) {
-		catalog[row[1]] = [3]string{row[0], row[2], row[3]}
+		catalog[[2]string{row[0], row[1]}] = [3]string{row[0], row[2], row[3]}
 	}
 	return catalog
 }
