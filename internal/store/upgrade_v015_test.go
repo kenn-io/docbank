@@ -349,7 +349,7 @@ func TestReleasedSchemaFixturesMatchVersions(t *testing.T) {
 					current, _ := newReleasedFixtureStore(t, filepath.Join(path, "current.db"), driver.driver, schemaSQL, version)
 					message := fmt.Sprintf("schema.sql differs from released schema %d; bump currentStorageSchemaVersion and add a cutover adapter", version)
 					assert.Empty(t, releasedSchemaChanges(t, released, current), message)
-					after := releasedSchemaCatalog(t, current, true)
+					after := releasedSchemaCatalog(t, current)
 					beforeOpen, err := os.Stat(filepath.Join(path, "released.db"))
 					require.NoError(t, err)
 					require.NoError(t, released.Close())
@@ -359,7 +359,7 @@ func TestReleasedSchemaFixturesMatchVersions(t *testing.T) {
 					afterOpen, err := os.Stat(filepath.Join(path, "released.db"))
 					require.NoError(t, err)
 					assert.True(t, os.SameFile(beforeOpen, afterOpen), "compatible index additions keep the released database in place")
-					assert.Equal(t, after, releasedSchemaCatalog(t, opened.db, true), message)
+					assert.Equal(t, after, releasedSchemaCatalog(t, opened.db), message)
 				})
 			}
 		}
@@ -371,8 +371,8 @@ func TestReleasedSchemaFixturesMatchVersions(t *testing.T) {
 
 func releasedSchemaChanges(t *testing.T, released, candidate *sql.DB) []string {
 	t.Helper()
-	before := releasedSchemaCatalog(t, released, true)
-	after := releasedSchemaCatalog(t, candidate, true)
+	before := releasedSchemaCatalog(t, released)
+	after := releasedSchemaCatalog(t, candidate)
 	var changes []string
 	for key, object := range before {
 		if after[key] != object {
@@ -390,17 +390,17 @@ func releasedSchemaChanges(t *testing.T, released, candidate *sql.DB) []string {
 		var unique bool
 		require.NoError(t, candidate.QueryRowContext(t.Context(), `SELECT "unique" FROM pragma_index_list(?) WHERE name=?`, object[1], key[1]).Scan(&unique))
 		if unique {
-			changes = append(changes, fmt.Sprintf("added unique index %s", key[1]))
+			changes = append(changes, "added unique index "+key[1])
 		}
 	}
 	slices.Sort(changes)
 	return changes
 }
 
-func releasedSchemaCatalog(t *testing.T, db *sql.DB, indexes bool) map[[2]string][3]string {
+func releasedSchemaCatalog(t *testing.T, db *sql.DB) map[[2]string][3]string {
 	t.Helper()
 	catalog := make(map[[2]string][3]string)
-	for _, row := range releasedSchemaCatalogRows(t, db, indexes) {
+	for _, row := range releasedSchemaCatalogRows(t, db, true) {
 		catalog[[2]string{row[0], row[1]}] = [3]string{row[0], row[2], row[3]}
 	}
 	return catalog
