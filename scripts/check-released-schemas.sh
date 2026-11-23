@@ -3,8 +3,9 @@
 # Every tagged schema version must appear in releasedStorageSchemaVersions.
 # From version 3 onward, the first tag to ship each version must match an
 # exact released-schema fixture byte for byte. A later tag at the same version
-# may only add non-unique indexes: every table, view, trigger, and index in the
-# version's fixture must remain unchanged in SQLite's catalog. Tags before
+# may only add non-unique indexes: every table, view, trigger, and index that
+# the fixture or an earlier tag at that version shipped must remain unchanged
+# in SQLite's catalog. Tags before
 # v0.10.0 have no explicit schema version; every later tag must declare one.
 # Requires full tag history (fetch-depth: 0) and the sqlite3 command.
 set -euo pipefail
@@ -34,17 +35,17 @@ fi
 scratch=$(mktemp -d)
 trap 'rm -rf -- "$scratch"' EXIT
 
-# catalog prints one line per schema object: type, name, and its SQL with
-# line breaks flattened, in a stable order.
+# catalog prints one line per schema object: type, name, whether an index is
+# unique, and its exact SQL as hex, in a stable byte order.
 catalog() {
 	local db="$scratch/catalog.db"
 	rm -f -- "$db"
 	sqlite3 -bail "$db" <"$1" >/dev/null
-	sqlite3 -separator $'\t' "$db" "SELECT type, name, replace(replace(coalesce(sql, ''), char(13), ' '), char(10), ' ') FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+	sqlite3 -separator $'\t' "$db" "SELECT m.type, m.name, coalesce((SELECT l.\"unique\" FROM pragma_index_list(m.tbl_name) AS l WHERE l.name = m.name), 0), hex(coalesce(m.sql, '')) FROM sqlite_master AS m WHERE m.name NOT GLOB 'sqlite_*'" | LC_ALL=C sort
 }
 
 failed=0
-declare -A version_fixture=()
+declare -A version_catalog=()
 for tag in $tags; do
 	version=$(git show "$tag:internal/store/store.go" 2>/dev/null |
 		sed -nE 's/^const currentStorageSchemaVersion = ([0-9]+).*/\1/p')
@@ -64,8 +65,10 @@ for tag in $tags; do
 		continue
 	fi
 	git show "$tag:internal/store/schema.sql" >"$scratch/tag.sql"
-	baseline=${version_fixture[$version]:-}
-	if [[ -z $baseline ]]; then
+	# shipped holds every object that earlier tags at this version shipped.
+	shipped=${version_catalog[$version]:-}
+	if [[ -z $shipped ]]; then
+		baseline=
 		for fixture in "$fixtures_dir"/schema-v*.sql; do
 			if cmp -s "$scratch/tag.sql" "$fixture"; then
 				baseline=$fixture
@@ -77,19 +80,21 @@ for tag in $tags; do
 			failed=1
 			continue
 		fi
-		version_fixture[$version]=$baseline
+		version_catalog[$version]="$scratch/v$version.catalog"
+		catalog "$baseline" >"${version_catalog[$version]}"
 		continue
 	fi
-	catalog "$baseline" | LC_ALL=C sort >"$scratch/baseline.catalog"
-	catalog "$scratch/tag.sql" | LC_ALL=C sort >"$scratch/tag.catalog"
-	changed=$(LC_ALL=C comm -23 "$scratch/baseline.catalog" "$scratch/tag.catalog" | cut -f1,2)
-	added=$(LC_ALL=C comm -13 "$scratch/baseline.catalog" "$scratch/tag.catalog" |
-		awk -F '\t' 'toupper($1) != "INDEX" || toupper($3) ~ /^CREATE UNIQUE INDEX/ { print $1 "\t" $2 }')
+	catalog "$scratch/tag.sql" >"$scratch/tag.catalog"
+	changed=$(LC_ALL=C comm -23 "$shipped" "$scratch/tag.catalog" | cut -f1,2)
+	added=$(LC_ALL=C comm -13 "$shipped" "$scratch/tag.catalog" |
+		awk -F '\t' '$1 != "index" || $3 != "0" { print $1 "\t" $2 }')
 	if [[ -n $changed || -n $added ]]; then
 		echo "error: $tag changes storage schema $version beyond added non-unique indexes; bump currentStorageSchemaVersion" >&2
 		[[ -z $changed ]] || sed 's/^/  changed or removed: /' <<<"$changed" >&2
 		[[ -z $added ]] || sed 's/^/  added: /' <<<"$added" >&2
 		failed=1
+		continue
 	fi
+	cp -- "$scratch/tag.catalog" "$shipped"
 done
 exit "$failed"

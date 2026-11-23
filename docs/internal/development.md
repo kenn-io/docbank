@@ -270,8 +270,8 @@ add non-unique indexes, needs no new fixture. Three checks enforce this:
 - `scripts/check-released-schemas.sh` runs in CI against every release tag. It
   fails when a tag's schema version is unlisted, when the first tag to ship a
   version has no exact `schema.sql` fixture, or when a later tag at that
-  version changes anything in the fixture's SQLite catalog except by adding
-  non-unique indexes.
+  version changes anything that the fixture or an earlier tag at that version
+  shipped. A later tag may only add non-unique indexes.
 - `TestReleasedSchemaFixturesMatchVersions` requires a bump when a released table,
   trigger, view, or index changes, or when a unique index is added.
   New non-unique indexes need no bump because startup creates them in place.
