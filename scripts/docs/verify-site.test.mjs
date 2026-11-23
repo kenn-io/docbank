@@ -112,6 +112,7 @@ for (const [name, html, markdown, error] of [
   ["example in HTML comment", "<p><code>docbank tag</code></p>", "<!-- `docbank tag` -->\n", /example.*missing from guide\.md/],
   ["expected-failure marker", "<p><code>docbank example</code></p>", "<!-- release-commands: expected-failure -->\n\n`docbank example`\n", null],
   ["unrelated code", "<p>Supports <code>PDF</code> files.</p>", "Supports PDF files.\n", null],
+  ["product name in code", "<p>Use the <code>Docbank API</code>.</p>", "Use the API.\n", null],
   ["copy command differs", '<div data-install-command data-command="docbank processing future"><code>docbank tag</code></div>', "`docbank tag`\n", /data-command/],
   ["note does not cover the next example", "<p>Not in the latest release yet</p><p><code>docbank first</code><code>docbank second</code></p>", "Not in the latest release yet\n\n`docbank first`\n\nNot in the latest release yet\n\n`docbank second`\n", /unreleased note only in guide\.md/],
   ["second example without a note", "<p>Not in the latest release yet</p><p><code>docbank first</code><code>docbank second</code></p>", "Not in the latest release yet\n\n`docbank first`\n\n`docbank second`\n", null],
