@@ -172,10 +172,7 @@ function compareWebsiteExamples(html, markdown, htmlName, markdownName, errors) 
   const protectedFences = markdown.replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?^ {0,3}\1[ \t]*(?=\r?$)/gm, (fence) => fence.replace(/\n(?=\s*\n)/g, "\v"));
   const rawBlocks = protectedFences.split(/\n\s*\n/).map((block) => block.replace(/\v/g, "\n"));
   const blocks = rawBlocks.map(normalize);
-  const examples = rawBlocks.map((block) => {
-    const fence = block.trim().match(/^ {0,3}(`{3,}|~{3,})[^\n]*\n([\s\S]*?)\n {0,3}\1[ \t]*$/);
-    return fence ? [normalize(fence[2])] : [...block.matchAll(/`([^`\n]+)`/g)].map((match) => normalize(match[1]));
-  });
+  const examples = rawBlocks.map((block) => [...block.matchAll(/^ {0,3}(`{3,}|~{3,})[^\n]*\n([\s\S]*?)\n {0,3}\1|`([^`\n]+)`/gm)].map((match) => normalize(match[2] ?? match[3])));
   for (const match of html.matchAll(/<(code|pre)\b[^>]*>([\s\S]*?)<\/\1>/gi)) {
     const example = plainText(match[2]);
     const before = html.slice(0, match.index).split(/<\/?(?:p|li)\b[^>]*>/i);
@@ -198,12 +195,8 @@ function compareWebsiteExamples(html, markdown, htmlName, markdownName, errors) 
       errors.push(`${htmlName}: put the unreleased note directly above an example`);
     }
   }
-  for (const [index, block] of blocks.entries()) {
-    if (!block.startsWith(unreleasedNote) || /`[^`]+`/.test(block)) continue;
-    const next = blocks[index + 1] ?? "";
-    if (block !== unreleasedNote || /^(?:[-*+]\s|\d+[.)]\s|\|)/.test(next) || !/`[^`]+`|^```|^~~~/.test(next)) {
-      errors.push(`${markdownName}: put the unreleased note directly above an example`);
-    }
+  if (blocks.some((block, i) => block.startsWith(unreleasedNote) && !block.includes("`") && (block !== unreleasedNote || /^(?:[-*+]\s|\d+[.)]\s|\|)/.test(blocks[i + 1] ?? "") || !/`[^`]+`|^```|^~~~/.test(blocks[i + 1] ?? "")))) {
+    errors.push(`${markdownName}: put the unreleased note directly above an example`);
   }
 }
 
