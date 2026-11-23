@@ -348,7 +348,7 @@ func TestReleasedSchemaFixturesMatchVersions(t *testing.T) {
 					released, _ := newReleasedFixtureStore(t, filepath.Join(path, "released.db"), driver.driver, fixture, version)
 					current, _ := newReleasedFixtureStore(t, filepath.Join(path, "current.db"), driver.driver, schemaSQL, version)
 					message := fmt.Sprintf("schema.sql differs from released schema %d; bump currentStorageSchemaVersion and add a cutover adapter", version)
-					assertCompatibleReleasedSchema(t, released, current, message)
+					assert.Empty(t, releasedSchemaChanges(t, released, current), message)
 					after := releasedSchemaCatalog(t, current, true)
 					beforeOpen, err := os.Stat(filepath.Join(path, "released.db"))
 					require.NoError(t, err)
@@ -367,11 +367,6 @@ func TestReleasedSchemaFixturesMatchVersions(t *testing.T) {
 	for version := range releasedSchemaFixtures {
 		assert.Contains(t, releasedStorageSchemaVersions, version)
 	}
-}
-
-func assertCompatibleReleasedSchema(t *testing.T, released, candidate *sql.DB, message string) {
-	t.Helper()
-	assert.Empty(t, releasedSchemaChanges(t, released, candidate), message)
 }
 
 func releasedSchemaChanges(t *testing.T, released, candidate *sql.DB) []string {

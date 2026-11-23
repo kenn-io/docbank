@@ -274,7 +274,8 @@ fixture. Three checks enforce this:
   supported release. It uses the catalog comparison shared with
   `TestReleasedSchemaFixturesMatchVersions`. The first tag at each version
   must match its fixture byte for byte. Later tags may only add non-unique
-  indexes.
+  indexes. The script requires Go and full tag history. To run the same check
+  directly, use `DOCBANK_RELEASE_SCHEMAS=1 go test -tags fts5 ./internal/store -run '^TestReleaseTagSchemas$' -count=1`.
 - `TestReleasedSchemaFixturesMatchVersions` requires a bump when a released table,
   trigger, view, or index changes, or when a unique index is added.
   New non-unique indexes need no bump because startup creates them in place.

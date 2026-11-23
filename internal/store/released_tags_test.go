@@ -15,6 +15,8 @@ import (
 	"golang.org/x/mod/semver"
 )
 
+const firstSupportedReleaseTag = "v0.9.0"
+
 var releaseTagVersion = regexp.MustCompile(`(?m)^const currentStorageSchemaVersion = ([0-9]+)\b`)
 
 type releaseTag struct {
@@ -30,17 +32,27 @@ func releaseTagFixtures() map[int]string {
 	return fixtures
 }
 
+func releaseTagNames(output []byte) []string {
+	names := strings.Fields(string(output))
+	slices.SortFunc(names, semver.Compare)
+	return names
+}
+
+func TestReleaseTagNamesPrereleaseOrder(t *testing.T) {
+	assert.Equal(t, []string{"v0.20.0-rc.1", "v0.20.0"}, releaseTagNames([]byte("v0.20.0\nv0.20.0-rc.1\n")))
+}
+
 func TestReleaseTagSchemas(t *testing.T) {
 	if os.Getenv("DOCBANK_RELEASE_SCHEMAS") == "" {
 		t.Skip("DOCBANK_RELEASE_SCHEMAS is unset")
 	}
 	output, err := exec.CommandContext(t.Context(), "git", "tag", "-l", "v[0-9]*", "--sort=v:refname").CombinedOutput()
 	require.NoErrorf(t, err, "list release tags: %s", output)
-	names := strings.Fields(string(output))
-	require.Contains(t, names, "v0.9.0", "release tags must include the first supported release; fetch full tag history")
+	names := releaseTagNames(output)
+	require.Contains(t, names, firstSupportedReleaseTag, "release tags must include the first supported release; fetch full tag history")
 	var tags []releaseTag
 	for _, name := range names {
-		if semver.Compare(name, "v0.9.0") < 0 {
+		if semver.Compare(name, firstSupportedReleaseTag) < 0 {
 			continue
 		}
 		var files [2]string
@@ -63,7 +75,7 @@ func releaseTagProblems(t *testing.T, tags []releaseTag, versions []int, fixture
 		match := releaseTagVersion.FindStringSubmatch(tag.store)
 		version := 1
 		if len(match) == 0 {
-			if tag.name != "v0.9.0" {
+			if tag.name != firstSupportedReleaseTag {
 				problems = append(problems, fmt.Sprintf("%s has no storage schema version", tag.name))
 				continue
 			}
