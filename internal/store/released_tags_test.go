@@ -100,7 +100,8 @@ func releaseTagProblems(t *testing.T, tags []releaseTag, versions []int, fixture
 		for _, driver := range v090UpgradeDrivers() {
 			released := schemaContractDB(t, driver.driver, baseline)
 			candidate := schemaContractDB(t, driver.driver, tag.schema)
-			for _, change := range releasedSchemaChanges(t, released, candidate) {
+			changes, _ := releasedSchemaChanges(t, released, candidate)
+			for _, change := range changes {
 				problems = append(problems, fmt.Sprintf("%s storage schema %d (%s): %s", tag.name, version, driver.name, change))
 			}
 		}
@@ -183,7 +184,7 @@ func TestReleasedSchemaChanges(t *testing.T) {
 				t.Run(driver.name, func(t *testing.T) {
 					before := schemaContractDB(t, driver.driver, tc.before)
 					after := schemaContractDB(t, driver.driver, tc.after)
-					changes := releasedSchemaChanges(t, before, after)
+					changes, _ := releasedSchemaChanges(t, before, after)
 					if tc.want == "" {
 						assert.Empty(t, changes)
 					} else {
