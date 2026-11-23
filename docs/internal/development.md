@@ -271,8 +271,10 @@ fixture. Three checks enforce this:
 
 - Run `bash scripts/check-released-schemas.sh` to check every release tag, as CI
   does. It runs `TestReleaseTagSchemas` on each tag from v0.9.0, the first
-  supported release. The first tag at each version must match its fixture
-  byte for byte. Later tags at that version may only add non-unique indexes.
+  supported release. It uses the catalog comparison shared with
+  `TestReleasedSchemaFixturesMatchVersions`. The first tag at each version
+  must match its fixture byte for byte. Later tags may only add non-unique
+  indexes.
 - `TestReleasedSchemaFixturesMatchVersions` requires a bump when a released table,
   trigger, view, or index changes, or when a unique index is added.
   New non-unique indexes need no bump because startup creates them in place.
