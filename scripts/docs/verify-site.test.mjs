@@ -115,6 +115,8 @@ for (const [name, html, markdown, error] of [
   ["product name in code", "<p>Use the <code>Docbank API</code>.</p>", "Use the API.\n", null],
   ["command name within prose", "<p><code>the docbank command</code></p>", "The command.\n", null],
   ["bare command", "<p><code>docbank</code></p>", "# Guide\n", /example.*missing from guide\.md/],
+  ["Windows executable", "<p><code>docbank.exe future</code></p>", "# Guide\n", /example.*missing from guide\.md/],
+  ["uppercase Windows executable", "<p><code>DOCBANK.EXE future</code></p>", "# Guide\n", /example.*missing from guide\.md/],
   ["installer command", "<p><code>curl -fsSL https://docbank.ai/install.sh | sh</code></p>", "# Guide\n", /example.*missing from guide\.md/],
   ["copy command differs", '<div data-install-command data-command="docbank processing future"><code>docbank tag</code></div>', "`docbank tag`\n", /data-command/],
   ["note does not cover the next example", "<p>Not in the latest release yet</p><p><code>docbank first</code><code>docbank second</code></p>", "Not in the latest release yet\n\n`docbank first`\n\nNot in the latest release yet\n\n`docbank second`\n", /unreleased note only in guide\.md/],

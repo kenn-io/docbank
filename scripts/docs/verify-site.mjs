@@ -176,7 +176,7 @@ function compareWebsiteExamples(html, markdown, htmlName, markdownName, errors) 
   const examples = rawBlocks.map((block) => [...block.matchAll(/^ {0,3}(`{3,}|~{3,})[^\n]*\n([\s\S]*?)\n {0,3}\1|(?<!`)(`+)(?!`)([\s\S]*?)(?<!`)\3(?!`)/gm)].map((match) => normalize(match[2] ?? match[4])));
   for (const match of html.matchAll(/<(code|pre)\b[^>]*>([\s\S]*?)<\/\1>/gi)) {
     const example = plainText(match[2]);
-    if (!/^docbank(?:\s|$)/.test(example) && !/^(?:curl|irm)\b.*\bdocbank\.ai\/install(?:\.sh|\.ps1)\b/i.test(example)) continue;
+    if (!/^docbank(?:\s|$)/.test(example) && !/^docbank\.exe(?:\s|$)/i.test(example) && !/^(?:curl|irm)\b.*\bdocbank\.ai\/install(?:\.sh|\.ps1)\b/i.test(example)) continue;
     const before = html.slice(0, match.index).split(/<\/?(?:p|li)\b[^>]*>/i);
     const own = before.pop();
     const previous = /<\/(?:code|pre)\s*>/i.test(own) ? "" : before.map(plainText).filter(Boolean).at(-1);
