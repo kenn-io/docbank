@@ -170,6 +170,13 @@ version before calling the same daemon endpoint on its own connection. It
 rebuilds the map from the returned observations before saving the private
 envelope. MCP replies contain the saved identity and bounded page summaries.
 The full map and source text stay in the local file for the existing resolver.
+The opt-in MCP resolver checks the vault before sending the private inputs to
+the existing resolve endpoint. It saves the validated review or a complete
+expansion proposal using the same private publication path. The client rebuilds
+an expansion from the submitted map and masks and checks it against the
+structured daemon response before saving. Proposal files require an explicit
+mask edit and another resolve. Neither MCP tool grants retention consent.
+
 
 Preparation shares one slot with resolve and render, with no queue. Shutdown cancels admitted
 work and waits for cleanup. Limits are 8 KiB requests, 64 MiB originals, the

@@ -21,6 +21,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/document/redaction"
+	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/mcp"
 	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/redactiontest"
@@ -285,8 +287,40 @@ func qualifyNativeExpansion(t *testing.T, f nativeRedactionFiles) {
 	require.ErrorAs(t, err, &proposal)
 	require.NotNil(t, proposal.Expanded)
 	require.Contains(t, diagnostic.String(), "expanded_boxes")
+	agent := startWorkflowMCP(t, mcp.ServerOptions{AllowPackageWrites: true})
+	defer agent.stop(t)
+	var vault api.VaultIdentity
+	require.NoError(t, json.Unmarshal(agent.call(t, "get_vault_info", map[string]any{}), &vault))
+	proposalBytes := saveMCPResolution(t, agent, vault.VaultID, f, filepath.Join(f.dir, "proposal.json"), "expansion_required")
+	require.Equal(t, diagnostic.Bytes(), proposalBytes)
+	unchanged, err := os.ReadFile(f.masks)
+	require.NoError(t, err)
+	require.Equal(t, data, unchanged)
 	masks[0].Selector = *proposal.Expanded
-	f.resolve(t, masks)
+	f.masks = filepath.Join(f.dir, "accepted-masks.json")
+	accepted, err := json.Marshal(masks)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(f.masks, accepted, 0600))
+	review := saveMCPResolution(t, agent, vault.VaultID, f, f.review, "review")
+	cli, err := runCLI(t, "redaction", "resolve", f.preparation, f.masks, "--json")
+	require.NoError(t, err)
+	require.True(t, bytes.Equal([]byte(cli), review), "MCP and CLI must save identical review JSON")
+
+	// The two-pixel padding reaches K across the space, yielding disjoint spans.
+	tight := redactiontest.FontPDF("BT /F1 12 Tf 36 720 Td [(SECRET ) 350 (KEEP)] TJ ET", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>", "")
+	f = importNativeRedaction(t, tight, "tight.pdf")
+	textMask := processing.RedactionMask{ID: uuid.New(), Selector: redaction.Selector{
+		Kind: "text", MapSHA256: f.prep.Map.SHA256, Span: &redaction.Span{Start: 0, End: 6},
+	}}
+	data, err = json.Marshal([]processing.RedactionMask{textMask})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(f.masks, data, 0600))
+	proposalBytes = saveMCPResolution(t, agent, vault.VaultID, f, filepath.Join(f.dir, "proposal.json"), "expansion_required")
+	var disjoint redaction.Problem
+	require.NoError(t, json.Unmarshal(proposalBytes, &disjoint))
+	require.Nil(t, disjoint.Expanded)
+	require.Equal(t, []redaction.Span{{Start: 0, End: 6}, {Start: 7, End: 8}}, disjoint.ExpandedSpans)
+	require.NotEmpty(t, disjoint.ExpandedBoxes)
 }
 
 func assertRedactionLeavesNoJobs(t *testing.T, root string) {

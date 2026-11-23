@@ -209,8 +209,64 @@ func qualifyMCPHistoricalPreparation(t *testing.T) {
 	require.NoError(t, os.WriteFile(f.masks, masks, 0600))
 	_, err = runCLI(t, "redaction", "resolve", f.preparation, f.masks, "--json")
 	require.ErrorContains(t, err, "mapping_incomplete")
-	review := f.resolve(t, []processing.RedactionMask{{ID: uuid.New(), Selector: redaction.Selector{Kind: "page", MapSHA256: f.prep.Map.SHA256, Pages: []int{1}}}})
+	refused := agent.call(t, "resolve_native_pdf", map[string]any{"vault_id": info.VaultID, "preparation_path": f.preparation,
+		"masks_path": f.masks, "destination_path": f.review})
+	var problem struct {
+		Code string `json:"code"`
+	}
+	require.NoError(t, json.Unmarshal(refused, &problem))
+	require.Equal(t, "mapping_incomplete", problem.Code)
+	require.NoFileExists(t, f.review)
+	wholePage, err := json.Marshal([]processing.RedactionMask{{ID: uuid.New(), Selector: redaction.Selector{
+		Kind: "page", MapSHA256: f.prep.Map.SHA256, Pages: []int{1},
+	}}})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(f.masks, wholePage, 0600))
+	const renamed = "/inbox/renamed-gap.pdf"
+	_, err = runCLI(t, "mv", path, renamed)
+	require.NoError(t, err)
+	reviewBytes := saveMCPResolution(t, agent, info.VaultID, f, f.review, "review")
+	var review processing.RedactionReview
+	require.NoError(t, json.Unmarshal(reviewBytes, &review))
+	require.Equal(t, node.CurrentVersionID, review.Selection.Source.VersionID)
+	require.Greater(t, review.ObservedNodeRevision, f.prep.Selection.Revision)
 	text, err := redaction.Text(review.Resolved)
 	require.NoError(t, err)
 	require.Equal(t, "[REDACTED]\f", string(text))
+
+	_, err = runCLI(t, "rm", renamed)
+	require.NoError(t, err)
+	missing := filepath.Join(f.dir, "missing-source.json")
+	refused = agent.call(t, "resolve_native_pdf", map[string]any{"vault_id": info.VaultID, "preparation_path": f.preparation,
+		"masks_path": f.masks, "destination_path": missing})
+	require.NoError(t, json.Unmarshal(refused, &problem))
+	require.Equal(t, "not_found", problem.Code)
+	require.NoFileExists(t, missing)
+}
+
+func saveMCPResolution(t *testing.T, agent *familyMCP, vaultID string, f nativeRedactionFiles, destination, outcome string) []byte {
+	t.Helper()
+	raw := agent.call(t, "resolve_native_pdf", map[string]any{"vault_id": vaultID, "preparation_path": f.preparation,
+		"masks_path": f.masks, "destination_path": destination})
+	var receipt struct {
+		Outcome      string `json:"outcome"`
+		SHA256       string `json:"sha256"`
+		Size         int    `json:"size"`
+		ReviewSHA256 string `json:"review_sha256"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &receipt))
+	require.Equal(t, outcome, receipt.Outcome, string(raw))
+	saved, err := os.ReadFile(destination)
+	require.NoError(t, err)
+	require.Equal(t, redactionPDFHash(saved), receipt.SHA256)
+	require.Equal(t, len(saved), receipt.Size)
+	if outcome == "review" {
+		var review processing.RedactionReview
+		require.NoError(t, json.Unmarshal(saved, &review))
+		require.NotEmpty(t, review.SHA256)
+		require.Equal(t, review.SHA256, receipt.ReviewSHA256)
+	} else {
+		require.Empty(t, receipt.ReviewSHA256)
+	}
+	return saved
 }

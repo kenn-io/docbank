@@ -23,6 +23,7 @@ import (
 )
 
 const toolCatalogTTLMs = 60_000
+const notFoundCode = "not_found"
 
 func catalogInstructions(options ServerOptions) string {
 	if !options.AllowProcessing && !options.AllowPackageWrites &&
@@ -34,7 +35,7 @@ func catalogInstructions(options ServerOptions) string {
 		instructions += " start_processing requires a reviewed plan and prior operator consent."
 	}
 	if options.AllowPackageWrites {
-		instructions += " Package writes can preflight local sources, import packages, assign or resolve custodians, prepare PDFs for review, and publish or export Bates PDFs. Bates reservation does not stamp or publish files. Reviewed PDF publication requires an operator-created allocation; MCP cannot grant original-retention consent."
+		instructions += " Package writes can preflight local sources, import packages, assign or resolve custodians, prepare PDFs, resolve masks, and publish or export Bates PDFs. Bates reservation does not stamp or publish files. Reviewed PDF publication requires an operator-created allocation; MCP cannot grant original-retention consent."
 	}
 	if options.AllowPhotoEdits {
 		instructions += " Photo edits change one asset at an expected revision."
@@ -203,7 +204,7 @@ func toolCatalog(options ServerOptions) []*sdkmcp.Tool {
 		definitions = append(definitions, preflightLoadFilePackageToolDefinition, packageImportToolDefinition,
 			resolvePackageCustodianToolDefinition, assignPackageCustodianToolDefinition,
 			ensureBatesNamespaceToolDefinition, reserveBatesRangeToolDefinition, publishBatesExportToolDefinition, publishNumberedPDFToolDefinition,
-			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition, recipientPackageTool, prepareNativePDFTool)
+			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition, recipientPackageTool, prepareNativePDFTool, resolveNativePDFTool)
 	}
 	if options.AllowPhotoEdits {
 		definitions = append(definitions, photoWriteToolDefinitions...)
@@ -267,7 +268,9 @@ func registerToolCatalog(
 			publishBatesExportToolDefinition.name, publishNumberedPDFToolDefinition.name, exportBatesFileToolDefinition.name:
 			handler = batesWriteToolHandler(lease, tool.Name, output, logger)
 		case prepareNativePDFTool.name:
-			handler = prepareNativePDFHandler(lease, output, logger)
+			handler = redactionFileHandler(tool.Name, prepareNativePDF, lease, output, logger)
+		case resolveNativePDFTool.name:
+			handler = redactionFileHandler(tool.Name, resolveNativePDF, lease, output, logger)
 		case recipientPackageTool.name:
 			handler = recipientPackageHandler(lease, output, logger)
 		case exportLoadFilePackageToolDefinition.name:
@@ -433,6 +436,9 @@ type searchProfileError struct{ code, message string }
 func (e *searchProfileError) Error() string { return e.message }
 
 func domainToolError(err error) (*sdkmcp.CallToolResult, bool) {
+	if resolution, ok := errors.AsType[*resolutionError](err); ok {
+		return toolErrorResult(toolErrorOutput{Code: resolution.code, Message: resolutionMessages[resolution.code]})
+	}
 	if publication, ok := errors.AsType[*numberedPublicationError](err); ok {
 		return toolErrorResult(toolErrorOutput{Code: publication.code, Message: numberedPublicationMessages[publication.code]})
 	}
@@ -487,6 +493,9 @@ func stableDomainError(err error) (string, int) {
 	if preparation, ok := errors.AsType[preparationError](err); ok {
 		return string(preparation), 0
 	}
+	if resolution, ok := errors.AsType[*resolutionError](err); ok {
+		return resolution.code, 0
+	}
 	var scope *daemonconn.SourceFenceScopeTooLargeError
 	switch {
 	case errors.Is(err, errPreparationLocalIO):
@@ -496,7 +505,7 @@ func stableDomainError(err error) (string, int) {
 	case errors.Is(err, store.ErrInvalidSearchScope):
 		return "validation", 0
 	case errors.Is(err, store.ErrNotFound):
-		return "not_found", 0
+		return notFoundCode, 0
 	case errors.Is(err, store.ErrNotDir):
 		return "not_dir", 0
 	case errors.Is(err, store.ErrProcessingSourceFenceStaleVersion):
@@ -580,8 +589,8 @@ func stableDomainError(err error) (string, int) {
 		"export_role_unavailable", "export_timeout", "export_canceled", "export_failed",
 		"export_unavailable":
 		return facts.Code, 0
-	case "not_found":
-		return "not_found", 0
+	case notFoundCode:
+		return notFoundCode, 0
 	case "not_dir":
 		return "not_dir", 0
 	case "download_selection_stale":
@@ -758,7 +767,7 @@ func domainErrorMessage(code string) string {
 		return "The export request failed."
 	case "package_incomplete":
 		return "The snapshot is missing a required representation for this export profile."
-	case "not_found":
+	case notFoundCode:
 		return "The requested Docbank identity was not found."
 	case "not_dir":
 		return "The requested node is not a directory."
@@ -831,7 +840,7 @@ func sanitizedRPCError(_ error) *jsonrpc.Error {
 
 func logOperationError(logger *slog.Logger, operation string, err error) {
 	code, _ := stableDomainError(err)
-	if errors.Is(err, errExportLocalIO) || errors.Is(err, errReportLocalIO) || (code == "bates_local_io" || code == recipientPackageLocalIOCode) || errors.Is(err, errPreparationLocalIO) {
+	if errors.Is(err, errExportLocalIO) || errors.Is(err, errReportLocalIO) || (code == "bates_local_io" || code == recipientPackageLocalIOCode) || errors.Is(err, errPreparationLocalIO) || code == resolutionLocalIO {
 		logger.Error("MCP operation failed", "operation", operation,
 			"error_code", code, "error", err)
 		return

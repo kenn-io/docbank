@@ -2,24 +2,18 @@ package mcp
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json/v2"
 	"errors"
-	"fmt"
 	"log/slog"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
-	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/filepublish"
 	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/production"
@@ -81,6 +75,7 @@ type prepareNativePDFPage struct {
 
 type prepareNativePDFOutput struct {
 	privateCache
+	redactionFileOutput
 
 	VaultID          string                 `json:"vault_id"`
 	NodeID           int64                  `json:"node_id"`
@@ -88,14 +83,9 @@ type prepareNativePDFOutput struct {
 	BlobHash         string                 `json:"blob_hash"`
 	SourceSize       int64                  `json:"source_size"`
 	Revision         int64                  `json:"revision"`
-	DestinationPath  string                 `json:"destination_path"`
-	Size             int                    `json:"size"`
-	SHA256           string                 `json:"sha256"`
 	EvidenceSHA256   string                 `json:"evidence_sha256"`
 	MapSHA256        string                 `json:"map_sha256"`
 	Pages            []prepareNativePDFPage `json:"pages"`
-	State            string                 `json:"state"`
-	CleanupFailed    bool                   `json:"cleanup_failed"`
 }
 
 func prepareNativePDF(ctx context.Context, lease *daemonLease, raw []byte, logger *slog.Logger) (prepareNativePDFOutput, error) {
@@ -138,7 +128,14 @@ func prepareNativePDF(ctx context.Context, lease *daemonLease, raw []byte, logge
 	if len(data) > preparationFileLimit {
 		return prepareNativePDFOutput{}, preparationError(preparationLimit)
 	}
-	return saveNativePreparation(ctx, logger, input, prepared, data)
+	saved, err := saveRedactionFile(ctx, logger, "docbank-preparation-", input.DestinationPath, data)
+	if err != nil {
+		if ctx.Err() != nil {
+			return prepareNativePDFOutput{}, preparationRequestError(ctx, err)
+		}
+		return prepareNativePDFOutput{}, preparationDestinationError(err)
+	}
+	return nativePreparationReceipt(input, prepared, saved), nil
 }
 
 func (in prepareNativePDFInput) pageBinding(ctx context.Context, c *daemonconn.Connection) (store.PageBinding, error) {
@@ -167,40 +164,7 @@ func (in prepareNativePDFInput) pageBinding(ctx context.Context, c *daemonconn.C
 	}}, nil
 }
 
-func saveNativePreparation(ctx context.Context, logger *slog.Logger, input prepareNativePDFInput,
-	prepared processing.RedactionPreparation, data []byte,
-) (output prepareNativePDFOutput, _ error) {
-	if err := ctx.Err(); err != nil {
-		return output, preparationRequestError(ctx, err)
-	}
-	stage, err := filepublish.CreateStage(filepath.Dir(input.DestinationPath), "docbank-preparation-")
-	if err != nil {
-		return output, preparationDestinationError(err)
-	}
-	defer func() {
-		if cleanupErr := stage.Cleanup(); cleanupErr != nil {
-			logger.Warn("MCP PDF preparation stage cleanup failed", "error", cleanupErr)
-			output.CleanupFailed = true
-		}
-	}()
-	if _, err := stage.File.Write(data); err != nil {
-		return output, preparationDestinationError(err)
-	}
-	if err := errors.Join(stage.File.Sync(), stage.File.Close()); err != nil {
-		return output, preparationDestinationError(err)
-	}
-	if err := ctx.Err(); err != nil {
-		return output, preparationRequestError(ctx, err)
-	}
-	published, err := filepublish.Publish(stage.Path(), input.DestinationPath, false)
-	if !published {
-		return output, preparationDestinationError(err)
-	}
-	state := "published"
-	if err != nil {
-		state = "published_durability_unknown"
-		logger.Warn("MCP PDF preparation saved with uncertain durability", "error", err)
-	}
+func nativePreparationReceipt(input prepareNativePDFInput, prepared processing.RedactionPreparation, saved redactionFileOutput) prepareNativePDFOutput {
 	pages := make([]prepareNativePDFPage, len(prepared.Map.Pages))
 	for i, page := range prepared.Map.Pages {
 		pages[i] = prepareNativePDFPage{Number: page.Number, Span: page.Span}
@@ -213,11 +177,10 @@ func saveNativePreparation(ctx context.Context, logger *slog.Logger, input prepa
 			page.OrderedGaps++
 		}
 	}
-	return prepareNativePDFOutput{privateCache: newPrivateCache(), State: state, VaultID: input.VaultID,
+	return prepareNativePDFOutput{privateCache: newPrivateCache(), redactionFileOutput: saved, VaultID: input.VaultID,
 		NodeID: input.NodeID, ContentVersionID: input.ContentVersionID, BlobHash: input.BlobHash,
-		SourceSize: input.Size, Revision: prepared.Selection.Revision, DestinationPath: input.DestinationPath,
-		Size: len(data), SHA256: fmt.Sprintf("%x", sha256.Sum256(data)), EvidenceSHA256: prepared.EvidenceSHA256,
-		MapSHA256: prepared.Map.SHA256, Pages: pages}, nil
+		SourceSize: input.Size, Revision: prepared.Selection.Revision, EvidenceSHA256: prepared.EvidenceSHA256,
+		MapSHA256: prepared.Map.SHA256, Pages: pages}
 }
 
 func preparationRequestError(ctx context.Context, err error) error {
@@ -240,7 +203,7 @@ func preparationRequestError(ctx context.Context, err error) error {
 	if code == "invalid_redaction_preparation" {
 		return invalidToolArgumentsError()
 	}
-	if _, known := preparationMessages[code]; known || code == "not_found" {
+	if _, known := preparationMessages[code]; known || code == notFoundCode {
 		return preparationError(code)
 	}
 	return sanitizedDaemonError(errDaemonRequestFailed, err)
@@ -251,26 +214,6 @@ func preparationDestinationError(err error) error {
 		return invalid
 	}
 	return errors.Join(errPreparationLocalIO, err)
-}
-
-func prepareNativePDFHandler(lease *daemonLease, validator *jsonschema.Resolved, logger *slog.Logger) sdkmcp.ToolHandler {
-	return func(ctx context.Context, request *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
-		if request == nil || request.Params == nil {
-			return nil, invalidToolArgumentsError()
-		}
-		output, err := prepareNativePDF(ctx, lease, request.Params.Arguments, logger)
-		if err != nil {
-			logOperationError(logger, prepareNativePDFTool.name, err)
-			if domain, ok := domainToolError(err); ok {
-				return domain, nil
-			}
-			if invalid, ok := errors.AsType[*jsonrpc.Error](err); ok && invalid.Code == jsonrpc.CodeInvalidParams {
-				return nil, invalid
-			}
-			return nil, sanitizedRPCError(err)
-		}
-		return boundedToolSuccess(validator, output, nil)
-	}
 }
 
 func prepareNativePDFSchemas() (schema, schema) {
