@@ -168,12 +168,21 @@ function plainText(html) {
 // appear there, under the unreleased note in both copies or in neither.
 function compareWebsiteExamples(html, markdown, htmlName, markdownName, errors) {
   const noted = (own, previous) => own.replace(/^(?:[-*+]|\d+[.)])\s+/, "").startsWith(unreleasedNote) || previous === unreleasedNote;
-  const blocks = markdown.split(/\n\s*\n/).map((block) => block.replace(/\s+/g, " ").trim());
+  const normalize = (value) => value.replace(/\s+/g, " ").trim();
+  const protectedFences = markdown.replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?^ {0,3}\1[ \t]*(?=\r?$)/gm, (fence) => fence.replace(/\n(?=\s*\n)/g, "\v"));
+  const rawBlocks = protectedFences.split(/\n\s*\n/).map((block) => block.replace(/\v/g, "\n"));
+  const blocks = rawBlocks.map(normalize);
+  const examples = rawBlocks.map((block) => {
+    const fence = block.trim().match(/^ {0,3}(`{3,}|~{3,})[^\n]*\n([\s\S]*?)\n {0,3}\1[ \t]*$/);
+    return fence ? [normalize(fence[2])] : [...block.matchAll(/`([^`\n]+)`/g)].map((match) => normalize(match[1]));
+  });
   for (const match of html.matchAll(/<(code|pre)\b[^>]*>([\s\S]*?)<\/\1>/gi)) {
     const example = plainText(match[2]);
-    const before = html.slice(0, match.index).split(/<\/?(?:p|li)\b[^>]*>/i).map(plainText);
-    const htmlNoted = noted(before.pop(), before.filter(Boolean).at(-1));
-    const candidates = blocks.flatMap((block, i) => block.includes(example) ? [i] : []);
+    const before = html.slice(0, match.index).split(/<\/?(?:p|li)\b[^>]*>/i);
+    const own = before.pop();
+    const previous = /<\/(?:code|pre)\s*>/i.test(own) ? "" : before.map(plainText).filter(Boolean).at(-1);
+    const htmlNoted = noted(plainText(own), previous);
+    const candidates = examples.flatMap((entries, i) => entries.includes(example) ? [i] : []);
     if (candidates.length === 0) {
       errors.push(`${htmlName}: example ${JSON.stringify(example)} is missing from ${markdownName}`);
     } else if (!candidates.some((i) => noted(blocks[i], blocks[i - 1]) === htmlNoted)) {

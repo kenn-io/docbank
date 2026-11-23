@@ -106,6 +106,10 @@ test("accepts complete routes, Markdown peers, links, and assets", async (t) => 
 
 for (const [name, html, markdown, error] of [
   ["missing example", "<p><code>docbank next</code></p>", "# Guide\n", /guide\/index\.html: example.*missing from guide\.md/],
+  ["partial example", "<p><code>docbank search --j</code></p>", "`docbank search --json`\n", /example.*missing from guide\.md/],
+  ["note does not cover the next example", "<p>Not in the latest release yet</p><p><code>docbank first</code><code>docbank second</code></p>", "Not in the latest release yet\n\n`docbank first`\n\nNot in the latest release yet\n\n`docbank second`\n", /unreleased note only in guide\.md/],
+  ["second example without a note", "<p>Not in the latest release yet</p><p><code>docbank first</code><code>docbank second</code></p>", "Not in the latest release yet\n\n`docbank first`\n\n`docbank second`\n", null],
+  ["blank lines in fenced example", "<pre><code>docbank first\n\ndocbank second</code></pre>", "```sh\ndocbank first\n\ndocbank second\n```\n", null],
   ["note only in Markdown", "<p><code>docbank next</code></p>", "Not in the latest release yet\n\n`docbank next`\n", /unreleased note only in guide\.md/],
   ["note only in HTML", "<p>Not in the latest release yet</p><p><code>docbank next</code></p>", "`docbank next`\n", /unreleased note only in guide\/index\.html/],
   ["matching notes", "<p>Not in the latest release yet</p><p><code>docbank next</code></p>", "Not in the latest release yet\n\n`docbank next`\n", null],
