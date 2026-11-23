@@ -6,45 +6,52 @@ description: Export search counts for a date range as CSV, review date evidence,
 
 # Search exports
 
-Export search counts for a date range from all live documents, selected
-import collections, or document versions selected in the workspace. Each
-export freezes the current document versions, search matches, family
-relationships, date evidence, and processing profile. Later vault changes do
-not change that export.
+You can export search counts for a date range across all live documents,
+selected import collections, or specific document versions you pick in the
+workspace. Every export freezes the current document versions, search matches,
+family relationships, date evidence, and processing profile at the time you run
+it, and later changes to your vault do not affect it.
 
-The CSV contains counts. The evidence ZIP contains the calculation inputs and
-date evidence needed to check those counts offline. To export original files
-or complete retained text, use [document export bundles](export-bundles.md).
+The CSV gives you the counts, while the evidence ZIP holds the calculation
+inputs and date evidence you need to check those counts offline. To export
+original files or complete retained text instead, use
+[document export bundles](export-bundles.md).
 
 ## Create an export in the browser
 
-1. Open **Searches → Run report**, or select documents on the displayed
-   workspace or query-result page and choose **Report selected documents**.
-2. Under **Options**, choose **All documents** or **Selected imports**. A workspace
-   selection opens a fixed **Selected documents (N)** scope. It uses only those
-   displayed versions, without adding other query matches or attachments.
-   Select a processing profile when more than one is configured. Exporting uses
-   existing text and does not start document processing.
-3. Add search expressions and an inclusive start and end date for each row.
-   Choose **Simple** or **Advanced** [query syntax](searching.md).
-4. Adjust the report timezone and coverage under **Options** if needed, then
-   **Create report**.
-5. If dates need review, select **Review dates**, inspect the evidence, and
-   give a reason for each choice. An interpreted date needs a date and source
-   timezone. Select **Create report with these date choices**.
-6. Download `search-export.csv` or `search-export.zip` when counts are ready.
+1. Open **Searches → Run report**. To report on specific files instead, select
+   them on the displayed workspace or query-result page and choose
+   **Report selected documents**.
+2. Under **Options**, choose **All documents** or **Selected imports**. If you
+   started from a workspace selection, the drawer opens with a fixed
+   **Selected documents (N)** scope that covers only those displayed versions,
+   without pulling in other query matches or attachments. When more than one
+   processing profile is configured, enter the profile's name in the
+   **Processing profile** field. Exporting reads existing text and does not
+   start document processing.
+3. Add your search expressions with an inclusive start and end date for each
+   row, and choose **Simple** or **Advanced** [query syntax](searching.md).
+4. If needed, adjust the report timezone and coverage under **Options**, then
+   select **Create report**.
+5. If any dates need review, select **Review dates**, inspect the evidence, and
+   enter a reason for each choice. When you interpret a date, provide both a
+   date and a source timezone. When you finish, select
+   **Create report with these date choices**.
+6. Once counts are ready, download `search-export.csv` or `search-export.zip`.
 
-**Recent reports** automatically keeps the latest 100 requests and compact
-outcomes in the vault. **Use as draft** copies the request without its old date
-choices. Selected-document drafts keep their version identities, even if the
-workspace refreshes. A new run checks those versions again. If any changed or
-disappeared, choose **Refresh selection** in the drawer. Review the changed
-versions and choose which current versions to include. Missing and trashed
-documents are left out. Choose **Use this selection**, then create the report
-again. A rename or move alone does not invalidate their content identity. This history has no naming or
-deletion controls. Use
-[Saved queries and highlights](web.md#saved-queries-and-highlights) to manage
-named search definitions.
+The vault automatically keeps the latest 100 requests and their compact
+outcomes under **Recent reports**. You can select **Use as draft** to copy an
+earlier request without its previous date choices. Drafts for selected
+documents keep their exact version identities even if the workspace refreshes,
+and a rename or move alone does not invalidate that content identity.
+
+When you rerun a selected-document draft, Docbank checks those versions again.
+If any have changed or disappeared, select **Refresh selection** in the drawer,
+review the updated versions, and pick which current versions to include.
+Missing and trashed documents are excluded. Select **Use this selection**, then
+create the report again. **Recent reports** has no naming or deletion controls,
+and if you want to manage named search definitions, use
+[Saved queries and highlights](web.md#saved-queries-and-highlights).
 
 ![Search-count request scoped to selected document versions](https://docbank.ai/assets/generated/selected-report-draft.png)
 
@@ -71,29 +78,32 @@ Save this version 1 request as `request.json`:
 }
 ```
 
+Then create, verify, and extract counts from the export:
+
 ```bash
 docbank report create --input request.json --output search-export.zip
 docbank report verify search-export.zip
 docbank report csv search-export.zip --output search-export.csv
 ```
 
-`create` uses the daemon and prints coverage. If dates need review, it prints
-an export ID and review instructions without writing the ZIP. Inspect the
-frozen evidence and submit a JSON array of choices:
+The `create` command talks to the daemon and prints coverage. If any dates need
+review, it prints an export ID and review instructions instead of writing the
+ZIP. You can inspect the frozen evidence and submit a JSON array of choices:
 
 ```bash
 docbank report dates <export-id> --limit 50
 docbank report revise <export-id> --choices choices.json --output reviewed.zip
 ```
 
-Use `--cursor` with the returned `next_cursor` to continue reading dates.
-`create`, `revise`, `download`, and `csv` refuse to replace an existing output
-unless `--overwrite` is supplied. `verify` and `csv` work offline without a
-vault. Both verify the packet before accepting its counts.
+To read more dates, pass the returned `next_cursor` value with `--cursor`. The
+`create`, `revise`, `download`, and `csv` commands refuse to overwrite an
+existing file unless you pass `--overwrite`. Both `verify` and `csv` work
+offline without a vault, and each checks the packet before accepting its counts.
 
 ## Inspect or recover an existing export
 
-Use a known report ID to read its live summary or save its verified evidence ZIP:
+If you have a report ID, you can read its live summary or save its verified
+evidence ZIP:
 
 ```bash
 docbank report show <report-id>
@@ -102,85 +112,98 @@ docbank report download <report-id> --output recovered.zip
 docbank report csv recovered.zip --output recovered.csv
 ```
 
-`show` includes counts, coverage, and expiry. A report awaiting date review has
-no counts or download yet. Use `dates` and `revise` to resolve its evidence.
-`download` saves the existing ZIP without creating a report, using another slot,
-or extending expiry. It supports relative paths and refuses an existing file
-unless you supply `--overwrite`. It does not download CSV directly. Extract CSV
-from the saved ZIP offline.
+`show` returns counts, coverage, and expiry. If a report is still waiting for
+date review, it has no counts or download yet, and you can resolve its evidence
+with `dates` and `revise`. The `download` command saves the existing ZIP
+without creating a new report, taking another slot, or extending the expiry. It
+accepts relative paths and refuses to replace an existing file unless you pass
+`--overwrite`. It does not download CSV directly; extract the CSV offline from
+the saved ZIP.
 
-List recorded runs, including their original requests, through history:
+To list recorded runs along with their original requests, check the report
+history:
 
 ```bash
 docbank report history --offset 0 --limit 20
 docbank report history --offset 0 --limit 20 --json
 ```
 
-History is vault-wide, including browser-created reports. Its recorded state
-does not promise that a report is still live or belongs to the CLI. `show` and
-`download` require a live handle owned by the CLI's API key. They do not
-recreate an expired or unavailable report from history. CLI and MCP share that
-owner.
+History covers the whole vault, including reports created in the browser. A
+recorded entry does not guarantee that the report is still live or belongs to
+the CLI. Both `show` and `download` require a live handle owned by the CLI's
+API key, which CLI and MCP share, and neither command recreates an expired or
+unavailable report from history.
 
-History keeps the latest 100 receipts. Offset ranges from 0 to 100. Limit
-ranges from 1 to 50 and defaults to 20. JSON returns the stored `{items, total}`
-page, including full request selections. A page may contain fewer items than
-requested to stay within its byte limit. Continue at the current offset plus
-the number of returned items, rather than adding the requested limit. Human
-output prints the next offset when more receipts remain.
+History stores the latest 100 receipts. Offsets range from 0 to 100, and limits
+range from 1 to 50 with a default of 20. In JSON output, you get the stored
+`{items, total}` page, including full request selections. A page can return
+fewer items than you asked for to stay within its byte limit. Advance your
+offset by the number of returned items rather than by your requested limit.
+Human-readable output prints the next offset whenever more receipts remain.
 
-After `create` or `revise` receives a valid summary, later errors keep the new
-report ID. Use `show` to inspect that result and `download` to retry delivery
-while it remains live. If the handle is unavailable after expiry or restart,
-create a new report. Retrying that handle cannot recover it. A revision error
-names the child report.
+Once `create` or `revise` receives a valid summary, any later error keeps the
+new report ID, and a revision error names the child report. While the handle is
+still live, use `show` to inspect the result and `download` to retry delivery.
+If the handle expires or disappears after a restart, retrying it cannot recover
+the report, and you need to create a new one.
 
-If delivery did not finish cleanly, inspect the destination first. The verified
-file may already have been published before a sync or staging-cleanup error.
-Verify an existing ZIP before deciding to retry or overwrite it. A failed final
-status print after a successful save says the file was saved.
+If delivery does not finish cleanly, check the destination path first.
+Docbank may have already published the verified file before hitting a sync or
+staging-cleanup error. Verify any existing ZIP before you decide to retry or
+overwrite it. If printing the final status fails after a successful save, the
+error tells you the file was saved.
 
-This recovery requires a known ID. If a create or revise reply was lost before
-the CLI received a valid summary, it cannot identify the result reliably.
-History can help an operator investigate, but it cannot prove which call created
-a receipt. Repeating create or revise may consume another slot.
+Recovery depends on having a known ID. If a `create` or `revise` reply is lost
+before the CLI receives a valid summary, the CLI cannot reliably identify the
+result. History can help you investigate, though it cannot prove which call
+created a given receipt, and repeating `create` or `revise` can consume another
+slot.
 
 ## Release a report after review
 
-Once you no longer need a live report, free its slot:
+When you no longer need a live report, free its slot:
 
 ```bash
 docbank report release <report-id>
 docbank report release <report-id> --json
 ```
 
-Release discards that handle's packet and date-review evidence, including a
-report still awaiting review. History cannot reconstruct that evidence. Saved
-files, source documents, history receipts and already published child reports
-remain unchanged. A child keeps its original expiry. Shared evidence stays in
-memory while another report or in-flight operation uses it, so freeing a slot
-does not guarantee that all global build or memory capacity is available.
+Releasing a report discards that handle's packet and date-review evidence, even
+if the report is still awaiting review, and history cannot reconstruct that
+evidence. Your saved files, source documents, history receipts, and any already
+published child reports stay intact, and each child keeps its original expiry.
+Shared evidence remains in memory while another report or in-flight operation
+uses it, so freeing a slot does not guarantee that all global build or memory
+capacity becomes available.
 
-An active download returns `409 report_retained`; retry deliberately after it
-closes. Even `download && release` can need a retry because the server closes
-its reader after sending the final bytes. The command does not retry for you.
+If a download is still active, release returns `409 report_retained`. Wait for
+the download to close and retry manually, as the command does not retry on its
+own. Even running `download && release` can need a retry because the server
+closes its reader after sending the final bytes.
 
-After an uncertain reply, run `docbank report show <report-id>`. A successful
-read means the handle remains. `410 report_unavailable` means no live handle
-owned by this caller remains; it does not establish which call removed it.
-`503 report_unavailable` means reporting itself is unavailable and says nothing
-about release. Repeating release for an absent handle returns 410, not success.
-If printing the result fails after a successful release, the error says the
+If you get an uncertain reply, run `docbank report show <report-id>` to check
+the state:
+
+- A successful read means the handle is still live.
+- `410 report_unavailable` means you no longer have a live handle for that ID,
+  though it does not tell you which call removed it.
+- `503 report_unavailable` means reporting itself is unavailable and says nothing
+  about whether the release succeeded.
+
+Calling release again on an absent handle returns `410`, not success. If
+printing the result fails after a successful release, the error tells you the
 report was released.
 
-JSON success is `{"report_id":"<report-id>","released":true}`. Invalid IDs or
-argument counts exit 2; release errors exit 1. Development builds using an older
-daemon that lacks this endpoint need an explicit daemon restart.
+In JSON mode, a successful release returns
+`{"report_id":"<report-id>","released":true}`. Invalid IDs or wrong argument
+counts exit with code 2, and release errors exit with code 1. If you run a
+development build against an older daemon that lacks this endpoint, restart the
+daemon explicitly.
 
 ## Request and reviewed-date format
 
-Version 1 is stored in export history and evidence packets. Required fields
-and optional controls are:
+Export history and evidence packets store requests in version 1 format. Here
+are the required fields and optional controls:
 
 | Field | Meaning |
 | --- | --- |
@@ -194,9 +217,9 @@ and optional controls are:
 | `terms` | 1–128 rows. Each has a unique positive `number`, nonempty `expression` of at most 8,192 Unicode characters, `syntax` (`simple` or `advanced`), and `dates.start` / `dates.end` in `YYYY-MM-DD` form. |
 | `date_choices` | Optional evidence-bound choices for captured documents. A reused history request omits these. |
 
-For selected documents, copy each current file's node ID, version ID, and
-content hash from the workspace/API. Replace the example request's all-document scope
-with this synthetic selection:
+To target specific documents, copy each current file's node ID, version ID, and
+content hash from the workspace or API, and replace the example request's
+all-document scope with a selection like this synthetic one:
 
 ```json
 {
@@ -211,25 +234,29 @@ with this synthetic selection:
 }
 ```
 
-The selection requires 1–50,000 distinct positive node IDs, canonical lowercase
-UUIDv4 version IDs, and 64-character lowercase hexadecimal hashes. The whole
-request must fit within 8 MiB. Historical versions and selected pages are not
-supported. Omitted or null `selected_documents` means no selected scope. An
-object with a missing, null, or empty `documents` list is invalid.
+A selection needs from 1 to 50,000 distinct positive node IDs, canonical
+lowercase UUIDv4 version IDs, and 64-character lowercase hexadecimal hashes,
+and the entire request must fit within 8 MiB. Historical versions and selected
+pages are not supported. Omitting `selected_documents` or setting it to `null`
+means no selected scope, while an object with a missing, `null`, or empty
+`documents` list is invalid.
 
-Malformed or mixed scope, repeated nodes, invalid identity values, and a wrong
-hash for a current version return `422 invalid_report_request`. A missing,
-trashed, or replaced version returns `409 report_selection_changed`, without
-a conflicting-member list. Even a new version with identical bytes conflicts.
-More than 50,000 selected identities returns `413 report_limit`. The existing
-50,000-collection limit returns 422. These application errors apply after HTTP
-schema validation. Wrong JSON types or missing required fields use the API's
-ordinary schema errors.
+Wrong JSON types or missing required fields return the API's ordinary schema
+errors. The application errors below apply after HTTP schema validation:
 
-A choice identifies the `document` (`node_id`, `version_id`, `sha256`),
-`candidate_id`, and `evidence_sha256` returned by the date page. Copy those
-values from that page. Do not invent replacement IDs or hashes. Include a
-nonempty `reason` of at most 4,096 bytes and one action:
+- Malformed or mixed scopes, duplicate nodes, invalid identity values, or a
+  mismatched hash for a current version return `422 invalid_report_request`.
+- Missing, trashed, or replaced versions return `409 report_selection_changed`
+  without listing the conflicting members. Even a new version with identical
+  bytes counts as a conflict.
+- Selecting more than 50,000 identities returns `413 report_limit`, while
+  exceeding the 50,000-collection limit returns `422`.
+
+Each date choice references the `document` fields `node_id`, `version_id`, and
+`sha256`, along with the `candidate_id` and `evidence_sha256` from the date
+page. Copy those values directly from the page rather than inventing
+replacements. Include a nonempty `reason` of at most 4,096 bytes and choose one
+action:
 
 | Action | Additional fields |
 | --- | --- |
@@ -237,17 +264,18 @@ nonempty `reason` of at most 4,096 bytes and one action:
 | `interpret` | Supply `reviewed_date` and `reviewed_timezone`. Only ambiguous numeric dates and timestamps without a timezone can be interpreted. The date must agree with the source tokens. An unclassified candidate also needs `reviewed_role`. |
 | `reclassify` | Supply `reviewed_role` without replacing the date or timezone. |
 
-Allowed reviewed roles are `document_date`, `created`, `authored`, `sent`,
-`captured`, `signed`, `effective`, and `expiry`. A revision keeps the original
-observation and expiry and receives a new export ID. It also keeps its parent's
-reviewed choices. Submit the documents whose choices you want to add or
-replace.
+Allowed values for `reviewed_role` are `document_date`, `created`, `authored`,
+`sent`, `captured`, `signed`, `effective`, and `expiry`. Each revision gets a
+new export ID while keeping the original observation, expiry, and its parent's
+reviewed choices. You only need to submit the documents whose choices you want
+to add or replace.
 
 ## Read the counts and coverage
 
-Rows keep the request order. Counts refer to distinct current document
-identities, not text occurrences. The first three CSV columns are **Term #**,
-**Terms**, and **Date Range**. The remaining columns mean:
+CSV rows stay in the same order as your request, and every count measures
+distinct current document identities rather than individual text matches. The
+first three columns are **Term #**, **Terms**, and **Date Range**, and the
+remaining columns report:
 
 | Column | Meaning |
 | --- | --- |
@@ -257,99 +285,110 @@ identities, not text occurrences. The first three CSV columns are **Term #**,
 | Unique Families | Date-eligible documents in matching families with no competing row hits among those eligible members. The web app labels this count **Documents in unique families**. The CSV keeps the heading **Unique Families**. |
 | Unique Hits Plus Family | Date-eligible documents in a family containing a unique hit for this term. |
 
-Families come from stored email parent/child evidence. A document without a
-family is a singleton. Family expansion stays within the selected source
-scope and each row's date range.
+Document families come from stored email parent and child evidence, while a
+document without a family is a singleton. Family expansion stays within your
+selected source scope and each row's date range.
 
-The ZIP includes relationship groups connected to selected documents, including
-connected documents outside the selected scope when needed to preserve
-grouping. An unselected attachment can connect two selected parents. It appears
-as a relationship reference, without member rows, text bindings, or date
-evidence.
-The ZIP omits unrelated relationship groups and their warnings. Documents outside
-the selected scope do not contribute to counts.
+The ZIP includes every relationship group connected to your selected documents.
+When needed to preserve grouping, it also includes connected documents outside
+the selected scope. For example, an unselected attachment can link two selected
+parents; it appears in the ZIP as a relationship reference, without member
+rows, text bindings, or date evidence. Unrelated relationship groups and their
+warnings are left out, and documents outside the selected scope never
+contribute to counts.
 
-A trashed attachment cannot connect a fresh report's family, and its published
-parent has incomplete family coverage. If the parent and attachment versions
-are still current, restoring the attachment from trash makes the link available
-to fresh reports again. Backup and restore preserve the published relationships
-and trash state; an already captured report keeps its original family evidence.
+A trashed attachment cannot connect a family in a fresh report, and its
+published parent has incomplete family coverage. If both the parent and
+attachment versions are still current, restoring the attachment from trash
+restores that link for future reports. Backup and restore preserve published
+relationships and trash state, while an already captured report keeps its
+original family evidence.
 
-Date selection prefers source evidence appropriate to the document kind,
-then labeled document dates, then source metadata and recorded import or vault
-dates. Equally preferred conflicting dates require review. Signed, effective,
-and expiry dates are kept for review and are not automatically treated as
-creation dates. Coarse or unusable dates are not silently made precise.
+When picking a date for a document, Docbank prefers source evidence suited to
+the document kind, then labeled document dates, and finally source metadata and
+recorded import or vault dates. If two equally preferred dates conflict, they
+require review. Docbank keeps signed, effective, and expiry dates for review
+instead of automatically treating them as creation dates, and it never silently turns coarse
+or unusable dates into precise ones.
 
-Coverage reports scoped documents, searchable documents, missing text,
-incomplete families, and fallback dates for each row and across the union of
-the date ranges. Incomplete-family coverage counts selected, date-eligible
-documents, not distinct family groups. `available_only` can omit documents
-without a usable selected date from coverage while keeping them as packet
-members. **Selected documents (N)** is the input population. `scoped` counts
-only documents inside at least one term's date range with a usable date.
-Missing evidence does not prove that a document has no relevant content. Keep
-the coverage receipt with the CSV when sharing counts.
+The coverage summary reports scoped documents, searchable documents, missing
+text, incomplete families, and fallback dates for each row as well as across
+the union of all date ranges. Incomplete-family coverage counts selected,
+date-eligible documents rather than distinct family groups. In `available_only`
+mode, documents without a usable selected date can be omitted from coverage
+while staying in the packet as members. **Selected documents (N)** shows your
+input population, while `scoped` counts only documents that have a usable date
+inside at least one term's date range. Missing evidence does not prove that a
+document lacks relevant content. Keep the coverage receipt alongside the CSV
+when you share counts.
 
 ## Evidence and retention limits
 
-The ZIP format marker is `search-export-v1`. Its fixed entries are `hits.csv`,
-`manifest.json`, `members.jsonl`, `families.jsonl`, and `dates.jsonl`. The
-manifest binds sizes and SHA-256 digests. Verification also checks date
-selections, hit bits, counts, and coverage against the evidence in the packet.
-For selected scope, the packet members must equal the requested identities
-exactly. Omitted, extra, duplicate, or substituted members fail verification.
-The packet includes document identities and date quotes, so review it before
-sharing it.
+Each ZIP uses the format marker `search-export-v1` and contains five fixed
+entries: `hits.csv`, `manifest.json`, `members.jsonl`, `families.jsonl`, and
+`dates.jsonl`. The manifest records file sizes and SHA-256 digests, and
+verification also checks date selections, hit bits, counts, and coverage against the
+packet's evidence. For a selected-document scope, the packet members must match
+your requested identities exactly; any omitted, extra, duplicate, or
+substituted member fails verification. Because the packet includes document
+identities and date quotes, review it before sharing it.
 
-Successful offline verification means **internally consistent**, not **source
-verified**. A packet cannot establish that its source vault or source documents
-were authentic. It does not include complete source text or rerun searches
-against the original documents.
+Passing offline verification means the packet is **internally consistent**, not
+**source verified**. A packet cannot prove that its source vault or original
+documents were authentic, and it neither includes complete source text nor
+reruns searches against the originals.
 
-Live export handles and date pages expire 30 minutes after observation and
-are lost on daemon restart. Handles belong to the requesting API or browser
-session. Ending a browser session invalidates its handles. Download the ZIP
-before expiry. CLI and MCP share eight live report slots, and every revision
-takes another slot. All descendants expire 30 minutes after the original
-observation. Downloading does not free a slot. CLI and MCP can explicitly release
-unneeded handles; browser sessions cannot release them.
+Live export handles and date pages expire 30 minutes after observation and are
+lost if the daemon restarts. Handles are tied to the API or browser session
+that created them, and ending a browser session invalidates its handles.
+Download the ZIP before it expires. CLI and MCP share eight live report slots,
+and each revision uses another slot. Every descendant expires 30 minutes after
+the original observation. Downloading a ZIP does not free its slot. CLI and MCP
+clients can release handles they no longer need, while browser sessions cannot.
 
-History receipts survive backup and restore, but neither history nor a backup
-of history restores live artifacts or date-review pages. Source replacement,
-trash, or pruning does not invalidate an already captured report or extend its
-lifetime. History remains readable after source deletion and restore. Rerunning
-a saved selection requires its versions to be live and current again.
+History receipts survive backup and restore, though neither history nor a
+backup of history restores live artifacts or date-review pages. Replacing,
+trashing, or pruning source documents does not invalidate an already captured
+report or extend its lifetime, and history stays readable after source deletion
+and restore. To rerun a saved selection, its versions must be live and current
+again.
 
 After restoring a vault, configure the same portable processing profile before
-rerunning its saved requests. The
-[backup](backup.md#where-does-restored-content-go) excludes `config.toml`.
-Preserve the restored target's storage settings when adding the profile. History
-does not keep date choices, so a fresh report may need date review again.
+you rerun its saved requests. The
+[backup](backup.md#where-does-restored-content-go) excludes `config.toml`, and
+you should preserve the restored target's storage settings when adding the
+profile. History does not keep date choices, so a fresh report can require date
+review again.
 
-Large selections enlarge stored history: 100 requests near the 8 MiB ceiling
-can approach 800 MiB of request JSON, also carried by metadata export. History
-pages stop at 16 MiB. Automation must advance its offset by the returned item
-count, which can be smaller than the requested limit.
+Large selections add up in stored history: 100 requests near the 8 MiB ceiling
+can reach almost 800 MiB of request JSON, which metadata export also carries.
+History pages stop at 16 MiB, and automated callers must advance their offset
+by the number of returned items, which can be smaller than the requested limit.
 
-Each build has a 60-second deadline and shares a 1 GiB accounted memory budget
-with other cached exports. Limits include 50,000 documents, 100,000 family
-relations, 256 date candidates per document, 16 MiB of inspected text per
-document, 512 MiB of inspected text overall, and a 512 MiB ZIP. Exceeding the
-date-candidate limit returns a resource-limit error naming the document. It
-does not silently truncate the evidence. Narrow the source scope when a vault
-exceeds a build limit. At most two builds run concurrently, with 64 cached or
-pending exports overall and eight per owner.
+Each export build has a 60-second deadline and shares a 1 GiB accounted memory
+budget with other cached exports. At most two builds run at once, with up to 64
+cached or pending exports globally and eight per owner. Individual builds are
+bounded to:
 
-Downloads of completed CSV and ZIP files are exempt from the server's
-60-second request timeout. Client cancellation still stops the transfer.
+- 50,000 documents
+- 100,000 family relations
+- 256 date candidates per document
+- 16 MiB of inspected text per document and 512 MiB of inspected text overall
+- 512 MiB for the final ZIP
+
+If a document exceeds the date-candidate limit, Docbank returns a
+resource-limit error naming that document instead of silently truncating its
+evidence. If your vault exceeds a build limit, narrow the source scope.
+
+Downloads of completed CSV and ZIP files are exempt from the server's 60-second
+request timeout, though canceling from the client still stops the transfer.
 
 Local MCP clients can select current documents, review frozen dates, and save
 the same verified ZIP with `docbank mcp --allow-report-writes`. See the
-[MCP report workflow](mcp.md#frozen-search-reports) for discovery, message limits,
-and shared handle capacity. Date pages return a continuation when the next
-complete evidence item cannot fit. Quotes are never truncated. HTTP clients
-can request smaller pages with `max_bytes`.
+[MCP report workflow](mcp.md#frozen-search-reports) for discovery, message
+limits, and shared handle capacity. Date pages return a continuation cursor
+whenever the next complete evidence item cannot fit, and quotes are never
+truncated. HTTP clients can request smaller pages with `max_bytes`.
 
-See the [HTTP contract](../architecture/http-api.md#search-exports) for endpoints,
-authentication, paging, and errors.
+For endpoints, authentication, paging, and error details, see the
+[HTTP contract](../architecture/http-api.md#search-exports).
