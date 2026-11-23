@@ -36,8 +36,10 @@ func TestReleaseTagSchemas(t *testing.T) {
 	}
 	output, err := exec.CommandContext(t.Context(), "git", "tag", "-l", "v[0-9]*", "--sort=v:refname").CombinedOutput()
 	require.NoErrorf(t, err, "list release tags: %s", output)
+	names := strings.Fields(string(output))
+	require.Contains(t, names, "v0.9.0", "release tags must include the first supported release; fetch full tag history")
 	var tags []releaseTag
-	for _, name := range strings.Fields(string(output)) {
+	for _, name := range names {
 		if semver.Compare(name, "v0.9.0") < 0 {
 			continue
 		}
