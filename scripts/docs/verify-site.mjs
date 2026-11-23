@@ -169,12 +169,14 @@ function plainText(html) {
 function compareWebsiteExamples(html, markdown, htmlName, markdownName, errors) {
   const noted = (own, previous) => own.replace(/^(?:[-*+]|\d+[.)])\s+/, "").startsWith(unreleasedNote) || previous === unreleasedNote;
   const normalize = (value) => value.replace(/\s+/g, " ").trim();
-  const protectedFences = markdown.replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?^ {0,3}\1[ \t]*(?=\r?$)/gm, (fence) => fence.replace(/\n(?=\s*\n)/g, "\v"));
+  const visibleMarkdown = markdown.replace(/<!--[\s\S]*?-->/g, (comment) => comment.replace(/[^\n]/g, ""));
+  const protectedFences = visibleMarkdown.replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?^ {0,3}\1[ \t]*(?=\r?$)/gm, (fence) => fence.replace(/\n(?=\s*\n)/g, "\v"));
   const rawBlocks = protectedFences.split(/\n\s*\n/).map((block) => block.replace(/\v/g, "\n"));
   const blocks = rawBlocks.map(normalize);
-  const examples = rawBlocks.map((block) => [...block.matchAll(/^ {0,3}(`{3,}|~{3,})[^\n]*\n([\s\S]*?)\n {0,3}\1|`([^`\n]+)`/gm)].map((match) => normalize(match[2] ?? match[3])));
+  const examples = rawBlocks.map((block) => [...block.matchAll(/^ {0,3}(`{3,}|~{3,})[^\n]*\n([\s\S]*?)\n {0,3}\1|(?<!`)(`+)(?!`)([\s\S]*?)(?<!`)\3(?!`)/gm)].map((match) => normalize(match[2] ?? match[4])));
   for (const match of html.matchAll(/<(code|pre)\b[^>]*>([\s\S]*?)<\/\1>/gi)) {
     const example = plainText(match[2]);
+    if (!/\bdocbank(?:\s|$)|\b(?:curl|irm)\b.*\bdocbank\.ai\/install(?:\.sh|\.ps1)\b/i.test(example)) continue;
     const before = html.slice(0, match.index).split(/<\/?(?:p|li)\b[^>]*>/i);
     const own = before.pop();
     const previous = /<\/(?:code|pre)\s*>/i.test(own) ? "" : before.map(plainText).filter(Boolean).at(-1);
@@ -184,6 +186,12 @@ function compareWebsiteExamples(html, markdown, htmlName, markdownName, errors) 
       errors.push(`${htmlName}: example ${JSON.stringify(example)} is missing from ${markdownName}`);
     } else if (!candidates.some((i) => noted(blocks[i], blocks[i - 1]) === htmlNoted)) {
       errors.push(`${htmlName} and ${markdownName}: ${JSON.stringify(example)} has an unreleased note only in ${htmlNoted ? htmlName : markdownName}`);
+    }
+  }
+  for (const match of html.matchAll(/<([a-z][\w-]*)\b([^>]*)>\s*<code\b[^>]*>([\s\S]*?)<\/code>/gi)) {
+    const command = attributes(match[2]).get("data-command");
+    if (command !== undefined && plainText(command) !== plainText(match[3])) {
+      errors.push(`${htmlName}: data-command differs from the displayed example`);
     }
   }
   const exampleTag = /<(?:code|pre)\b/i;
