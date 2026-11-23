@@ -6,20 +6,19 @@ description: What Docbank does today, what it does not do yet, and what is plann
 
 # Roadmap
 
-This page says where Docbank is going. Today it stores, organizes, versions,
-verifies, and backs up documents. The CLI, web app, and terminal browser share
-one authenticated local daemon. Go applications can also own separate vaults
-and use the document-processing packages directly.
+Today, Docbank stores, organizes, versions, verifies, and backs up documents
+through a shared authenticated local daemon used by the CLI, web app, and
+terminal browser. Go applications can also own separate vaults and use the
+document-processing packages directly.
 
-For detail on current features, see the [capability guide](capabilities.md).
-Instructions and limits live in the guides linked below. The
-[changelog](changelog.md) records published releases.
-
-The [review-to-delivery roadmap](https://github.com/kenn-io/docbank/issues/719)
+For details on current features, see the [capability guide](capabilities.md),
+or check the [changelog](changelog.md) for published releases. Instructions and
+limits live in the guides linked below. The
+[review-to-delivery roadmap](https://github.com/kenn-io/docbank/issues/719)
 connects the original document-workflow proposals to merged outcomes, work under
 review, and the next scope decisions.
 
-## What can I use now?
+## What works today
 
 | Task | What works today | Guide |
 | --- | --- | --- |
@@ -37,83 +36,87 @@ review, and the next scope decisions.
 | Add physical storage | Verified placement, repair, salvage, and evacuation across filesystem and S3-compatible stores | [Multi-store storage](usage/storage.md) |
 | Integrate an application | Authenticated HTTP API, local MCP server, offline OpenAPI generation, and embedded Go vaults with their own roots | [Agent integration](agents/integration.md), [MCP](usage/mcp.md), and [Embed in Go](embedding.md) |
 
-Release archives cover Linux, macOS, and Windows on amd64 and arm64.
-`docbank update` installs a published release and coordinates daemon restart.
+Release archives cover Linux, macOS, and Windows on amd64 and arm64. Running
+`docbank update` installs a published release and coordinates the daemon
+restart.
 
 Native PDF preparation and rendering require the configured Linux amd64 page
 runtime and supported source text. Reserving numbers explicitly retains the
 unredacted original indefinitely. See the linked guide for limits and the
-difference between recovering recorded bytes and verifying them against a review.
+difference between recovering recorded bytes and verifying them against a
+review.
 
-## What document processing is available?
+## Document processing today
 
-Go applications can extract source metadata, generate visual previews, and use
+Go applications can extract source metadata, generate visual previews, and call
 local or hosted providers to produce text, Markdown, and embeddings. An
-embedding represents content as numbers for comparison. The
-[Go processing guide](document-understanding.md) maps the provider packages and
-their requirements.
+embedding represents content as numbers so similar content can be compared. See
+the [Go processing guide](document-understanding.md) for the provider packages
+and their requirements.
 
-The vault stores each derived result with the source version it came from. It
-also stores processing profiles, disclosure consent, and independent embedding
+The vault stores each derived result alongside the source version it came from,
+along with processing profiles, disclosure consent, and independent embedding
 sets. Vector indexes can be rebuilt. Hybrid retrieval combines lexical and
-vector matches, and is limited to the source versions a search is authorized
-for. Optional internal components expand queries, rerank results, and retrieve
-from an operator-hosted QMD. See
+vector matches and stays limited to the source versions a search is authorized
+for. Optional internal components handle query expansion, result reranking, and
+retrieval from an operator-hosted QMD. See
 [Document processing](architecture/document-processing.md) for the flow and
 trust boundaries.
 
 The daemon extracts supported plain text automatically. Configured
-[embedding workers](configuration.md#embedding-workers-and-credentials) can
-run stored jobs for the registered runtime contracts. Those jobs still need
-prepared input generations, matching profiles, and current consent.
+[embedding workers](configuration.md#embedding-workers-and-credentials) can run
+stored jobs for registered runtime contracts, provided the jobs have prepared
+input generations, matching profiles, and current consent.
 
 You can [preview and run configured processing profiles](usage/document-processing.md),
-inspect jobs, and read the stored sanitized renditions through the CLI, HTTP
-API, web app, and TUI. [Automatic and processing search](usage/search.md) has lexical,
-semantic, hybrid, and auto modes, and searches only the source versions you
+inspect jobs, and read stored sanitized renditions through the CLI, HTTP API,
+web app, and TUI. [Automatic and processing search](usage/search.md) supports
+lexical, semantic, hybrid, and auto modes over only the source versions you
 have authorized.
 
 HTTP and MCP clients can [save exact text citations](usage/mcp.md#saved-text-citations)
-and reopen retained quotations after source or rendition replacement. Citations
-do not prevent pruning or purge.
+and reopen retained quotations even after a source or rendition is replaced.
+Citations do not prevent pruning or purge.
 
-New imports do not automatically run OCR or prepare semantic search. The
-default configuration has no processing profiles, and search without them uses
-names and locally extracted text. With a configured embedding binding, Auto
-search in the web app and TUI uses Hybrid. Saving a query with hybrid-search
-settings does not run it. Frozen query snapshots in Documents support lexical mode.
-Photos snapshots also support semantic and hybrid search.
+New imports do not run OCR or prepare semantic search automatically. The
+default configuration includes no processing profiles, and without them search
+uses file names and locally extracted text. With a configured embedding
+binding, **Auto** search in the web app and TUI uses **Hybrid**. Saving a query
+with hybrid-search settings does not run it. Frozen query snapshots in
+**Documents** support lexical mode, while **Photos** snapshots also support
+semantic and hybrid search.
 
-## What can the web app and terminal browser do?
+## Web app and terminal browser
 
-In the [web app](usage/web.md) you can browse and search the vault, upload
+In the [web app](usage/web.md), you can browse and search the vault, upload
 files, download current or earlier content, manage tags, and trash or restore
 documents. You can also inspect versions, source history, audit evidence,
 background jobs, backup recovery points, and storage health.
 
-The [terminal browser](usage/tui.md) has tree navigation, search, document and
-version details, a node audit timeline, and trash with restore. Its operations
-views show daemon jobs, storage inventory, and configured backup recovery
-points.
+The [terminal browser](usage/tui.md) gives you tree navigation, search,
+document and version details, a node audit timeline, and trash with restore.
+Its operations views display daemon jobs, storage inventory, and configured
+backup recovery points.
 
-Storage placement is still done through the CLI or the API. The storage views
-in the web app and terminal browser are read-only. The web app and HTTP API
-[manage saved queries and highlight sets](usage/web.md#saved-queries-and-highlights).
-The terminal browser has no screen for managing them.
+Storage placement still happens through the CLI or the API, and the storage
+views in the web app and terminal browser are read-only. You can
+[manage saved queries and highlight sets](usage/web.md#saved-queries-and-highlights)
+in the web app and HTTP API, while the terminal browser has no screen for
+managing them.
 
-## What is planned?
+## Planned work
 
-- Automatic Office extraction for new vault imports and broader
-  processing workflows.
+- Automatic Office extraction for new vault imports and broader processing
+  workflows.
 - Overlapping permanent audit scopes.
 - A retention contract for external references to Docbank nodes. Embedded
-  source references currently record origin; they do not prevent deletion.
+  source references currently record origin and do not prevent deletion.
 - Broader metadata inspection and version comparison in the web app.
 - Import progress and broader metadata and evidence in the terminal browser.
 - Tree, timeline, comparison, evidence, and job components that other
   applications can reuse.
-- Automatic replication targets, primary-store replacement, lifecycle
-  policies, and web or terminal storage-placement controls.
+- Automatic replication targets, primary-store replacement, lifecycle policies,
+  and web or terminal storage-placement controls.
 - Broader backup retention policy, and hardening against representative
   document collections.
 
