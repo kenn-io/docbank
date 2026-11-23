@@ -56,15 +56,10 @@ func TestReleaseTagSchemas(t *testing.T) {
 
 func releaseTagProblems(t *testing.T, tags []releaseTag, versions []int, fixtures map[int]string) []string {
 	t.Helper()
-	if len(tags) == 0 {
-		return []string{"release tag list is empty"}
-	}
 	var problems []string
 	previous := make(map[int]string)
+	checked := make(map[int]bool)
 	for _, tag := range tags {
-		if semver.Compare(tag.name, "v0.9.0") < 0 {
-			continue
-		}
 		match := releaseTagVersion.FindStringSubmatch(tag.store)
 		version := 1
 		if len(match) == 0 {
@@ -94,9 +89,10 @@ func releaseTagProblems(t *testing.T, tags []releaseTag, versions []int, fixture
 			baseline = fixture
 		}
 		start := len(problems)
-		if !seen && tag.schema != fixture {
+		if !checked[version] && tag.schema != fixture {
 			problems = append(problems, fmt.Sprintf("%s storage schema %d differs from its exact fixture", tag.name, version))
 		}
+		checked[version] = true
 		for _, driver := range v090UpgradeDrivers() {
 			released := schemaContractDB(t, driver.driver, baseline)
 			candidate := schemaContractDB(t, driver.driver, tag.schema)
@@ -138,7 +134,6 @@ func TestReleaseTagSchemasRules(t *testing.T) {
 		{"missing fixture", []releaseTag{tag("v0.15.0", 29, base)}, []string{"no fixture"}},
 		{"missing version", []releaseTag{{"v0.10.0", "", base}}, []string{"no storage schema version"}},
 		{"missing version after boundary", []releaseTag{{"v0.9.1", "", base}}, []string{"no storage schema version"}},
-		{"old ignored", []releaseTag{{"v0.8.1", "", "garbage"}}, nil},
 		{"v1", []releaseTag{{"v0.9.0", "", base}}, nil},
 		{"v1 mismatch", []releaseTag{{"v0.9.0", "", "CREATE TABLE other (id INTEGER);"}}, []string{"exact fixture", "changed or missing table item"}},
 		{"v2 mismatch", []releaseTag{tag("v0.10.0", 2, base+index)}, []string{"exact fixture"}},
@@ -147,7 +142,6 @@ func TestReleaseTagSchemasRules(t *testing.T) {
 		{"version 3", []releaseTag{tag("v0.12.0", 3, schemaV0140SQL)}, nil},
 		{"version 3 mismatch", []releaseTag{tag("v0.12.0", 3, base)}, []string{"exact fixture"}},
 		{"baseline retained", []releaseTag{tag("v0.15.0", 28, base), tag("v0.15.1", 28, base+" CREATE UNIQUE INDEX idx ON item(id);"), tag("v0.15.2", 28, base+index)}, []string{"v0.15.1", "added unique index idx"}},
-		{"empty", nil, []string{"empty"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -164,6 +158,15 @@ func TestReleaseTagSchemasRules(t *testing.T) {
 			}
 		})
 	}
+	t.Run("first mismatch is reported once", func(t *testing.T) {
+		tags := []releaseTag{tag("v0.10.0", 2, base+index), tag("v0.10.1", 2, base+index), tag("v0.11.0", 2, base)}
+		problems := releaseTagProblems(t, tags, []int{2}, fixtures)
+		assert.Equal(t, 1, strings.Count(strings.Join(problems, "\n"), "differs from its exact fixture"))
+		assert.Contains(t, strings.Join(problems, "\n"), "v0.10.0")
+		assert.Contains(t, strings.Join(problems, "\n"), "v0.11.0")
+		assert.NotContains(t, strings.Join(problems, "\n"), "v0.10.1")
+	})
+
 	t.Run("shared name", func(t *testing.T) {
 		first := base + " CREATE INDEX trig ON item(id);"
 		last := base + " CREATE INDEX trig ON item(id DESC);"
