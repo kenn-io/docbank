@@ -267,11 +267,10 @@ release to ship a version saves its exact `schema.sql` as
 `releasedSchemaFixtures`. A later release at the same version, which may only
 add non-unique indexes, needs no new fixture. Three checks enforce this:
 
-- `scripts/check-released-schemas.sh` runs in CI against every release tag. It
-  fails when a tag's schema version is unlisted, when the first tag to ship a
-  version has no exact `schema.sql` fixture, or when a later tag at that
-  version changes anything that the fixture or an earlier tag at that version
-  shipped. A later tag may only add non-unique indexes.
+- Run `bash scripts/check-released-schemas.sh` to check every release tag, as CI
+  does. It runs `TestReleaseTagSchemas`, which applies the catalog rules of
+  `TestReleasedSchemaFixturesMatchVersions` to each tag against its fixture or
+  the previous tag at the same version. It also checks version registration.
 - `TestReleasedSchemaFixturesMatchVersions` requires a bump when a released table,
   trigger, view, or index changes, or when a unique index is added.
   New non-unique indexes need no bump because startup creates them in place.

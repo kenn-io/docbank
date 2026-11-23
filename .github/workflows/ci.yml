@@ -278,7 +278,18 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Require an upgrade path and exact fixture for every release
+      - name: Set up Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Restore Go caches
+        uses: $/.github/actions/go-cache-restore
+        with:
+          group: linux-cgo
+
+      - name: Check every release tag's storage schema
         run: bash scripts/check-released-schemas.sh
 
   report-export-browser:

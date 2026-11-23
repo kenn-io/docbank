@@ -348,8 +348,7 @@ func TestReleasedSchemaFixturesMatchVersions(t *testing.T) {
 					released, _ := newReleasedFixtureStore(t, filepath.Join(path, "released.db"), driver.driver, fixture, version)
 					current, _ := newReleasedFixtureStore(t, filepath.Join(path, "current.db"), driver.driver, schemaSQL, version)
 					message := fmt.Sprintf("schema.sql differs from released schema %d; bump currentStorageSchemaVersion and add a cutover adapter", version)
-					assert.Equal(t, releasedSchemaCatalog(t, released, false), releasedSchemaCatalog(t, current, false), message)
-					before := releasedSchemaCatalog(t, released, true)
+					assertCompatibleReleasedSchema(t, released, current, message)
 					after := releasedSchemaCatalog(t, current, true)
 					beforeOpen, err := os.Stat(filepath.Join(path, "released.db"))
 					require.NoError(t, err)
@@ -361,20 +360,30 @@ func TestReleasedSchemaFixturesMatchVersions(t *testing.T) {
 					require.NoError(t, err)
 					assert.True(t, os.SameFile(beforeOpen, afterOpen), "compatible index additions keep the released database in place")
 					assert.Equal(t, after, releasedSchemaCatalog(t, opened.db, true), message)
-					for name, object := range after {
-						if _, existed := before[name]; existed || object[0] != "index" {
-							continue
-						}
-						var unique bool
-						require.NoError(t, current.QueryRowContext(t.Context(), `SELECT "unique" FROM pragma_index_list(?) WHERE name=?`, object[1], name).Scan(&unique))
-						assert.False(t, unique, message)
-					}
 				})
 			}
 		}
 	}
 	for version := range releasedSchemaFixtures {
 		assert.Contains(t, releasedStorageSchemaVersions, version)
+	}
+}
+
+func assertCompatibleReleasedSchema(t *testing.T, released, candidate *sql.DB, message string) {
+	t.Helper()
+	assert.Equal(t, releasedSchemaCatalog(t, released, false), releasedSchemaCatalog(t, candidate, false), message)
+	before := releasedSchemaCatalog(t, released, true)
+	after := releasedSchemaCatalog(t, candidate, true)
+	for name, object := range before {
+		assert.Equalf(t, object, after[name], "%s: changed or missing %s", message, name)
+	}
+	for name, object := range after {
+		if _, existed := before[name]; existed || object[0] != "index" {
+			continue
+		}
+		var unique bool
+		require.NoError(t, candidate.QueryRowContext(t.Context(), `SELECT "unique" FROM pragma_index_list(?) WHERE name=?`, object[1], name).Scan(&unique))
+		assert.Falsef(t, unique, "%s: added unique index %s", message, name)
 	}
 }
 
