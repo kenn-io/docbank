@@ -2666,16 +2666,62 @@ wait for it to expire.
 ## Verification contract
 
 Repository workflows use GitHub-hosted runners. The main CI workflow uses
-Ubuntu 24.04 for Linux jobs and Windows Server 2025 for Windows amd64. Windows
+Ubuntu 26.04 for Linux jobs and Windows Server 2025 for Windows amd64. Windows
 arm64 uses `windows-11-vs2026-arm`. Each Windows architecture runs four package
-shards. Pull requests call `ci.yml` from `main`, so changes to that workflow take
-effect for pull requests after merge. Workflow validation runs against the
-proposed workflow changes.
+shards. Pull requests and merge groups call `ci.yml` from `main`, so changes to
+that workflow take effect for pull requests and merge groups after merge.
+Workflow validation runs against the proposed workflow changes.
 
 The exception is the `CI gate` job in `ci-pr.yml`, which checks the CI
 run's result and preserves schema records from the pull request or merge-group
 base. It runs on the Namespace profile `namespace-profile-linux-1cpu` so
 it does not wait in the GitHub-hosted queue after CI finishes.
+
+### Merge queue checks
+
+Every PR runs the full CI suite before it can join the merge queue, and every
+push to `main` runs it again. A merge group therefore runs only the Linux checks
+that catch integration breakage between separately green PRs:
+
+- `test` (`Linux tests`): the full Linux CGO Go test suite, Huma API contract
+  check, `go vet`, Unix installer syntax check, S3-compatible service tests,
+  SQLite schema-contract (`TestStorageSchemaVersionContract`) and
+  released-schema upgrade tests, the embedded PostgreSQL migration-chain check
+  (`TestEmbeddedMigrationChainValid`), and the embedded `modernc` restore check
+  without FTS5 build tags.
+- `lint` (`golangci-lint`): timing-suppression check and `golangci-lint` for
+  Linux, Windows (`GOOS=windows`), and macOS (`GOOS=darwin`).
+- `frontend` (`Web application`): formatting, lint, type checks, kit-ui checks,
+  screenshot checks, Vitest unit tests, and production build.
+- `report-export-browser` (`Browser reports and original exports`): Chromium
+  end-to-end checks against the built frontend and real daemon.
+- `docs` (`Public documentation`): strict docs build, bridge contract tests,
+  upload-input verification, and docs-site browser checks.
+- `released-schemas` (`Released storage schemas`): release-tag schema fixture
+  verification.
+- `CI gate` (in `ci-pr.yml`): verifies CI success and preserves base schema
+  records from the pull-request or merge-group base.
+
+Merge groups skip `postgres` (PostgreSQL 16 and 18), `purego` (pure-Go SQLite
+with `CGO_ENABLED=0`), `macos`, and `windows` (all eight amd64 and arm64
+shards). Those jobs still run on every PR and on every push to `main`.
+
+Two PRs that claim the same unreleased SQLite storage schema version or
+PostgreSQL migration number can merge without a Git conflict. The merge queue
+still catches both: `TestStorageSchemaVersionContract` and `Preserve base
+schema records` reject conflicting or modified SQLite schema records, and
+`TestEmbeddedMigrationChainValid` in `Linux tests` rejects duplicate or gapped
+PostgreSQL migration numbers. Semantic PostgreSQL schema/migration equivalence
+against `schema.sql`, pure-Go SQLite runtime differences, and platform-specific
+runtime failures on macOS or Windows rely on PR CI and `main` CI; a break that
+only a skipped suite catches surfaces in `main` CI after the merge.
+
+When adding a CI job, decide whether it belongs in merge groups or only on PRs
+and `main`. A job skips merge groups when its `if` includes
+`github.event_name != 'merge_group'` (using `*go-changed-outside-queue` for
+Go-only jobs). Branch protection requires `CI gate` and the separate
+`Sibling pins on main` check, not individual jobs inside `ci.yml`, so these
+changes need no ruleset update.
 
 Go test jobs run `go test` through gotestsum, which the module pins as a Go
 tool. gotestsum reruns each failed test up to two more times. A test that passes

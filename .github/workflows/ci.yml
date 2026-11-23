@@ -51,9 +51,12 @@ jobs:
               # Keep document/**: make docs-build runs its bridge contract tests.
               - '!{README.md,AGENTS.md,CLAUDE.md,cmd/**,docbank/**,internal/**,mcp/**,report/**,sqlite/**}'
 
+  # Merge groups skip PostgreSQL, pure-Go SQLite, macOS, and Windows. Every PR
+  # runs them before it can be queued; see
+  # docs/internal/development.md#merge-queue-checks.
   postgres:
     needs: changes
-    if: &go-changed ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go')) }}
+    if: &go-changed-outside-queue ${{ github.event_name != 'merge_group' && !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go')) }}
     name: PostgreSQL ${{ matrix.version }} metadata
     runs-on: ubuntu-26.04
     # Cold builds and all test suites share this job's budget.
@@ -359,7 +362,7 @@ jobs:
 
   test:
     needs: changes
-    if: *go-changed
+    if: &go-changed ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go')) }}
     name: Linux tests
     runs-on: ubuntu-26.04
     timeout-minutes: 38
@@ -477,7 +480,7 @@ jobs:
 
   purego:
     needs: changes
-    if: *go-changed
+    if: *go-changed-outside-queue
     name: Pure-Go SQLite
     runs-on: ubuntu-26.04
     timeout-minutes: 36
@@ -523,7 +526,7 @@ jobs:
 
   macos:
     needs: changes
-    if: *go-changed
+    if: *go-changed-outside-queue
     # Exercises the kqueue watch backend and other darwin-only code paths.
     name: macOS tests
     runs-on: macos-26
@@ -617,7 +620,7 @@ jobs:
 
   windows:
     needs: changes
-    if: *go-changed
+    if: *go-changed-outside-queue
     env:
       LLVM_MINGW_VERSION: "20260602"
       LLVM_MINGW_NAME: llvm-mingw-20260602-ucrt-aarch64
