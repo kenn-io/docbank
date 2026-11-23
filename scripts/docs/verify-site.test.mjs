@@ -112,8 +112,8 @@ for (const [name, html, markdown, error] of [
   ["notes in example paragraph", "<p>Not in the latest release yet: <code>docbank next</code></p>", "Not in the latest release yet: `docbank next`\n", null],
   ["notes in list item", "<ul><li>Not in the latest release yet: <code>docbank next</code></li></ul>", "- Not in the latest release yet: `docbank next`\n", null],
   ["orphan note", "<p>Not in the latest release yet</p><p>Other text</p>", "# Guide\n", /put the unreleased note directly above an example/],
-  ["note with prose only", "<p>Not in the latest release yet: coming soon</p>", "# Guide\n", /put the unreleased note directly above an example/],
-  ["note before list", "<p>Not in the latest release yet</p><ul><li><code>docbank next</code></li></ul>", "Not in the latest release yet\n\n- `docbank next`\n", /put the unreleased note directly above an example/],
+  ["note with prose only", "<p>Other text</p>", "Not in the latest release yet: coming soon\n", /put the unreleased note directly above an example/],
+  ["note before list", "<p>Not in the latest release yet</p><ul><li><code>docbank next</code></li></ul>", "`docbank next`\n", /put the unreleased note directly above an example/],
   ["entities and pre", "<pre><code>docbank a &amp;&amp; docbank b</code></pre>", "```sh\ndocbank a && docbank b\n```\n", null],
 ]) {
   test(`website examples: ${name}`, async (t) => {
