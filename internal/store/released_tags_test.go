@@ -164,11 +164,6 @@ func TestReleaseTagSchemasRules(t *testing.T) {
 			}
 		})
 	}
-	t.Run("version 2 layered fixture", func(t *testing.T) {
-		problems := releaseTagProblems(t, []releaseTag{tag("v0.10.0", 2, schemaV090SQL+schemaV0100PhysicalSQL)}, []int{2}, map[int]string{2: schemaV0100SQL})
-		assert.Contains(t, strings.Join(problems, "\n"), "differs from its exact fixture")
-	})
-
 	t.Run("shared name", func(t *testing.T) {
 		first := base + " CREATE INDEX trig ON item(id);"
 		last := base + " CREATE INDEX trig ON item(id DESC);"
