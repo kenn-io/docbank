@@ -343,7 +343,8 @@ Agents can use these CLI commands or the authenticated
 `POST /api/v1/redaction/resolve` and `/api/v1/redaction/render` routes. Browser
 sessions use resolve along with the temporary-preview and numbered-publication
 routes described below. Direct ZIP rendering requires an API key. MCP agents
-can [save a review or an expansion proposal](mcp.md#resolve-explicit-pdf-masks)
+can [save a review or an expansion proposal](mcp.md#resolve-explicit-pdf-masks),
+[save an independently checked unnumbered ZIP](mcp.md#deliver-a-reviewed-pdf-without-bates-numbers),
 and [publish an operator-reserved numbered PDF](#deliver-one-reviewed-pdf-with-bates-numbers).
 
 ### Review a PDF in the browser

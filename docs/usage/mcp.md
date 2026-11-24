@@ -178,7 +178,8 @@ also accepts six independent write flags that you can combine at startup:
 - `--allow-processing` adds only guarded processing start.
 - `--allow-package-writes` permits load-file preflight, import, custodian
   changes, Bates exports, reviewed recipient ZIPs, PDF preparation, mask
-  resolution, and publication of an operator-reserved reviewed PDF.
+  resolution, unnumbered PDF delivery, and publication of an operator-reserved
+  reviewed PDF.
 - `--allow-photo-edits` permits photo asset mutations.
 - `--allow-export-writes` enables native export jobs and local downloads.
 - `--allow-report-writes` enables frozen report creation, revision, local
@@ -276,7 +277,7 @@ content and its JSON text representation, with the complete result, including
 resource links, capped at 1 MiB.
 
 Tests cap the default catalog at 150,000 bytes and the catalog with all write
-flags enabled at 239,000 bytes.
+flags enabled at 241,000 bytes.
 They measure compact JSON of the complete client-decoded `tools/list` result
 with HTML escaping disabled to match the SDK, including output schemas,
 metadata, and cache fields; a larger catalog requires a reviewed budget edit.
@@ -932,6 +933,36 @@ shares the daemon's native PDF slot and has a 60-second daemon deadline. After
 an interrupted reply, inspect the destination before retrying. The tool does
 not replace an existing file. Reservation and retention consent remain in the
 operator workflow.
+
+## Deliver a reviewed PDF without Bates numbers
+
+With `--allow-package-writes`, call `render_native_pdf` with `vault_id` and
+four absolute paths on the MCP host. Use the same `preparation_path`,
+`masks_path`, and `review_path` from resolution. Choose a new
+`destination_path` outside the Docbank data directory. If your review uses an
+older writer, resolve the masks again before rendering.
+
+The daemon renders the exact reviewed version. MCP independently checks the
+PDF against the reviewed masks and text before saving the ZIP. It reports
+`verification: "masks_and_text"`, the review SHA-256, and the saved ZIP's size
+and SHA-256. The ZIP holds `redacted.pdf`, `redacted.txt`, and `receipt.json`.
+Keep the private input files separate. The check cannot compare unmasked
+pixels with the original or identify who approved the review.
+
+Use stdio for long calls. Standalone HTTP cancels the request after two
+minutes. The whole operation can hold the shared MCP full-check slot for up
+to 20 minutes. During that time, reviewed `export_bates_file` and
+`export_recipient_package` calls return `redaction_busy`. The daemon renders
+and transfers for up to ten minutes. The local check can take another ten
+minutes within the overall cap. It can keep a 512 MiB PDFium allocation for
+the life of the MCP process. The 1 GiB verifier memory ceiling counts the
+whole MCP process.
+
+After a lost reply, check the destination first. If the ZIP exists, use
+`docbank redaction verify` with the three original input files before handing
+it off. The tool refuses to replace an existing file. A fresh request can
+render again. For retained, numbered delivery, use an operator reservation
+and the next workflow.
 
 ## Publish a reserved numbered PDF
 

@@ -39,13 +39,7 @@ func saveRedactionFile(ctx context.Context, logger *slog.Logger, prefix, destina
 	if _, err := stage.File.Write(data); err != nil {
 		return output, err
 	}
-	if err := errors.Join(stage.File.Sync(), stage.File.Close()); err != nil {
-		return output, err
-	}
-	if err := ctx.Err(); err != nil {
-		return output, err
-	}
-	published, err := filepublish.Publish(stage.Path(), destination, false)
+	published, err := publishRedactionStage(ctx, stage, destination)
 	if !published {
 		return output, err
 	}
@@ -55,6 +49,16 @@ func saveRedactionFile(ctx context.Context, logger *slog.Logger, prefix, destina
 		logger.Warn("MCP redaction file saved with uncertain durability", "error", err)
 	}
 	return redactionFileOutput{DestinationPath: destination, State: state, Size: len(data), SHA256: fmt.Sprintf("%x", sha256.Sum256(data))}, nil
+}
+
+func publishRedactionStage(ctx context.Context, stage *filepublish.Stage, destination string) (bool, error) {
+	if err := errors.Join(stage.File.Sync(), stage.File.Close()); err != nil {
+		return false, err
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return filepublish.Publish(stage.Path(), destination, false)
 }
 
 func redactionFileHandler[Output any](operation string, run func(context.Context, *daemonLease, []byte, *slog.Logger) (Output, error),

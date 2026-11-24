@@ -191,7 +191,7 @@ func init() {
 	mcpCmd.PersistentFlags().BoolVar(&mcpAllowProcessing, "allow-processing", false,
 		"expose guarded start_processing (still requires prior operator consent)")
 	mcpCmd.PersistentFlags().BoolVar(&mcpAllowPackageWrites, "allow-package-writes", false,
-		"allow load-file preflight, import, custodian writes, Bates exports, recipient ZIPs, PDF preparation, mask resolution, and reviewed PDF publication")
+		"allow load-file preflight, import, custodian writes, Bates exports, recipient ZIPs, PDF preparation, mask resolution, unnumbered PDF delivery, and numbered PDF publication")
 	mcpCmd.PersistentFlags().BoolVar(&mcpAllowPhotoEdits, "allow-photo-edits", false,
 		"expose guarded photo asset mutations")
 	mcpCmd.PersistentFlags().BoolVar(&mcpAllowExportWrites, "allow-export-writes", false,

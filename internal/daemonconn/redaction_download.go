@@ -24,34 +24,7 @@ func (c *Connection) RenderNativePDFTo(ctx context.Context, request processing.R
 	if err != nil {
 		return result, err
 	}
-	if output == nil {
-		return result, errors.New("redaction output file is required")
-	}
-	if err := output.Truncate(0); err != nil {
-		return result, err
-	}
-	if _, err := output.Seek(0, io.SeekStart); err != nil {
-		return result, err
-	}
-	var response *http.Response
-	_, err = c.redactionAPI(&response).RenderNativePDF(runtime.WithStreamingResponse(ctx), &apiclient.RenderNativePDFRequestOptions{Body: &request})
-	if err != nil {
-		return result, err
-	}
-	defer func() { _ = response.Body.Close() }()
-	size, digest := response.ContentLength, response.Header.Get("X-Content-Sha256")
-	if size < 1 || size > processing.MaxRedactionArchiveBytes || !canonical.IsSHA256Hex(digest) || response.Header.Get("X-Redaction-Review-Sha256") != review.SHA256 || response.Header.Get("Content-Type") != "application/zip" {
-		return result, integrityErrorf("redaction archive headers disagree with review")
-	}
-	hash := sha256.New()
-	written, err := io.Copy(io.MultiWriter(output, hash), redactionReader{ctx, io.LimitReader(response.Body, size+1)})
-	if err != nil {
-		return result, err
-	}
-	if written != size || hex.EncodeToString(hash.Sum(nil)) != digest {
-		return result, integrityErrorf("redaction archive size or digest mismatch")
-	}
-	contents, err := VerifyRedactionArchive(ctx, output, size, review)
+	archive, contents, err := c.downloadNativePDFTo(ctx, request, review, output)
 	if err != nil {
 		return result, err
 	}
@@ -74,8 +47,58 @@ func (c *Connection) RenderNativePDFTo(ctx context.Context, request processing.R
 		if err := pdfproduction.VerifySaved(ctx, contents.PDF, contents.PDF.Size(), review.Resolved, review.Recipe, contents.Presentation); err != nil {
 			return result, err
 		}
-	} else if contents.Receipt.Numbered != nil {
-		return result, integrityErrorf("unexpected numbering on plain render")
 	}
-	return processing.RedactionArchive{Receipt: contents.Receipt, Size: size, SHA256: digest}, nil
+	return archive, nil
+}
+
+// RenderUnnumberedPDFTo checks the archive against the caller's validated
+// review. Keep output open and unchanged while reading the returned PDF.
+func (c *Connection) RenderUnnumberedPDFTo(ctx context.Context, inputs processing.RedactionResolveRequest,
+	review processing.RedactionReview, output *os.File,
+) (processing.RedactionArchive, RedactionArchiveContents, error) {
+	return c.downloadNativePDFTo(ctx, processing.RedactionRenderRequest{
+		Preparation: inputs.Preparation, Masks: inputs.Masks, ReviewSHA256: review.SHA256,
+	}, review, output)
+}
+
+func (c *Connection) downloadNativePDFTo(ctx context.Context, request processing.RedactionRenderRequest,
+	review processing.RedactionReview, output *os.File,
+) (processing.RedactionArchive, RedactionArchiveContents, error) {
+	var result processing.RedactionArchive
+	var contents RedactionArchiveContents
+	if output == nil {
+		return result, contents, errors.New("redaction output file is required")
+	}
+	if err := output.Truncate(0); err != nil {
+		return result, contents, err
+	}
+	if _, err := output.Seek(0, io.SeekStart); err != nil {
+		return result, contents, err
+	}
+	var response *http.Response
+	_, err := c.redactionAPI(&response).RenderNativePDF(runtime.WithStreamingResponse(ctx), &apiclient.RenderNativePDFRequestOptions{Body: &request})
+	if err != nil {
+		return result, contents, err
+	}
+	defer func() { _ = response.Body.Close() }()
+	size, digest := response.ContentLength, response.Header.Get("X-Content-Sha256")
+	if size < 1 || size > processing.MaxRedactionArchiveBytes || !canonical.IsSHA256Hex(digest) || response.Header.Get("X-Redaction-Review-Sha256") != review.SHA256 || response.Header.Get("Content-Type") != "application/zip" {
+		return result, contents, integrityErrorf("redaction archive headers disagree with review")
+	}
+	hash := sha256.New()
+	written, err := io.Copy(io.MultiWriter(output, hash), redactionReader{ctx, io.LimitReader(response.Body, size+1)})
+	if err != nil {
+		return result, contents, err
+	}
+	if written != size || hex.EncodeToString(hash.Sum(nil)) != digest {
+		return result, contents, integrityErrorf("redaction archive size or digest mismatch")
+	}
+	contents, err = VerifyRedactionArchive(ctx, output, size, review)
+	if err != nil {
+		return result, contents, err
+	}
+	if request.AllocationID == uuid.Nil() && contents.Receipt.Numbered != nil {
+		return result, RedactionArchiveContents{}, integrityErrorf("unexpected numbering on plain render")
+	}
+	return processing.RedactionArchive{Receipt: contents.Receipt, Size: size, SHA256: digest}, contents, nil
 }
