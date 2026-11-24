@@ -176,10 +176,22 @@ func NormalizeEmailDocumentRelationQuery(q EmailDocumentRelationQuery) (EmailDoc
 }
 
 // EmailAttachmentParts uses retained MIME structure. Bodies, multipart
-// containers, and pictures an HTML body shows by content ID are excluded;
-// explicit attachments and other inline resources remain distinct. Descendants of an attached message are owned by that child email.
+// containers, and PNG, JPEG or GIF pictures an HTML body shows by content ID
+// are excluded; explicit attachments and other inline resources remain
+// distinct. Descendants of an attached message are owned by that child email.
 // Returned copies inherit encrypted ancestry without changing retained evidence.
 func EmailAttachmentParts(e EmailV1) []EmailPartV1 {
+	if e.Inventory == nil {
+		return []EmailPartV1{}
+	}
+	return EmailAttachmentPartsExcept(e, emailShownPictures(e.Inventory))
+}
+
+// EmailAttachmentPartsExcept lists attachment parts like EmailAttachmentParts,
+// but leaves out the parts in shown instead of the pictures the HTML body
+// references. A renderer passes the parts it drew into the body, so a picture
+// it could not draw stays listed. Explicit attachments are always listed.
+func EmailAttachmentPartsExcept(e EmailV1, shown map[string]bool) []EmailPartV1 {
 	parts := []EmailPartV1{}
 	if e.Inventory == nil {
 		return parts
@@ -190,7 +202,6 @@ func EmailAttachmentParts(e EmailV1) []EmailPartV1 {
 			bodies[a.PartPath] = true
 		}
 	}
-	shown := emailShownInlineParts(e.Inventory.Messages)
 	encrypted := map[string]bool{}
 	for _, p := range e.Inventory.Parts {
 		// Validated inventories put parents before their descendants.
@@ -209,21 +220,26 @@ func EmailAttachmentParts(e EmailV1) []EmailPartV1 {
 			continue
 		}
 		explicit := p.Disposition != nil && strings.EqualFold(*p.Disposition, "attachment")
-		if explicit || p.Path != "1" && !bodies[p.Path] && (!shown[p.Path] || !emailEmbeddedPicture(p)) {
+		if explicit || p.Path != "1" && !bodies[p.Path] && !shown[p.Path] {
 			parts = append(parts, p)
 		}
 	}
 	return parts
 }
 
-// emailShownInlineParts returns the parts an HTML body shows by content ID.
-// Mail programs show those pictures in the body instead of listing them.
-func emailShownInlineParts(messages []EmailMessageV1) map[string]bool {
+// emailShownPictures returns the PNG, JPEG and GIF parts an HTML body shows by
+// content ID. Mail programs show those pictures in the body instead of listing
+// them. Other referenced files stay attachments.
+func emailShownPictures(inventory *EmailInventoryV1) map[string]bool {
+	parts := map[string]EmailPartV1{}
+	for _, p := range inventory.Parts {
+		parts[p.Path] = p
+	}
 	shown := map[string]bool{}
-	for _, message := range messages {
+	for _, message := range inventory.Messages {
 		for _, group := range message.RelatedGroups {
 			for _, resource := range group.Resources {
-				if resource.Referenced && resource.State == EmailResourceUnique && len(resource.Candidates) == 1 {
+				if resource.Referenced && resource.State == EmailResourceUnique && len(resource.Candidates) == 1 && emailEmbeddedPicture(parts[resource.Candidates[0]]) {
 					shown[resource.Candidates[0]] = true
 				}
 			}

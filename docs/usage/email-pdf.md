@@ -42,9 +42,10 @@ duplicate policies. It keeps each PDF separate and records every occurrence.
 Each PDF contains Subject, From, To, Cc, available Bcc, the original Date with
 its timezone, Message-ID, the complete selected body, expanded quoted text,
 verified raster inline images, and an attachment inventory. The inventory
-leaves out PNG, JPEG, and GIF pictures the body already shows by `cid:`. Attachment contents are
-not embedded or concatenated. Plain text preserves whitespace and wraps long
-lines, tables paginate, and long URLs wrap.
+leaves out the pictures embedded in the body; a picture shown only as a
+placeholder stays listed. Attachment contents are not embedded or
+concatenated. Plain text preserves whitespace and wraps long lines, tables
+paginate, and long URLs wrap.
 
 Only verified raster MIME parts referenced by `cid:` are included. Remote,
 missing, ambiguous, and unsupported inline resources appear as visible

@@ -33,6 +33,9 @@ type htmlOutput struct {
 	strings.Builder
 
 	err error
+	// embedded holds the part paths drawn into the body, which the
+	// attachment inventory leaves out.
+	embedded map[string]bool
 }
 
 func (o *htmlOutput) reserve(n int) bool {
@@ -235,7 +238,7 @@ func BuildHTML(ctx context.Context, e document.EmailV1, paper string, open OpenA
 		}
 	}
 	out.WriteString(`<section class="inventory"><h2>Attachment inventory</h2><p>Attachment contents are not included in this PDF.</p><ul>`)
-	for _, p := range document.EmailAttachmentParts(e) {
+	for _, p := range document.EmailAttachmentPartsExcept(e, out.embedded) {
 		size := "size unavailable"
 		if p.Payload != nil {
 			size = fmt.Sprintf("%d bytes", p.Payload.Size)
@@ -369,5 +372,9 @@ func inlineImage(ctx context.Context, out *htmlOutput, n *html.Node, message doc
 		return nil //nolint:nilerr // Unsupported raster formats are explicit visible placeholders, never rendered unchecked.
 	}
 	out.WriteString(`<img alt="` + out.escape(alt) + `" src="data:image/` + format + `;base64,` + base64.StdEncoding.EncodeToString(b) + `">`)
+	if out.embedded == nil {
+		out.embedded = map[string]bool{}
+	}
+	out.embedded[candidate] = true
 	return nil
 }

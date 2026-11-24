@@ -88,6 +88,19 @@ func TestHTMLEmbedsPercentEncodedInlineImagesAndListsOnlyAttachments(t *testing.
 	require.NotContains(t, inventory, "logo.png")
 }
 
+func TestHTMLListsReferencedPicturesItCannotDraw(t *testing.T) {
+	source := "Content-Type: multipart/related; boundary=r\r\n\r\n" +
+		"--r\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>Report</p><img src='cid:broken' alt='chart'>\r\n" +
+		"--r\r\nContent-Type: image/gif\r\nContent-ID: <broken>\r\nContent-Disposition: inline; filename=chart.gif\r\n\r\nGIF89a not a picture\r\n" +
+		"--r--\r\n"
+	got, err := decodedHTML(t, source, "A4")
+	require.NoError(t, err)
+	body, inventory, found := strings.Cut(string(got.Bytes), "Attachment inventory")
+	require.True(t, found)
+	require.Contains(t, body, "[unsupported inline image: chart]")
+	require.Contains(t, inventory, "chart.gif", "a picture the PDF shows only as a placeholder stays in its inventory")
+}
+
 func TestHTMLRejectsIncompleteAndInvalidPageSize(t *testing.T) {
 	_, err := decodedHTML(t, "Content-Type: multipart/mixed; boundary=missing\r\n\r\ntruncated", "A4")
 	require.Error(t, err)
