@@ -1391,6 +1391,10 @@ Embedding is a separate application ownership mode, not a second privileged
 path into a daemon-owned vault. External agents should continue using the
 [authenticated HTTP contract](agents/integration.md).
 
+Importing the library leaves your program's Huma settings unchanged, so an
+application that serves its own Huma API keeps its own error responses and
+schemas.
+
 ## Idle embedding discovery
 
 A quiet vault skips embedding discovery. One full pass resumes after any

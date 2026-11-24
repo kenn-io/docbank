@@ -58,30 +58,28 @@ func NewError(status int, code, detail string) *Error {
 	return &Error{Title: http.StatusText(status), Status: status, Code: code, Detail: detail}
 }
 
-// The hook is a package-level huma variable that every huma registration
-// reads, so it is installed once at init rather than by each NewServer.
-func init() { installErrorFormatter() }
-
-// installErrorFormatter routes huma's own errors (request validation,
-// parsing) through the same envelope.
-func installErrorFormatter() {
-	huma.NewError = func(status int, msg string, errs ...error) huma.StatusError {
-		code := "validation"
-		if status >= http.StatusInternalServerError {
-			code = "internal"
-		}
-		e := NewError(status, code, strings.ToValidUTF8(msg, "\ufffd"))
-		for _, err := range errs {
-			if err != nil {
-				detail := strings.ToValidUTF8(err.Error(), "\ufffd")
-				if validation, ok := errors.AsType[*huma.ErrorDetail](err); ok && privateMediaValidation(validation) {
-					detail = "invalid media reference body"
-				}
-				e.Errors = append(e.Errors, detail)
-			}
-		}
-		return e
+// transformHumaError gives framework errors the same envelope as handler errors.
+func transformHumaError(_ huma.Context, _ string, value any) (any, error) {
+	model, ok := value.(*huma.ErrorModel)
+	if !ok {
+		return value, nil
 	}
+	code := "validation"
+	if model.Status >= http.StatusInternalServerError {
+		code = "internal"
+	}
+	envelope := NewError(model.Status, code, strings.ToValidUTF8(model.Detail, "\ufffd"))
+	for _, detail := range model.Errors {
+		if detail == nil {
+			continue
+		}
+		message := strings.ToValidUTF8(detail.Error(), "\ufffd")
+		if privateMediaValidation(detail) {
+			message = "invalid media reference body"
+		}
+		envelope.Errors = append(envelope.Errors, message)
+	}
+	return envelope, nil
 }
 
 func privateMediaValidation(detail *huma.ErrorDetail) bool {

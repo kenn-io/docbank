@@ -425,6 +425,14 @@ branch on the code, not human detail. Adding a store error normally requires:
 4. documenting the public code; and
 5. testing the non-2xx response envelope.
 
+Huma's own request errors, such as validation and parsing failures, use the
+same envelope. A transformer on the daemon's Huma API rewrites them, and the
+schema registry names Huma's error type as `Error`. Neither touches Huma's
+process-wide `huma.NewError`, so a Go program that embeds Docbank and serves
+its own Huma API keeps its own error responses. Huma offers array nullability
+only as a process-wide default; building the daemon server sets
+`huma.DefaultArrayNullable` to false, and importing the library does not.
+
 Document search forwards `content_first` through `retrieval.Query` to the store's
 lexical search, following the [HTTP search ordering contract](../architecture/http-api.md#coverage-and-source-fenced-search).
 
