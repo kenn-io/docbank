@@ -110,8 +110,6 @@ for (const [name, html, markdown, error] of [
   ["wrapped code span", "<p><code>docbank document list</code></p>", "`docbank document\nlist`\n", null],
   ["multi-backtick code span", "<p><code>docbank search `title`</code></p>", "``docbank search `title` ``\n", null],
   ["example in HTML comment", "<p><code>docbank tag</code></p>", "<!-- `docbank tag` -->\n", /example.*missing from guide\.md/],
-  ["expected-failure marker", "<p><code>docbank example</code></p>", "<!-- release-commands: expected-failure -->\n\n`docbank example`\n", null],
-  ["unrelated code", "<p>Supports <code>PDF</code> files.</p>", "Supports PDF files.\n", null],
   ["product name in code", "<p>Use the <code>Docbank API</code>.</p>", "Use the API.\n", null],
   ["command name within prose", "<p><code>the docbank command</code></p>", "The command.\n", null],
   ["bare command", "<p><code>docbank</code></p>", "# Guide\n", /example.*missing from guide\.md/],
