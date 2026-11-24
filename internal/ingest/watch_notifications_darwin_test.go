@@ -65,16 +65,17 @@ func TestKqueueRenamedDirectoryReleasesFileWatches(t *testing.T) {
 		}
 		deadline.Stop()
 		_ = n.Drain()
+		previous := n.backend
 		enroll(names[(i+1)%2])
-	}
-	// fsnotify's kqueue Close releases watched file descriptors synchronously,
-	// then signals readEvents to close the kqueue and wakeup pipe asynchronously.
-	assert.EventuallyWithT(t, func(c *assert.CollectT) {
-		entries, err := os.ReadDir("/dev/fd")
-		if !assert.NoError(c, err) {
-			return
+		require.NotEqual(t, previous, n.backend, "rename must replace the kqueue backend")
+		// Wait for the retired watcher's readEvents loop to enter its teardown
+		// defer so closed watchers do not accumulate their kqueue/pipe fds.
+		for range previous.Errors() {
 		}
-		assert.LessOrEqual(c, len(entries), baseline+2,
-			"each rename must not leave its %d file watches open", files)
-	}, 5*time.Second, 10*time.Millisecond)
+	}
+	// The final retired watcher closes its kqueue and wakeup pipe in the last
+	// two lines of readEvents's defer after closing Errors; allow that pair on
+	// top of ambient noise while still catching any leaked per-file watches.
+	assert.LessOrEqual(t, openDescriptorCount(t), baseline+4,
+		"each rename must not leave its %d file watches open", files)
 }
