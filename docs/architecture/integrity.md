@@ -6,40 +6,39 @@ description: What Docbank defends against, which layer owns each integrity guara
 # Integrity and trust
 
 Docbank verifies stored content and metadata within a single-user trust
-boundary. Its checks address crashes, corruption, stale state, and accidental
-damage. They do not establish trust against someone who can rewrite both the
+boundary. Its checks catch crashes, corruption, stale state, and accidental
+damage, though they cannot protect you from someone who can rewrite both the
 vault and its expected evidence.
 
-This page owns that boundary and the rationale for accepted trade-offs. The
-mechanism table identifies which component performs each check.
+This page owns that trust boundary and the rationale for accepted trade-offs.
+The mechanism table identifies which component performs each check.
 
 ## Trust boundary
 
-Docbank is a **single-user tool**. The vault lives under a `0700`
-directory owned by the user, its location comes from the user's own
-environment (`DOCBANK_HOME`), and every Docbank process runs with the
-user's privileges. Consequently:
+Docbank is a **single-user tool**. Your vault lives in a `0700` directory that
+you own, its location comes from your environment (`DOCBANK_HOME`), and every
+Docbank process runs with your privileges. That boundary determines what
+Docbank defends against:
 
-- **In scope:** crashes and power loss at any instant; filesystem bit
-  rot; accidental damage to the vault or source trees (a stray symlink
-  where a document or blob *file* belongs, a deleted file, a manual
-  edit inside `~/.docbank`); concurrent Docbank processes; a *stale* or
-  *tampered* object being silently vouched for. The vault's own
-  *directory structure* is trusted. See the read-guarantee note below.
-- **Out of scope:** an adversary with the user's own privileges. Anyone
-  who can race a running Docbank process while rewriting the user's
-  files already executes as the user and does not need Docbank as a
-  vector. Defenses whose only payoff is against that actor are declined
-  by policy.
+- **In scope.** Crashes and power loss at any moment, filesystem bit rot,
+  accidental damage to the vault or source trees (such as a stray symlink where
+  a document or blob *file* belongs, a deleted file, or a manual edit inside
+  `~/.docbank`), concurrent Docbank processes, and a *stale* or *tampered*
+  object being silently accepted as valid. Docbank trusts the vault's own
+  *directory structure*, as noted in the read guarantee below.
+- **Out of scope.** An adversary who already has your privileges. Anyone who
+  can race a running Docbank process while rewriting your files already runs as
+  you and does not need Docbank to reach them. Docbank declines defenses whose
+  only benefit is against that actor.
 
 ## Which layer owns which guarantee
 
 | Guarantee | Owner | Mechanism |
 |---|---|---|
-| A referenced blob is durable | `blob.Write` | raw or zstd tmp → fsync → publish → dir fsync, on every path including dedup |
-| A deleted blob stays deleted | `blob.Remove` | shard dir fsync before gc deletes the metadata row, including on the already-missing retry path |
-| A stored object is what its name claims *structurally* | `blob.Write` dedup check | Kit performs a no-follow identity check; a wrong-sized object, symlink, or special file fails closed and is left unchanged for explicit recovery |
-| Reads serve only stored blobs | `blob.Open` / `blob.Exists` | no-follow open + regular-file check on the blob itself; the vault's own directory structure above it is trusted per the boundary above (a symlinked shard dir is user-privileged relocation or tampering, not an attack Docbank can meaningfully resist) |
+| A referenced blob is durable | `blob.WriteContext` | raw or zstd tmp → fsync → publish → dir fsync, on every path including dedup |
+| A deleted blob stays deleted | `blob.Remove` | gc deletes the metadata row and records the exact loose object for retirement in one transaction; removal then fsyncs the shard dir, including on the already-missing retry path, and clears the record only after it succeeds |
+| A stored object is what its name claims *structurally* | `blob.WriteContext` dedup check | Kit performs a no-follow identity check; a wrong-sized object, symlink, or special file fails closed and is left unchanged for explicit recovery |
+| Reads serve only stored blobs | `blob.OpenContext` / `blob.Exists` | no-follow open + regular-file check on the blob itself; the vault's own directory structure above it is trusted per the boundary above (a symlinked shard dir is user-privileged relocation or tampering, not an attack Docbank can meaningfully resist) |
 | Metadata and audit authority are internally consistent | `docbank vault verify` | relational validation plus independent replay and reconciliation of canonical audit history |
 | Permanent audit evidence and retained bytes agree | `docbank audit verify` | independent replay, an optional exact-prefix proof against externally recorded lineage/scope evidence, and a re-hash of every unique protected blob |
 | Content matches its hash *byte-for-byte* | `docbank vault verify`; `POST /nodes/{id}/verify` | full-vault re-hash on demand, or a revision-bound fresh read of one file through the mixed store |
@@ -53,98 +52,100 @@ user's privileges. Consequently:
 
 ## Accepted trade-offs
 
-These were proposed (most more than once) and declined.
+Each of the following ideas was proposed, most of them more than once, and
+declined.
 
 ### No re-hash on the dedup fast path
 
-`blob.Write`'s dedup check verifies structure (regular file, expected
-size), not content. Re-hashing the existing blob on every duplicate
-import would double the I/O of the most common bulk-import case to
-detect exactly one thing the structural check misses: **same-length
-corrupt bytes**, i.e. bit rot or tampering.
+`blob.WriteContext`'s dedup check verifies structure (that the target is a
+regular file with the expected size), not content. Re-hashing an existing blob
+on every duplicate import would double the I/O of the most common bulk-import
+path to catch only one thing the structural check misses: **same-length corrupt
+bytes** from bit rot or tampering.
 
-`docbank vault verify` owns detection of same-length corruption. A corrupt blob also
-affects every node that already references it. Verification scans all blobs,
-so detection does not depend on a later duplicate import.
+Instead, `docbank vault verify` handles same-length corruption. A corrupt blob
+also affects every node that already points to it, and verification scans every
+blob so detection does not wait for a later duplicate import.
 
 ### Fail closed on an invalid canonical object
 
-An existing wrong-sized file, symlink, or special file at a blob's canonical
-path is evidence of damage or manual modification, not a valid deduplication
-target. `blob.Write` returns a content-mismatch error and leaves that object
-unchanged. It does not replace a path whose identity may have raced or been
-tampered with.
+If a wrong-sized file, symlink, or special file already sits at a blob's
+canonical path, that points to damage or manual modification rather than a
+valid deduplication target. `blob.WriteContext` returns a content-mismatch
+error and leaves the object untouched instead of overwriting a path that may
+have raced or been tampered with.
 
-Recovery is a separate step. An embedded owner with trusted bytes calls
-`RepairContent` for the exact existing logical identity. The method verifies
-the full stream before changing physical authority and preserves every node and
-historical version reference. A standalone owner restores from a verified
-backup or uses an offline recovery procedure. `Put` and `Create` do not
-silently turn a content write into repair. Verify the repaired or restored
-bytes before relying on them.
+Recovery happens as a separate step. In embedded mode, an owner with trusted
+bytes calls `RepairContent` for the exact existing logical identity; it
+verifies the full stream before replacing physical authority and keeps every
+node and historical version reference intact. In standalone mode, you restore
+from a verified backup or run an offline recovery procedure. `Put` and `Create`
+never silently turn a normal write into a repair. Always verify repaired or
+restored bytes before relying on them.
 
 ### No fd-relative directory traversal on import
 
-`docbank document add` walks source trees by path (`filepath.WalkDir`). A
-directory swapped for a symlink *between classification and descent*
-can redirect the walk, but only when an actor mutates the user's own
-source tree mid-import, which is outside the trust boundary above. The
-payoff (importing user-readable files into the user's own vault) does
-not justify platform-specific `openat`/`fstatat` machinery. The
-*accidental* case, a symlink sitting in the tree, is handled: it is
-classified, reported, and skipped, and the final open refuses to
-follow links regardless. The one exception is a source argument whose
-final component is a symlink to a directory, which is common for cloud-storage
-roots. Docbank resolves that link before walking and continues on the resolved
-path, so retargeting the user-facing link after resolution cannot redirect the
-walk. Descendant symlinks are still skipped, while virtual naming and provenance
-retain the spelling the user supplied.
+`docbank document add` walks source trees by path with `filepath.WalkDir`.
+Swapping a directory for a symlink *between classification and descent* can
+redirect the walk, but only if someone modifies your source tree mid-import,
+which sits outside the trust boundary above. Adding platform-specific
+`openat`/`fstatat` machinery is not worth the complexity when the operation
+only imports files you can already read into your own vault. Docbank still
+handles the *accidental* case of a symlink sitting in the tree by classifying,
+reporting, and skipping it, and the final open refuses to follow links
+regardless. The one exception is a source argument whose final component is a
+symlink to a directory, which is common for cloud-storage roots. Docbank
+resolves that top-level link before walking and traverses the resolved path, so
+retargeting the link afterward cannot redirect the walk. Descendant symlinks
+are still skipped, while virtual naming and provenance keep the spelling you
+supplied.
 
-Watched inboxes use a stronger traversal boundary because they run repeatedly
-without an operator supervising each scan, and accidentally entering the live
-vault would create a self-ingestion loop. A watcher pins its resolved source
-with `os.Root`, opens every descendant relative to held directory descriptors,
-rejects symlink or reparse-point components, and refuses to cross a filesystem
-mount. Linux requires a kernel-provided mount ID. It does not substitute a
-device number that would mistake a bind mount for the source mount. Before any
-ingest, the watcher also compares every descended directory with the pinned
-vault-root identity. This catches a vault physically beneath the source even
-when separate bind aliases hide that ancestry from path comparison. The same
-identity check remains active during later scans.
+Watched inboxes enforce a stricter traversal boundary because they run
+repeatedly without supervision, and wandering into the live vault would create
+a self-ingestion loop. A watcher pins its resolved source with `os.Root`, opens
+every descendant relative to held directory descriptors, rejects symlink or
+reparse-point components, and refuses to cross a filesystem mount. On Linux, it
+requires a kernel-provided mount ID rather than falling back to a device number
+that would mistake a bind mount for the source mount. Before ingesting
+anything, the watcher also compares every descended directory against the
+pinned vault-root identity, catching a vault located physically beneath the
+source even when bind aliases hide that relationship from path comparison. The
+same identity check stays active on every later scan.
 
 ### Released schema upgrades
 
-v0.9.0 established Docbank's first public storage compatibility boundary.
-Later layouts carry an explicit storage-schema version. Released vaults survive
-incompatible SQLite changes through one shared logical-cutover driver: Docbank
-selects the adapter for the source generation, exports deterministic metadata-v1
-JSONL from the old database, imports and validates it in a fresh current-schema
-database, restores physical pack authority, and only then publishes the
-replacement. A v0.9.0 source is retained beside it as
-`<database>.v0.9.0.bak`. Later source generations use their own identified
-recovery copy.
+v0.9.0 established Docbank's first public storage compatibility boundary, and
+later layouts store an explicit storage-schema version. When an incompatible
+SQLite change lands, released vaults upgrade through one shared logical-cutover
+driver. Docbank picks the adapter for the source generation, exports
+deterministic metadata-v1 JSONL from the old database, imports and validates it
+in a fresh current-schema database, restores physical pack authority, and only
+then publishes the replacement. A v0.9.0 source stays beside the new database
+as `<database>.v0.9.0.bak`, and later source generations keep their own
+version-identified recovery copy.
 
-The generation marker is paired with a physical downgrade fence: the mandatory
-identity read performed by the unversioned v0.9 binary cannot succeed against a
-newer database. This prevents an older process from ignoring an unfamiliar
+Docbank pairs the version marker with a physical downgrade fence. The mandatory
+identity read that an unversioned v0.9 binary runs at startup fails against any
+newer database, which stops an older process from ignoring an unfamiliar
 version column and mutating current storage with obsolete rules.
 
-This is not an in-place migration ledger. Unreleased development
-layouts remain disposable, while every supported released layout has an exact
+Docbank does not maintain an in-place migration ledger. Unreleased development
+layouts stay disposable, while every supported released layout has an exact
 fixture and a direct-to-current end-to-end cutover test under both SQLite
-implementations. Metadata remains format v1 until a released logical-format
+implementations. Metadata stays at format v1 until a released logical-format
 change requires a deterministic version normalizer.
 
 ### One owner for an entire vault tree
 
-The daemon and embedded `Vault` both hold the portable hierarchy lock
-exclusively for their whole lifetime, acquired non-blocking at startup. Another
-owner of the same root, any ancestor, or any descendant is refused immediately,
-never queued. Unrelated roots may remain open concurrently. Ordinary commands
-do not touch the lock: they are HTTP clients of the daemon. Maintenance is
-serialized against ordinary mutations by the owner's in-process mutation gate.
-See [Ownership and concurrency](locking.md).
+Both the daemon and an embedded `Vault` acquire the portable hierarchy lock
+non-blocking at startup and hold it exclusively for their entire lifetime. If
+another process tries to own the same root, any ancestor, or any descendant,
+Docbank refuses it immediately instead of queuing it. Unrelated vault roots can
+stay open at the same time. Ordinary CLI commands never touch the lock because
+they talk to the daemon as HTTP clients, and the owner's in-process mutation
+gate serializes maintenance against ordinary mutations. See
+[Ownership and concurrency](locking.md) for details.
 
-Next: [Backup and recovery](backup.md) covers the snapshot architecture these
-guarantees extend to. [Troubleshooting](../troubleshooting.md) applies them
-when something looks wrong.
+Next, see [Backup and recovery](backup.md) for how these guarantees extend to
+snapshots, or [Troubleshooting](../troubleshooting.md) when something looks
+wrong.

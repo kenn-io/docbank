@@ -7,11 +7,11 @@ description: Every docbank command, with its flags, output formats, and error be
 # CLI reference
 
 Use this page to look up command syntax, flags, output, and failure behavior.
-For a first import, follow [Quickstart](quickstart.md).
+If you are importing files for the first time, follow [Quickstart](quickstart.md).
 
-Run `docbank --help` for commands grouped by outcome, a numbered agent workflow,
-selectors, output modes, environment settings, and exit codes. Follow with `docbank <command> --help`
-for its workflow and flags. Runnable commands include examples; prerequisite
+Run `docbank --help` to see commands grouped by outcome, a numbered agent workflow,
+selectors, output modes, environment settings, and exit codes. Then run `docbank <command> --help`
+for a command's workflow and flags. Runnable commands include examples, and prerequisite
 examples show where version, job, and snapshot IDs come from.
 
 ## Find a command by task
@@ -22,22 +22,23 @@ docbank cli search pack loose blobs --json --limit 3
 ```
 
 Describe a task to get up to five matching commands, then run the suggested
-`--help` command for flags and examples. Quoting the task is optional.
-`--limit` accepts 1–20; its default is 5. Discovery reads the current command
-tree without loading configuration, opening a vault, contacting the network,
-or starting a daemon.
+`--help` command for flags and examples. Quoting the task is optional. You can
+set `--limit` from 1 to 20, and the default is 5. Discovery reads the current
+command tree without loading configuration, opening a vault, contacting the
+network, or starting a daemon.
 
-Text output gives a command and summary per line, followed by a help hint.
-`--json` prints one object with `query` and `results`. Each result contains
-`command`, `summary`, and `usage`; no matches produces `"results": []` and
-exit 0. Blank queries and invalid limits fail with exit 2. Errors go to stderr,
-using the existing JSON error envelope when `--json` has been parsed.
+Text output prints one command and summary per line, followed by a help hint.
+With `--json`, the command prints one object containing `query` and `results`,
+where each result has `command`, `summary`, and `usage`. If nothing matches, it
+outputs `"results": []` and exits 0. Blank queries and invalid limits fail with
+exit 2. Errors go to stderr, using the existing JSON error envelope when
+`--json` has been parsed.
 
 Results omit hidden and deprecated commands, help-only groups, completion,
 discovery itself, `tui`, the `web` launcher, the `mcp` server, and
 `daemon run`. Finite children such as `web sessions revoke` and `mcp config`
-remain searchable. Results describe available commands; check their help for
-prerequisites before executing them. To search stored documents, use
+stay searchable. Results describe available commands; check their help for
+prerequisites before you run them. To search stored documents, use
 `docbank search <query>`.
 
 ## Command groups and older spellings
@@ -60,36 +61,39 @@ saved search-count evidence. Other domain groups keep their existing names.
 | `mailbox` | `email mailbox` |
 | `search-export` | `report` |
 
-Older spellings remain callable for at least one release and are hidden from
-root help and completion suggestions. Executing an older spelling prints a
-deprecation notice on stderr. Flags, arguments, successful stdout, exit codes,
-HTTP routes, MCP tools, and daemon launch commands retain their contracts.
-Nested actions keep their flags and arguments: for example, `versions list`
-becomes `document versions list`. Regenerate installed completion scripts with
-`docbank completion bash|zsh|fish|powershell` to discover the new command tree.
+Older spellings remain callable for at least one release, though they are hidden
+from root help and completion suggestions. When you run an older spelling,
+Docbank prints a deprecation notice on stderr. Flags, arguments, successful
+stdout, exit codes, HTTP routes, MCP tools, and daemon launch commands keep
+their contracts. Nested actions keep their flags and arguments too: for example,
+`versions list` becomes `document versions list`. To pick up the new command
+tree in your shell, regenerate installed completion scripts with
+`docbank completion bash|zsh|fish|powershell`.
 
 ## Vault selection and execution
 
 Vault commands use `~/.docbank` unless `DOCBANK_HOME` selects another location.
-See [Configuration](configuration.md). Virtual paths are absolute,
-`/`-separated, and case-sensitive. Errors go to stderr and produce a nonzero
-exit code. Parsing errors (unknown commands or flags, wrong argument counts,
-missing required flags) include usage or a help command. An unknown child of a
-command group, such as `docbank tag bogus`, fails with exit `2`; the bare
+See [Configuration](configuration.md). Virtual paths are absolute, separated by
+`/`, and case-sensitive. Errors go to stderr and return a nonzero exit code.
+Parsing errors, such as unknown commands or flags, wrong argument counts, or
+missing required flags, include usage or a help command. An unknown child of a
+command group, such as `docbank tag bogus`, fails with exit `2`, while the bare
 `docbank tag` still shows help and succeeds. Errors include a next-step hint,
-or a command suggestion when Cobra can identify a likely typo. Hints name canonical CLI
-commands and flags, including when an older spelling was invoked. They stay
-on stderr.
+or a command suggestion when Cobra can identify a likely typo. Hints name
+canonical CLI commands and flags, even when you invoke an older spelling, and
+they stay on stderr.
 
 Within `document`, `rename` aliases `move`, `delete` aliases `remove`, and
-`show` aliases `cat`. These aliases have the same output and behavior.
-`document show` prints original file bytes; `document delete` moves to trash.
+`show` aliases `cat`. These aliases produce the same output and behavior:
+`document show` prints original file bytes, and `document delete` moves a node
+to trash.
 
 Data commands send HTTP requests to the daemon and start it in the background
-if needed. `docbank push` selects an explicit keyed daemon with `--to` and
-does not start a local daemon. Commands never open the vault directly. `docbank daemon status` and
-`docbank daemon stop` never start a daemon. See [Daemon](architecture/daemon.md)
-and [Ownership and concurrency](architecture/locking.md).
+when needed, and they never open the vault directly. `docbank push` selects an
+explicit keyed daemon with `--to` and does not start a local daemon.
+`docbank daemon status` and `docbank daemon stop` also never start a daemon.
+See [Daemon](architecture/daemon.md) and
+[Ownership and concurrency](architecture/locking.md).
 
 ## docbank changes
 
@@ -97,9 +101,21 @@ and [Ownership and concurrency](architecture/locking.md).
 docbank changes [--after CURSOR] [--follow] [--json]
 ```
 
-Read committed vault changes in cursor order. The default output has four tab-separated columns: cursor, kind, node ID, and revision. `--json` prints one JSON event per line. `--after` resumes after a saved cursor; omitting it starts at the oldest retained event. `--follow` waits for new events after draining the backlog. Ctrl-C stops following cleanly. A successful finite drain prints `cursor: CURSOR` on stderr, including when it has no events.
+Read committed vault changes in cursor order. By default, each line has four
+tab-separated columns: cursor, kind, node ID, and revision. With `--json`, the
+command prints one JSON event per line. Pass `--after` to resume after a saved
+cursor, or omit it to start at the oldest retained event. Pass `--follow` to
+wait for new events after draining the backlog, and press Ctrl-C to stop
+following cleanly. A successful finite drain prints `cursor: CURSOR` on stderr,
+even when there are no events.
 
-An expired cursor produces a nonzero exit and a message to rescan, then resume with `--after CURSOR`, including when expiry happens during streaming. An interrupted drain or a later read failure also produces a nonzero exit. The command prints only change events; HTTP completion and error records stay out of stdout. Save the supplied cursor before rescanning. See [React to vault changes](agents/integration.md#react-to-vault-changes) for event kinds and retention.
+An expired cursor exits nonzero and tells you to rescan and resume with
+`--after CURSOR`, including when expiry happens during streaming. An
+interrupted drain or a later read failure also exits nonzero. The command
+prints only change events, keeping HTTP completion and error records out of
+stdout. Save the supplied cursor before rescanning. See
+[React to vault changes](agents/integration.md#react-to-vault-changes) for
+event kinds and retention.
 
 ## docbank kata
 
@@ -110,9 +126,10 @@ docbank kata cite <path-or-id> --citation citation.json --title TITLE --idempote
 docbank kata context <issue> [--offset N] [--json]
 ```
 
-Create or append a verified passage and read its current source state. Requires
-an enabled Kata connection. See [Cite documents in Kata](usage/kata-evidence.md)
-for configuration, Unicode ranges, retry behavior and evidence compatibility.
+Create or append a verified passage and read its current source state. This
+command requires an enabled Kata connection. See
+[Cite documents in Kata](usage/kata-evidence.md) for configuration, Unicode
+ranges, retry behavior, and evidence compatibility.
 
 ## docbank email mailbox
 
@@ -124,16 +141,18 @@ docbank email mailbox register <archive-id> <description>
 docbank email mailbox transfer <message.eml> --archive ID --reference REF [--dest /] [--settings ID] [--if-rev REV]
 ```
 
-Imports stream caller-selected files to the daemon. Output is JSON. `watch`
-prints newline-delimited job snapshots until a terminal state. Upload progress
-goes to stderr. Canceling `watch` closes the observer but does not stop the job.
-Use `cancel` to stop the import itself. `--preview` retains a verified source
-without importing messages. Receipt pages contain at most 100 occurrences.
-Pass the final ordinal as `--after` to read the next page.
+Imports stream caller-selected files to the daemon, and their upload progress
+goes to stderr. Output is JSON. `watch` prints newline-delimited job snapshots
+until the job reaches a terminal state. Canceling `watch` closes the observer
+without stopping the job; to stop the import itself, run `cancel`. Pass
+`--preview` to retain a verified source without importing messages. Receipt
+pages contain at most 100 occurrences, and you can pass the final ordinal as
+`--after` to read the next page.
 
-`--id` identifies the source upload and, by default, the import job. Repeat it
-to retry without resending verified chunks. Use a distinct `--job-id` to import
-the same sealed source with different settings or a different destination.
+`--id` identifies the source upload and, by default, the import job. Repeat the
+same ID to retry without resending verified chunks. To import the same sealed
+source with different settings or a different destination, pass a distinct
+`--job-id`.
 
 See [Mailbox archives](usage/importing.md#mailbox-archives) for retention,
 limits, explicit continuation, and the EML transfer retry contract.
@@ -151,34 +170,34 @@ docbank package members <package-id> [--after-ordinal N] [--limit 100] [--json]
 docbank package record <package-id> <row-id> [--json]
 ```
 
-Imports a review production as one auditable package. `preflight` validates a
-directory that holds the DAT or CSV load file, an optional OPT or LFP page
-map, and the referenced original documents, images, and supplied text. It
-reports diagnostics and retains a short-lived preflight ID. Resolve blocking
+Import a review production as one auditable package. `preflight` validates a
+directory holding the DAT or CSV load file, an optional OPT or LFP page map,
+and the referenced original documents, images, and supplied text. It reports
+diagnostics and keeps a short-lived preflight ID. Resolve any blocking
 diagnostics before starting an import.
 
-`import` starts a durable job from that preflight. The daemon verifies files
-against their preflight SHA-256 hashes and records a receipt for each committed
-record. Keep the source unchanged while the job runs. `status` reports
+`import` starts a durable job from that preflight. While the job runs, keep the
+source unchanged. The daemon verifies files against their preflight SHA-256
+hashes and records a receipt for each committed record, and `status` reports
 committed, gap, and total counts.
 
 Without `--accept-partial`, the worker verifies every declared file before
-creating document entries. A missing file, changed source inventory, or content
-mismatch rejects the job during that check. With `--accept-partial`, the job
-retains supported records and reports files that become unavailable as gaps.
-It finishes as `partial` when it commits at least one record and reports gaps.
-`--index-supplied-text` indexes the sender's text files for search.
+creating document entries, and rejects the job if a file is missing, the source
+inventory changes, or content does not match. With `--accept-partial`, the job
+retains supported records, reports files that become unavailable as gaps, and
+finishes as `partial` when it commits at least one record and reports gaps. Pass
+`--index-supplied-text` to index the sender's text files for search.
 
-`cancel` stops a queued or running job. It retains records already committed
-with receipts and removes staged document entries that have no receipt. Shared
+`cancel` stops a queued or running job. It keeps records already committed with
+receipts and removes staged document entries that have no receipt, while shared
 file bytes remain subject to ordinary garbage collection.
 
-`--operation-id` makes a retry return the original job when you reuse the
-same preflight and import options. `list`, `show`, `members`, and `record`
-browse retained packages and their immutable rows. Page limits are 50, 100,
+If you reuse the same preflight and import options with `--operation-id`, a
+retry returns the original job. Use `list`, `show`, `members`, and `record` to
+browse retained packages and their immutable rows, with page limits of 50, 100,
 or 250.
 
-The web application imports a ZIP of the same layout through
+In the web application, you can import a ZIP of the same layout through
 **Import load files**. See the
 [web application guide](usage/web.md#import-load-files).
 
@@ -188,10 +207,10 @@ The web application imports a ZIP of the same layout through
 docbank labels lookup <label> [--package UUID] [--label-set SET] [--provenance received|assigned] [--cursor CURSOR] [--limit 100] [--json]
 ```
 
-Finds every scoped occurrence or page that carries one exact Bates label. A
+Find every scoped occurrence or page that carries one exact Bates label. A
 label is only unique inside its package and label set, so scope the lookup
 with `--package` when senders reuse numbering. Received labels come from the
-sender's load file; assigned labels come from Docbank's own productions.
+sender's load file, while assigned labels come from Docbank's own productions.
 
 ## docbank email pdf
 
@@ -199,8 +218,8 @@ sender's load file; assigned labels come from Docbank's own productions.
 docbank email pdf <version-uuid> <local-file> [--paper A4|Letter] [--overwrite]
 ```
 
-Requests a retained PDF for one EML version through the daemon, waits for its
-processing job, verifies the bytes independently, and publishes the local file
+Request a retained PDF for one EML version through the daemon, wait for its
+processing job, verify the bytes independently, and publish the local file
 atomically. New requests require a configured local renderer. See
 [Email PDFs](usage/email-pdf.md) for retained browser downloads and setup.
 
@@ -210,7 +229,7 @@ atomically. New requests require a configured local renderer. See
 docbank vault info [--json]
 ```
 
-Shows which vault `DOCBANK_HOME` selects and confirms that its daemon is
+Show which vault `DOCBANK_HOME` selects and confirm that its daemon is
 reachable. Human output includes:
 
 - The canonical local vault path and stable vault ID.
@@ -220,11 +239,12 @@ reachable. Human output includes:
 - Tracked content blobs.
 - Physical storage used by loose files and packs.
 
-`--json` exposes the same values as stable fields. Agents should record
-`vault_id` as identity and use `vault_path` only to confirm local placement:
-restoring or moving a vault changes its path without changing its ID. Tracked
-blob totals can include content awaiting garbage collection. `storage` reports
-the files and packs currently occupying physical storage.
+`--json` exposes the same values as stable fields. For automation, record
+`vault_id` as the vault's identity and use `vault_path` only to confirm local
+placement, because restoring or moving a vault changes its path without
+changing its ID. Tracked blob totals can include content awaiting garbage
+collection, and `storage` reports the files and packs currently occupying
+physical storage.
 
 ## docbank formats
 
@@ -232,34 +252,35 @@ the files and packs currently occupying physical storage.
 docbank formats [--family <family>] [--format <id> | --extension <extension>] [--json]
 ```
 
-Reports what the running Docbank binary can do for each classified format.
+Report what the running Docbank binary can do for each classified format.
 The human table prints `FORMAT`, `CAPABILITY`, `STATE`, and `REASON`, with one
-row for each of the seven capability keys. `--family` limits returned format
-rows. `--format` and `--extension` attach an exact lookup and return only the
-matching classified row. They cannot be used together.
+row for each of the seven capability keys. Use `--family` to limit returned
+format rows, or use `--format` or `--extension` to attach an exact lookup and
+return only the matching classified row. You cannot combine `--format` and
+`--extension`.
 
 `--json` emits the flat `format-coverage/v1` response with `contract_version`,
-`formats`, `pending`, `generated_by`, and an optional `lookup`. A recognized
-pending extension and an unknown extension both succeed, but their lookup
-matches are `pending` and `unknown_format` respectively. See
+`formats`, `pending`, `generated_by`, and an optional `lookup`. Both a
+recognized pending extension and an unknown extension succeed, with lookup
+matches of `pending` and `unknown_format` respectively. See
 [Format coverage](architecture/format-coverage.md) for the capability and
 state definitions.
 
 ## Node selectors
 
-Commands that inspect or mutate an existing node accept either its absolute
+Commands that inspect or modify an existing node accept either its absolute
 virtual path or a stable selector such as `id:42`. Paths are convenient live
-coordinates. `id:42` continues to name the same document after a move or
-rename. Human listings print this copyable `id:<positive-decimal>` form.
-Machine-readable JSON continues to expose node IDs as numbers.
+coordinates, while `id:42` continues to name the same document after a move or
+rename. Human listings print this copyable `id:<positive-decimal>` form, and
+machine-readable JSON continues to expose node IDs as numbers.
 
 The destination of `mv` remains an absolute path because it describes where
-the node should go. `restore` also accepts its older bare numeric form for
-compatibility, although new scripts should use the unambiguous `id:42` form.
+the node belongs. For compatibility, `restore` also accepts its older bare
+numeric form, though new scripts should use the unambiguous `id:42` form.
 Commands that require a live tree entry reject trashed selectors. Read-only
-`stat`, `cat`, `versions list`, `photos assets inspect`, audit status, and audit
-history can still inspect a trashed node by stable ID. `restore` is the mutation
-that returns it to the live tree.
+`stat`, `cat`, `versions list`, `photos assets inspect`, audit status, and
+audit history can still inspect a trashed node by stable ID, and `restore` is
+the mutation that returns it to the live tree.
 
 ## docbank photos
 
@@ -298,23 +319,54 @@ docbank photos checkout rebind <checkout-id> <destination>
 docbank photos checkout retire <checkout-id>
 ```
 
-Photo commands emit JSON through the daemon. Image and concrete video files are
-enrolled when created. Generic RAW files require explicit promotion.
-Existing-asset and settings mutations read the current revision and retry once
-if another write changes it first. Pass `--revision` to fail with exit code 4
-instead. `inspect` also accepts an `id:N` or path selector for a member file.
-`id:N` also finds a trashed member. Sidecars must point at a same-asset RAW or
-image member and never become the display member. `timeline` counts the photos
-a QueryV1 scope selects by recorded capture day; see
+Photo commands emit JSON through the daemon. Docbank enrolls image and concrete
+video files when they are created, while generic RAW files require explicit
+promotion. When you modify an existing asset or setting, the CLI reads the
+current revision and retries once if another write changes it first. To fail
+with exit code 4 instead of retrying, pass `--revision`. `inspect` also accepts
+an `id:N` or path selector for a member file, and `id:N` also finds a trashed
+member. Sidecars must point at a same-asset RAW or image member and never
+become the display member. `timeline` counts the photos a QueryV1 scope selects
+by recorded capture day; see
 [Count photos by capture day](usage/photos.md#count-photos-by-capture-day).
 
-`photos settings set hidden_unlock_lifetime <duration>` changes how long future Hidden unlocks last, using Go duration syntax such as `15m`, and `photos settings reset hidden_unlock_lifetime` restores five minutes. Backup schedule overrides use [`backup schedule`](#docbank-backup). Browser sessions cannot write either.
+To change how long future Hidden unlocks last, run
+`photos settings set hidden_unlock_lifetime <duration>` using Go duration
+syntax such as `15m`. To restore five minutes, run
+`photos settings reset hidden_unlock_lifetime`. Backup schedule overrides use
+[`backup schedule`](#docbank-backup). Browser sessions cannot write either
+setting.
 
-Photo assets, albums, memberships, settings, receipts, and checkout definitions are included in JSONL backup and restore. Sidecars require a selected eligible original; name errors skip the whole affected photo. The estimate and the checkout in create, status, and list JSON report up to 20 `skipped_photos` details and the total `skipped_photo_count`; status and list also print a short skip summary to stderr. A selection with no remaining files fails. Failed and cancelled checkouts release unpublished source holds and destination reservations. Published or uncertain copies retain their bases until `photos checkout retire <checkout-id>` releases all holds. Retirement preserves copies and history. Queued or running work keeps retirement pending until it finishes or is cancelled; if the lane is paused, resume or cancel the job through Jobs first.
+JSONL backup and restore include photo assets, albums, memberships, settings,
+receipts, and checkout definitions. Sidecars require a selected eligible
+original, and name errors skip the whole affected photo. The estimate and the
+checkout in create, status, and list JSON report up to 20 `skipped_photos`
+details and the total `skipped_photo_count`, and status and list also print a
+short skip summary to stderr. A selection with no remaining files fails. Failed
+and cancelled checkouts release unpublished source holds and destination
+reservations, while published or uncertain copies keep their bases until
+`photos checkout retire <checkout-id>` releases all holds. Retirement preserves
+copies and history. Queued or running work keeps retirement pending until it
+finishes or is cancelled; if the lane is paused, resume or cancel the job
+through Jobs first.
 
-Restored checkouts stay unbound until `rebind` verifies their daemon-host folder. Rebind hashes and classifies present tracked paths, records absent paths as missing, and requires at least one tracked regular file. It marks present files published and re-holds their surviving bases, preserves held bases whose working files are missing, and leaves pruned bases unheld. Commit holds each advanced base. Edits based on pruned unpublished references report conflicts. Creation and commit share the `photo_checkout` pause lane. Watches and storage bindings require released folders, including retired ones, to be empty or missing.
+Restored checkouts stay unbound until `rebind` verifies their daemon-host
+folder. `rebind` hashes and classifies present tracked paths, records absent
+paths as missing, and requires at least one tracked regular file. It marks
+present files published and re-holds their surviving bases, preserves held
+bases whose working files are missing, and leaves pruned bases unheld. Commit
+holds each advanced base, and edits based on pruned unpublished references
+report conflicts. Creation and commit share the `photo_checkout` pause lane.
+Watches and storage bindings require released folders, including retired ones,
+to be empty or missing.
 
-`scan` previews working-file states and untracked paths. `commit` saves stable edits as new versions and leaves conflicting or changing files in the folder. Both report state counts and bounded path details. `status` pages entries by file ID, with 100 entries by default and `--limit` from 1 through 250; pass `next_after` as `--after` to continue. See [Create writable copies](usage/photos.md#create-writable-copies) for selection, destination, capacity, settlement, and retention rules.
+`scan` previews working-file states and untracked paths, while `commit` saves
+stable edits as new versions and leaves conflicting or changing files in the
+folder. Both report state counts and bounded path details. `status` pages
+entries by file ID, returning 100 entries by default with `--limit` from 1
+through 250; pass `next_after` as `--after` to continue. See
+[Create writable copies](usage/photos.md#create-writable-copies) for selection,
+destination, capacity, settlement, and retention rules.
 
 ### Photo albums
 
@@ -334,28 +386,39 @@ docbank photos albums delete <album-id>
 
 For `add` and `remove`, supply either up to 1,000 asset IDs or `--query` with
 strict QueryV1 JSON. A query selects its complete current photo result in one
-atomic write. Coverage-dependent queries also accept `--coverage` and
+atomic write, and coverage-dependent queries also accept `--coverage` and
 `--profile-fingerprint`. Existing-album writes accept `--revision` with the
-same automatic read and retry as asset writes.
+same automatic read and retry behavior as asset writes.
 
-`members` defaults to `added_time` descending and 50 photos per page; the page
-size can be 1–250. Omitting the asset ID from `cover` clears the chosen cover.
+`members` defaults to `added_time` descending and 50 photos per page, with page
+sizes from 1 to 250. To clear the chosen cover, omit the asset ID from `cover`.
 Removing a photo from an album or deleting the album keeps every file. See
 [Albums](usage/photos.md#albums) for visibility, cover selection, and `set:`
 filters.
 
 ### Hidden photos
 
-Hidden passcodes use protected terminal input or one line from stdin. Terminal setup and change ask for the new passcode twice. Change reads the current and new passcode on separate lines. Commands that read or edit a hidden asset prompt for the passcode and unlock only for that invocation. Disable returns all hidden photos to Library; reset preserves hidden flags while removing credentials. Passcode and hidden-flag changes require a writable vault. For hidden photo details, use passcode-authorized CLI inspection; MCP photo tools remain locked. Documents and MCP document tools still expose their ordinary file nodes.
+Hidden passcodes use protected terminal input or one line from stdin. Terminal
+setup and change ask for the new passcode twice, and change reads the current
+and new passcode on separate lines. Commands that read or edit a hidden asset
+prompt for the passcode and unlock only for that invocation. Disabling returns
+all hidden photos to Library, while resetting preserves hidden flags while
+removing credentials. Passcode and hidden-flag changes require a writable
+vault. For hidden photo details, use passcode-authorized CLI inspection; MCP photo
+tools stay locked. Documents and MCP document tools still expose their ordinary
+file nodes.
 
 ### Photo imports
 
 `photos import` queues a background import of a folder on the daemon host and
 prints the operation ID. It creates one photo per same-folder, same-name group
-discovered in the scan. `docbank jobs show <operation-id> --json` returns its
-progress and receipt, including every group the run left unpaired and the number
-of unsupported files it skipped. `docbank jobs cancel <operation-id>` stops it.
-Current duplicate owners preserve existing pairings. Burst grouping and stack decisions are available in the web app. The CLI sets the gap with `photos settings --burst-gap-seconds N`. See
+discovered in the scan. Run `docbank jobs show <operation-id> --json` to read
+its progress and receipt, including every group the run left unpaired and the
+number of unsupported files it skipped, or run
+`docbank jobs cancel <operation-id>` to stop it. Current duplicate owners
+preserve existing pairings. Burst grouping and stack decisions are available in
+the web app, and the CLI sets the gap with
+`photos settings set --burst-gap-seconds N`. See
 [Photos](usage/photos.md#import-a-camera-folder).
 
 ## docbank people
@@ -371,14 +434,15 @@ docbank people split <person-id> --revision REV --display-name NAME [--identity 
 ```
 
 Person commands use the daemon API and emit the same JSON records as the HTTP
-client. List matches the start of any word in the folded display name. `show` includes identity,
-external UID, assertion selectors, key face, and revision data. Package custodian assignment IDs come from package reads. Get
-assignment IDs from `GET /api/v1/packages/by-id/{package_id}/custodians` or MCP
+client. `list` matches the start of any word in the folded display name, and
+`show` includes identity, external UID, assertion selectors, key face, and
+revision data. Package custodian assignment IDs come from package reads: get
+them from `GET /api/v1/packages/by-id/{package_id}/custodians` or MCP
 `list_package_custodians`. See [People](usage/people.md#create-and-inspect) for
-the full split rules. Mutations use the revision supplied by the caller. The
-merge and split operation IDs make retries replayable. When you omit one, the
-CLI generates it and prints it to stderr before the request. A split needs at
-least one identity, assertion, assignment, or external UID.
+the full split rules. Mutations use the revision you supply. The merge and
+split operation IDs make retries replayable; if you omit one, the CLI generates
+it and prints it to stderr before sending the request. A split needs at least
+one identity, assertion, assignment, or external UID.
 
 ## docbank document stat
 
@@ -386,29 +450,30 @@ least one identity, assertion, assignment, or external UID.
 docbank document stat <path-or-id> [--json]
 ```
 
-Inspects one document or directory. Human output shows its stable `id:N`
+Inspect one document or directory. Human output shows its stable `id:N`
 selector, live or trashed state, quoted live path and name, kind, revision, and
-timestamps. Files also show the current immutable version ID, SHA-256 content
-identity, raw size, and recorded MIME type.
+timestamps. For files, it also shows the current immutable version ID, SHA-256
+content identity, raw size, and recorded MIME type.
 
-A path resolves only a live node. A stable ID can inspect the same node after
-it is moved, renamed, or trashed. Trashed output has no `path`
-because the node has no live coordinate. `--json` returns the complete node
-object used by the HTTP API.
+A path resolves only a live node, while a stable ID can inspect the same node
+after it is moved, renamed, or trashed. Trashed output has no `path` because
+the node has no live coordinate. `--json` returns the complete node object used
+by the HTTP API.
 
 ## Process exit codes
 
-CLI process codes are stable so shell automation can branch without parsing
-stderr. Human error text remains explanatory and may change. Invocation and
-request-validation errors both use `2`; operational and internal failures use
-`1`. Missing backup repository configuration uses `2` and explains `--repo`
-and `backup init`; repository I/O failures still use `1`.
+CLI process codes are stable so shell scripts can branch without parsing
+stderr, while human error text stays explanatory and may change. Both
+invocation and request-validation errors exit `2`, and operational or internal
+failures exit `1`. Missing backup repository configuration also exits `2` and
+explains `--repo` and `backup init`, while repository I/O failures still exit
+`1`.
 
 Human errors print `error: MESSAGE` followed by `hint: NEXT STEP`. Search with
-`--agent` uses `Hint:` for its recovery line; its successful hit rows keep their
-existing format. Other commands support `--json` only where their help lists it.
-If that command has already parsed `--json` as true, its final error record on
-stderr is compact JSON with a trailing newline:
+`--agent` uses `Hint:` for its recovery line and keeps its existing format for
+successful hit rows. Other commands support `--json` only where their help
+lists it. If a command has already parsed `--json` as true, its final error
+record on stderr is compact JSON with a trailing newline:
 
 ```json
 {"error":{"message":"...","code":"not_found","exit":3,"hint":"list paths with \"docbank document tree\" or find by name with \"docbank search <name>\""}}
@@ -416,20 +481,20 @@ stderr is compact JSON with a trailing newline:
 
 The CLI `error.code` values are `error`, `usage`, `not_found`, `stale`, `busy`,
 `integrity`, and `claim_required`, corresponding to exits `1` through `7`.
-`error.hint` is omitted when a command suggestion already provides recovery.
-These are process categories; HTTP problem codes retain their richer meanings.
+When a command suggestion already provides recovery, `error.hint` is omitted.
+These are process categories; HTTP problem codes keep their richer meanings.
 
-Previews and progress can precede this final stderr record. For example,
-`backup claim --json` still prints its repository preview before requesting
+Previews and progress can appear on stderr before this final record. For
+example, `backup claim --json` prints its repository preview before asking for
 confirmation. Parse the final record separately from those diagnostics.
-`--json=false` keeps human errors. Flag parsing can fail before `--json` is
-read; those failures also stay human. A malformed repeated output flag keeps
-the last successfully parsed value. When search parses both `--agent` and
-`--json` as true, their mutual-exclusion error uses JSON.
+`--json=false` keeps human errors, and flag-parsing failures that happen before
+`--json` is read also stay human. A malformed repeated output flag keeps the
+last successfully parsed value. When search parses both `--agent` and `--json`
+as true, their mutual-exclusion error uses JSON.
 
-Success output stays on stdout. Commands may return a report or partial bytes
-before failing; always check the exit code. Recovery hints recommend inspection
-before retrying a write whose outcome is uncertain.
+Success output stays on stdout. Commands may write a report or partial bytes
+before failing; always check the exit code. Recovery hints recommend
+inspecting state before retrying a write whose outcome is uncertain.
 
 | Code | Meaning | Typical action |
 |------|---------|----------------|
@@ -443,10 +508,10 @@ before retrying a write whose outcome is uncertain.
 | `7` | The backup repository has history this vault installation has not claimed, as after upgrading or restoring | Review it with `docbank backup claim`, then confirm |
 
 Integrity commands may write their complete human or JSON report before
-exiting `6`. The report is evidence, not a success indication. Failures that
-prevent verification from completing, such as an unreachable daemon, use
-`1`. HTTP clients should continue to branch on the API's problem `code` rather
-than translating process exits back into HTTP status.
+exiting `6`. Treat that report as evidence, not as a success indicator.
+Failures that prevent verification from completing, such as an unreachable
+daemon, exit `1`. HTTP clients should continue to branch on the API's problem
+`code` rather than translating process exits back into HTTP status.
 
 ## docbank document add
 
@@ -456,8 +521,8 @@ docbank document add <path>... --preflight [--include <pattern>]... [--exclude <
 docbank document add <https-url> [--dest <virtual-dir>] [--allow-http] [--max-bytes <bytes>] [--progress auto|bar|plain] [--json]
 ```
 
-Imports files or directory trees into the vault. Sources are copied,
-never modified or deleted.
+Import files or directory trees into the vault. Docbank copies sources and
+never modifies or deletes them.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -471,43 +536,48 @@ never modified or deleted.
 | `--allow-http` | false | Permit HTTP for a URL download and its redirects |
 | `--max-bytes` | `100000000` | URL download byte cap; positive and at most the ingest limit |
 
-URL imports accept one HTTP(S) URL, with HTTPS required unless `--allow-http` is set. The same rule applies to every redirect, with a ten-redirect ceiling. Downloads have no total timeout and honor cancellation. Responses must be HTTP 200 and fit within the cap before import. Filters, `--preflight`, and `--replace` are local-only. See [URL imports](usage/importing.md#import-from-a-url) for naming, skips, and fetch provenance.
+URL imports accept one HTTP(S) URL and require HTTPS unless you pass
+`--allow-http`. The same rule applies to every redirect, up to a ten-redirect
+ceiling. Downloads have no total timeout and honor cancellation, and responses
+must return HTTP 200 and fit within the cap before import. Filters,
+`--preflight`, and `--replace` apply only to local imports. See
+[URL imports](usage/importing.md#import-from-a-url) for naming, skips, and
+fetch provenance.
 
-- A directory argument imports recursively: its basename becomes a
-  directory under `--dest` and relative structure is preserved.
-- An explicitly named directory symlink is followed as the import root.
+- A directory argument imports recursively: its basename becomes a directory
+  under `--dest` and its relative structure is preserved.
+- An explicitly named directory symlink is followed as the import root, and
   Docbank keeps the supplied basename and source-path spelling.
 - Selected symlinks within the tree, file symlinks, and other non-regular files
-  are skipped and reported as failures. They do not abort the run.
+  are skipped and reported as failures without aborting the run.
 - Entries removed by include filters are excluded without failure.
-- Include and exclude patterns use `/` separators on every platform. A
+- Include and exclude patterns use `/` separators on every platform, and a
   backslash in a pattern is rejected.
-- Name collisions with different content auto-suffix:
-  `report.pdf` → `report (2).pdf`.
+- Name collisions with different content add an automatic suffix:
+  `report.pdf` becomes `report (2).pdf`.
 - `--replace` records the destination node revision before reading the source,
   then replaces that exact live file when the bytes differ.
 - `--replace` skips unchanged bytes without changing the stored MIME type or
   creating a content version.
-- With `--replace`, a live directory fails the file. A destination created
-  after the initial read also fails with an exact-name conflict. Docbank does
-  not add a suffix. Without `--replace`, ordinary suffixing still applies.
+- With `--replace`, a live directory fails the file, and a destination created
+  after the initial read fails with an exact-name conflict instead of adding a
+  suffix. Without `--replace`, ordinary suffixing still applies.
 - Without `--replace`, a rerun skips content that already exists under a
-  candidate name in the destination. An interrupted bulk import can be
-  rerun. See [Importing documents](usage/importing.md).
+  candidate name in the destination. You can rerun an interrupted bulk import.
+  See [Importing documents](usage/importing.md).
 
 ### Preview an import
 
-Run `--preflight` before a large import. It cannot be combined with `--replace`.
-The report counts files, directories, and logical bytes. It separates
-pack-eligible files, larger loose-only files, files above the ingest limit,
-exclusions, non-regular entries, and filesystem errors. It also summarizes the
-largest extension groups.
+Run `--preflight` before a large import; you cannot combine it with `--replace`. The report counts files, directories, and logical bytes, and
+separates pack-eligible files, larger loose-only files, files above the ingest
+limit, exclusions, non-regular entries, and filesystem errors. It also
+summarizes the largest extension groups.
 
-On macOS, preflight counts cloud placeholders whose bytes are not local.
-Importing those files downloads them through the provider. Preflight itself
-reads only filesystem metadata. It does not open placeholders, create the
-destination, record an ingest, or write blobs. `--json` includes a bounded set
-of detailed findings and file-type groups.
+On macOS, preflight counts cloud placeholders whose bytes are not local;
+importing those files downloads them through the provider. Preflight itself
+reads only filesystem metadata and does not open placeholders, create the
+destination, record an ingest, or write blobs. With `--json`, it includes a
+bounded set of detailed findings and file-type groups.
 
 ### Select files with patterns
 
@@ -515,11 +585,11 @@ Preflight and import share these selection rules:
 
 - A pattern without `/`, such as `*.pdf`, matches a basename at any depth.
 - A pattern with `/`, such as `project/*.pdf`, matches a source-relative path.
-- `*` and `?` do not cross `/`; `**` is not a recursive globstar.
+- `*` and `?` do not cross `/`, and `**` is not a recursive globstar.
 - Include rules filter regular files without pruning directories.
-- Exclusions win. Excluding a directory prunes its subtree.
+- Exclusions win, and excluding a directory prunes its subtree.
 - Absolute patterns and `..` escapes are rejected.
-- Commas are ordinary characters. Repeat the flag for multiple patterns.
+- Commas are ordinary characters; repeat the flag for multiple patterns.
 - Patterns are case-sensitive on every platform, including Windows.
 
 Watch configuration uses these glob rules in `exclude_patterns`, while
@@ -529,7 +599,7 @@ Watch configuration uses these glob rules in `exclude_patterns`, while
 
 An ordinary import first scans source metadata for file and byte totals, then
 shows ingest progress on stderr. `auto` uses a redrawable bar on a terminal and
-durable periodic lines when redirected. `--progress plain` forces durable
+durable periodic lines when redirected, while `--progress plain` forces durable
 lines. The scan is advisory because sources may change before they are opened.
 The command ends with a one-line stdout summary plus one stderr line per failed
 file:
@@ -539,11 +609,11 @@ added: 12  skipped: 3  excluded: 2  failed: 1
 failed: /src/broken.pdf: opening /src/broken.pdf: permission denied
 ```
 
-Exit is non-zero if any file failed. A missing or unreadable top-level
-source is reported as a failure and the command continues with remaining
-source arguments, just as it does for failures inside a directory tree.
-`--json` suppresses progress and returns the same terminal report shape as the
-HTTP JSON endpoint, so stdout remains safe for automation.
+The exit code is nonzero if any file failed. A missing or unreadable top-level
+source is reported as a failure while the command continues with remaining
+source arguments, as it does for failures inside a directory tree. `--json`
+suppresses progress and returns the same terminal report shape as the HTTP JSON
+endpoint, keeping stdout safe for automation.
 
 ## docbank push
 
@@ -551,12 +621,13 @@ HTTP JSON endpoint, so stdout remains safe for automation.
 docbank push <local-dir> --to <daemon-url> --name <push-name> --dest <virtual-dir> [--api-key-file FILE] [--watch] [--exclude VALUE]... [--settle-time 30s] [--minimum-age 0s] [--scan-interval 5s]
 ```
 
-Archives a local folder through the selected daemon. Reads the API key from
-`DOCBANK_API_KEY`, or from `--api-key-file` when supplied. Prints acknowledged
-outcomes, each file the daemon rejected, and a final count. Rejected files do
-not stop the run, but make the exit code nonzero. Ctrl+C stops the run and
-still prints the count; stopping `--watch` this way is not an error. Repeat the
-command to resume from the daemon's accepted hashes.
+Archive a local folder through the selected daemon. `push` reads the API key
+from `DOCBANK_API_KEY`, or from `--api-key-file` when supplied, and prints
+acknowledged outcomes, each file the daemon rejected, and a final count.
+Rejected files do not stop the run, though they make the exit code nonzero.
+Pressing Ctrl-C stops the run and still prints the count; stopping `--watch`
+this way is not an error. Repeat the command to resume from the daemon's
+accepted hashes.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
@@ -580,17 +651,18 @@ switching from a daemon-owned watch without re-uploading unchanged files.
 docbank document provenance <path-or-id> [--limit <n>] [--offset <n>] [--json]
 ```
 
-Shows the immutable origin facts retained for one file, newest ingest first.
+Show the immutable origin facts retained for one file, newest ingest first.
 Each result includes its SHA-256 identity, whether it is the active fact, the
 ingest UUID and time, source kind and description, original source path and
 modification time, and the identity it supersedes when applicable. A page
-holds 1–1,000 facts. Human output prints a continuation hint when more remain.
+holds 1 to 1,000 facts, and human output prints a continuation hint when more
+remain.
 
-Paths resolve live files. A stable `id:<node-id>` may also inspect a trashed
-file. In that case the response has no live virtual path and the human output
-labels it as trashed. `--json` returns the complete node, path, page authority,
-and fact objects. The command is read-only and does not access or alter the
-original source.
+Paths resolve live files, while a stable `id:<node-id>` can also inspect a
+trashed file. For a trashed file, the response has no live virtual path and
+human output labels it as trashed. `--json` returns the complete node, path,
+page authority, and fact objects. The command is read-only and never accesses
+or alters the original source.
 
 ## docbank document mkdir
 
@@ -598,11 +670,11 @@ original source.
 docbank document mkdir <absolute-virtual-path> [--json]
 ```
 
-Creates one directory at the given virtual path and prints its stable
-`id:N` selector plus quoted canonical path. The parent directory must already
-exist. This command does not create missing parents. Existing names, `/`,
-relative paths, files used as parents, and `.` or `..` path segments are
-rejected without creating anything.
+Create one directory at the given virtual path and print its stable `id:N`
+selector and quoted canonical path. The parent directory must already exist;
+`mkdir` does not create missing parents. Existing names, `/`, relative
+paths, files used as parents, and `.` or `..` path segments are rejected
+without creating anything.
 
 The daemon resolves the parent and creates the directory in one transaction,
 so a concurrent ancestor move cannot redirect a path-based request. `--json`
@@ -614,14 +686,14 @@ returns the complete directory node.
 docbank document list [path-or-id] [--json]
 ```
 
-Lists a virtual directory (default `/`). Columns: `SELECTOR`, `KIND`
-(`dir`/`file`), `SIZE` (bytes; 0 for directories), `MODIFIED` (UTC,
-RFC 3339 at second precision), `NAME`. Fails with `not a directory` when the
-path names a file.
+List a virtual directory, defaulting to `/`. Columns are `SELECTOR`, `KIND`
+for `dir` or `file`, `SIZE` in bytes with 0 for directories, `MODIFIED` in UTC
+RFC 3339 at second precision, and `NAME`. The command fails with
+`not a directory` if the path names a file.
 
 `--json` returns the resolved directory under `directory` and its complete,
-ordered child list under `items`. Empty directories produce `"items": []`.
-JSON preserves the full-precision timestamps.
+ordered child list under `items`. Empty directories produce `"items": []`, and
+JSON preserves full-precision timestamps.
 
 ## docbank document tree
 
@@ -629,21 +701,21 @@ JSON preserves the full-precision timestamps.
 docbank document tree [path-or-id] [-L <depth>] [--max-entries <count>] [--all] [--json]
 ```
 
-Prints the subtree rooted at the path or stable node selector (default `/`),
-two-space indented, each entry suffixed with its `id:N` selector in brackets.
-Output is bounded by default to
-four levels and 1,000 nodes, so an exploratory command cannot flood a terminal
-or an agent's context. `-L`/`--depth` and `--max-entries` set narrower or wider
-bounds. `--all` restores an unlimited traversal and cannot be
-combined with either bound. Fails without output if `path` names a file.
+Print the subtree rooted at the path or stable node selector, defaulting to `/`,
+indented by two spaces with each entry suffixed with its `id:N` selector in
+brackets. Output is bounded by default to four levels and 1,000 nodes, so an
+exploratory command cannot flood a terminal or an agent's context. Use
+`-L`/`--depth` and `--max-entries` to set narrower or wider bounds, or `--all`
+for an unlimited traversal; you cannot combine `--all` with either bound. The
+command fails without output if `path` names a file.
 
 When a bound hides entries, human output names every truncation boundary and
-the number of direct children omitted there. Narrow the root path or increase a
+the number of direct children omitted there. Narrow the root path or raise a
 bound before using `--all` on an unfamiliar archive.
 
 `--json` returns the resolved root and a deterministic, pre-order `items`
 array. Each item contains the node, its absolute virtual `path`, and its
-`depth` beneath the root (direct children have depth 1). Always inspect
+`depth` beneath the root, where direct children have depth 1. Always inspect
 `truncated`. When it is true, `omissions` contains the affected path, the
 `depth_limit` or `entry_limit` reason, and the number of direct children not
 returned at that boundary.
@@ -654,8 +726,8 @@ returned at that boundary.
 docbank document cat <path-or-id>
 ```
 
-Streams the file's stored bytes to stdout. Fails with `not a file` for
-directories.
+Stream the file's stored bytes to stdout. If the target is a directory, the
+command fails with `not a file`.
 
 ## docbank document get
 
@@ -663,18 +735,18 @@ directories.
 docbank document get <path-or-id> <local-file> [--overwrite] [--progress auto|bar|plain] [--json]
 ```
 
-Downloads one current document version to a local file. Docbank writes into an
+Download one current document version to a local file. Docbank writes into an
 owner-private staging directory beside the destination, verifies the complete
 size, SHA-256 identity, and terminal HTTP digest, syncs and closes the file,
-then publishes it atomically. An interrupted or corrupt transfer never exposes
-a partial destination.
+then publishes it atomically. An interrupted or corrupt transfer never leaves a
+partial file at the destination.
 
-Existing files are preserved unless you pass `--overwrite`. Even then,
-Docbank verifies the replacement before atomically replacing the existing path.
-An existing symlink is replaced rather than followed. `--json` suppresses
-progress and returns the node ID, immutable version ID, hash, size, and absolute
-local output path. A trashed file remains retrievable by its stable `id:N`
-selector while its content version is retained.
+Existing files stay untouched unless you pass `--overwrite`. Even with
+`--overwrite`, Docbank verifies the replacement before atomically swapping it
+into place, and replaces an existing symlink rather than following it. `--json`
+suppresses progress and returns the node ID, immutable version ID, hash, size,
+and absolute local output path. You can still retrieve a trashed file by its
+stable `id:N` selector while its content version is retained.
 
 ## docbank document put
 
@@ -682,28 +754,30 @@ selector while its content version is retained.
 docbank document put <local-file> <path-or-id> [--mime-type <type>] [--progress auto|bar|plain] [--json]
 ```
 
-Replaces one existing file's current content while retaining every prior
-immutable version. The source must be a regular file and is opened without
-following a final symlink. It is never modified.
+Replace one existing file's current content while keeping every prior immutable
+version. The source must be a regular file; Docbank opens it without following
+a final symlink and never modifies it.
 
-`put` reads the source twice: first to compute the SHA-256 and exact size the
-daemon must independently verify, then to upload the bytes. Human mode shows
-separate `hash` and `upload` progress. `auto` uses a terminal bar or durable
-redirected lines, and `plain` always emits durable lines. `--json` suppresses
-progress and returns the new node, immutable version, and server-computed hash
-and size. `--mime-type` overrides extension/content detection.
+`put` reads the source twice: first to compute the SHA-256 and exact size for
+the daemon to verify independently, then to upload the bytes. Human mode shows
+separate `hash` and `upload` progress, where `auto` uses a terminal bar or
+durable redirected lines and `plain` always emits durable lines. `--json`
+suppresses progress and returns the new node, immutable version, and
+server-computed hash and size. Pass `--mime-type` to override extension and
+content detection.
 
-The command hashes locally before starting or contacting the daemon. It then
+The command hashes locally before starting or contacting the daemon, then
 resolves the target's node ID and revision immediately before upload. Slow
-hashing therefore does not use the daemon's idle timeout.
+hashing therefore does not consume the daemon's idle timeout.
 
 The raw `PUT` sends the inspected revision as `If-Match`. If someone moves,
 trashes, or replaces the node before the write, Docbank returns
 `stale_revision`.
 
-Success advances the node revision and creates a `content_replace` version.
-Older bytes remain available through `docbank document versions cat <id>`. Even identical
-replacement bytes record a versioned operation, while sharing the existing blob.
+On success, Docbank advances the node revision and creates a `content_replace`
+version, while older bytes stay available through
+`docbank document versions cat <id>`. Even identical replacement bytes record a
+versioned operation while sharing the existing blob.
 
 ## docbank document edit
 
@@ -711,26 +785,28 @@ replacement bytes record a versioned operation, while sharing the existing blob.
 docbank document edit <path-or-id> [--editor <command>] [--mime-type <type>] [--progress auto|bar|plain]
 ```
 
-Downloads the current immutable version into a private temporary directory,
-verifies its version ID, size, SHA-256, and terminal digest, and opens the
-staged file in a blocking editor. `--editor` takes precedence over `VISUAL`,
-then `EDITOR`. The platform fallback is `vi` on Unix or Notepad on Windows.
-Editor commands use shell-style quoting on Unix and native Windows command-line
-parsing on Windows, but are executed directly without a shell. GUI editors must
-be configured to wait, such as `VISUAL='code --wait'`.
+Download the current immutable version into a private temporary directory,
+verify its version ID, size, SHA-256, and terminal digest, and open the staged
+file in a blocking editor. `--editor` takes precedence over `VISUAL`, then
+`EDITOR`, with a fallback to `vi` on Unix or Notepad on Windows. Editor
+commands use shell-style quoting on Unix and native Windows command-line
+parsing on Windows, and run directly without a shell. Configure GUI editors to
+wait, such as `VISUAL='code --wait'`.
 
-After a successful editor exit, Docbank hashes the staged file. If its bytes and
-media type are unchanged, it reports the existing version and does not write.
-Otherwise it preserves the current media type (or applies `--mime-type`) and
-uploads a verified `content_replace` using the revision inspected before the
-editor opened. Concurrent mutation fails with `stale_revision`. The command
-does not silently reopen or overwrite the newer state. Since editing may exceed
-the idle timeout, the daemon is reacquired after hashing. Human progress covers
-`download`, `hash`, and `upload`. This interactive command has no JSON mode.
+After the editor exits cleanly, Docbank hashes the staged file. If its bytes
+and media type did not change, Docbank reports the existing version without
+writing. Otherwise it keeps the current media type or applies `--mime-type`,
+and uploads a verified `content_replace` using the revision inspected before
+the editor opened. A concurrent change fails with `stale_revision` instead of
+silently reopening or overwriting the newer state. Because editing can exceed
+the idle timeout, Docbank reacquires the daemon after hashing. Human progress
+covers `download`, `hash`, and `upload`. This interactive command has no JSON
+mode.
 
-Private staging is removed on every ordinary outcome. If cleanup fails after an
-update already committed, Docbank keeps the command successful, prints the new
-version, and emits a warning rather than encouraging a duplicate retry.
+Docbank removes the private staging directory on every ordinary outcome. If
+cleanup fails after an update has already committed, the command still
+succeeds, prints the new version, and emits a warning rather than encouraging a
+duplicate retry.
 
 ## docbank document versions
 
@@ -738,8 +814,8 @@ version, and emits a warning rather than encouraging a duplicate retry.
 docbank document versions <command>
 ```
 
-Groups the `list`, `show`, `cat`, and `prune` operations for immutable
-document content versions.
+Group the `list`, `show`, `cat`, and `prune` operations for immutable document
+content versions.
 
 ### docbank document versions list
 
@@ -747,15 +823,15 @@ document content versions.
 docbank document versions list <path-or-id> [--limit <n>] [--offset <n>] [--json]
 ```
 
-Lists the file's immutable content versions newest-first. The default limit
-is 100. `--limit` accepts 1–1000 and `--offset` continues through older
-records. Human output marks the node's current version. `--json` emits
-`{"items": [...], "total", "limit", "offset"}` so callers can distinguish a
-complete page from a prefix.
+List the file's immutable content versions newest first. The default limit is
+100; `--limit` accepts 1 to 1000 and `--offset` continues through older
+records. Human output marks the node's current version, and `--json` emits
+`{"items": [...], "total", "limit", "offset"}` so callers can tell a complete
+page from a prefix.
 
-Every newly imported file has one revision-one `content_create` version. Each
-successful `put` adds a `content_replace` row and each `revert` adds a
-`content_revert` row naming its immutable source.
+Every newly imported file starts with one revision-one `content_create`
+version. Each successful `put` adds a `content_replace` row, and each `revert`
+adds a `content_revert` row naming its immutable source.
 
 ### docbank document versions show
 
@@ -763,9 +839,9 @@ successful `put` adds a `content_replace` row and each `revert` adds a
 docbank document versions show <version-uuid> [--json]
 ```
 
-Inspects one immutable version by stable UUID, independent of the file's current
-path. The human view prints node and node-revision identity, recording time,
-transition kind, blob hash, size, media type, and any reversion source.
+Inspect one immutable version by stable UUID, independent of the file's current
+path. Human output prints the node and node-revision identity, recording time,
+transition kind, blob hash, size, media type, and any reversion source, while
 `--json` emits the typed record.
 
 ### docbank document versions cat
@@ -774,11 +850,11 @@ transition kind, blob hash, size, media type, and any reversion source.
 docbank document versions cat <version-uuid>
 ```
 
-Writes that version's bytes to stdout. It exits successfully only after
+Write a version's bytes to stdout. The command exits successfully only after
 the response version ID, byte count, SHA-256 identity, and terminal
-`Content-Digest` all agree. Output may already have reached stdout when
-verification fails, so scripts publishing a file should write privately and
-rename it only after a successful exit.
+`Content-Digest` all agree. Because bytes may already have reached stdout when
+verification fails, scripts publishing a file should write privately and rename
+the file only after a successful exit.
 
 ### docbank document versions prune
 
@@ -789,8 +865,8 @@ docbank document versions prune <path-or-id> --older-than <age> [--run] [--json]
 docbank document versions prune <path-or-id> --all-prior [--run] [--json]
 ```
 
-Selects prior versions to remove from one file. The command previews by
-default. `--run` applies removal. Choose exactly one selector:
+Select prior versions to remove from one file. The command previews by default;
+pass `--run` to apply removal. Choose exactly one selector:
 
 | Selector | Selection |
 |----------|-----------|
@@ -799,34 +875,34 @@ default. `--run` applies removal. Choose exactly one selector:
 | `--older-than` | Versions older than a Go duration or whole-day age such as `90d` |
 | `--all-prior` | All prior version history |
 
-The current content is always retained. Ordinary selectors cannot select the
-current row. If one includes a source still required by a retained reversion,
-the report identifies and retains that source. `--all-prior` can replace a
-current reversion with a same-byte source-free checkpoint so the complete
-previous graph, including that superseded revert row, can be released safely.
-Execution uses the node ID and revision inspected immediately beforehand. A
-concurrent change fails with `stale_revision`.
+Docbank always keeps the current content, and ordinary selectors cannot select
+the current row. If a selection includes a source still required by a retained
+reversion, the report identifies and keeps that source. With `--all-prior`,
+Docbank can replace a current reversion with a same-byte source-free checkpoint
+so the complete previous graph, including that superseded revert row, can be
+released safely. Execution uses the node ID and revision inspected immediately
+beforehand, and a concurrent change fails with `stale_revision`.
 
-Age previews report their evaluated cutoff. Wall-clock aging does not advance a
-node revision, so a later `--older-than ... --run` can also select versions that
-crossed the same age boundary after the preview. To execute the exact previewed
-set, pass its candidate IDs back through repeated `--version` flags.
-Explicit-ID requests accept at most 1,000 IDs. Re-read the node revision between
-batches when applying a larger exact set.
+Age previews report their evaluated cutoff. Because wall-clock aging does not
+advance a node revision, a later `--older-than ... --run` can also select
+versions that crossed the same age boundary after the preview. To execute the
+exact previewed set, pass its candidate IDs back through repeated `--version`
+flags. Explicit-ID requests accept at most 1,000 IDs; when applying a larger
+exact set, re-read the node revision between batches.
 
-Pruning removes version records. It does not reclaim disk space. Human and
-JSON reports distinguish these storage effects:
+Pruning removes version records without reclaiming disk space. Human and JSON
+reports distinguish these storage effects:
 
 - Shared blobs remain reachable through other retained references.
 - Unreferenced loose blobs wait for `docbank vault gc --run`.
 - Dead packed content waits for GC, then `docbank storage repack`.
 
 A blob can have loose and packed locations in different stores. The report
-identifies that overlap without counting the blob twice as releasable.
-Physical byte totals cover every affected authorized location.
+identifies that overlap without counting the blob twice as releasable, and
+physical byte totals cover every affected authorized location.
 
-Deleted version IDs stop resolving. Later backups preserve the pruned state.
-Earlier snapshots still contain their original history.
+Deleted version IDs stop resolving. Later backups preserve the pruned state,
+while earlier snapshots still contain their original history.
 
 ## docbank email documents
 
@@ -837,16 +913,16 @@ docbank email documents relations --child-version <version-uuid> [--limit <n>]
 docbank email documents release <operation-id> --request-digest <digest>
 ```
 
-Inspects or releases email attachment receipts through the authenticated
-daemon. `show` returns the receipt as JSON. `relations` returns one JSON page
-for exactly one parent or child version. The default limit is 100 and the
-maximum is 250. Continue with
+Inspect or release email attachment receipts through the authenticated daemon.
+`show` returns the receipt as JSON, and `relations` returns one JSON page for
+exactly one parent or child version. The default limit is 100 and the maximum is 250;
+to continue, pass
 `--after-operation <next_operation_id> --after-order <next_order>` from the
 previous page.
 
-`release` requires the `request_digest` from the inspected receipt. It
-removes the receipt and its relationships, keeps child documents, and gives up
-the original operation's retry guarantee. See
+`release` requires the `request_digest` from the inspected receipt. It removes
+the receipt and its relationships, keeps child documents, and gives up the
+original operation's retry guarantee. See
 [release email attachment references](usage/trash-and-gc.md#release-email-attachment-references)
 when a receipt blocks trash empty or version pruning.
 
@@ -856,18 +932,19 @@ when a receipt blocks trash empty or version pruning.
 docbank document refs <sha256> [--limit <n>] [--offset <n>] [--json]
 ```
 
-Finds every immutable content version that retains the canonical lowercase
+Find every immutable content version that retains the canonical lowercase
 SHA-256 identity. Live current references sort first, followed by live prior
 versions and trashed references. Each result carries the stable version and
-node IDs, node revision, current/history state, size, recording time, and the
-node's current path when it is live. Human output renders the node as a
-copyable `id:N` selector. JSON keeps its numeric ID. Trashed nodes have no
-resolvable path.
+node IDs, node revision, current or history state, size, recording time, and
+the node's current path when it is live. Human output renders the node as a
+copyable `id:N` selector, while JSON keeps its numeric ID. Trashed nodes have
+no resolvable path.
 
-The default limit is 100. `--limit` accepts 1–1000 and `--offset` continues a
-bounded result. `--json` emits the page envelope with `items`, `total`, `limit`,
-and `offset`. A cataloged physical blob with no retained content version is not
-a match. The command reports `no document versions found for this content hash on this page`.
+The default limit is 100; `--limit` accepts 1 to 1000 and `--offset` continues
+a bounded result. `--json` emits the page envelope with `items`, `total`,
+`limit`, and `offset`. A cataloged physical blob with no retained content
+version is not a match, and the command reports
+`no document versions found for this content hash on this page`.
 
 ## docbank document revert
 
@@ -875,17 +952,17 @@ a match. The command reports `no document versions found for this content hash o
 docbank document revert <path-or-id> <version-uuid> [--json]
 ```
 
-Makes a prior version current by creating a new immutable `content_revert`
-history row. It never deletes or rewinds the current or intervening versions,
-and it does not read or copy the source blob. The selected source must belong to
-the target file and must not already be its current version.
+Make a prior version current by creating a new immutable `content_revert`
+history row. `revert` never deletes or rewinds the current or intervening
+versions, and it does not read or copy the source blob. The selected source
+must belong to the target file and must not already be its current version.
 
 The command inspects the target's stable node ID and revision, then sends both
 with the source version ID. A concurrent move, trash, replacement, or reversion
 fails with `stale_revision`. Human output identifies the source, new version,
-resulting revision, size, and hash. `--json` returns the node, new version, and
-complete source-version receipt. Repeating the same historical choice later is
-valid and records another operation.
+resulting revision, size, and hash, while `--json` returns the node, new
+version, and complete source-version receipt. Repeating the same historical
+choice later is valid and records another operation.
 
 ## docbank tag
 
@@ -900,32 +977,33 @@ docbank tag unassign <name-or-id> <path-or-id> [--json]
 docbank tag nodes <name-or-id> [--limit <n>] [--offset <n>] [--json]
 ```
 
-Defines stable tags and assigns them to live nodes independently of virtual
-paths. Every subcommand accepts the exact current tag name. Commands operating
-on an existing tag also accept its UUID. Names are Unicode NFC-normalized,
-case-sensitive, mutable, and cannot contain control characters. Renaming never
-changes the tag ID. Deleting a tag removes all assignments but does not delete
-nodes or content. Recreating the same name allocates a different ID.
+Define stable tags and assign them to live nodes independently of virtual
+paths. Every subcommand accepts the exact current tag name, and commands that
+operate on an existing tag also accept its UUID. Tag names are Unicode
+NFC-normalized, case-sensitive, and mutable, and they cannot contain control
+characters. Renaming a tag never changes its ID. Deleting a tag removes all
+assignments without deleting nodes or content, and recreating the same name
+allocates a different ID.
 
-A canonical UUID-shaped selector is always a stable ID, including after that
-ID is deleted. If a tag's display name itself looks like a UUID, address that
-tag through the different UUID returned when it was created. This prevents a
+A canonical UUID-shaped selector is always treated as a stable ID, even after
+that ID is deleted. If a tag's display name itself looks like a UUID, address
+that tag through the different UUID returned when you created it. This keeps a
 mutable or reused display name from taking over a durable identifier.
 
 `tag list` and `tag show` expose each tag's revision. Rename and delete first
-resolve the selector, then condition the mutation on that inspected revision.
-A concurrent rename or assignment change returns `stale_revision` instead of
+resolve the selector, then condition the change on that inspected revision. A
+concurrent rename or assignment change returns `stale_revision` instead of
 overwriting or deleting the newer state.
 
 Assignment by path resolves that live coordinate and updates its tag inside
-one daemon/store transaction, so moving an ancestor cannot redirect the
+one daemon and store transaction, so moving an ancestor cannot redirect the
 operation between separate requests. An `id:N` selector targets the stable node
 identity under its inspected revision. Repeated assignment and unassignment are
-idempotent and report `changed: false` without a revision bump. A real
-assignment change advances both the node and tag revisions. `tag nodes` includes
-live and trashed nodes, but omits a path for trash because it has no resolvable
-live coordinate. List commands return at most 1000 results per page and JSON
-output includes `total`, `limit`, and `offset`.
+idempotent and report `changed: false` without bumping a revision, while a real
+assignment change advances both the node and tag revisions. `tag nodes`
+includes live and trashed nodes, omitting a path for trashed nodes because they
+have no resolvable live coordinate. List commands return at most 1000 results
+per page, and JSON output includes `total`, `limit`, and `offset`.
 
 ## docbank audit
 
@@ -945,57 +1023,63 @@ docbank audit verify [--expected <prior-json-report>] [--json]
 versions beneath it. You cannot disable enrollment.
 
 1. Run the default command to preview the protected set, storage impact,
-   baseline digest, and vault-wide permanent metadata. Keep its one-use token.
+   baseline digest, and vault-wide permanent metadata, and keep its one-use
+   token.
 2. Review the retention effect. The first scope preserves enrollment-time
    names, tree structure, tags, assignments, ingests, and provenance across
-   the whole vault, including outside the scope. Unrelated content does not
-   become a scope member.
-3. Execute with the token and `--acknowledge-permanent-retention`.
-   The execution command accepts no target selector.
+   the whole vault, including outside the scope, while unrelated content does
+   not become a scope member.
+3. Run the command with the token and `--acknowledge-permanent-retention`.
+   This execution command accepts no target selector.
 
 The token expires after ten minutes, is consumed by one execution attempt, and
-does not survive daemon restart. The daemon recomputes the reviewed authority
-inside the mutation boundary. If metadata or allocator state changed, it
-returns `audit_preview_stale` without enabling the scope. Run a new preview.
+does not survive a daemon restart. The daemon recomputes the reviewed authority
+inside the mutation boundary; if metadata or allocator state changed, it
+returns `audit_preview_stale` without enabling the scope, and you need to run a
+new preview.
 
-`audit status` without a selector reports vault and scope evidence. A path or
-stable node ID additionally reports whether that node has sticky audit
+Without a selector, `audit status` reports vault and scope evidence. With a
+path or stable node ID, it also reports whether that node has sticky audit
 membership.
 
 `audit history` reads canonical events for one protected node, newest first.
-Path events expose old and new coordinates with their live/trash state. Content
-events expose prior and resulting immutable version IDs. Tag and provenance
-events expose their stable identity and typed before/after state. Photo edits and undo show authored values and confirmed field names before and after, including confirmation of an empty caption. The default
-and maximum page sizes are 50 and 500. `next_cursor` in JSON, or the `next
-cursor` line in human output, continues
-through older events without shifting when a newer operation is appended. A
-cursor is opaque and bound to its stable node. Use `--node-id` for a moved or
-trashed node. A protected enrollment-baseline member can have no node-specific
-events until its first later mutation. Use `audit status` to check membership.
+Path events expose old and new coordinates with their live or trash state,
+content events expose prior and resulting immutable version IDs, and tag and
+provenance events expose their stable identity and typed before and after
+state. Photo edits and undo show authored values and confirmed field names
+before and after, including confirmation of an empty caption. The default page
+size is 50 and the maximum is 500. Use `next_cursor` in JSON, or the `next
+cursor` line in human output, to continue through older events without shifting
+when a newer operation is appended. A cursor is opaque and bound to its stable
+node. For a moved or trashed node, use `--node-id`. A protected
+enrollment-baseline member can have no node-specific events until its first
+later change. Use `audit status` to check membership.
 
 `audit history --scope <scope-id>` reads the same canonical events across all
 members of one permanent scope. Human output names each event's copyable node
-selector. JSON includes the complete scope status alongside the page. Its
+selector, and JSON includes the complete scope status alongside the page. Its
 cursor is bound to the stable scope rather than one node.
 
 `audit verify` independently replays canonical history against current
 metadata, then re-hashes every unique blob retained by protected versions. Its
 terminal evidence contains the stable vault and allocation-lineage identities,
-allocation count/head, operation high-water mark, and every scope count/head.
-Human output reports the same evidence and protected-byte totals. JSON is
-suitable for external recording. Missing, corrupt, unreadable, or inconsistent
-authority exits non-zero. Use the top-level `docbank vault verify` when the decision
-requires every blob in the vault rather than only permanent audit content.
+allocation count and head, operation high-water mark, and every scope count and
+head. Human output reports the same evidence and protected-byte totals, while
+JSON is suited for external recording. Missing, corrupt, unreadable, or
+inconsistent authority exits nonzero. When your decision requires verifying
+every blob in the vault rather than only permanent audit content, use the
+top-level `docbank vault verify`.
 
 Save a successful active JSON report outside the vault, then pass it back with
 `--expected`. Verification proves that its allocation head and every recorded
-scope head remain exact prefixes of current authority. Equal or validly extended
-chains pass. A different vault/lineage, missing scope, shorter chain, or
-divergent head is reported with a stable problem code and exits non-zero.
+scope head remain exact prefixes of current authority. Equal or validly
+extended chains pass, while a different vault or lineage, missing scope,
+shorter chain, or divergent head reports a stable problem code and exits
+nonzero.
 
 The first scope creates the vault-wide genesis. Later `audit enable` commands
-can add disjoint directory scopes without duplicating that genesis. Overlapping
-or nested scopes are rejected. See
+can add disjoint directory scopes without duplicating that genesis, and
+overlapping or nested scopes are rejected. See
 [Permanent audited history](usage/audited-history.md) for enrollment,
 supported mutations, and maintenance behavior.
 
@@ -1005,21 +1089,20 @@ supported mutations, and maintenance behavior.
 docbank document move <source-path-or-id> <dest-path> [--json]
 ```
 
-Moves or renames a node. The move changes metadata only. No bytes move. The
-destination is interpreted like POSIX `mv`:
+Move or rename a node. This changes metadata only and moves no bytes. The
+destination behaves like POSIX `mv`:
 
-- If `dest-path` names an existing directory, the source moves **into**
-  it, keeping its name.
-- Otherwise `dest-path`'s parent must exist, and its basename becomes
-  the new name (rename, or move-and-rename).
+- If `dest-path` names an existing directory, the source moves **into** it and
+  keeps its name.
+- Otherwise `dest-path`'s parent must exist, and its basename becomes the new
+  name for a rename or a move-and-rename.
 - If `dest-path` names an existing **file**, the move fails with
   `name already exists`. Docbank never overwrites.
 
-Directory moves carry the whole subtree. A move that would place a
-directory under its own descendant fails with `move would create a
-cycle`. On success, human output prints `moved [id:<id>] <new-path>`. `--json`
-returns the complete resulting node, including its stable ID, revision, and
-new path.
+Directory moves carry the whole subtree, and any move that would place a
+directory under its own descendant fails with `move would create a cycle`. On
+success, human output prints `moved [id:<id>] <new-path>`, and `--json` returns
+the complete resulting node, including its stable ID, revision, and new path.
 
 ### docbank document move batch
 
@@ -1027,9 +1110,9 @@ new path.
 docbank document move batch <plan.json|-> [--json]
 ```
 
-Applies up to 1,000 moves as one all-or-nothing metadata transaction. A dash
-reads the plan from standard input. Each plan item has `source` (an absolute
-virtual path or `id:<number>`) and an absolute `destination`:
+Apply up to 1,000 moves as one all-or-nothing metadata transaction. Pass `-` to
+read the plan from standard input. Each plan item specifies a `source` as an
+absolute virtual path or `id:<number>` and an absolute `destination`:
 
 ```json
 {"moves":[
@@ -1038,16 +1121,16 @@ virtual path or `id:<number>`) and an absolute `destination`:
 ]}
 ```
 
-Sources are interpreted from the transaction's initial tree. A batch
+Sources are resolved against the transaction's initial tree. A batch
 destination is always the exact final coordinate, and its parent is resolved
 in the planned final tree. Unlike ordinary `mv`, an existing directory does
-not mean “move into this directory.” To move into a directory, include the
-basename in the destination. The complete final tree is validated before
-anything moves, which supports file and directory swaps and nested
+not mean "move into this directory." To move into a directory, include the
+basename in the destination. Docbank validates the complete final tree before
+moving anything, which supports file and directory swaps and nested
 reorganizations without temporary user-visible names. Any missing source or
-parent, stale ID revision, collision, or cycle rejects the entire plan.
-Human output reports the stable ID and quoted old/new paths in request
-order. `--json` returns the same bounded receipt set as structured data.
+parent, stale ID revision, collision, or cycle rejects the entire plan. Human
+output reports the stable ID and quoted old and new paths in request order,
+and `--json` returns the same bounded receipt set as structured data.
 
 ## docbank document remove
 
@@ -1055,22 +1138,22 @@ order. `--json` returns the same bounded receipt set as structured data.
 docbank document remove <path-or-id> [--json]
 ```
 
-Soft-deletes a node by moving it, and for a directory its entire subtree,
-to the trash. Nothing is permanently removed and no bytes are reclaimed.
-The freed name is immediately reusable. Prints:
+Soft-delete a node by moving it, and for a directory its entire subtree, to
+the trash. Nothing is permanently removed, no bytes are reclaimed, and the
+freed name is immediately reusable. Human output prints:
 
 ```
 trashed [id:15] /taxes/2024/return.pdf (restore with: docbank document restore id:15)
 ```
 
-`--json` returns the trashed node receipt. Its `path` is the pre-trash path
-shown for recovery context. It no longer resolves to that node. Keep the
+`--json` returns the trashed node receipt. Its `path` shows the pre-trash path
+for recovery context, though it no longer resolves to that node. Keep the
 stable `id` and `revision` to identify the node.
 
 There is no hard-delete flag. GC cannot collect a trashed document because the
 trash entry remains a restorable reference. Permanent metadata deletion,
-unreachable-content collection, and packed-space reclamation are the separate
-`trash empty --run`, `gc --run`, and `storage repack` operations.
+unreachable-content collection, and packed-space reclamation are handled by
+the separate `trash empty --run`, `gc --run`, and `storage repack` operations.
 
 ## docbank document restore
 
@@ -1078,13 +1161,16 @@ unreachable-content collection, and packed-space reclamation are the separate
 docbank document restore <id:N> [--json]
 ```
 
-Returns a trashed node (by `id:N` selector; see `docbank trash list`) to its
-original location, re-suffixing its name if a live node now occupies it. If the
-original parent directory was itself permanently deleted, the node is restored
-under `/`. Human output prints `restored [id:<id>] <path>`. `--json` returns the
-complete restored node with its resulting path and revision.
+Return a trashed node by its `id:N` selector, which you can find with
+`docbank trash list`, to its original location. If a live node now occupies
+that name, Docbank re-suffixes the restored name, and if the original parent
+directory was permanently deleted, Docbank restores the node under `/`. Human
+output prints `restored [id:<id>] <path>`, and `--json` returns the complete
+restored node with its resulting path and revision.
 
-Selecting a photo member restores its whole group. Companions inside trashed folders also recover those folders and their other contents, including other photos. Output reports the selected node's path.
+Selecting a photo member restores its whole group. Companions inside trashed
+folders also recover those folders and their other contents, including other
+photos, while output reports the selected node's path.
 
 ## docbank search
 
@@ -1092,116 +1178,119 @@ Selecting a photo member restores its whole group. Companions inside trashed fol
 docbank search [<query>...] [--tag <name-or-id>] [--mime-type <type/subtype>] [--under <path-or-id>] [--modified-since <timestamp>] [--modified-before <timestamp>] [--source-present] [--pdf-filter <expression>] [--fuzzy] [--limit <n>] [--agent | --json]
 ```
 
-Query words are joined. When a processing profile has a query embedding
-binding, plain text search tries hybrid retrieval over the current versions of
-all live files, then appends folder name matches from ordinary search within
-the same `--limit`. Filters, `--fuzzy`, limits above 100, queries longer than 8,192 Unicode
-characters, and `--mode lexical` run ordinary lexical search without trying
-hybrid. When a hybrid attempt fails, the CLI writes `degraded: REASON` to
-stderr and prints ordinary lexical results. See
-[Automatic and processing search](usage/search.md).
+Query words are joined into one search. When a processing profile has a query
+embedding binding, plain text search tries hybrid retrieval over the current
+versions of all live files, then appends folder name matches from ordinary
+search within the same `--limit`. Filters, `--fuzzy`, limits above 100,
+queries longer than 8,192 Unicode characters, and `--mode lexical` run
+ordinary lexical search without trying hybrid. If a hybrid attempt fails, the
+CLI writes `degraded: REASON` to stderr and prints ordinary lexical results.
+See [Automatic and processing search](usage/search.md).
 
 Ordinary lexical search uses SQLite FTS5, its full-text search engine, over
-live node names and verified extracted text. Prepared words match as prefixes, including regular forms; quoted phrases match adjacent words.
-Docbank escapes FTS operator syntax instead of interpreting it. Name matches
-use BM25 relevance ranking and appear before separately ranked content-only
-matches.
-The default limit is 50 and `--limit` accepts 1–1000. When more matches exist,
-the command says that the result is truncated. Output columns are `SELECTOR`,
-`MATCH`, and `PATH`. With no matches, it prints `no matches`.
+live node names and verified extracted text. Prepared words match as prefixes,
+including regular forms, and quoted phrases match adjacent words. Docbank
+escapes FTS operator syntax instead of interpreting it. Name matches use BM25
+relevance ranking and appear before separately ranked content-only matches.
+The default limit is 50 and `--limit` accepts 1 to 1000; when more matches
+exist, the command tells you that the result is truncated. Output columns are
+`SELECTOR`, `MATCH`, and `PATH`, and with no matches it prints `no matches`.
 
-`--tag` requires one current tag assignment. It accepts a tag's exact name or
+`--tag` requires one current tag assignment and accepts a tag's exact name or
 stable UUID using the same selector rules as `docbank tag show`. The CLI
 resolves names before searching, so the request is bound to stable identity.
 
 `--mime-type` accepts one valid parameter-free media type and matches the
 current version's base type case-insensitively. Stored parameters do not affect
-the match: `text/plain` includes `text/plain; charset=utf-8`. MIME filtering
+the match, so `text/plain` includes `text/plain; charset=utf-8`. MIME filtering
 excludes directories and retained non-current versions.
 
 `--under` accepts an absolute virtual path or stable `id:N` selector for one
-live directory and searches its descendants. The CLI sends paths as
-`under_path`; the daemon resolves the path and pins its stable directory ID
-for the request. JSON echoes both the authored path and `under_node_id`.
-The directory itself is excluded. A file, missing node, or trashed directory
-is rejected.
+live directory and searches its descendants, excluding the directory itself.
+The CLI sends paths as `under_path`, and the daemon resolves the path and pins
+its stable directory ID for the request. JSON echoes both the authored path and
+`under_node_id`. A file, missing node, or trashed directory is rejected.
 
 `--modified-since` and `--modified-before` accept absolute RFC3339 timestamps
 and filter the live node's current modification time. The lower bound is
-inclusive and the upper bound is exclusive. Either may be used alone. When
-both are present, the lower bound must be earlier. Inputs are normalized to
-canonical UTC before the request.
+inclusive and the upper bound is exclusive. You can use either flag alone;
+when both are present, the lower bound must be earlier. Inputs are normalized
+to canonical UTC before the request.
 
 Use `--pdf-filter` for a Boolean expression over recorded PDF facts, such as
 `pdf_embedded_file_count_min:1 OR pdf_has_javascript:true`. See
-[PDF evidence filters](usage/searching.md#find-pdfs-by-recorded-evidence) for fields, permission labels, and unknown observations. MIME filters narrow the result type; add `--mime-type application/pdf` to select only files labeled as PDFs. Background extraction may still be recording facts after an import or upgrade.
+[PDF evidence filters](usage/searching.md#find-pdfs-by-recorded-evidence) for
+fields, permission labels, and unknown observations. MIME filters narrow the
+result type; to select only files labeled as PDFs, add
+`--mime-type application/pdf`. Background extraction may still be recording
+facts after an import or upgrade.
 
-The query can be omitted for a bounded filter page when `--tag`,
-`--modified-since`, `--modified-before`, or `--pdf-filter` is supplied. These results are
-ordered newest-first by current modification time and show `filter` in the
-`MATCH` column. `--mime-type` and `--under` narrow a query or an anchored
-filter page, but neither is an anchor by itself, so a blank search with only
-one of those options is rejected. Blank includes whitespace-only queries.
-Results include live files and directories, excluding the vault root. The
-limit bounds response size, not database work. Search has no continuation
-cursor: when `truncated` is true, narrowing time bounds cannot recover omitted
-nodes that share a timestamp with returned nodes, such as a restored subtree.
+You can omit the query for a bounded filter page when you supply `--tag`,
+`--modified-since`, `--modified-before`, or `--pdf-filter`. These results sort
+newest first by current modification time and show `filter` in the `MATCH`
+column. `--mime-type` and `--under` narrow a query or an anchored filter page,
+though neither is an anchor by itself, so a blank search with only one of those
+options is rejected. Blank includes whitespace-only queries. Results include
+live files and directories, excluding the vault root. The limit bounds response
+size rather than database work. Search has no continuation cursor: when
+`truncated` is true, narrowing time bounds cannot recover omitted nodes that
+share a timestamp with returned nodes, such as a restored subtree.
 
-`--json` emits the existing typed report for the selected path: ordinary lexical
-search uses `hits`; hybrid and explicit processing search use `results`. A
-lexical fallback writes its degradation reason to stderr, keeping stdout JSON
-unchanged.
+`--json` emits the existing typed report for the selected path: ordinary
+lexical search uses `hits`, while hybrid and explicit processing search use
+`results`. A lexical fallback writes its degradation reason to stderr, keeping
+stdout JSON unchanged.
 
 For ordinary lexical search, the typed report contains `hits`, the applied
 `limit`, and a `truncated` boolean. A filtered report also echoes the stable
 `tag_id`, normalized `mime_type`, stable `under_node_id`, authored `under_path`
-when selected by path, and canonical `modified_since` / `modified_before`
-bounds when supplied. An empty result uses
-`"hits": []`.
+when selected by path, and canonical `modified_since` and `modified_before`
+bounds when supplied. An empty result uses `"hits": []`.
 
 The daemon indexes current UTF-8 `text/*`, JSON, and JSONL blobs up to 16 MiB
-after a complete verified read. It also indexes PDF text locally in the
+after a complete verified read, and also indexes PDF text locally in the
 background. Office extraction and OCR require configured profiles. Ordinary
-search uses words in names and indexed text.
-Explicit processing search uses the form below. Saved queries and highlight sets
-use a separate
-[HTTP API](usage/searching.md#save-complete-query-intent-over-http), with no CLI
+search uses words in names and indexed text, while explicit processing search
+uses the form below. Saved queries and highlight sets use a separate
+[HTTP API](usage/searching.md#save-complete-query-intent-over-http) with no CLI
 management command. See [Searching](usage/searching.md).
 
-`--fuzzy` appends bounded ASCII filename/path discovery after ordinary hits.
-For example, `docbank search invocie --fuzzy --under /cases/acme` can find
-`invoice.pdf`. Only one edit is allowed across the whole query, on a word of
-at least five characters, with the first character unchanged and no digit edits.
-Slash queries match a path suffix; a leading slash anchors it at the root.
-Supplemental sources are `fuzzy_name` and `fuzzy_path`, including exact path
-matches. Unicode typo matching is unsupported. Query text outside the
-supplemental syntax still returns ordinary hits and reports `not_run`.
+`--fuzzy` appends bounded ASCII filename and path discovery after ordinary
+hits. For example, `docbank search invocie --fuzzy --under /cases/acme` can
+find `invoice.pdf`. Only one edit is allowed across the whole query, on a word
+of at least five characters, with the first character unchanged and no digit
+edits. Slash queries match a path suffix, and a leading slash anchors the match
+at the root. Supplemental sources are `fuzzy_name` and `fuzzy_path`, including
+exact path matches. Unicode typo matching is unsupported. Query text outside
+the supplemental syntax still returns ordinary hits and reports `not_run`.
 
 Fuzzy search requires query text and rejects `--mode`, `--profile`,
 `--binding`, `--source-version`, `--explain`, `--rerank`, and `--similar-to`.
 Only opted-in JSON includes a `fuzzy` receipt with `status` and an always-array
-`reasons`. Human output reports incomplete coverage even with no hits.
-Candidate, name, path, and time bounds can miss matches; narrow the query or
-`--under`. See [fuzzy discovery rules and limits](usage/searching.md#what-if-i-remember-a-misspelled-filename-or-path)
+`reasons`. Human output reports incomplete coverage even when there are no
+hits. Candidate, name, path, and time bounds can miss matches; narrow the query
+or `--under`. See
+[fuzzy discovery rules and limits](usage/searching.md#what-if-i-remember-a-misspelled-filename-or-path)
 for the full contract and receipt meanings.
 
 ### Agent output
 
-`--agent` changes only output. It is mutually exclusive with `--json`. The
-header contains `OK search`, count, query, actual mode, degradation reason (or
-`false`), and truncation. A hybrid failure without a daemon problem code also
-adds `degraded_error`. Fuzzy lexical search adds `fuzzy` status and
-`fuzzy_reasons`. Processing headers include coverage and complete/scoped
-document counts. With `--explain`, the header adds trace stage/count pairs.
-With `--rerank`, it adds outcome, candidate count, and any failure cause.
-When similar search lacks a source embedding, the header adds `next=` with the planning command.
+`--agent` changes only the output format and is mutually exclusive with
+`--json`. The header contains `OK search`, count, query, actual mode,
+degradation reason or `false`, and truncation. A hybrid failure without a
+daemon problem code also adds `degraded_error`, and fuzzy lexical search adds
+`fuzzy` status and `fuzzy_reasons`. Processing headers include coverage and
+complete or scoped document counts. With `--explain`, the header adds trace
+stage and count pairs; with `--rerank`, it adds outcome, candidate count, and
+any failure cause. When similar search lacks a source embedding, the header
+adds `next=` with the planning command.
 
 Each hit is one line with selector, match, and path. Processing hits add the
-daemon score, a lexical/semantic/hybrid match kind, and a short excerpt.
+daemon score, a lexical, semantic, or hybrid match kind, and a short excerpt.
 Ordinary lexical hits omit score and excerpt because that API exposes neither.
 Hybrid output lists folder name matches as `match=name` lines after the
 processing hits. Values with spaces, quotes, or backslashes use Go string
-quoting; terminal escapes and controls are removed. Excerpts collapse
+quoting, and terminal escapes and controls are removed. Excerpts collapse
 whitespace and are bounded to 160 Unicode characters.
 
 ```text
@@ -1215,11 +1304,11 @@ OK search count=1 query="renewal terms" mode=lexical degraded=false truncated=fa
 docbank search <query> --mode <lexical|semantic|hybrid|auto> --profile <name> --source-version <uuid> [--source-version <uuid>...] [--binding <name>] [--limit <n>] [--rerank] [--explain] [--agent | --json]
 ```
 
-Searches retained processing results for the source versions you list. That set
-is the source fence: results come only from those versions. `--mode`, an
-executable `--profile`, and at least one `--source-version` are required. Query
-text must not be blank. Supply at most 4,096 distinct canonical UUIDv4 version
-IDs. The CLI adds the selected daemon's vault UUID.
+Search retained processing results for the source versions you list. That set
+is the source fence: results come only from those versions. You must pass
+`--mode`, an executable `--profile`, at least one `--source-version`, and
+non-blank query text. You can supply up to 4,096 distinct canonical UUIDv4
+version IDs, and the CLI adds the selected daemon's vault UUID.
 
 | Flag or mode | Contract |
 |--------------|----------|
@@ -1233,13 +1322,13 @@ IDs. The CLI adds the selected daemon's vault UUID.
 | `--explain` | Include bounded retrieval-stage codes and counts |
 | `--json` | Emit the processing search report, including modes, coverage, degradation, results, truncation, and trace |
 
-Processing search cannot be combined with `--tag`, `--mime-type`, `--under`,
+You cannot combine processing search with `--tag`, `--mime-type`, `--under`,
 `--modified-since`, or `--modified-before`. Human output reports the mode,
 coverage, degradation, and ranked results inside the source fence.
 
-Semantic and hybrid search require active query-text consent; lexical and
+Semantic and hybrid search require active query-text consent, while lexical and
 auto do not. `--rerank` requires an active query-and-excerpt consent grant for
-all modes. Approving the profile's plan grants it together with the other
+all modes; approving the profile's plan grants it together with the other
 configured operations. Human output prints the reranking outcome and bounded
 candidate count. Follow
 [Consent before semantic or hybrid search](usage/search.md#consent-before-semantic-or-hybrid-search)
@@ -1247,24 +1336,25 @@ to grant consent through a reviewed processing build or the HTTP consent API.
 
 ### Find similar files
 
-Use `docbank search --similar-to id:42 --profile private_text` with repeated
-`--source-version <uuid>` values to find files like one selected current
-version. Include that version in the source fence. `--version <uuid>` pins the
-selection; omission uses the node's current version. The fence accepts 1 to
-4,096 versions. `--binding`, `--limit` from 1 to 100, and `--agent` or `--json`
-are supported.
-The default limit is 20 content groups.
+To find files similar to one selected current version, run
+`docbank search --similar-to id:42 --profile private_text` with repeated
+`--source-version <uuid>` values, including that version in the source fence.
+Pass `--version <uuid>` to pin the selection, or omit it to use the node's
+current version. The fence accepts 1 to 4,096 versions, and you can also pass
+`--binding`, `--limit` from 1 to 100, and `--agent` or `--json`. The default
+limit is 20 content groups.
 
 Similarity uses stored embeddings locally. It excludes the source node, groups
 identical content, and reports how many other eligible copies each group has.
 When the source embedding is missing, human and agent output show a
-`docbank processing plan` command. JSON reports `state: unavailable` and the
-missing coverage. Query text, `--mode`, `--explain`, `--rerank`, and lexical
-filters cannot accompany `--similar-to`.
+`docbank processing plan` command, and JSON reports `state: unavailable` along
+with the missing coverage. You cannot combine query text, `--mode`,
+`--explain`, `--rerank`, or lexical filters with `--similar-to`.
 
 ## docbank export
 
-Exports original document versions or rendered photos as verified ZIP bundles through the daemon.
+Export original document versions or rendered photos as verified ZIP bundles
+through the daemon.
 
 | Command | Purpose |
 | --- | --- |
@@ -1277,13 +1367,13 @@ Exports original document versions or rendered photos as verified ZIP bundles th
 | `download <job-id> <local-file> [--overwrite]` | Verify a completed ZIP before saving it locally. |
 | `release <job-id>` | Remove a finished job and its retained archive to free a slot. |
 
-Every command accepts `--json`. Download never releases automatically. See
-[Verified export bundles](usage/export-bundles.md) for the request format,
-retry rules, publication behavior, and shared capacity limits.
+Every command accepts `--json`, and downloading a bundle never releases it
+automatically. See [Verified export bundles](usage/export-bundles.md) for the
+request format, retry rules, publication behavior, and shared capacity limits.
 
 ## docbank report
 
-Exports dated search counts and retains the evidence needed to check them.
+Export dated search counts and retain the evidence needed to check them.
 
 | Command | Purpose and options |
 | --- | --- |
@@ -1297,9 +1387,9 @@ Exports dated search counts and retains the evidence needed to check them.
 | `history [--offset N] [--limit N] [--json]` | List recorded requests and outcomes; history does not guarantee live availability. |
 | `download <report-id> --output report.zip` | Save the existing verified ZIP without creating another report. |
 
-Commands with `--output` also accept `--overwrite`. Existing destinations are
-otherwise preserved. See [Search exports](usage/search-exports.md) for the
-version 1 request format, date choices, counts, and retention limits.
+Commands with `--output` also accept `--overwrite`; without it, existing
+destinations stay untouched. See [Search exports](usage/search-exports.md) for
+the version 1 request format, date choices, counts, and retention limits.
 
 ## docbank processing
 
@@ -1315,40 +1405,63 @@ docbank processing build <path-or-id> --profile <name> --plan-fingerprint <sha25
 docbank processing status <job-id> [--json]
 ```
 
-`vision-fingerprints` prints the descriptor and disclosure fingerprints for a vision profile. `--task` defaults to `compatible-vision.describe-v1`; use `compatible-vision.detect-faces-v1` for automatic face detection or `compatible-vision.understand-v1` for searchable image interpretations. It runs locally without a daemon or provider credential. See [Photo descriptions](configuration.md#photo-descriptions) and [Automatic face detection](configuration.md#automatic-face-detection).
+`vision-fingerprints` prints the descriptor and disclosure fingerprints for a
+vision profile. It runs locally without a daemon or provider credential.
+`--task` defaults to `compatible-vision.describe-v1`; use
+`compatible-vision.detect-faces-v1` for automatic face detection or
+`compatible-vision.understand-v1` for searchable image interpretations. See
+[Photo descriptions](configuration.md#photo-descriptions) and
+[Automatic face detection](configuration.md#automatic-face-detection).
 
-`probe` runs Mistral capability checks locally with the processing profile's policy, credential, and egress settings. It writes the manifest to the rendition runtime's configured `capability_manifest` path. Supply five synthetic native seeds and use `--overwrite` to replace an existing manifest. After saving, it prints the profile's `descriptor_fingerprint` and `disclosure_fingerprint`. See [Mistral OCR configuration](configuration.md#document-ocr-with-mistral).
+`probe` runs Mistral capability checks locally with the processing profile's
+policy, credential, and egress settings, and writes the manifest to the
+rendition runtime's configured `capability_manifest` path. Supply five
+synthetic native seeds, and pass `--overwrite` to replace an existing manifest.
+After saving, `probe` prints the profile's `descriptor_fingerprint` and
+`disclosure_fingerprint`. See
+[Mistral OCR configuration](configuration.md#document-ocr-with-mistral).
 
-`local` previews text indexing for this vault and future imports, including provider disclosures, then enables it without a prompt and downloads any missing server and model files. An indexed compatible Nomic profile keeps its extractor, chunks, and vectors when it moves to the shared server; setup previews a rebuild when another model requires a new built-in index. It saves the selected profile and server outside `config.toml`, then restarts and reconnects the daemon. Both `auto` and `local` select Kit's shared per-user server. See [Local text search](usage/document-processing.md#set-up-local-text-search).
+`local` previews text indexing for this vault and future imports, including
+provider disclosures, then enables it without a prompt and downloads any
+missing server and model files. An indexed compatible Nomic profile keeps its
+extractor, chunks, and vectors when it moves to the shared server, while setup
+previews a rebuild when another model requires a new built-in index. It saves
+the selected profile and server outside `config.toml`, then restarts and
+reconnects the daemon. Both `auto` and `local` select Kit's shared per-user
+server. See [Local text search](usage/document-processing.md#set-up-local-text-search).
 
-`faces` previews local face suggestions, downloads any missing runtime and model assets, and enables suggestions without a prompt. Faces in Hidden photos are included. If an older text embeddings server needs a restart, stop the reported server and rerun the command. See [People](usage/people.md).
+`faces` previews local face suggestions, downloads any missing runtime and
+model assets, and enables suggestions without a prompt, including faces in
+Hidden photos. If an older text embeddings server needs a restart, stop the
+reported server and rerun the command. See [People](usage/people.md).
 
-`profiles` lists names the daemon can execute, their rendition and embedding
-bindings, and profile fingerprints. The default configuration lists none.
+`profiles` lists the profile names the daemon can execute, along with their
+rendition and embedding bindings and profile fingerprints. The default
+configuration lists none.
 
-`coverage` inspects one UUIDv4 version under an executable profile. It
-prints rendition and embedding counters without starting processing. Stale or
-unavailable evidence is reported as diagnostic output, and the command still
-succeeds. JSON contains `content_version_id` and `coverage`. See
+`coverage` inspects one UUIDv4 version under an executable profile and prints
+rendition and embedding counters without starting processing. Stale or
+unavailable evidence appears as diagnostic output, and the command still
+succeeds. JSON output contains `content_version_id` and `coverage`. See
 [Inspect evidence before reporting](usage/document-processing.md#inspect-evidence-before-reporting)
 for profile restrictions and the distinction from report coverage.
 
 `plan` resolves a live file's current version and reports its provider flows,
 disclosed and retained classes, estimates, consent state, and backup effect.
-Review the complete plan before running `build`. A changed source or profile
-requires a new preview and its lowercase SHA-256 `--plan-fingerprint`.
+Review the complete plan before running `build`. If the source or profile
+changes, run a new preview and use its lowercase SHA-256 `--plan-fingerprint`.
 
 `build` requires `--consent`, even when consent is already active. It grants
-ongoing permission for this profile's document and query operations to the
-daemon operator across documents and searches, with no expiry. It then runs
-the reviewed work and prints the durable job ID and aggregate status.
-`--json` emits the job record. `--ndjson` emits a job event followed by a
-terminal status event. These output flags are mutually exclusive. A failed
-required operation returns a nonzero exit code and includes an accepted job
-ID when available. Preserve that ID after an interrupted response.
+ongoing permission with no expiry for this profile's document and query
+operations to the daemon operator across documents and searches, then runs the
+reviewed work and prints the durable job ID and aggregate status. `--json`
+emits the job record, and `--ndjson` emits a job event followed by a terminal
+status event; these two output flags are mutually exclusive. A failed required
+operation exits nonzero and includes an accepted job ID when available, which
+you should keep after an interrupted response.
 
 `status` accepts a lowercase SHA-256 job ID and reports aggregate state, phase,
-completed embedding bindings, and any failure code. It does not start new work.
+completed embedding bindings, and any failure code without starting new work.
 See [Document processing](usage/document-processing.md) for the full workflow
 and [HTTP consent](architecture/http-api.md#processing-consent) for grants with
 expiry or revocation.
@@ -1366,15 +1479,16 @@ docbank redaction verify <preparation.json> <masks.json> <review.json> <archive.
 docbank redaction package <selection.json> <recipient.zip> [--json]
 ```
 
-Prepare, resolve and render use the daemon to inspect and redact a retained
-native PDF. Render saves one ZIP containing the fresh PDF, sanitized text and
-receipt. See [Review and render a native PDF](usage/document-processing.md#review-and-render-a-native-pdf)
-for masks, review files, runtime requirements and refusal handling.
+`prepare`, `resolve`, and `render` use the daemon to inspect and redact a
+retained native PDF. `render` saves one ZIP containing the fresh PDF,
+sanitized text, and receipt. See
+[Review and render a native PDF](usage/document-processing.md#review-and-render-a-native-pdf)
+for masks, review files, runtime requirements, and refusal handling.
 
-Reserve retains the unredacted original indefinitely and reserves a number per
-page. There is no release path. Render with `--allocation` adds the reserved
-footer labels, retains the verified PDF and saves the three-entry ZIP. Exact
-retries reuse the allocation and first published PDF. See
+`reserve` retains the unredacted original indefinitely and reserves one number
+per page, with no release path. Running `render` with `--allocation` adds the
+reserved footer labels, retains the verified PDF, and saves the three-entry
+ZIP, while exact retries reuse the allocation and first published PDF. See
 [Numbered delivery](usage/document-processing.md#deliver-one-reviewed-pdf-with-bates-numbers)
 for retention consent and recovery by number.
 
@@ -1383,26 +1497,28 @@ docbank bates export download <allocation-id> <local-file> [--overwrite] [--json
   [--preparation <file> --masks <file> --review <file>]
 ```
 
-Download without review inputs checks recorded bytes and numbering metadata for
-numbered output. All three inputs select full mask, text and number verification.
-JSON includes `verification`, size, SHA-256, page count, destination and state.
-Ordinary stamped PDFs keep their existing stamp verification.
+Downloading without review inputs checks recorded bytes and numbering metadata
+for numbered output, while supplying all three inputs runs full mask, text, and
+number verification. JSON output includes `verification`, size, SHA-256, page
+count, destination, and state. Ordinary stamped PDFs keep their existing stamp
+verification.
 
-Verify checks a saved ZIP offline, without the source, a daemon or a configured
-page runtime. Embedded PDFium checks the PDF's masks, text and structure against
-the review. The command uses one private temporary archive snapshot and
-prints the checked receipt and the complete archive's size and SHA-256; `--json`
-returns `{ "receipt": ..., "size": ..., "sha256": ... }`. It cannot compare
-unmasked image content with the source or authenticate the producer. Compare the archive
-digest with the render-time value. See
+`verify` checks a saved ZIP offline without the source, a daemon, or a
+configured page runtime. Embedded PDFium checks the PDF's masks, text, and
+structure against the review. The command uses one private temporary archive
+snapshot and prints the checked receipt along with the complete archive's size
+and SHA-256.
+With `--json`, it returns `{ "receipt": ..., "size": ..., "sha256": ... }`.
+`verify` cannot compare unmasked image content with the source or authenticate
+the producer; compare the archive digest with the render-time value. See
 [Check and retain a saved archive](usage/document-processing.md#check-and-retain-a-saved-archive)
-for limits, exit codes and recovery.
+for limits, exit codes, and recovery.
 
-Package checks every selected review before downloading completed numbered PDFs,
-then saves their unchanged bytes, sanitized text, DAT, OPT, mapping and receipt in
-one recipient ZIP. It never overwrites the destination. See
+`package` checks every selected review before downloading completed numbered
+PDFs, then saves their unchanged bytes, sanitized text, DAT, OPT, mapping, and
+receipt in one recipient ZIP. It never overwrites the destination. See
 [Package completed numbered PDFs](usage/document-processing.md#package-completed-numbered-pdfs-for-a-recipient)
-for the selection format, limits and recipient import commands.
+for the selection format, limits, and recipient import commands.
 
 ## docbank rendition
 
@@ -1412,17 +1528,19 @@ docbank rendition window <path-or-id> [--version <version-uuid>] [--profile <nam
   [--attachment <attachment-id>] [--offset <n>] [--max-chars <n>] [--json]
 ```
 
-`get` writes an active retained sanitized-Markdown attachment to stdout only after
-verifying the complete stream. The attachment ID must be lowercase SHA-256.
-`--max-bytes` accepts 1–67,108,864 and defaults to 67,108,864 (64 MiB). Missing,
-oversized, incomplete, or invalid renditions return a nonzero exit code.
-The output includes the [Markdown envelope and body-relative navigation](architecture/document-derivatives.md#sanitized-markdown-contract).
+`get` writes an active retained sanitized-Markdown attachment to stdout only
+after verifying the complete stream. The attachment ID must be lowercase
+SHA-256, and `--max-bytes` accepts 1 to 67,108,864 with a default of
+67,108,864, or 64 MiB. Missing, oversized, incomplete, or invalid renditions
+exit nonzero. The output includes the
+[Markdown envelope and body-relative navigation](architecture/document-derivatives.md#sanitized-markdown-contract).
 
 `window` reads bounded Markdown from the current version. It selects the one
 active rendition with readable text, or asks you to choose when several have
-text. `--version`, `--profile`, and `--attachment` pin the selection. A
-rendition whose profile is no longer configured is identified by fingerprint. It prints a pinned
-continuation command. It does not verify the complete artifact. See
+text, and you can pin the selection with `--version`, `--profile`, and
+`--attachment`. A rendition whose profile is no longer configured is identified
+by fingerprint. `window` prints a pinned continuation command and does not
+verify the complete artifact. See
 [Read and continue a text window](usage/document-processing.md#read-and-continue-a-text-window)
 for offsets, limits, JSON fields, and discovery costs.
 
@@ -1432,13 +1550,13 @@ for offsets, limits, JSON fields, and discovery costs.
 docbank tui
 ```
 
-Opens an interactive terminal browser over the authenticated daemon API. It
-navigates the live virtual tree, searches names and extracted text, shows the
-selected node's stable authority, and can move one inspected revision to
-recoverable trash or restore one inspected trash root. It loads at most 1,000
+Open an interactive terminal browser over the authenticated daemon API. You can
+navigate the live virtual tree, search names and extracted text, inspect a
+selected node's stable authority, move one inspected revision to recoverable
+trash, or restore one inspected trash root. The TUI loads at most 1,000
 directory entries, search results, or trash roots and reports truncation.
-<kbd>K</kbd> opens the load-file package browser, which lists at most 250
-packages or members and looks up exact Bates labels inside the selected
+Press <kbd>K</kbd> to open the load-file package browser, which lists at most
+250 packages or members and looks up exact Bates labels inside the selected
 package.
 
 Trash and restore require explicit revision-bound confirmation. The TUI does
@@ -1453,21 +1571,22 @@ capability boundary.
 docbank web [--no-browser]
 ```
 
-Opens the embedded web application, starting or reconnecting to a compatible
+Open the embedded web application, starting or reconnecting to a compatible
 daemon for the selected vault. Use the application to browse, search, inspect,
-download verified documents, and upload files into the current folder.
-See the [web application guide](usage/web.md) for all available workflows.
+download verified documents, and upload files into the current folder. See the
+[web application guide](usage/web.md) for all available workflows.
 
-The CLI transfers a daemon-issued browser session through an owner-private
-launch file, without putting it in a child-process argument. The master API
-key stays on the CLI's connection to the verified daemon and never enters the
-browser. Each daemon uses its own temporary loopback origin, even when the API
-port is fixed. The application removes its scoped session token from the
-address bar before requests and keeps it only in page memory.
+The CLI passes a daemon-issued browser session through an owner-private launch
+file rather than a child-process argument. The master API key stays on the
+CLI's connection to the verified daemon and never enters the browser. Each
+daemon uses its own temporary loopback origin, even when the API port is fixed,
+and the application removes its scoped session token from the address bar
+before making requests and keeps it only in page memory.
 
-`--no-browser` prints that authenticated URL instead of opening it. The output
-contains a live scoped browser session and must be handled as a secret. See the
-[web application guide](usage/web.md) for its capabilities and trust boundary.
+Pass `--no-browser` to print that authenticated URL instead of opening it.
+The printed URL contains a live scoped browser session; handle it as a secret.
+See the [web application guide](usage/web.md) for its capabilities and trust
+boundary.
 
 ## docbank mcp
 
@@ -1477,54 +1596,55 @@ docbank mcp [--transport stdio|http] [--listen <ip:port>] [--allowed-host <host[
             [--allow-photo-edits] [--allow-report-writes] [--allow-kata-writes]
 ```
 
-Runs the selected vault's exact MCP `2026-07-28` server as another client of
-the local daemon. `--transport` defaults to `stdio`. Stdio accepts one JSON-RPC
+Run the selected vault's exact MCP `2026-07-28` server as another client of
+the local daemon. `--transport` defaults to `stdio`, which accepts one JSON-RPC
 message per line, reserves stdout for protocol frames, and writes only redacted
 diagnostics to stderr. `--listen` is invalid for stdio.
 
-HTTP requires `--transport http`, an explicit IPv4 or IPv6 `--listen`, and
-a separate named credential binding, from TOML or
+HTTP mode requires `--transport http`, an explicit IPv4 or IPv6 `--listen`
+address, and a separate named credential binding from TOML or
 `DOCBANK_MCP_HTTP_TOKEN`/`DOCBANK_MCP_HTTP_TOKEN_FILE`. Network addresses opt
-into plain HTTP and require a trusted network or encrypted transport.
-`--allowed-host` adds accepted client authorities and can be repeated; it is
-invalid for stdio. The bearer is resolved once at startup and must differ from
-the daemon's effective API key. There is no token flag or remote-daemon option.
-See [MCP network access](usage/mcp.md#connect-over-a-trusted-network).
+into plain HTTP and require a trusted network or encrypted transport. You can
+repeat `--allowed-host` to add accepted client authorities; it is invalid for
+stdio. Docbank resolves the bearer once at startup, and it must differ from the
+daemon's effective API key. There is no token flag or remote-daemon option. See
+[MCP network access](usage/mcp.md#connect-over-a-trusted-network).
 
 The default catalog contains read-only tools, including `get_photo_asset`.
 `--allow-processing` adds only the guarded `start_processing` tool. The agent
 must first retrieve the plan from the same process, and the operator must
-already have consented to that unchanged disclosure. The flag does not let MCP
+already have consented to that unchanged disclosure; the flag does not let MCP
 grant consent. The supported CLI consent path is `docbank processing plan`,
 followed by
-`docbank processing build --plan-fingerprint <fingerprint> --consent`. The
-build command also starts the reviewed work. See
+`docbank processing build --plan-fingerprint <fingerprint> --consent`, which
+also starts the reviewed work. See
 [Document processing](usage/document-processing.md) for the full flow.
 
 `--allow-package-writes` separately adds load-file preflight, package import,
 package custodian assignment and resolution, Bates exports, recipient ZIP
-delivery, and reviewed PDF publication with `publish_numbered_pdf`. It also adds
-`export_load_file_package`, which writes a load-file package to a local path and
-can replace an existing file when the call sets `overwrite`. These tools can
-read local sources, write local files, and change the vault without using the
-processing consent flow. Publication needs a range an operator already
-reserved; MCP cannot grant original-retention consent.
+delivery, and reviewed PDF publication with `publish_numbered_pdf`. It also
+adds `export_load_file_package`, which writes a load-file package to a local
+path and can replace an existing file when the call sets `overwrite`. These
+tools can read local sources, write local files, and change the vault without
+using the processing consent flow. Publication needs a range an operator
+already reserved; MCP cannot grant original-retention consent.
 
 `--allow-export-writes` separately adds native export previews, start,
-cancellation, local download, and release. Status is available without write
-flags. See the [MCP export workflow](usage/mcp.md#native-export-jobs) for
+cancellation, local download, and release, while status stays available without
+write flags. See the [MCP export workflow](usage/mcp.md#native-export-jobs) for
 selection and recovery.
 
-`--allow-photo-edits` separately adds guarded photo asset mutations. Each
+`--allow-photo-edits` separately adds guarded photo asset mutations, where each
 write uses an asset revision and one daemon request. Display and settings
-writes remain in the HTTP and CLI surfaces.
+writes stay in the HTTP API and CLI.
 
-No flag enables another flag's tools; combine the flags to allow more than one
-kind of work.
+No flag enables another flag's tools; combine flags when you want to allow more
+than one kind of work.
 
 See [Model Context Protocol](usage/mcp.md) for client setup, tool and resource
-catalogs, transport limits, caching, and unsupported capabilities. For read-only
-HTTP hosting in the daemon process, see [docbank daemon](#docbank-daemon).
+catalogs, transport limits, caching, and unsupported capabilities. For
+read-only HTTP hosting in the daemon process, see
+[docbank daemon](#docbank-daemon).
 
 ### docbank agent setup
 
@@ -1532,7 +1652,12 @@ HTTP hosting in the daemon process, see [docbank daemon](#docbank-daemon).
 docbank agent setup [--agent claude|codex] [--check] [--json] [--print]
 ```
 
-Registers the selected vault with installed Claude Code and Codex clients. `--check` reports readiness without installing; `--print` prints manual commands. Setup enables Codex's MCP feature, which causes an under-development feature notice each session. Re-running setup registers the read-only tools and replaces extra arguments, including `--allow-*`; use `docbank mcp config` for write tools.
+Register the selected vault with installed Claude Code and Codex clients. Pass
+`--check` to report readiness without installing, or `--print` to print manual
+commands. Setup enables Codex's MCP feature, which causes an under-development
+feature notice each session. Re-running setup registers the read-only tools and
+replaces extra arguments, including `--allow-*`; to configure write tools, use
+`docbank mcp config`.
 
 ### docbank mcp config
 
@@ -1540,29 +1665,29 @@ Registers the selected vault with installed Claude Code and Codex clients. `--ch
 docbank mcp config --client claude-code|codex [--transport stdio|http] [--listen <ip:port>] [--allow-processing] [--allow-package-writes] [--allow-photo-edits] [--allow-export-writes] [--allow-report-writes] [--allow-kata-writes]
 ```
 
-Prints Claude Code JSON for `.mcp.json` or Codex TOML for
-`~/.codex/config.toml`. Stdio uses Docbank's absolute launch path, preserves
-symlinks, selects the vault through `DOCBANK_HOME`, and carries enabled write
-flags into the server's arguments. Client files remain untouched.
+Print Claude Code JSON for `.mcp.json` or Codex TOML for
+`~/.codex/config.toml` without modifying client files. Stdio uses Docbank's
+absolute launch path, preserves symlinks, selects the vault through
+`DOCBANK_HOME`, and carries enabled write flags into the server's arguments.
 Keep the project's `.mcp.json` out of version control because it contains
 machine-specific paths.
 
 HTTP requires a nonzero `--listen` address for an existing daemon or standalone
-listener. Wildcard addresses become loopback URLs ending in `/mcp`. The
-selected bearer binding appears as an environment-variable reference; its
-secret stays unresolved. With no selected binding, printing uses the listener's
-conventional `DOCBANK_MCP_HTTP_TOKEN` variable. HTTP write flags belong on a standalone listener's
-startup command.
+listener, and wildcard addresses become loopback URLs ending in `/mcp`. The
+selected bearer binding appears as an environment-variable reference with its
+secret unresolved; with no selected binding, printing uses the listener's
+conventional `DOCBANK_MCP_HTTP_TOKEN` variable. HTTP write flags belong on a
+standalone listener's startup command.
 
-Clients must support MCP `2026-07-28`. The Codex snippet includes a reminder to run
-`codex features enable mcp_2026_07_28` once to persist the client's MCP protocol
-support in `config.toml` for either transport. Then launch with plain `codex`.
-Generated Codex stdio configuration also sets
+Clients must support MCP `2026-07-28`. The Codex snippet reminds you to run
+`codex features enable mcp_2026_07_28` once to persist the client's MCP
+protocol support in `config.toml` for either transport, then launch with plain
+`codex`. Generated Codex stdio configuration also sets
 `CODEX_MCP_PROTOCOL_VERSION=2026-07-28` for Codex, which reads it to pick the
-protocol version and does not pass it to the server.
-After upgrading Docbank, rerun `docbank mcp config` and replace the saved
-configuration so its protocol selection matches the installed server.
-See the [MCP setup guide](usage/mcp.md#start-the-server).
+protocol version and does not pass it to the server. After upgrading Docbank,
+rerun `docbank mcp config` and replace the saved configuration so its protocol
+selection matches the installed server. See the
+[MCP setup guide](usage/mcp.md#start-the-server).
 
 ## docbank trash
 
@@ -1571,16 +1696,16 @@ docbank trash list [--json]
 docbank trash empty [--older-than <age>] [--run] [--json]
 ```
 
-`list` shows restorable trashed nodes: `SELECTOR`, `TRASHED AT`, `NAME`. Only
-trash roots are listed: trashing a directory produces one entry, and
-restoring it brings the whole subtree back. Human output renders UTC seconds.
-`--json` preserves the full-precision timestamps.
+`list` shows restorable trashed nodes with columns `SELECTOR`, `TRASHED AT`,
+and `NAME`. Only trash roots appear: trashing a directory produces one entry,
+and restoring it brings the whole subtree back. Human output renders UTC
+seconds, while `--json` preserves full-precision timestamps.
 
-`empty` reports how many trash roots are eligible but does not delete by
-default. Pass `--run` to permanently delete them. Their blobs then become
-`gc` candidates unless referenced elsewhere. `--older-than` accepts Go
-durations (`12h`, `30m`) plus a day suffix (`30d`); negative ages are
-rejected. Without that filter, every trash root is eligible.
+`empty` reports how many trash roots are eligible without deleting anything by
+default. Pass `--run` to permanently delete them, making their blobs `gc`
+candidates unless referenced elsewhere. `--older-than` accepts Go durations
+such as `12h` or `30m` plus a day suffix such as `30d`, and rejects negative
+ages. Without `--older-than`, every trash root is eligible.
 
 `list --json` emits `{"items": [...]}`. `empty --json` emits the same typed
 dry-run or execution report as the HTTP API: `candidate_roots`,
@@ -1593,24 +1718,25 @@ suppressed so stdout contains one JSON document.
 docbank vault gc [--run]
 ```
 
-Garbage-collects unreachable blobs: content referenced by no live node,
-no trashed node, and no recorded prior version. Dry-run by default:
+Garbage-collect unreachable blobs: content referenced by no live node, no
+trashed node, and no recorded prior version. The command runs as a dry run by
+default:
 
 ```
 3 candidate blob(s), 0 untracked file(s), 1204882 loose byte(s) reclaimable
 dry run — pass --run to delete
 ```
 
-Packed candidates are reported separately as stored bytes pending repack.
-Removing their catalog authority does not reclaim the space inside an immutable
-pack. With `--run`, loose blob files are deleted first, then their metadata
-rows. Output separately reports removed blob records, reclaimed loose files,
-and reclaimed bytes. A crash mid-GC leaves rows without files, which the next
-`gc --run` reconciles and `verify` reports in the meantime. The daemon's
-maintenance gate rejects new mutations with the retryable busy exit code `5`
-while `gc --run` runs, so it never races a concurrent import (see
-[Ownership and concurrency](architecture/locking.md)). GC does not invoke
-repack, and no automatic GC/repack scheduler exists today.
+Packed candidates appear separately as stored bytes pending repack, and
+removing their catalog authority does not reclaim the space inside an immutable
+pack. With `--run`, Docbank deletes loose blob files first and then their
+metadata rows, and reports removed blob records, reclaimed loose files, and
+reclaimed bytes separately. A crash mid-GC leaves rows without files, which the
+next `gc --run` reconciles and `verify` reports in the meantime. While
+`gc --run` runs, the daemon's maintenance gate rejects new mutations with the
+retryable busy exit code `5`, so it never races a concurrent import; see
+[Ownership and concurrency](architecture/locking.md). GC does not invoke
+repack, and no automatic GC or repack scheduler exists today.
 
 ## docbank storage
 
@@ -1644,13 +1770,14 @@ pinning, remote-only acknowledgement, and recovery behavior.
 docbank storage status [store] [--refresh] [--json]
 ```
 
-Reports the daemon's physical storage inventory: logical loose blob count and
-physical loose bytes (raw and zstd files), live packed blobs and their
-stored/raw bytes, pack count, and immutable packed bytes pending repack. It
-also reports each store's role, kind, observed state, catalog-authorized
+Report the daemon's physical storage inventory: logical loose blob count and
+physical loose bytes for raw and zstd files, live packed blobs and their stored
+and raw bytes, pack count, and immutable packed bytes pending repack. The
+command also reports each store's role, kind, observed state, catalog-authorized
 objects, sole copies, affected live documents, and objects whose every
-authorized location is currently offline. The command is read-only. `--json`
-emits the same fields as the authenticated `GET /api/v1/storage` endpoint.
+authorized location is currently offline. `storage status` is read-only, and
+`--json` emits the same fields as the authenticated `GET /api/v1/storage`
+endpoint.
 
 ## docbank storage pack
 
@@ -1658,19 +1785,19 @@ emits the same fields as the authenticated `GET /api/v1/storage` endpoint.
 docbank storage pack [--max-bytes <bytes>] [--json]
 ```
 
-Converts authorized loose blobs into immutable Kit pack files. The
-operation runs through the authenticated daemon and holds the vault maintenance
-gate. Reads remain available, while imports and other mutations receive the
-retryable busy exit code `5`. Packing
-does not change document identity or blob read authority, and mixed loose and
-packed storage remains valid after an interruption.
+Convert authorized loose blobs into immutable Kit pack files. The operation
+runs through the authenticated daemon and holds the vault maintenance gate:
+reads stay available, while imports and other mutations receive the retryable
+busy exit code `5`. Packing does not change document identity or blob read
+authority, and mixed loose and packed storage remains valid after an
+interruption.
 
-`--max-bytes` is a soft raw-byte work budget. The blob that crosses the budget
-is committed before the operation stops, and output says the budget was
-exhausted. Check `storage status` and rerun if loose blobs remain; crossing the
-budget does not itself prove that more eligible work exists. Zero (the default)
-is unlimited. `--json` includes packing, repair, deferral, and reconciliation
-counters from the shared Kit lifecycle engine.
+`--max-bytes` sets a soft raw-byte work budget, where 0 is the unlimited
+default. Docbank commits the blob that crosses the budget before stopping and
+reports that the budget was exhausted. Check `storage status` and rerun if loose blobs remain; crossing the budget
+does not by itself prove that more eligible work exists. `--json` includes
+packing, repair, deferral, and reconciliation counters from the shared Kit
+lifecycle engine.
 
 ## docbank storage repack
 
@@ -1679,27 +1806,28 @@ docbank storage repack [--min-age <duration>] [--min-dead-bytes <bytes>]
                        [--max-bytes <bytes>] [--json]
 ```
 
-Rewrites eligible sparse packs with only their live blobs, atomically changes
-catalog authority, and retires the old immutable pack files after active
-readers release them. Packs with no live mappings are retired regardless of
-age. A partially live pack is eligible when at most half its entries remain and
-it satisfies both selection thresholds. Defaults are `--min-age 24h` and
-`--min-dead-bytes 8388608`. Use smaller positive values for immediate
-manual compaction.
+Rewrite eligible sparse packs with only their live blobs, atomically switch
+catalog authority, and retire the old immutable pack files after active readers
+release them. Packs with no live mappings are retired regardless of age. A
+partially live pack is eligible when at most half its entries remain and it
+meets both selection thresholds. Defaults are `--min-age 24h` and
+`--min-dead-bytes 8388608`; pass smaller positive values for immediate manual
+compaction.
 
-`--max-bytes` is a soft live raw-byte budget. Zero is unlimited and makes a
-source-content error fail the operation immediately. A positive budget lets
-Kit continue with independent eligible source packs and return their combined
-errors after committed work. The report's `bytes_repacked` is live raw content
-rewritten, not a claim about filesystem bytes reclaimed. Compare `storage
-status` before and after when exact inventory change matters.
+`--max-bytes` sets a soft live raw-byte budget. Zero is unlimited and causes a
+source-content error to fail the operation immediately, while a positive budget
+lets Kit continue with independent eligible source packs and return their
+combined errors after committed work. The report's `bytes_repacked` measures live raw content rewritten rather than
+filesystem bytes reclaimed. Compare `storage status` before and after when
+exact inventory change matters.
 
 Pack retirement can be deferred when another process holds a source pack open,
-most commonly through a Windows handle that does not permit deletion. The
-repack response then uses `pack_retirement_deferred`: replacement catalog
-authority has already committed, so do not restore the old mapping or assume
-the rewrite rolled back. Release the external file lock and run `docbank
-storage pack`; its reconciliation pass removes the orphaned source pack.
+most commonly through a Windows handle that does not permit deletion. When that
+happens, the repack response uses `pack_retirement_deferred`: replacement
+catalog authority has already committed, so do not restore the old mapping or
+assume the rewrite rolled back. Release the external file lock and run
+`docbank storage pack`; its reconciliation pass removes the orphaned source
+pack.
 
 ## docbank transfer
 
@@ -1709,19 +1837,19 @@ storage pack`; its reconciliation pass removes the orphaned source pack.
 docbank transfer verify <package> [--archive-id <archive-id>] [--json]
 ```
 
-Verifies a transfer package from a local directory, ZIP file, or legacy
-Msgvault JSONL file without opening a vault or starting the daemon. The command
-reads only the named path. See [Verify transfer packages](usage/transfers.md)
-for the integrity checks and legacy compatibility limits.
+Verify a transfer package from a local directory, ZIP file, or legacy Msgvault
+JSONL file without opening a vault or starting the daemon. The command reads
+only the named path. See [Verify transfer packages](usage/transfers.md) for
+the integrity checks and legacy compatibility limits.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--archive-id <archive-id>` | none | Bind a legacy `msgvault-message-export/1` JSONL file to the registered archive ID that will own it. The flag is required for legacy JSONL and ignored for directory and ZIP packages. Verification checks the ID's syntax but cannot confirm vault registration. |
 | `--json` | `false` | Write the complete machine-readable verification report to stdout. |
 
-Human output is one `valid <format> package <package-id> for archive
-<archive-id> (<package-authority> authority)` line for a complete valid package.
-A valid partial package starts with `valid partial` and includes a second line,
+For a complete valid package, human output prints one line:
+`valid <format> package <package-id> for archive <archive-id> (<package-authority> authority)`.
+A valid partial package starts with `valid partial` and adds a second line,
 `next_cursor: "<continuation>"`. An invalid package starts with
 `invalid <format> package: <n> finding(s)`, followed by each retained finding as
 `<path>: <detail> (<code>)`.
@@ -1729,16 +1857,16 @@ A valid partial package starts with `valid partial` and includes a second line,
 The JSON report contains `format`, `package_id`, `archive_id`, `next_cursor`,
 `valid`, `partial`, `findings_truncated`, `findings`, `findings_total`, `counts`,
 `bounds`, `integrity_authority`, and `package_authority`. A legacy report also
-contains `legacy_evidence`, with `format`, `sha256`, and `bytes`, plus
-`format_limitations`. Each format limitation has `capability`, `state`, and
+includes `legacy_evidence` with `format`, `sha256`, and `bytes`, along with
+`format_limitations`, where each limitation has `capability`, `state`, and
 `reason`.
 
-Exit `0` means validation succeeded and the reader closed successfully. A bad
+Exit `0` means validation succeeded and the reader closed cleanly. A bad
 invocation, including a missing or malformed `--archive-id` for legacy JSONL,
-exits `2`. Invalid-package findings produce a report and exit `6`. Operational
-failures, including cancellation, spool failures, and cleanup failures, report
-their cause and exit `1` without a validation report. Input-opening,
-legacy-normalization, and report-output errors also exit `1`.
+exits `2`, and invalid-package findings print a report and exit `6`.
+Operational failures, including cancellation, spool failures, and cleanup
+failures, report their cause and exit `1` without a validation report.
+Input-opening, legacy-normalization, and report-output errors also exit `1`.
 
 ## docbank vault verify
 
@@ -1746,12 +1874,13 @@ legacy-normalization, and report-output errors also exit `1`.
 docbank vault verify
 ```
 
-Validates logical metadata, including independent replay of any audit history,
-then re-hashes every stored blob against its recorded SHA-256. Reports metadata
-failures as `metadata: <detail>` and blob failures as `missing: <hash>` (row
-without file), `corrupt: <hash>` (hash mismatch), or `unreadable: <hash>` (I/O
-error), followed by `<n> blob(s) ok, <n> problem(s)`. Exits non-zero if any
-problem was found.
+Validate logical metadata, including independent replay of any audit history,
+then re-hash every stored blob against its recorded SHA-256. Metadata failures
+appear as `metadata: <detail>`, and blob failures appear as `missing: <hash>`
+for a row without a file, `corrupt: <hash>` for a hash mismatch, or
+`unreadable: <hash>` for an I/O error, followed by
+`<n> blob(s) ok, <n> problem(s)`. The command exits nonzero if it finds any
+problem.
 
 ## docbank backup
 
@@ -1775,8 +1904,8 @@ docbank backup schedule set <interval|keep_last> <value> [--revision REV]
 docbank backup schedule reset <interval|keep_last> [--revision REV]
 ```
 
-Creates, lists, verifies, restores, and removes recovery points in a Kit backup
-repository and reclaims unused backup storage. Supply `--repo` or configure
+Create, list, verify, restore, and remove recovery points in a Kit backup
+repository, and reclaim unused backup storage. Supply `--repo` or configure
 `[backup] repo`; the flag takes precedence.
 
 | Command | Behavior |
@@ -1792,28 +1921,29 @@ repository and reclaims unused backup storage. Supply `--repo` or configure
 | `schedule` | Show, override, or reset the scheduled interval and `keep_last` without a restart; output is JSON |
 
 `schedule set interval` takes a Go duration such as `24h`, where `0` disables
-scheduling. `schedule reset` returns a key to `config.toml`. Writes read the
-current settings revision and retry once if another write changes it first;
-`--revision` fails with exit code 4 instead.
+scheduling, and `schedule reset` returns a key to `config.toml`. Writes read
+the current settings revision and retry once if another write changes it first;
+pass `--revision` to fail with exit code 4 instead.
 
 `claim --json` writes the final claim object with `owned` true or false to
-stdout. Previews and prompts go to stderr. Confirmation applies only to the
-previewed history; a repository that changed after the preview exits `4`.
+stdout, while previews and prompts go to stderr. Confirmation applies only to
+the previewed history; if the repository changed after the preview, the command
+exits `4`.
 
-`create` pauses mutations briefly to fix the metadata view for the snapshot.
-It then streams loose or packed content while normal daemon work resumes.
+`create` briefly pauses mutations to fix the metadata view for the snapshot,
+then streams loose or packed content while normal daemon work resumes.
 
-A nonempty restore target requires `--overwrite`. Restore merges into it
-without clearing unrelated files. Compatible content is restored packed;
-the report identifies any verified loose fallback.
+Restoring into a nonempty target requires `--overwrite`, and restore merges
+into it without clearing unrelated files. Compatible content is restored
+packed, and the report identifies any verified loose fallback.
 
-`--jobs 1` serializes repository readers. Use `--force-unlock` only when the
-repository lock's owner is known to be gone.
+Pass `--jobs 1` to serialize repository readers. Use `--force-unlock` only when
+you know the repository lock's owner is gone.
 
 `create` and `verify` show per-stage progress bars on a terminal and persistent
-lines when redirected. `--progress` chooses the format. Every subcommand
-supports `--json`; long-running commands suppress progress in that mode.
-See [Backup and restore](usage/backup.md) for the procedure.
+lines when redirected, and `--progress` chooses the format. Every subcommand
+supports `--json`, with long-running commands suppressing progress in that
+mode. See [Backup and restore](usage/backup.md) for the procedure.
 
 ## docbank daemon
 
@@ -1834,28 +1964,28 @@ docbank daemon stop
 | `daemon stop` | Stop gracefully, or print `no daemon running`; never start a daemon |
 
 `status --json` emits `{"running": bool, "pid", "address", "version",
-"started_at"}`. Running daemons also report `explicit_start` as a boolean
-when launch intent is recorded, and `idle_timeout` as the effective duration
-string when recorded. Older records omit unavailable fields. Foreground
-daemons report `explicit_start: false` without `idle_timeout`.
-Restart prints `restarted: ...` or
-`started (was not running): ...` according to the prior state.
+"started_at"}`. Running daemons also report `explicit_start` as a boolean when
+launch intent is recorded, and `idle_timeout` as the effective duration string
+when recorded, while older records omit unavailable fields. Foreground daemons
+report `explicit_start: false` without `idle_timeout`. Depending on the prior
+state, `restart` prints `restarted: ...` or `started (was not running): ...`.
 
-Data commands start a daemon automatically when needed. Use `daemon start`
-for explicit control, such as inspecting logs before sending data commands.
-It normally invokes `daemon run` in the background; foreground use is useful
+Data commands start a daemon automatically when needed. Use `daemon start` for
+explicit control, such as inspecting logs before sending data commands. It
+normally runs `daemon run` in the background, while foreground mode is useful
 for debugging.
 
 The daemon hosts read-only MCP HTTP tools at `/mcp` on its API port when
 `[mcp.http] enabled` is true, or by default for a loopback API once its MCP
 bearer resolves. `[mcp.http] port` moves MCP to a separate loopback port. See
 the [configuration reference](configuration.md#mcp-http-credential) for
-credential settings and the [MCP guide](usage/mcp.md#connect-over-a-trusted-network)
-for Host settings and client access.
+credential settings and the
+[MCP guide](usage/mcp.md#connect-over-a-trusted-network) for Host settings and
+client access.
 
-Start, restart, and automatic startup also replace an incompatible daemon.
-If its version or API protocol differs from the invoking binary, the CLI stops
-it and starts the matching one. It prints
+Start, restart, and automatic startup also replace an incompatible daemon. If
+its version or API protocol differs from the invoking binary, the CLI stops it,
+starts the matching one, and prints
 `replaced daemon <old> (pid N) with <new>: ...`. See
 [Daemon](architecture/daemon.md).
 
@@ -1870,30 +2000,34 @@ docbank jobs resume <lane>
 docbank jobs concurrency derive:visual-previews <1-4>
 ```
 
-Shows daemon-owned background tasks in stable name order, including status,
+Show daemon-owned background tasks in stable name order, including status,
 start and finish timestamps, and the bounded error recorded for a failed task.
-Running tasks have no finish timestamp. A worker that is waiting for work shows
-as `idle` instead of `running`. Terminal worker records remain visible
-until the daemon restarts. Storage records follow their retention and preserve
+Running tasks have no finish timestamp, and a worker waiting for work shows as
+`idle` instead of `running`. Terminal worker records stay visible until the
+daemon restarts, while storage records follow their retention and preserve
 pending cleanup. `--json` emits `{"items": [...]}` plus optional `lanes` for
 automation.
-The CONTROL column shows `read-only`, `active`, or `paused`; previews add
+
+The CONTROL column shows `read-only`, `active`, or `paused`. Previews add
 `limit=N`, and controllable storage jobs add `lane=NAME` for pause and resume.
-Controllable lanes are `derive:visual-previews`, `photo_import`, `photo_checkout`,
-`place`, `evacuate`, `repair`, and `salvage`. Pause finishes the current item or
-import group before waiting. Pause and preview concurrency survive restart;
-restored backups start unpaused with concurrency 1. Storage lanes keep their
-existing concurrency. Cancellation uses an operation ID. When lane controls
-cannot be read, `jobs` still lists every task and prints a warning to stderr;
-`--json` includes `lane_controls_error`.
-To recover malformed settings, repair or remove `lane-controls.json` in the
-vault directory. Removing it restores unpaused lanes with concurrency 1.
-Cancellation remains available while settings are unreadable.
-Every daemon registers `text:pdf` for automatic local PDF text, `extract:plain-text`, `extract:source-metadata`,
-`extract:photo-sidecars`, `derive:photo-quality`, and
-`maintenance:auxiliary-checksums`; `process:renditions` appears only when a
-rendition provider is bound, and configured watched inboxes add `watch:<name>`
-tasks. See [Daemon](architecture/daemon.md) for what each job does.
+Controllable lanes are `derive:visual-previews`, `photo_import`,
+`photo_checkout`, `place`, `evacuate`, `repair`, and `salvage`. Pausing
+finishes the current item or import group before waiting. Pause state and
+preview concurrency survive a restart, while restored backups start unpaused
+with concurrency 1; storage lanes keep their existing concurrency. Cancellation
+uses an operation ID. When lane controls cannot be read, `jobs` still lists
+every task and prints a warning to stderr, and `--json` includes
+`lane_controls_error`. To recover malformed settings, repair or remove
+`lane-controls.json` in the vault directory; removing it restores unpaused
+lanes with concurrency 1. Cancellation stays available while settings are
+unreadable.
+
+Every daemon registers `text:pdf` for automatic local PDF text,
+`extract:plain-text`, `extract:source-metadata`, `extract:photo-sidecars`,
+`derive:photo-quality`, and `maintenance:auxiliary-checksums`.
+`process:renditions` appears only when a rendition provider is bound, and
+configured watched inboxes add `watch:<name>` tasks. See
+[Daemon](architecture/daemon.md) for what each job does.
 
 ## docbank media
 
@@ -1925,92 +2059,91 @@ docbank media origins
 
 `media origins` prints each registered origin's ID, provider,
 `acquisition_available` value, adapter contract, operator-declared deployment
-revision, and startup probe result. The fields are `adapter_contract`,
+revision, and startup probe result, using the fields `adapter_contract`,
 `deployment_revision`, `probe_state`, and `probed_at`. See the
 [origin listing contract](architecture/http-api.md#remote-recording-references).
 Self-hosted Cap registrations report `acquisition_available: false` until a
 later acquisition owner exists.
 
 `media operation` prints the saved receipt of a `media submit --reference-file`
-call by its operation ID, for use after a lost reply.
+call by its operation ID, which helps recover after a lost reply.
 
-`media submit` accepts bounded WAV, MP3, and M4A files. It verifies the declared
-size and SHA-256 computed by the CLI, retains the original bytes, and records
-the caller occurrence separately. Repeating the same bytes reuses one source
-version while a different occurrence remains independently revocable. An
-empty processing profile means retention only.
+`media submit` accepts bounded WAV, MP3, and M4A files. It verifies the
+declared size and SHA-256 computed by the CLI, retains the original bytes, and
+records the caller occurrence separately. Submitting the same bytes again
+reuses one source version while keeping each occurrence independently
+revocable. An empty processing profile means retention only.
 
 M4A uses `.m4a` and `audio/mp4`; the HTTP and embedded APIs also accept
-`audio/x-m4a` and retain the canonical `audio/mp4` type. The MP4 container must
+`audio/x-m4a` and store the canonical `audio/mp4` type. The MP4 container must
 have only sound tracks with AAC or ALAC audio. Docbank verifies local sample
 references and takes the longest of the movie, track, media, and sample-table
 durations and the length the stored frames decode to, so understated headers
-cannot pass the duration limit. It streams the sample bytes without decoding
-them. Fragmented files, unknown timelines, external references, encrypted
-entries, and video tracks are rejected. Movie metadata over 16 MiB, or over a
-smaller caller entry bound, reports `entry_bytes_exceeded`. More than 1,048,576
+cannot pass the duration limit. It streams sample bytes without decoding them.
+Fragmented files, unknown timelines, external references, encrypted entries,
+and video tracks are rejected. Movie metadata over 16 MiB, or over a smaller
+caller entry bound, reports `entry_bytes_exceeded`, and more than 1,048,576
 sample chunks reports `entry_count_exceeded`. The existing 24-hour media
 duration limit applies.
 
 M4A shares the streaming audio source ceiling with WAV and MP3: 4 GiB by
-default, lowered with
+default, which you can lower with
 [`[media].max_source_bytes`](configuration.md#supplied-audio-transcription).
 
 Use `media import-artifact --kind media` to bind a supplied WAV, MP3, M4A, or
 remote MP4 to the exact visible occurrence of a remote source registered
 through the HTTP or embedded API. MP4 uses the `.mp4` extension and
 `video/mp4`, with limits of 20 MiB, 2,088,960 coded pixels, 300,000
-milliseconds, and 18,000 frames. The original must be retained before a
-caption or transcript can be imported. Use `--kind caption --file
-CAPTIONS.srt --provider loom` for SubRip input, or `--kind transcript --file
-TRANSCRIPT.txt` for supplied transcript text. The fixed upload table maps
-`.mp4` to `video/mp4` and `.srt` to `application/x-subrip`. The receipt returns
-the input ID. Pass that value with
-`media retry --supplied-input-id INPUT_ID` when more than one transcript exists
-for the recording. The selected input remains fixed for the job; importing
-another transcript does not change work already queued.
-Artifact imports retain inputs only. Use
-`media retry` to request processing after the import. Retry selects the caller's
-newest visible occurrence for the source; it cannot target an older occurrence.
-Use ordinary document processing with the older recording's node and current
-content version when needed.
+milliseconds, and 18,000 frames. You must retain the original before importing
+a caption or transcript. Pass
+`--kind caption --file CAPTIONS.srt --provider loom` for SubRip input, or
+`--kind transcript --file TRANSCRIPT.txt` for supplied transcript text. The
+fixed upload table maps `.mp4` to `video/mp4` and `.srt` to
+`application/x-subrip`. The receipt returns the input ID; when more than one
+transcript exists for the recording, pass that value with
+`media retry --supplied-input-id INPUT_ID`. The selected input stays fixed for
+the job, and importing another transcript does not change work already queued.
+Artifact imports retain inputs only; run `media retry` after importing to
+request processing. Retry selects the caller's newest visible occurrence for
+the source and cannot target an older occurrence; when you need an older
+recording, use ordinary document processing with its node and current content
+version.
 
 Processing is explicit. The built-in `supplied-transcript` profile turns the
 selected retained transcript into the ordinary sanitized Markdown rendition
-used by search and export. The `supplied-captions` profile retains timed
+used by search and export, while `supplied-captions` retains timed
 `media-transcript/v1` evidence and supports lexical and auto search. Semantic
 and hybrid search are not configured for supplied captions. `media retry`
-queues work only when the exact processing consent is still valid, then
-returns without waiting for the provider. The daemon resumes queued work after
-restart. In `media status`, `operation_id`,
-`operation_state`, `job_id`, and `supplied_input_id` describe the newest
-processing attempt. To wait for a retry, match its operation ID and wait for its
-operation state to become `succeeded` or `failed`. The separate `coverage_state`
-preserves the last successful transcript's coverage while a retry is pending or
-fails. Revoking that transcript's occurrence makes its coverage `stale`. Before
-any successful processing, coverage describes the current attempt. Media
-processing requires a profile with a rendition provider. Profiles that only
-produce embeddings are rejected.
+queues work only when the exact processing consent is still valid, then returns
+without waiting for the provider, and the daemon resumes queued work after a
+restart. In `media status`, `operation_id`, `operation_state`, `job_id`, and
+`supplied_input_id` describe the newest processing attempt. To wait for a
+retry, match its operation ID and wait until its operation state becomes
+`succeeded` or `failed`. The separate `coverage_state` keeps the last
+successful transcript's coverage while a retry is pending or fails, and
+revoking that transcript's occurrence makes its coverage `stale`. Before any
+successful processing, coverage describes the current attempt. Media processing
+requires a profile with a rendition provider; profiles that only produce
+embeddings are rejected.
 
-`media transcript` reads one retained transcript through the daemon.
-Both version flags are required so a newer recording cannot be accepted by
-accident. The JSON result keeps `evidence_state`, `coverage_state`, and
-`operation_state` separate. Only a `ready` evidence state includes transcript
-units. Units keep an optional `time_span` and speaker, and the origin
-identifies supplied versus generated evidence. Ready transcripts include
-`build_id`, and supplied transcripts also include `supplied_input_id`. See
+`media transcript` reads one retained transcript through the daemon. Both
+version flags are required so a newer recording cannot be accepted by accident.
+The JSON result keeps `evidence_state`, `coverage_state`, and `operation_state`
+separate, and only a `ready` evidence state includes transcript units. Units
+keep an optional `time_span` and speaker, and the origin identifies supplied
+versus generated evidence. Ready transcripts include `build_id`, and supplied
+transcripts also include `supplied_input_id`. See
 [how to verify search attribution](agents/integration.md#read-an-exact-media-transcript).
 
-Remote references submitted by the CLI are read from `--reference-file PATH`,
-or from stdin with `--reference-file -`. They are never accepted as a
-command-line URL. CLI reference submission uses the
-configured-origin policy, performs no network access by itself, and rejects
-processing requests. The CLI has no canonical URL option. Submit a canonical
-URL for the generic manual path through the HTTP or embedded API, then use the
-CLI for `--kind media`, transcript import, and retry. Acquisition planning,
-grant, and revoke commands are available under `media acquisition-plan` and
-`media consent`. A daemon without a registered acquisition policy reports the
-capability as unavailable.
+The CLI reads remote references from `--reference-file PATH`, or from stdin
+with `--reference-file -`, and never accepts them as a command-line URL. CLI
+reference submission uses the configured-origin policy, performs no network
+access by itself, and rejects processing requests. The CLI has no canonical URL option; submit a canonical URL for the generic
+manual path through the HTTP or embedded API, then use the CLI for
+`--kind media`,
+transcript import, and retry. Acquisition planning, grant, and revoke commands
+live under `media acquisition-plan` and `media consent`. A daemon without a
+registered acquisition policy reports the capability as unavailable.
 
 ## docbank watch
 
@@ -2018,18 +2151,22 @@ capability as unavailable.
 docbank watch list [--json]
 ```
 
-Lists the daemon's effective watched-inbox configuration in stable name order:
+List the daemon's effective watched-inbox configuration in stable name order:
 the machine-local source, virtual-tree destination, complete settle window,
-minimum source age (`0s` when disabled), scan interval, exclusion count, and
-current runner state. `TAGS` shows quoted tag names and any unavailable-tag error. The final `PROCESSING` column shows the profile and any consent wait or status error, or `-` without a profile. Mapped watches show comma-separated `family=profile` entries with a separate consent note for each route.
-A waiting watcher shows `idle`; it shows `running` while
-ingesting a file. Human output quotes source and destination paths so
-terminal control characters cannot disguise them. `--json` includes the
-complete exclusion rules, the corresponding job record, and optional `processing` status for agents and automation.
-See the [watch API](architecture/http-api.md#background-job-status) for its fields.
+minimum source age with `0s` when disabled, scan interval, exclusion count, and
+current runner state. `TAGS` shows quoted tag names and any unavailable-tag
+error, and the final `PROCESSING` column shows the profile and any consent wait
+or status error, or `-` without a profile. Mapped watches show comma-separated
+`family=profile` entries with a separate consent note for each route. A waiting
+watcher shows `idle`, and it shows `running` while ingesting a file. Human
+output quotes source and destination paths so terminal control characters
+cannot disguise them. `--json` includes the complete exclusion rules, the
+corresponding job record, and optional `processing` status for agents and
+automation. See the [watch API](architecture/http-api.md#background-job-status)
+for its fields.
 
-This command is inspection only. Edit `config.toml` and restart the daemon to
-change a watch.
+This command is inspection only. To change a watch, edit `config.toml` and
+restart the daemon.
 
 ## docbank update
 
@@ -2037,22 +2174,22 @@ change a watch.
 docbank update [--check] [--yes] [--force]
 ```
 
-Checks GitHub for a newer release and installs it unless `--check` is set.
-During installation, the command stops a running daemon, replaces the binary,
-and restarts from the new executable. If installation fails, it restarts the
-old daemon.
+Check GitHub for a newer release and install it unless `--check` is set. During
+installation, `update` stops a running daemon, replaces the binary, and
+restarts from the new executable. If installation fails, it restarts the old
+daemon.
 
 - `--check` prints the current and latest versions without installing.
-- `--yes` skips confirmation. It is required for noninteractive installation.
-- `--force` fetches release metadata again and permits replacing an unversioned
-  development build. It does not reinstall an already-current release.
+- `--yes` skips confirmation and is required for noninteractive installation.
+- `--force` fetches release metadata again and allows replacing an unversioned
+  development build, without reinstalling an already-current release.
 
-The command refuses a release without a published SHA256 checksum.
+The command refuses a release that has no published SHA256 checksum.
 
 A binary built for a package manager such as Homebrew never replaces itself.
-The command refuses to install and names the package manager's upgrade
+Instead, `update` refuses to install and names the package manager's upgrade
 command, such as `brew upgrade docbank`. `--check` still reports the latest
-release, with the same guidance.
+release with the same guidance.
 
 ## docbank openapi
 
@@ -2060,10 +2197,10 @@ release, with the same guidance.
 docbank openapi
 ```
 
-Prints the HTTP API's OpenAPI document as YAML. It needs no running daemon
-and no vault: routes are registered
-against an offline server instance and never invoked. Use it for agents and
-API client generation. See [HTTP API](architecture/http-api.md).
+Print the HTTP API's OpenAPI document as YAML. This command needs no running
+daemon and no vault; it registers routes against an offline server instance
+without invoking them. Use it for agents and API client generation. See
+[HTTP API](architecture/http-api.md).
 
 ## docbank version
 
@@ -2071,12 +2208,12 @@ API client generation. See [HTTP API](architecture/http-api.md).
 docbank version
 ```
 
-Prints the build version and commit (`dev (unknown)` for untagged local
-builds; release builds inject both via `-ldflags`).
+Print the build version and commit. Untagged local builds show `dev (unknown)`,
+and release builds inject both with `-ldflags`.
 
 ## Environment variables
 
-`DOCBANK_HOME` selects the vault (see [Configuration](configuration.md)).
-`DOCBANK_LOG_LEVEL` sets the daemon or MCP process log level (`debug`, `info`,
-`warn`, `error`; default `info`) for `docbank daemon run`, background-spawned
-daemons, and `docbank mcp` diagnostics.
+`DOCBANK_HOME` selects the vault; see [Configuration](configuration.md).
+`DOCBANK_LOG_LEVEL` sets the daemon or MCP process log level to `debug`,
+`info`, `warn`, or `error`, defaulting to `info`, for `docbank daemon run`,
+background-spawned daemons, and `docbank mcp` diagnostics.

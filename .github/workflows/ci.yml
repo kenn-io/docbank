@@ -51,9 +51,12 @@ jobs:
               # Keep document/**: make docs-build runs its bridge contract tests.
               - '!{README.md,AGENTS.md,CLAUDE.md,cmd/**,docbank/**,internal/**,mcp/**,report/**,sqlite/**}'
 
+  # Merge groups skip PostgreSQL, pure-Go SQLite, macOS, and Windows. Every PR
+  # runs them before it can be queued; see
+  # docs/internal/development.md#merge-queue-checks.
   postgres:
     needs: changes
-    if: &go-changed ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go')) }}
+    if: &go-changed-outside-queue ${{ github.event_name != 'merge_group' && !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go')) }}
     name: PostgreSQL ${{ matrix.version }} metadata
     runs-on: ubuntu-26.04
     # Cold builds and all test suites share this job's budget.
@@ -275,7 +278,18 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Require an upgrade path and exact fixture for every release
+      - name: Set up Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Restore Go caches
+        uses: $/.github/actions/go-cache-restore
+        with:
+          group: linux-cgo
+
+      - name: Check every release tag's storage schema
         run: bash scripts/check-released-schemas.sh
 
   report-export-browser:
@@ -359,7 +373,7 @@ jobs:
 
   test:
     needs: changes
-    if: *go-changed
+    if: &go-changed ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go')) }}
     name: Linux tests
     runs-on: ubuntu-26.04
     timeout-minutes: 38
@@ -477,7 +491,7 @@ jobs:
 
   purego:
     needs: changes
-    if: *go-changed
+    if: *go-changed-outside-queue
     name: Pure-Go SQLite
     runs-on: ubuntu-26.04
     timeout-minutes: 36
@@ -523,7 +537,7 @@ jobs:
 
   macos:
     needs: changes
-    if: *go-changed
+    if: *go-changed-outside-queue
     # Exercises the kqueue watch backend and other darwin-only code paths.
     name: macOS tests
     runs-on: macos-26
@@ -617,7 +631,7 @@ jobs:
 
   windows:
     needs: changes
-    if: *go-changed
+    if: *go-changed-outside-queue
     env:
       LLVM_MINGW_VERSION: "20260602"
       LLVM_MINGW_NAME: llvm-mingw-20260602-ucrt-aarch64

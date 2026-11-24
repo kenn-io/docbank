@@ -5,41 +5,43 @@ description: A guided model of vaults, document identity, immutable content, sto
 
 # How Docbank works
 
-Docbank lets people and agents organize documents without rewriting their
-stored bytes. It presents directories and files as a virtual tree: paths live
-in a database, while document bytes live in a separate content store.
+Docbank lets you and your agents organize documents without rewriting their
+stored bytes. It separates where a document appears from where its bytes live,
+presenting directories and files as a virtual tree backed by a database and a
+separate content store.
 
 Two parts make this work:
 
-- **SQLite metadata** describes the tree people and agents work with: stable
-  document identity, paths, versions, tags, provenance, trash state, and
-  search indexes.
-- **Immutable content storage** holds the bytes, addressed by their SHA-256
-  digest and stored either as individual files or inside sealed pack files.
+- **SQLite metadata.** Holds the tree you work with, including stable document
+  identity, paths, versions, tags, provenance, trash state, and search indexes.
+- **Immutable content storage.** Holds the document bytes, addressed by their
+  SHA-256 digest and stored either as individual files or inside sealed pack
+  files.
 
-A move changes metadata instead of copying file bytes. Identical content
-shares storage, and each edit keeps the earlier version. Backup can rebuild
-the same document collection even when the restored storage layout differs.
+When you move a document, Docbank updates metadata instead of copying bytes.
+Identical content shares storage, and each edit keeps the earlier version.
+Backups can rebuild the same document collection even when the restored storage
+layout differs.
 
-Docbank does not assume one global archive per machine. A person or application
-may operate many independent vaults, each with its own identity, metadata,
-content, policy, and backup history.
+You do not have to keep everything in one global archive on a machine. You or
+an application can run many independent vaults, each with its own identity,
+metadata, content, policy, and backup history.
 
 ## The model in one minute
 
-Five ideas explain most of the system:
+Five ideas explain how the pieces fit together:
 
-1. A **vault** is one independent document collection. Its database and content
-   store are one logical unit.
-2. A **node** is a directory or file with a stable numeric ID. Its path can
-   change without changing which document it is.
-3. A file's **content version** is an immutable historical record with its own
-   random UUID. Editing or reverting creates a new version. It never rewrites
-   an old one.
-4. A **blob** is the byte content of one or more versions. Its SHA-256 digest is
-   its identity, so byte-identical files share storage automatically.
-5. The **catalog** decides which bytes are authoritative and where Docbank may
-   read them. A loose file or pack entry found on disk has no authority by
+1. A **vault** is an independent document collection whose database and content
+   store act as one logical unit.
+2. A **node** is a directory or file with a stable numeric ID. You can change
+   its path without changing which document it is.
+3. A **content version** is an immutable historical record of a file, with its
+   own random UUID. When you edit or revert a file, Docbank creates a new
+   version and never rewrites an old one.
+4. A **blob** is the byte content shared by one or more versions. Its SHA-256
+   digest is its identity, so byte-identical files share storage automatically.
+5. The **catalog** decides which bytes are authoritative and where Docbank can
+   read them. A loose file or pack entry sitting on disk has no authority by
    itself.
 
 ```mermaid
@@ -56,18 +58,18 @@ flowchart LR
     CATALOG -->|"loose or packed"| CONTENT
 ```
 
-Docbank follows these links in order:
+To read a file by path, Docbank follows four steps in order:
 
 1. Resolve the path to a node.
 2. Read the file node's current version ID.
-3. Read the version's content digest.
-4. Ask the catalog which stored copy may supply those bytes.
+3. Read that version's content digest.
+4. Ask the catalog which stored copy can supply those bytes.
 
-A name or a stray file cannot authorize a read on its own.
+Neither a path name nor a stray file on disk can authorize a read on its own.
 
 ## Identity, addressing, and authority
 
-These values answer different questions and are not interchangeable:
+These values answer different questions, and you cannot swap one for another:
 
 | Value | What it answers | Stability and authority |
 | --- | --- | --- |
@@ -79,24 +81,26 @@ These values answer different questions and are not interchangeable:
 | Blob digest | Which exact bytes are these? | SHA-256 of the content; identical bytes have one identity |
 | Catalog membership and mapping | May Docbank read this content, and from where? | A `blobs` row grants authority; an optional pack mapping selects packed rather than loose storage |
 
-This is why an automation should remember node and version IDs, not paths
-alone. It is also why finding a correctly named file under `blobs/` does not
-make that file part of the vault. Only a committed catalog reference does.
+Because paths can change, any automation you write should store node and
+version IDs rather than paths alone. Likewise, finding a correctly named file
+under `blobs/` does not make that file part of the vault; only a committed
+catalog reference does.
 
 ## How a write becomes authoritative
 
-Every content-write surface follows one ordering rule: prove and publish bytes
-before committing metadata that names them.
+Every way of writing content follows the same rule. Docbank proves and
+publishes the bytes before it commits any metadata that refers to them:
 
-1. Docbank streams the source into private staging while counting and hashing
-   it. A verified upload or replacement must declare the expected size and
-   digest. A mismatch ends the operation without granting node authority.
-2. The content store syncs the completed bytes, closes them, publishes them
-   under their digest, and syncs the containing directory.
+1. Docbank streams the incoming data into private staging while counting and
+   hashing it. If you use a verified upload or content replacement, you must
+   declare the expected size and digest. A mismatch ends the operation without
+   granting node authority.
+2. The content store syncs the completed bytes, closes the file, publishes it
+   under its digest, and syncs the containing directory.
 3. One SQLite transaction creates or updates the node, records the immutable
    content version, and grants the blob catalog authority.
 
-The entry points differ in what the caller can know and what evidence comes
+The write endpoints differ in what you pass in and what confirmation you get
 back:
 
 | Write surface | Caller contract | Success evidence |
@@ -105,34 +109,35 @@ back:
 | Remote `/uploads` | Must declare destination, size, and SHA-256 before streaming one file | Status, committed node projection, and independently computed size and digest |
 | Content replacement | Must declare size and SHA-256 and supply `If-Match` for the stable node | Committed node and version, computed identity, resulting revision, and ETag |
 
-If the process fails before step 3, durable bytes may exist without a database
-reference. They are harmless orphans: normal reads cannot see them, and garbage
-collection can reclaim them later. The ordering prevents the reverse state: a
-committed version whose bytes were never durably published.
+If the process fails before step 3, durable bytes can sit on disk without a
+database reference. Those files are harmless orphans that normal reads cannot
+see, and garbage collection can reclaim them later. This write order prevents
+the opposite problem, where a committed version points to bytes that were never
+durably published.
 
-Tree mutations such as move, rename, trash, restore, tag assignment, reversion,
-and version pruning happen in SQLite transactions. Path-based mutation
-endpoints resolve the path and perform the change in the same transaction, so
-a concurrent move cannot silently redirect the operation.
+Tree changes such as move, rename, trash, restore, tag assignment, reversion,
+and version pruning run inside SQLite transactions. Path-based mutation
+endpoints resolve the path and apply the change in the same transaction, so a
+concurrent move cannot silently redirect your operation.
 
 ## How a read is proved
 
-A read walks the authority chain in the opposite direction:
+When you read a file, Docbank walks the same authority chain in reverse:
 
 1. Resolve a path or node ID to a file node.
 2. Select its current version, or address a historical version directly.
-3. Resolve that version's digest through the catalog.
+3. Look up that version's digest in the catalog.
 4. Stream the authorized loose blob or pack entry while verifying its recorded
    framing, size, and SHA-256 digest.
 
-Receiving some bytes is not yet proof of a complete read. The typed clients
+Receiving partial bytes does not prove a complete read. The typed clients
 accept content only after reaching terminal EOF and validating the terminal
-`Content-Digest` trailer. Embedded streaming follows the same rule: an early
-close is incomplete verification, not success.
+`Content-Digest` trailer. Embedded streaming applies the same rule, treating an
+early close as incomplete verification rather than success.
 
 ## Editing, deletion, and reclamation are separate
 
-Docbank keeps logical decisions distinct from physical storage maintenance:
+Docbank separates logical document actions from physical storage maintenance:
 
 | Operation | What changes | What does not happen yet |
 | --- | --- | --- |
@@ -144,89 +149,94 @@ Docbank keeps logical decisions distinct from physical storage maintenance:
 | GC | Removes unreferenced catalog authority and loose bytes | Dead entries inside an immutable pack do not shrink that pack |
 | Repack | Copies live pack entries into new packs and retires sparse old packs | Logical document history is not changed |
 
-These separate steps give users time to undo a deletion. Docbank retains every
-edit by default. Users and agents choose when to prune history, empty trash,
-and reclaim space from packs. [Editing and versions](editing-and-versions.md) and
-[Trash, garbage collection, repack, and verify](../usage/trash-and-gc.md) give the command-level
-contracts.
+Keeping these steps separate gives you time to undo a deletion. Docbank retains
+every edit by default, and you or your agents decide when to prune history,
+empty trash, and reclaim space from packs. For the command-level contracts, see
+[Editing and versions](editing-and-versions.md) and
+[Trash, garbage collection, repack, and verify](../usage/trash-and-gc.md).
 
-Metadata extracted from original file formats is separate from this authority
-chain. It is immutable evidence tied to a content digest and exact version. It
-does not replace the original. [Source metadata](source-metadata.md) explains
-the typed field contract, supported media formats, and current size limit.
+Metadata extracted from original file formats sits outside this authority
+chain. It is immutable evidence tied to a content digest and an exact version,
+and it never replaces the original file. See
+[Source metadata](source-metadata.md) for the typed field contract, supported
+media formats, and current size limit.
 
 ## One logical content store can use several physical locations
 
-New content is published as a loose, digest-named file. Packing later combines
-eligible small blobs into sealed immutable pack files, reducing filesystem
-enumeration and backup overhead. The catalog changes representation without
-changing the blob digest, version identity, or document path.
+Docbank publishes new content as a loose file named by its digest. Packing
+later combines eligible small blobs into sealed, immutable pack files to reduce
+filesystem enumeration and backup overhead. When the catalog switches a blob
+from loose to packed, the blob digest, version identity, and document path stay
+the same.
 
 Every ingest first lands in the vault's fixed local filesystem primary. A vault
-may also authorize verified copies in secondary filesystem or S3-compatible
-stores. Paths, endpoints, buckets, credentials, and observed availability stay
-outside portable document metadata. The catalog records stable store identity
-and which locations have been independently verified for each SHA-256 object.
+can also authorize verified copies in secondary filesystem or S3-compatible
+stores. Local details such as paths, endpoints, buckets, credentials, and
+observed availability stay outside portable document metadata. Instead, the
+catalog records each store's stable identity and which locations hold an
+independently verified copy of each SHA-256 object.
 
-Readers therefore do not care whether content is loose or packed, local or
-remote. They select a currently usable catalog-authorized candidate and verify
-the complete decoded identity. A failed stream is never silently continued
-from another location, because bytes from the first candidate are not yet
+Because the catalog handles representation and location, readers do not need to
+care whether content is loose or packed, local or remote. A reader picks a
+currently usable catalog-authorized candidate and verifies the complete decoded
+bytes. If a stream fails partway through, Docbank never silently continues from
+another location, because the bytes from the first candidate are not yet
 trusted. A later retry can select a different healthy copy.
 
-Placement manages capacity. It is not synchronization or backup. Backup
-captures every logical blob from one verified candidate and does not record
-the source topology. Default restore rebuilds a fresh local primary. See
-[Multi-store storage](../usage/storage.md) for registration, placement,
-fencing, repair, and restore mapping, and
+Placement manages storage capacity rather than acting as synchronization or
+backup. A backup captures every logical blob from one verified candidate and
+omits the source store topology, and a default restore rebuilds a fresh local
+primary. See [Multi-store storage](../usage/storage.md) for registration,
+placement, fencing, repair, and restore mapping, and
 [Loose and packed content](packed-storage.md) for representation limits and the
 boundary between Docbank policy and Kit mechanics.
 
 ## One owner, two integration modes
 
-Exactly one process owns an open vault at a time:
+Only one process owns an open vault at a time:
 
-- In **daemon mode**, `docbank daemon run` owns SQLite and content storage. The
-  CLI is a thin authenticated HTTP client, as are other local tools and agents.
-  Discovery and auto-start do not create a second storage owner.
-- In **embedded mode**, one Go application owns a separately rooted vault
-  through the Go package. It uses the same metadata, content authority, verified
-  reads, locking, and packing rules without running a sidecar daemon.
+- **Daemon mode.** `docbank daemon run` owns SQLite and content storage. The
+  CLI and other local tools or agents connect as thin authenticated HTTP clients.
+  Discovery and auto-start never create a second storage owner.
+- **Embedded mode.** A single Go application owns a separately rooted vault
+  through the Go package. It applies the same metadata, content authority,
+  verified reads, locking, and packing rules without running a sidecar daemon.
 
-A vault is not shared between the two modes concurrently. Hierarchical locks
-also prevent a daemon or restore from operating inside an already owned vault
-tree. [Ownership and concurrency](locking.md), [Daemon and process model](daemon.md),
-and [Embed in Go](../embedding.md) describe those boundaries.
+You cannot share a vault between both modes at the same time. Hierarchical
+locks also stop a daemon or a restore from operating inside a vault tree that
+another process already owns. See [Ownership and concurrency](locking.md),
+[Daemon and process model](daemon.md), and [Embed in Go](../embedding.md) for
+details.
 
 ## Backup reconstructs meaning, not a live database copy
 
-Snapshots are immutable and incremental. Embedded applications can forget
-selected snapshots and reclaim repository data that no surviving snapshot
-uses. Each snapshot contains a complete deterministic JSONL description of the
-logical vault plus every retained content and derivative blob. Unchanged
-objects are reused by digest across snapshots.
+Backup snapshots are immutable and incremental. Embedded applications can
+forget selected snapshots and reclaim repository data that no surviving snapshot
+uses. Each snapshot stores a complete deterministic JSONL description of the
+logical vault along with every retained content and derivative blob, reusing
+unchanged objects by digest across snapshots.
 
-Restore publishes a vault only after it verifies the repository, imports the
+Before a restore publishes a vault, it verifies the repository, imports the
 logical metadata, rebuilds search and content locations, and checks the result.
-The backup does not require the restored vault to use the source's loose or
-packed layout. [Backup and recovery](backup.md) owns the capture and restore
+The restored vault does not have to match the source vault's loose or packed
+layout. See [Backup and recovery](backup.md) for the full capture and restore
 sequence, including failure and publication rules.
 
 ## Integrity boundary
 
-Docbank is designed to detect truncation, corruption, stale writes, malformed
-metadata, and incomplete recovery within its application and storage
-boundaries:
+Within its application and storage boundaries, Docbank is designed to detect
+truncation, corruption, stale writes, malformed metadata, and incomplete
+recovery:
 
-- SHA-256 identifies bytes.
-- Revisions and ETags bind mutations to observed state.
-- Catalog authority excludes stray storage.
-- Full verification reads and hashes content.
-- Restore validates the logical relations before publication.
+- SHA-256 digests identify stored bytes.
+- Revisions and ETags bind mutations to the state you observed.
+- Catalog authority excludes stray files on disk.
+- Full verification reads and hashes stored content.
+- Restore validates logical relations before publishing a vault.
 
-These mechanisms do not make a host administrator, compromised process, or
-someone able to rewrite both data and expected evidence harmless. The
-[Integrity and trust](integrity.md) page states what is proved, when it is proved,
+These checks do not defend against a host administrator, a compromised process,
+or anyone able to rewrite both the stored data and its expected evidence. See
+[Integrity and trust](integrity.md) for what Docbank proves, when it proves it,
 and which threats require independent evidence.
 
 ## Where to go next
@@ -243,6 +253,7 @@ and which threats require independent evidence.
 | What integrity checks do and do not establish | [Integrity and trust](integrity.md) |
 | Permanent retention, history, and verification | [Audited history](audited-history.md) |
 
-The [Roadmap](../roadmap.md) gives high-level product direction. These pages
-explain implemented behavior and durable design intent. Planned behavior is
-marked as planned. They do not track implementation work or status.
+For high-level product direction, see the [Roadmap](../roadmap.md). These
+architecture pages explain implemented behavior and durable design intent, with
+planned behavior marked as planned, rather than tracking implementation work or
+status.

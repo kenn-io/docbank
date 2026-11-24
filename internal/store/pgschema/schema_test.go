@@ -7,6 +7,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestEmbeddedMigrationChainValid(t *testing.T) {
+	t.Parallel()
+	require.NoError(t, migrationLoadErr)
+	require.NotEmpty(t, migrations)
+}
+
 func TestRejectBrokenMigrationChains(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
