@@ -150,6 +150,65 @@ async function compareSource(site, relative, source, errors) {
 }
 
 
+const unreleasedNote = "Not in the latest release yet";
+const entities = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+
+
+function plainText(html) {
+  return html
+    .replace(/<[^>]*>/g, "")
+    .replace(/&(?:#(\d+)|#x([\da-f]+)|(\w+));/gi, (match, decimal, hex, name) =>
+      decimal || hex ? String.fromCodePoint(decimal ? Number(decimal) : parseInt(hex, 16)) : entities[name] ?? match)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+
+// The release check reads only the Markdown copy, so each HTML example must
+// appear there, under the unreleased note in both copies or in neither.
+function compareWebsiteExamples(html, markdown, htmlName, markdownName, errors) {
+  const noted = (own, previous) => own.replace(/^(?:[-*+]|\d+[.)])\s+/, "").startsWith(unreleasedNote) || previous === unreleasedNote;
+  const normalize = (value) => value.replace(/\s+/g, " ").trim();
+  const visibleMarkdown = markdown.replace(/<!--[\s\S]*?-->/g, (comment) => comment.replace(/[^\n]/g, ""));
+  const protectedFences = visibleMarkdown.replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?^ {0,3}\1[ \t]*(?=\r?$)/gm, (fence) => fence.replace(/\n(?=\s*\n)/g, "\v"));
+  const rawBlocks = protectedFences.split(/\n\s*\n/).map((block) => block.replace(/\v/g, "\n"));
+  const blocks = rawBlocks.map(normalize);
+  const examples = rawBlocks.map((block) => [...block.matchAll(/^ {0,3}(`{3,}|~{3,})[^\n]*\n([\s\S]*?)\n {0,3}\1|(?<!`)(`+)(?!`)([\s\S]*?)(?<!`)\3(?!`)/gm)].map((match) => normalize(match[2] ?? match[4])));
+  for (const match of html.matchAll(/<(code|pre)\b[^>]*>([\s\S]*?)<\/\1>/gi)) {
+    const example = plainText(match[2]);
+    if (!match[2].split("\n").some((line) => /^(?:[$>]\s*)?(?:[A-Za-z_]\w*=\S*\s+)*(?:\.\\)?docbank(?:\s|$)/.test(plainText(line)) || /^(?:[$>]\s*)?(?:[A-Za-z_]\w*=\S*\s+)*(?:\.\\)?docbank\.exe(?:\s|$)/i.test(plainText(line)))) continue;
+    const before = html.slice(0, match.index).split(/<\/?(?:p|li)\b[^>]*>/i);
+    const own = before.pop();
+    const previous = /<\/(?:code|pre)\s*>/i.test(own) ? "" : before.map(plainText).filter(Boolean).at(-1);
+    const htmlNoted = noted(plainText(own), previous) || /<p\b[^>]*>\s*Not in the latest release yet\s*<\/p>\s*<(?:ul|ol)\b[^>]*>(?:(?!<\/(?:ul|ol)\s*>)[\s\S])*$/i.test(html.slice(0, match.index));
+    const candidates = examples.flatMap((entries, i) => entries.includes(example) ? [i] : []);
+    if (candidates.length === 0) {
+      errors.push(`${htmlName}: example ${JSON.stringify(example)} is missing from ${markdownName}`);
+    } else if (!candidates.some((i) => noted(blocks[i], blocks[i - 1]) === htmlNoted)) {
+      errors.push(`${htmlName} and ${markdownName}: ${JSON.stringify(example)} has an unreleased note only in ${htmlNoted ? htmlName : markdownName}`);
+    }
+  }
+  for (const match of html.matchAll(/<([a-z][\w-]*)\b([^>]*)>\s*<code\b[^>]*>([\s\S]*?)<\/code>/gi)) {
+    const command = attributes(match[2]).get("data-command");
+    if (command !== undefined && plainText(command) !== plainText(match[3])) {
+      errors.push(`${htmlName}: data-command differs from the displayed example`);
+    }
+  }
+  const exampleTag = /<(?:code|pre)\b/i;
+  for (const match of html.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)) {
+    const value = plainText(match[1]);
+    if (!value.startsWith(unreleasedNote) || exampleTag.test(match[1])) continue;
+    const next = html.slice(match.index + match[0].length).match(/^\s*<(p|pre|ul|ol)\b[^>]*>([\s\S]*?)<\/\1>/i);
+    if (value !== unreleasedNote || !next || (next[1].toLowerCase() !== "pre" && !exampleTag.test(next[2]))) {
+      errors.push(`${htmlName}: put the unreleased note directly above an example`);
+    }
+  }
+  if (blocks.some((block, i) => block.startsWith(unreleasedNote) && !block.includes("`") && (block !== unreleasedNote || /^\|/.test(blocks[i + 1] ?? "") || !/`[^`]+`|^```|^~~~/.test(blocks[i + 1] ?? "")))) {
+    errors.push(`${markdownName}: put the unreleased note directly above an example`);
+  }
+}
+
+
 export async function verifySite({ site, sources }) {
   const errors = [];
   const files = await filesUnder(site);
@@ -228,6 +287,10 @@ export async function verifySite({ site, sources }) {
     if (!fileSet.has(rendered)) errors.push(`${relative}: missing HTML route ${rendered}`);
     if (relative === "index.md" || relative === "guide.md") {
       await compareSource(site, relative, path.join(sources.website, relative), errors);
+      if (fileSet.has(rendered)) {
+        const read = (name) => readFile(path.join(site, ...name.split("/")), "utf8");
+        compareWebsiteExamples(await read(rendered), await read(relative), rendered, relative, errors);
+      }
     } else if (relative.startsWith("docs/")) {
       const sourceRelative = relative.slice("docs/".length);
       await compareSource(site, relative, path.join(sources.docs, sourceRelative), errors);

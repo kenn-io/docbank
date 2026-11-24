@@ -104,6 +104,48 @@ test("accepts complete routes, Markdown peers, links, and assets", async (t) => 
 });
 
 
+for (const [name, html, markdown, error] of [
+  ["missing example", "<p><code>docbank next</code></p>", "# Guide\n", /guide\/index\.html: example.*missing from guide\.md/],
+  ["partial example", "<p><code>docbank search --j</code></p>", "`docbank search --json`\n", /example.*missing from guide\.md/],
+  ["wrapped code span", "<p><code>docbank document list</code></p>", "`docbank document\nlist`\n", null],
+  ["multi-backtick code span", "<p><code>docbank search `title`</code></p>", "``docbank search `title` ``\n", null],
+  ["example in HTML comment", "<p><code>docbank tag</code></p>", "<!-- `docbank tag` -->\n", /example.*missing from guide\.md/],
+  ["product name in code", "<p>Use the <code>Docbank API</code>.</p>", "Use the API.\n", null],
+  ["command name within prose", "<p><code>the docbank command</code></p>", "The command.\n", null],
+  ["env-prefixed HTML-only", "<p><code>DOCBANK_HOME=/tmp/example docbank future-command</code></p>", "# Guide\n", /example.*missing from guide\.md/],
+  ["matching env-prefixed command", "<p><code>DOCBANK_HOME=/tmp/example docbank search</code></p>", "`DOCBANK_HOME=/tmp/example docbank search`\n", null],
+  ["bare command", "<p><code>docbank</code></p>", "# Guide\n", /example.*missing from guide\.md/],
+  ["Windows executable", "<p><code>docbank.exe future</code></p>", "# Guide\n", /example.*missing from guide\.md/],
+  ["uppercase Windows executable", "<p><code>DOCBANK.EXE future</code></p>", "# Guide\n", /example.*missing from guide\.md/],
+  ["command after comment", "<pre><code># install\ndocbank bogus</code></pre>", "# Guide\n", /example.*missing from guide\.md/],
+  ["shell prompt", "<pre><code>$ docbank bogus</code></pre>", "# Guide\n", /example.*missing from guide\.md/],
+  ["relative Windows executable", "<code>.\\docbank.exe bogus</code>", "# Guide\n", /example.*missing from guide\.md/],
+  ["copy command differs", '<div data-install-command data-command="docbank processing future"><code>docbank tag</code></div>', "`docbank tag`\n", /data-command/],
+  ["note does not cover the next example", "<p>Not in the latest release yet</p><p><code>docbank first</code><code>docbank second</code></p>", "Not in the latest release yet\n\n`docbank first`\n\nNot in the latest release yet\n\n`docbank second`\n", /unreleased note only in guide\.md/],
+  ["second example without a note", "<p>Not in the latest release yet</p><p><code>docbank first</code><code>docbank second</code></p>", "Not in the latest release yet\n\n`docbank first`\n\n`docbank second`\n", null],
+  ["blank lines in fenced example", "<pre><code>docbank first\n\ndocbank second</code></pre>", "```sh\ndocbank first\n\ndocbank second\n```\n", null],
+  ["note only in Markdown", "<p><code>docbank next</code></p>", "Not in the latest release yet\n\n`docbank next`\n", /unreleased note only in guide\.md/],
+  ["note only in HTML", "<p>Not in the latest release yet</p><p><code>docbank next</code></p>", "`docbank next`\n", /unreleased note only in guide\/index\.html/],
+  ["notes in example paragraph", "<p>Not in the latest release yet: <code>docbank next</code></p>", "Not in the latest release yet: `docbank next`\n", null],
+  ["notes in list item", "<ul><li>Not in the latest release yet: <code>docbank next</code></li></ul>", "- Not in the latest release yet: `docbank next`\n", null],
+  ["note before command list", "<p>Not in the latest release yet</p><ul><li><code>docbank first</code></li><li><code>docbank second</code></li></ul>", "Not in the latest release yet\n\n- `docbank first`\n- `docbank second`\n", null],
+  ["orphan note", "<p>Not in the latest release yet</p><p>Other text</p>", "# Guide\n", /put the unreleased note directly above an example/],
+  ["HTML note with trailing text", "<p>Not in the latest release yet: soon</p><p><code>docbank next</code></p>", "`docbank next`\n", /put the unreleased note directly above an example/],
+  ["Markdown orphan note", "<p>Other text</p>", "Not in the latest release yet\n\nOther text\n", /put the unreleased note directly above an example/],
+  ["note with prose only", "<p><code>docbank next</code></p>", "Not in the latest release yet: coming soon\n\n`docbank next`\n", /put the unreleased note directly above an example/],
+  ["entities and pre", "<pre><code>docbank a &#38;&#x26; docbank b &amp; c</code></pre>", "```sh\ndocbank a && docbank b & c\n```\n", null],
+]) {
+  test(`website examples: ${name}`, async (t) => {
+    const input = await fixture(t);
+    await write(input.site, "guide/index.html", page({ canonical: "https://docbank.ai/guide/", body: html }));
+    await write(input.site, "guide.md", markdown);
+    await write(input.sources.website, "guide.md", markdown);
+    if (error) await assert.rejects(() => verifySite(input), error);
+    else await verifySite(input);
+  });
+}
+
+
 test("accepts the generated 404 page without a canonical peer", async (t) => {
   const input = await fixture(t);
   const notFound = page({

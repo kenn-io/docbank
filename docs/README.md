@@ -54,7 +54,7 @@ Start with the outcome and name the reader's next action. Explain a technical
 term where the reader first needs it. Keep exact commands, fields, limits,
 authorization checks, and failure behavior when simplifying prose.
 
-CI checks command examples in the README, installers, and public Markdown pages against the latest release, excluding the changelog. Put unreleased examples under a visible `Not in the latest release yet` paragraph, or a `# Not in the latest release yet` comment in installers, and remove the note when the release supports them. Use `<!-- release-commands: expected-failure -->` only for literal sample text that resembles a command, such as the sentinel phrases in [Configuration](configuration.md).
+CI checks command examples in the README, installers, and public Markdown pages against the latest release, excluding the changelog. Put unreleased examples under a visible `Not in the latest release yet` paragraph, or a `# Not in the latest release yet` comment in installers, and remove the note when the release supports them. Use `<!-- release-commands: expected-failure -->` only for literal sample text that resembles a command, such as the sentinel phrases in [Configuration](configuration.md). On the two hand-written website pages, put the note directly above the example in both the Markdown and HTML copies.
 
 Update the section that owns the fact. Use numbered steps for a sequence and
 paragraphs for the reason behind a rule. Keep limitations apart from available
