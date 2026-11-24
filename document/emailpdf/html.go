@@ -371,6 +371,12 @@ func inlineImage(ctx context.Context, out *htmlOutput, n *html.Node, message doc
 		placeholder("unsupported inline image")
 		return nil //nolint:nilerr // Unsupported raster formats are explicit visible placeholders, never rendered unchecked.
 	}
+	// A valid header can front corrupt pixel data. Decode the whole picture
+	// so only pictures that draw are embedded and left out of the inventory.
+	if _, _, err := image.Decode(bytes.NewReader(b)); err != nil {
+		placeholder("unsupported inline image")
+		return nil //nolint:nilerr // A picture that does not decode is a visible placeholder and stays listed.
+	}
 	out.WriteString(`<img alt="` + out.escape(alt) + `" src="data:image/` + format + `;base64,` + base64.StdEncoding.EncodeToString(b) + `">`)
 	if out.embedded == nil {
 		out.embedded = map[string]bool{}

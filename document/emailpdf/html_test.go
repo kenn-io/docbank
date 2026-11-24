@@ -101,6 +101,23 @@ func TestHTMLListsReferencedPicturesItCannotDraw(t *testing.T) {
 	require.Contains(t, inventory, "chart.gif", "a picture the PDF shows only as a placeholder stays in its inventory")
 }
 
+func TestHTMLListsPicturesWithCorruptPixelData(t *testing.T) {
+	var picture bytes.Buffer
+	require.NoError(t, png.Encode(&picture, image.NewGray(image.Rect(0, 0, 2, 2))))
+	header := picture.Bytes()[:33] // Signature and IHDR: the size is readable, the pixels are missing.
+	source := "Content-Type: multipart/related; boundary=r\r\n\r\n" +
+		"--r\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<img src='cid:chart' alt='chart'>\r\n" +
+		"--r\r\nContent-Type: image/png\r\nContent-ID: <chart>\r\nContent-Disposition: inline; filename=chart.png\r\nContent-Transfer-Encoding: base64\r\n\r\n" +
+		base64.StdEncoding.EncodeToString(header) + "\r\n--r--\r\n"
+	got, err := decodedHTML(t, source, "A4")
+	require.NoError(t, err)
+	body, inventory, found := strings.Cut(string(got.Bytes), "Attachment inventory")
+	require.True(t, found)
+	require.Contains(t, body, "[unsupported inline image: chart]")
+	require.NotContains(t, body, "data:image/png")
+	require.Contains(t, inventory, "chart.png")
+}
+
 func TestHTMLRejectsIncompleteAndInvalidPageSize(t *testing.T) {
 	_, err := decodedHTML(t, "Content-Type: multipart/mixed; boundary=missing\r\n\r\ntruncated", "A4")
 	require.Error(t, err)
