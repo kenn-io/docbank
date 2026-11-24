@@ -67,6 +67,14 @@ func TestKqueueRenamedDirectoryReleasesFileWatches(t *testing.T) {
 		_ = n.Drain()
 		enroll(names[(i+1)%2])
 	}
-	assert.LessOrEqual(t, openDescriptorCount(t), baseline+2,
-		"each rename must not leave its %d file watches open", files)
+	// fsnotify's kqueue Close releases watched file descriptors synchronously,
+	// then signals readEvents to close the kqueue and wakeup pipe asynchronously.
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		entries, err := os.ReadDir("/dev/fd")
+		if !assert.NoError(c, err) {
+			return
+		}
+		assert.LessOrEqual(c, len(entries), baseline+2,
+			"each rename must not leave its %d file watches open", files)
+	}, 5*time.Second, 10*time.Millisecond)
 }
