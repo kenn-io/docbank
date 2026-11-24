@@ -107,6 +107,47 @@ func TestDecodeRelatedGroupTreatsInvalidCIDAsMissingButExcludesAttachment(t *tes
 	assert.Zero(t, countDiagnostic(attachment, document.EmailDiagnosticCIDMissing))
 }
 
+func TestDecodeRelatedGroupMarksTheIDsItsHTMLBodyShows(t *testing.T) {
+	raw := "Content-Type: multipart/related; boundary=r\r\n\r\n--r\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p><img src=\"cid:logo%40example.com\"><IMG SRC='CID:chart'><a href=\"cid:unused\">x</a></p>\r\n" +
+		"--r\r\nContent-Type: image/png\r\nContent-ID: <logo@example.com>\r\n\r\nlogo\r\n" +
+		"--r\r\nContent-Type: image/png\r\nContent-ID: <chart>\r\n\r\nchart\r\n" +
+		"--r\r\nContent-Type: image/png\r\nContent-ID: <unused>\r\n\r\nunused\r\n--r--\r\n"
+	result := decodeFixture(t, raw)
+	resources := result.Evidence.Inventory.Messages[0].RelatedGroups[0].Resources
+	require.Len(t, resources, 3)
+	referenced := map[string]bool{}
+	for _, resource := range resources {
+		referenced[*resource.CID] = resource.Referenced
+	}
+	assert.Equal(t, map[string]bool{"logo@example.com": true, "chart": true, "unused": false}, referenced)
+	_, _, err := document.MarshalEmailV1(result.Evidence)
+	require.NoError(t, err)
+}
+
+func TestDecodeRelatedGroupDoesNotMarkAmbiguousOrPlainBodyIDs(t *testing.T) {
+	ambiguous := decodeFixture(t, "Content-Type: multipart/related; boundary=r\r\n\r\n--r\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<img src=cid:x>\r\n--r\r\nContent-ID: <x>\r\nContent-Type: image/png\r\n\r\none\r\n--r\r\nContent-ID: <x>\r\nContent-Type: image/png\r\n\r\ntwo\r\n--r--\r\n")
+	assert.False(t, ambiguous.Evidence.Inventory.Messages[0].RelatedGroups[0].Resources[0].Referenced)
+
+	plain := decodeFixture(t, "Content-Type: multipart/related; boundary=r\r\n\r\n--r\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n<img src=cid:x>\r\n--r\r\nContent-ID: <x>\r\nContent-Type: image/png\r\n\r\none\r\n--r--\r\n")
+	assert.False(t, plain.Evidence.Inventory.Messages[0].RelatedGroups[0].Resources[0].Referenced)
+}
+
+func TestEmailAttachmentPartsLeaveOutPicturesTheHTMLBodyShows(t *testing.T) {
+	raw := "Content-Type: multipart/mixed; boundary=m\r\n\r\n--m\r\nContent-Type: multipart/related; boundary=r\r\n\r\n" +
+		"--r\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<img src=cid:logo><img src=cid:seal>\r\n" +
+		"--r\r\nContent-Type: image/png\r\nContent-ID: <logo>\r\n\r\nlogo\r\n" +
+		"--r\r\nContent-Type: image/png\r\nContent-ID: <seal>\r\nContent-Disposition: attachment; filename=seal.png\r\n\r\nseal\r\n" +
+		"--r\r\nContent-Type: image/png\r\nContent-ID: <unused>\r\n\r\nunused\r\n--r--\r\n" +
+		"--m\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=notice.pdf\r\n\r\n%PDF-1.4\r\n--m--\r\n"
+	result := decodeFixture(t, raw)
+
+	var paths []string
+	for _, part := range document.EmailAttachmentParts(result.Evidence) {
+		paths = append(paths, part.Path)
+	}
+	assert.Equal(t, []string{"1.1.3", "1.1.4", "1.2"}, paths, "the shown logo is left out; an explicit attachment, an unused picture and the PDF stay")
+}
+
 func TestCanonicalRelatedValidationRejectsTamperedScopeCIDOrderAndShape(t *testing.T) {
 	baseResult := decodeFixture(t, "Content-Type: multipart/related; boundary=r\r\n\r\n--r\r\nContent-Type: text/html; charset=utf-8\r\n\r\nhtml\r\n--r\r\nContent-Type: image/png\r\nContent-ID: <x>\r\n\r\nsame\r\n--r\r\nContent-Type: image/png\r\nContent-ID: <x>\r\n\r\nsame\r\n--r--\r\n")
 	encoded, _, err := document.MarshalEmailV1(baseResult.Evidence)
@@ -121,6 +162,9 @@ func TestCanonicalRelatedValidationRejectsTamperedScopeCIDOrderAndShape(t *testi
 		},
 		"missing entry": func(value *document.EmailV1) {
 			value.Inventory.Messages[0].RelatedGroups[0].Resources = []document.EmailResourceV1{}
+		},
+		"referenced ambiguous ID": func(value *document.EmailV1) {
+			value.Inventory.Messages[0].RelatedGroups[0].Resources[0].Referenced = true
 		},
 		"extra sentinel": func(value *document.EmailV1) {
 			value.Inventory.Messages[0].RelatedGroups[0].Resources = append(value.Inventory.Messages[0].RelatedGroups[0].Resources, document.EmailResourceV1{CID: nil, Candidates: []string{}, State: document.EmailResourceMissing})

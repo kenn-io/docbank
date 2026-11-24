@@ -57,7 +57,7 @@ func Recipe() document.EmailRecipeV1 {
 }
 
 func recipeWithLimits(limits document.EmailLimitsV1) document.EmailRecipeV1 {
-	return document.EmailRecipeV1{ContractVersion: document.EmailRecipeContractV1, ImplementationRevision: 3, GoVersion: runtime.Version(), CharsetProfile: "docbank-email-charset/v1", HeaderProfile: "docbank-email-header/v1", FilenameProfile: "docbank-email-filename/v1", BodyProfile: "docbank-email-body-selection/v1", Limits: limits}
+	return document.EmailRecipeV1{ContractVersion: document.EmailRecipeContractV1, ImplementationRevision: 4, GoVersion: runtime.Version(), CharsetProfile: "docbank-email-charset/v1", HeaderProfile: "docbank-email-header/v1", FilenameProfile: "docbank-email-filename/v1", BodyProfile: "docbank-email-body-selection/v1", Limits: limits}
 }
 
 func Decode(ctx context.Context, sourceSHA256 string, sourceSize int64, source io.Reader, spoolParent string) (*Result, error) {
@@ -117,7 +117,9 @@ func decodeWithLimits(ctx context.Context, sourceSHA256 string, sourceSize int64
 	if closeErr != nil {
 		return nil, closeErr
 	}
-	d.finishMessages()
+	if err = d.finishMessages(); err != nil {
+		return nil, err
+	}
 	root := "1"
 	inventory := &document.EmailInventoryV1{State: document.EmailInventoryComplete, RootPath: &root, Parts: d.parts, Messages: d.messages, Diagnostics: []document.EmailDiagnosticV1{}, Termination: nil}
 	if d.termination != nil {
@@ -720,12 +722,14 @@ func (d *decoder) diagnosticAt(code document.EmailDiagnosticCode, operation docu
 	return d.diagnostic(code, operation, path, &index, detail)
 }
 
-func (d *decoder) finishMessages() {
+func (d *decoder) finishMessages() error {
 	// Every declared related container needs a group, including containers
 	// whose boundary, transfer encoding, or budget prevented traversal.
 	for _, part := range d.parts {
 		if part.Media.Declared != nil && *part.Media.Declared == "multipart/related" {
-			d.addRelatedGroup(part.MessagePath, part.Path)
+			if err := d.addRelatedGroup(part.MessagePath, part.Path); err != nil {
+				return err
+			}
 		}
 	}
 	for index := range d.messages {
@@ -752,9 +756,10 @@ func (d *decoder) finishMessages() {
 			message.Diagnostics = append(message.Diagnostics, d.diagnostic(document.EmailDiagnosticBodyUnavailable, document.EmailOperationBodySelection, message.Path, nil, "no message body alternative is available")...)
 		}
 	}
+	return nil
 }
 
-func (d *decoder) addRelatedGroup(messagePath, rootPath string) {
+func (d *decoder) addRelatedGroup(messagePath, rootPath string) error {
 	message := &d.messages[d.messageIndex[messagePath]]
 	group := document.EmailRelatedGroupV1{RootPath: rootPath, Resources: []document.EmailResourceV1{}}
 	partsByPath := make(map[string]*document.EmailPartV1, len(d.parts))
@@ -819,7 +824,42 @@ func (d *decoder) addRelatedGroup(messagePath, rootPath string) {
 			part.Diagnostics = append(part.Diagnostics, d.diagnostic(document.EmailDiagnosticCIDMissing, document.EmailOperationCID, part.Path, nil, "inline related resource has no usable Content-ID")...)
 		}
 	}
+	if err := d.markReferencedResources(message, &group); err != nil {
+		return err
+	}
 	message.RelatedGroups = append(message.RelatedGroups, group)
+	return nil
+}
+
+// markReferencedResources marks the unique IDs the group's HTML body shows
+// with <img src="cid:...">, so attachment lists can leave those pictures out.
+func (d *decoder) markReferencedResources(message *document.EmailMessageV1, group *document.EmailRelatedGroupV1) error {
+	if group.BodyPath == nil {
+		return nil
+	}
+	html := false
+	for _, alternative := range message.Alternatives {
+		if alternative.PartPath == *group.BodyPath && alternative.Kind == document.EmailBodyHTML {
+			html = true
+		}
+	}
+	name := d.artifactFilename(*group.BodyPath, document.EmailArtifactBodyUTF8)
+	if !html || name == "" {
+		return nil
+	}
+	file, err := d.spool.openRegular(name)
+	if err != nil {
+		return err
+	}
+	ids, scanErr := htmlImageContentIDs(file)
+	if err := errors.Join(scanErr, file.Close()); err != nil {
+		return err
+	}
+	for index := range group.Resources {
+		resource := &group.Resources[index]
+		resource.Referenced = resource.State == document.EmailResourceUnique && resource.CID != nil && ids[*resource.CID]
+	}
+	return nil
 }
 
 func nearestRelatedRoot(path, messagePath string, parts map[string]*document.EmailPartV1) string {

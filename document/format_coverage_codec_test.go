@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const qualifiedMetadataFingerprint = "d325514d29d8e8ec9d0ce14c44beade5efeba49f6d9083baebf525118f45f83e"
+const qualifiedMetadataFingerprint = "764170f0fbd26cdfb6c2d6672a4561c82f44755115e8e0b25b4f5cfbe4de09ab"
 
 func TestFormatCoverageCanonicalRoundTripAndRejections(t *testing.T) {
 	record := validFormatCoverageRecord()

@@ -175,9 +175,9 @@ func NormalizeEmailDocumentRelationQuery(q EmailDocumentRelationQuery) (EmailDoc
 	return q, nil
 }
 
-// EmailAttachmentParts uses retained MIME structure. Bodies and multipart
-// containers are excluded; explicit attachments and inline resources remain
-// distinct. Descendants of an attached message are owned by that child email.
+// EmailAttachmentParts uses retained MIME structure. Bodies, multipart
+// containers, and pictures an HTML body shows by content ID are excluded;
+// explicit attachments and other inline resources remain distinct. Descendants of an attached message are owned by that child email.
 // Returned copies inherit encrypted ancestry without changing retained evidence.
 func EmailAttachmentParts(e EmailV1) []EmailPartV1 {
 	parts := []EmailPartV1{}
@@ -190,6 +190,7 @@ func EmailAttachmentParts(e EmailV1) []EmailPartV1 {
 			bodies[a.PartPath] = true
 		}
 	}
+	shown := emailShownInlineParts(e.Inventory.Messages)
 	encrypted := map[string]bool{}
 	for _, p := range e.Inventory.Parts {
 		// Validated inventories put parents before their descendants.
@@ -208,11 +209,27 @@ func EmailAttachmentParts(e EmailV1) []EmailPartV1 {
 			continue
 		}
 		explicit := p.Disposition != nil && strings.EqualFold(*p.Disposition, "attachment")
-		if explicit || p.Path != "1" && !bodies[p.Path] {
+		if explicit || p.Path != "1" && !bodies[p.Path] && !shown[p.Path] {
 			parts = append(parts, p)
 		}
 	}
 	return parts
+}
+
+// emailShownInlineParts returns the parts an HTML body shows by content ID.
+// Mail programs show those pictures in the body instead of listing them.
+func emailShownInlineParts(messages []EmailMessageV1) map[string]bool {
+	shown := map[string]bool{}
+	for _, message := range messages {
+		for _, group := range message.RelatedGroups {
+			for _, resource := range group.Resources {
+				if resource.Referenced && resource.State == EmailResourceUnique && len(resource.Candidates) == 1 {
+					shown[resource.Candidates[0]] = true
+				}
+			}
+		}
+	}
+	return shown
 }
 
 func EmailDocumentPartOutcome(p EmailPartV1) string {

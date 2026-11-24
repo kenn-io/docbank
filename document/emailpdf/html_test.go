@@ -1,10 +1,14 @@
 package emailpdf
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"image"
+	"image/png"
 	"io"
 	"path/filepath"
 	"strings"
@@ -60,6 +64,28 @@ func TestHTMLSanitizerShowsUnsafeResourcesAndExpandedHiddenQuotes(t *testing.T) 
 	for _, forbidden := range []string{"onclick", "display:none", "<script", "<iframe", "src=\"https:", "src=\"data:", "src=\"DATA:", "file:///etc/passwd"} {
 		require.NotContains(t, s, forbidden)
 	}
+}
+
+func TestHTMLEmbedsPercentEncodedInlineImagesAndListsOnlyAttachments(t *testing.T) {
+	var picture bytes.Buffer
+	require.NoError(t, png.Encode(&picture, image.NewGray(image.Rect(0, 0, 2, 2))))
+	encoded := base64.StdEncoding.EncodeToString(picture.Bytes())
+	source := "Content-Type: multipart/mixed; boundary=m\r\n\r\n" +
+		"--m\r\nContent-Type: multipart/related; boundary=r\r\n\r\n" +
+		"--r\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>Report</p><img src=' cid:logo%40example.test ' alt='logo'>\r\n" +
+		"--r\r\nContent-Type: image/png\r\nContent-ID: <logo@example.test>\r\nContent-Disposition: inline; filename=logo.png\r\nContent-Transfer-Encoding: base64\r\n\r\n" + encoded + "\r\n" +
+		"--r--\r\n" +
+		"--m\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename=appendix.txt\r\n\r\nappendix\r\n" +
+		"--m--\r\n"
+	got, err := decodedHTML(t, source, "A4")
+	require.NoError(t, err)
+	s := string(got.Bytes)
+	require.Contains(t, s, `<img alt="logo" src="data:image/png;base64,`+encoded+`">`)
+	require.NotContains(t, s, "missing inline image")
+	_, inventory, found := strings.Cut(s, "Attachment inventory")
+	require.True(t, found)
+	require.Contains(t, inventory, "appendix.txt")
+	require.NotContains(t, inventory, "logo.png")
 }
 
 func TestHTMLRejectsIncompleteAndInvalidPageSize(t *testing.T) {

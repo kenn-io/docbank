@@ -16,6 +16,7 @@ import (
 	_ "image/jpeg" // Register only supported raster image decoders.
 	_ "image/png"  // Register only supported raster image decoders.
 	"io"
+	"net/url"
 	"strings"
 	"unicode/utf8"
 
@@ -318,7 +319,7 @@ func inlineImage(ctx context.Context, out *htmlOutput, n *html.Node, message doc
 	placeholder := func(reason string) {
 		out.WriteString(`<span class="warning">[` + reason + ": " + out.escape(alt) + "]</span>")
 	}
-	scheme, cid, hasScheme := strings.Cut(src, ":")
+	scheme, cid, hasScheme := strings.Cut(strings.TrimSpace(src), ":")
 	if hasScheme && strings.EqualFold(scheme, "data") {
 		placeholder("unsupported embedded image")
 		return nil
@@ -326,6 +327,10 @@ func inlineImage(ctx context.Context, out *htmlOutput, n *html.Node, message doc
 	if !hasScheme || !strings.EqualFold(scheme, "cid") {
 		placeholder("remote resource unavailable")
 		return nil
+	}
+	// Match IDs as the decoder records them: percent-decoded, as a browser resolves cid: URLs.
+	if decoded, err := url.PathUnescape(cid); err == nil {
+		cid = decoded
 	}
 	var candidate string
 	for _, g := range message.RelatedGroups {
