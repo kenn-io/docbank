@@ -386,6 +386,7 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 				require.NoError(t, err)
 				version = imported.CurrentVersionID
 				require.NoError(t, catalog.Close())
+				wakeDaemon(t)
 			}
 			select {
 			case <-started:
