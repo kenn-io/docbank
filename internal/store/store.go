@@ -182,16 +182,24 @@ func openCurrentStoreOnce(
 	return s, nil
 }
 
+// checkReadOnlyOpenRetryable can be replaced in tests to simulate temporary
+// sharing restrictions that persist through the write-access check.
+var checkReadOnlyOpenRetryable = defaultCheckReadOnlyOpenRetryable
+
 func isTransientReadOnlyOpen(path string, err error) bool {
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "readonly database") {
 		return false
 	}
+	return checkReadOnlyOpenRetryable(path)
+}
+
+func defaultCheckReadOnlyOpenRetryable(path string) bool {
 	file, openErr := os.OpenFile(path, os.O_RDWR, 0)
-	if openErr != nil {
-		return false
+	if openErr == nil {
+		_ = file.Close()
+		return true
 	}
-	_ = file.Close()
-	return true
+	return isTemporaryWriteSharingError(path, openErr)
 }
 
 // bootstrap applies the schema and creates the root node if missing, all in

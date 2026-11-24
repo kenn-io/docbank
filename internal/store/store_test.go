@@ -197,6 +197,7 @@ func TestOpenConcurrentBootstrap(t *testing.T) { //nolint:paralleltest // owns c
 
 type transientReadOnlyDriver struct {
 	docsqlite.Driver
+
 	writerOpens atomic.Int32
 	failCount   int32
 }
@@ -208,8 +209,7 @@ func (d *transientReadOnlyDriver) Open(path string, opts docsqlite.OpenOptions) 
 	return d.Driver.Open(path, opts)
 }
 
-func TestOpenRetriesTransientReadOnlyWriterOpen(t *testing.T) {
-	t.Parallel()
+func TestOpenRetriesTransientReadOnlyWriterOpen(t *testing.T) { //nolint:paralleltest // overrides checkReadOnlyOpenRetryable for sharing-violation coverage
 	dbPath := filepath.Join(t.TempDir(), "docbank.db")
 	// Pre-create an empty regular file so the simulated read-only open hits
 	// SQLITE_READONLY on bootstrap while the underlying file stays writable.
@@ -220,6 +220,26 @@ func TestOpenRetriesTransientReadOnlyWriterOpen(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	assert.Equal(t, int32(2), drv.writerOpens.Load())
+
+	// Simulate a temporary sharing restriction that persists through the first
+	// two write-access checks before clearing.
+	sharingPath := filepath.Join(t.TempDir(), "sharing.db")
+	require.NoError(t, os.WriteFile(sharingPath, nil, 0o600))
+	origCheck := checkReadOnlyOpenRetryable
+	t.Cleanup(func() { checkReadOnlyOpenRetryable = origCheck })
+	var sharingChecks atomic.Int32
+	checkReadOnlyOpenRetryable = func(path string) bool {
+		if path == sharingPath && sharingChecks.Add(1) <= 2 {
+			return true
+		}
+		return origCheck(path)
+	}
+	sharingDrv := &transientReadOnlyDriver{Driver: DefaultSQLiteDriver(), failCount: 2}
+	sharingStore, err := Open(t.Context(), sharingPath, sharingDrv)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sharingStore.Close()) })
+	assert.Equal(t, int32(3), sharingDrv.writerOpens.Load())
+	assert.Equal(t, int32(2), sharingChecks.Load())
 
 	if runtime.GOOS == "windows" {
 		return
