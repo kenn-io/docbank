@@ -64,6 +64,14 @@ func TestNativePDFRedactionCLI(t *testing.T) {
 	t.Run("ordered gap", qualifyNativeRedactionOrderedGap)
 	stop()
 	assertRedactionLeavesNoJobs(t, root)
+	db, err := store.DefaultSQLiteDriver().Open(filepath.Join(root, "docbank.db"),
+		sqlite.OpenOptions{Access: sqlite.ReadOnlyImmutable, TransactionMode: sqlite.Deferred})
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	var count int
+	require.NoError(t, db.QueryRowContext(t.Context(),
+		`SELECT (SELECT COUNT(*) FROM bates_allocations) + (SELECT COUNT(*) FROM bates_artifacts) + (SELECT COUNT(*) FROM collection_snapshots)`).Scan(&count))
+	require.Zero(t, count, "unnumbered renders do not keep a delivery or retention snapshot")
 	spool, err := os.ReadDir(filepath.Join(root, "blobs", "tmp"))
 	require.NoError(t, err)
 	require.Empty(t, spool)
@@ -183,18 +191,51 @@ func qualifyNativeRedactionCLI(t *testing.T) {
 	replacement := writeSourceFile(t, "replacement.txt", "new current source")
 	_, err = runCLI(t, "put", replacement, "/reviewed/renamed.pdf")
 	require.NoError(t, err)
-	historical, after := f.render(t, "historical.zip")
-	require.Greater(t, after.Receipt.AdmittedNodeRevision, result.Receipt.AdmittedNodeRevision)
-	require.Equal(t, result.Receipt.ReviewSHA256, after.Receipt.ReviewSHA256)
-	oldFiles, _ := readNativeRedactionZIP(t, historical)
+	agent := startWorkflowMCP(t, mcp.ServerOptions{AllowPackageWrites: true})
+	defer agent.stop(t)
+	var vault api.VaultIdentity
+	require.NoError(t, json.Unmarshal(agent.call(t, "get_vault_info", map[string]any{}), &vault))
+	f.review = filepath.Join(f.dir, "mcp-review.json")
+	saveMCPResolution(t, agent, vault.VaultID, f, f.review, "review")
+	historical := filepath.Join(f.dir, "historical.zip")
+	args := mcpRedactionRenderArguments(vault.VaultID, f.preparation, f.masks, f.review, historical)
+	var delivery struct {
+		Destination  string `json:"destination_path"`
+		Size         int64  `json:"size"`
+		SHA256       string `json:"sha256"`
+		ReviewSHA256 string `json:"review_sha256"`
+		Verification string `json:"verification"`
+		State        string `json:"state"`
+	}
+	require.NoError(t, json.Unmarshal(agent.call(t, "render_native_pdf", args), &delivery))
+	require.Equal(t, "published", delivery.State)
+	require.Equal(t, "masks_and_text", delivery.Verification)
+	require.Equal(t, historical, delivery.Destination)
+	require.Equal(t, result.Receipt.ReviewSHA256, delivery.ReviewSHA256)
+	body, err := os.ReadFile(historical)
+	require.NoError(t, err)
+	require.EqualValues(t, len(body), delivery.Size)
+	require.Equal(t, redactionPDFHash(body), delivery.SHA256)
+	oldFiles, after := readNativeRedactionZIP(t, historical)
+	require.Greater(t, after.AdmittedNodeRevision, result.Receipt.AdmittedNodeRevision)
+	require.Nil(t, after.Numbered)
+	require.Equal(t, "[REDACTED] KEEP SECRET\f", string(oldFiles["redacted.txt"]))
 	require.Equal(t, files["redacted.pdf"], oldFiles["redacted.pdf"])
+	verified, err := runCLI(t, "redaction", "verify", f.preparation, f.masks, f.review, historical, "--json")
+	require.NoError(t, err, verified)
+	var offline processing.RedactionArchive
+	require.NoError(t, json.Unmarshal([]byte(verified), &offline))
+	require.Equal(t, delivery.SHA256, offline.SHA256)
 	_, err = runCLI(t, "rm", "/reviewed/renamed.pdf")
 	require.NoError(t, err)
 	refused := filepath.Join(f.dir, "refused.zip")
-	_, err = runCLI(t, "redaction", "render", f.preparation, f.masks, f.review, refused)
-	require.Equal(t, exitNotFound, commandExitCode(err, true))
-	_, err = os.Stat(refused)
-	require.ErrorIs(t, err, os.ErrNotExist)
+	args["destination_path"] = refused
+	var failure struct {
+		Code string `json:"code"`
+	}
+	require.NoError(t, json.Unmarshal(agent.call(t, "render_native_pdf", args), &failure))
+	require.Equal(t, "not_found", failure.Code)
+	require.NoFileExists(t, refused)
 	_, err = runCLI(t, "restore", fmt.Sprintf("id:%d", f.prep.Selection.NodeID))
 	require.NoError(t, err)
 	_, err = runCLI(t, "versions", "prune", "/reviewed/renamed.pdf", "--keep-newest", "1", "--run")

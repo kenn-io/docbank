@@ -23,7 +23,7 @@ import (
 
 const (
 	defaultToolCatalogBudget  = 150_000
-	allWriteToolCatalogBudget = 239_000
+	allWriteToolCatalogBudget = 241_000
 )
 
 func listCatalogThroughClient(t *testing.T, server *Server) *sdkmcp.ListToolsResult {
@@ -165,7 +165,7 @@ func TestWriteToolsAreIndependentConstructionTimeOptIns(t *testing.T) {
 	enabled := catalogNames(enabledTools)
 	require.Equal(t, append(append([]string{}, readOnly...), "start_processing", "preflight_load_file_package", "start_package_import",
 		"resolve_package_custodian", "assign_package_custodian", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export", "publish_numbered_pdf",
-		"export_bates_file", "export_load_file_package", "export_recipient_package", "prepare_native_pdf", "resolve_native_pdf"), enabled)
+		"export_bates_file", "export_load_file_package", "export_recipient_package", "prepare_native_pdf", "resolve_native_pdf", "render_native_pdf"), enabled)
 
 	for _, write := range enabledTools[len(readOnly):] {
 		require.NotNil(t, write.Annotations)
@@ -183,8 +183,8 @@ func TestWriteToolsAreIndependentConstructionTimeOptIns(t *testing.T) {
 		{},
 		{options: ServerOptions{AllowProcessing: true}, writes: []string{"start_processing"}},
 		{options: ServerOptions{AllowKataWrites: true}, writes: []string{"cite_kata_evidence"}},
-		{options: ServerOptions{AllowPackageWrites: true}, writes: []string{"preflight_load_file_package", "start_package_import", "resolve_package_custodian", "assign_package_custodian", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export", "publish_numbered_pdf", "export_bates_file", "export_load_file_package", "export_recipient_package", "prepare_native_pdf", "resolve_native_pdf"}},
-		{options: ServerOptions{AllowProcessing: true, AllowPackageWrites: true}, writes: []string{"start_processing", "preflight_load_file_package", "start_package_import", "resolve_package_custodian", "assign_package_custodian", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export", "publish_numbered_pdf", "export_bates_file", "export_load_file_package", "export_recipient_package", "prepare_native_pdf", "resolve_native_pdf"}},
+		{options: ServerOptions{AllowPackageWrites: true}, writes: []string{"preflight_load_file_package", "start_package_import", "resolve_package_custodian", "assign_package_custodian", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export", "publish_numbered_pdf", "export_bates_file", "export_load_file_package", "export_recipient_package", "prepare_native_pdf", "resolve_native_pdf", "render_native_pdf"}},
+		{options: ServerOptions{AllowProcessing: true, AllowPackageWrites: true}, writes: []string{"start_processing", "preflight_load_file_package", "start_package_import", "resolve_package_custodian", "assign_package_custodian", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export", "publish_numbered_pdf", "export_bates_file", "export_load_file_package", "export_recipient_package", "prepare_native_pdf", "resolve_native_pdf", "render_native_pdf"}},
 	} {
 		server := newServerWithOptions(testImplementation(), test.options)
 		discovery := decodeResult(t, exchangeRaw(t, server, requestFor("server/discover", nil)))
