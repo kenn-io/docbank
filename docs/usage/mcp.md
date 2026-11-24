@@ -177,9 +177,8 @@ also accepts six independent write flags that you can combine at startup:
 
 - `--allow-processing` adds only guarded processing start.
 - `--allow-package-writes` permits load-file preflight, import, custodian
-  changes, Bates exports, reviewed recipient ZIPs, PDF preparation, and
-  publication of an
-  operator-reserved reviewed PDF.
+  changes, Bates exports, reviewed recipient ZIPs, PDF preparation, mask
+  resolution, and publication of an operator-reserved reviewed PDF.
 - `--allow-photo-edits` permits photo asset mutations.
 - `--allow-export-writes` enables native export jobs and local downloads.
 - `--allow-report-writes` enables frozen report creation, revision, local
@@ -277,7 +276,7 @@ content and its JSON text representation, with the complete result, including
 resource links, capped at 1 MiB.
 
 Tests cap the default catalog at 150,000 bytes and the catalog with all write
-flags enabled at 237,000 bytes.
+flags enabled at 239,000 bytes.
 They measure compact JSON of the complete client-decoded `tools/list` result
 with HTML escaping disabled to match the SDK, including output schemas,
 metadata, and cache fields; a larger catalog requires a reviewed budget edit.
@@ -907,6 +906,32 @@ Preparation uses the daemon's configured Linux amd64 page runtime and its
 `redaction_selection_changed`. After a lost reply, inspect the destination
 before retrying. `published_durability_unknown` and `cleanup_failed` describe
 problems after saving. The destination still names the saved file.
+
+## Resolve explicit PDF masks
+
+With `--allow-package-writes`, use `resolve_native_pdf` to save a private review
+or a mask expansion proposal. Supply `vault_id` from the preparation receipt
+or `get_vault_info`, and three absolute paths on the MCP host.
+`preparation_path` and `masks_path` name existing inputs. `destination_path`
+names a new file outside the Docbank data directory. Use a neutral name such as
+`PRIVATE-resolution.json` until you know which result it contains.
+
+- `outcome: review` gives you the saved review and its `review_sha256`. Use the
+  review with its original preparation and masks for CLI reservation.
+- `outcome: expansion_required` saves the complete proposal. Inspect it, edit
+  your masks explicitly, and call the tool with a new destination. A proposal
+  cannot be used as a review.
+
+Both receipts include the saved file size and `sha256`. The private files can
+contain text or geometry from the original. The tool reply carries the receipt.
+A coverage refusal such as `mapping_incomplete` produces no file. Cover ordered
+gaps with masks and unordered gaps with whole-page masks.
+
+The daemon rechecks the original with its Linux amd64 page runtime. Resolve
+shares the daemon's native PDF slot and has a 60-second daemon deadline. After
+an interrupted reply, inspect the destination before retrying. The tool does
+not replace an existing file. Reservation and retention consent remain in the
+operator workflow.
 
 ## Publish a reserved numbered PDF
 

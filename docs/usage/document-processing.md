@@ -342,9 +342,9 @@ download. A killed daemon may leave private files in its spool; see the
 Agents can use these CLI commands or the authenticated
 `POST /api/v1/redaction/resolve` and `/api/v1/redaction/render` routes. Browser
 sessions use resolve along with the temporary-preview and numbered-publication
-routes described below, while direct ZIP rendering remains API-key-only. MCP can
-publish operator-reserved numbered PDFs, as described in
-[Numbered delivery](#deliver-one-reviewed-pdf-with-bates-numbers).
+routes described below. Direct ZIP rendering requires an API key. MCP agents
+can [save a review or an expansion proposal](mcp.md#resolve-explicit-pdf-masks)
+and [publish an operator-reserved numbered PDF](#deliver-one-reviewed-pdf-with-bates-numbers).
 
 ### Review a PDF in the browser
 

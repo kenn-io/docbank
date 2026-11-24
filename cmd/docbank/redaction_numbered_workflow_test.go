@@ -91,7 +91,18 @@ func TestNumberedNativePDFCLI(t *testing.T) {
 		masks[i] = processing.RedactionMask{ID: uuid.New(), Selector: redaction.Selector{
 			Kind: "text", MapSHA256: f.prep.Map.SHA256, Span: &redaction.Span{Start: page.Span.Start, End: page.Span.Start + 6}}}
 	}
-	f.resolve(t, masks)
+	if os.Getenv(child) == "v2" {
+		f.resolve(t, masks)
+	} else {
+		maskBytes, err := json.Marshal(masks)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(f.masks, maskBytes, 0600))
+		resolver := startWorkflowMCP(t, mcp.ServerOptions{AllowPackageWrites: true})
+		var vault api.VaultIdentity
+		require.NoError(t, json.Unmarshal(resolver.call(t, "get_vault_info", map[string]any{}), &vault))
+		saveMCPResolution(t, resolver, vault.VaultID, f, f.review, "review")
+		resolver.stop(t)
+	}
 	var historical processing.RedactionReview
 	if os.Getenv(child) == "v2" {
 		// Retain the reviewed recipe across the upgrade; no writer-selection flag.

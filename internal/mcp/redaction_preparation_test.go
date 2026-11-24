@@ -205,7 +205,7 @@ func TestMCPPrepareNativePDFReadDuringCancellation(t *testing.T) {
 		"content_version_id": selected.VersionID, "blob_hash": selected.SHA256, "size": selected.Size, "destination_path": destination})
 	require.NoError(t, err)
 	_, outputSchema := prepareNativePDFSchemas()
-	handler := prepareNativePDFHandler(server.daemon, mustResolveSchema(outputSchema), slog.Default())
+	handler := redactionFileHandler(prepareNativePDFTool.name, prepareNativePDF, server.daemon, mustResolveSchema(outputSchema), slog.Default())
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan *sdkmcp.CallToolResult, 1)
