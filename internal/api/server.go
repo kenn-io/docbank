@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"reflect"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -134,9 +135,12 @@ func NewServer(d Deps) *Server {
 	if d.StartedAt.IsZero() {
 		d.StartedAt = time.Now()
 	}
+	useNonNullableArrays()
 	mux := http.NewServeMux()
 	cfg := huma.DefaultConfig("docbank", version.Version)
 	cfg.Components.Schemas = huma.NewMapRegistry("#/components/schemas/", apiSchemaName)
+	cfg.Components.Schemas.RegisterTypeAlias(reflect.TypeFor[huma.ErrorModel](), reflect.TypeFor[Error]())
+	cfg.Transformers = append(cfg.Transformers, transformHumaError)
 	jsonFormat := huma.Format{
 		Marshal: func(w io.Writer, value any) error {
 			return json.MarshalWrite(w, value)

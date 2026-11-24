@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -13,8 +14,16 @@ import (
 	"go.kenn.io/docbank/internal/daemonauth"
 )
 
-// JSON v2 writes nil slices as empty arrays. Keep the generated contract aligned.
-func init() { huma.DefaultArrayNullable = false }
+var arraySchemas sync.Once
+
+// useNonNullableArrays aligns array schemas with JSON v2, which writes nil
+// slices as empty arrays. Huma reads this setting from a process-wide
+// variable while it builds schemas and offers no per-API option, so it is set
+// when a server is built rather than when the package is imported. A program
+// that only embeds Docbank's library API keeps its own Huma defaults.
+func useNonNullableArrays() {
+	arraySchemas.Do(func() { huma.DefaultArrayNullable = false })
+}
 
 // NewOfflineServer builds a Server for offline document generation only: it
 // never binds a socket or serves a request, so its API key is a fixed
