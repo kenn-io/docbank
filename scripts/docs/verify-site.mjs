@@ -176,11 +176,11 @@ function compareWebsiteExamples(html, markdown, htmlName, markdownName, errors) 
   const examples = rawBlocks.map((block) => [...block.matchAll(/^ {0,3}(`{3,}|~{3,})[^\n]*\n([\s\S]*?)\n {0,3}\1|(?<!`)(`+)(?!`)([\s\S]*?)(?<!`)\3(?!`)/gm)].map((match) => normalize(match[2] ?? match[4])));
   for (const match of html.matchAll(/<(code|pre)\b[^>]*>([\s\S]*?)<\/\1>/gi)) {
     const example = plainText(match[2]);
-    if (!match[2].split("\n").some((line) => /^(?:[$>]\s*)?(?:[A-Za-z_]\w*=\S*\s+)*(?:\.\\)?docbank(?:\s|$)/.test(plainText(line)) || /^(?:[$>]\s*)?(?:[A-Za-z_]\w*=\S*\s+)*(?:\.\\)?docbank\.exe(?:\s|$)/i.test(plainText(line)))) continue;
+    if (!match[2].split("\n").some((line) => /^(?:\$\s*)?(?:[A-Za-z_]\w*=\S*\s+)*docbank(?:\s|$)/.test(plainText(line)) || /^(?:\$\s*)?(?:[A-Za-z_]\w*=\S*\s+)*docbank\.exe(?:\s|$)/i.test(plainText(line)))) continue;
     const before = html.slice(0, match.index).split(/<\/?(?:p|li)\b[^>]*>/i);
     const own = before.pop();
     const previous = /<\/(?:code|pre)\s*>/i.test(own) ? "" : before.map(plainText).filter(Boolean).at(-1);
-    const htmlNoted = noted(plainText(own), previous) || /<p\b[^>]*>\s*Not in the latest release yet\s*<\/p>\s*<(?:ul|ol)\b[^>]*>(?:(?!<\/(?:ul|ol)\s*>)[\s\S])*$/i.test(html.slice(0, match.index));
+    const htmlNoted = noted(plainText(own), previous);
     const candidates = examples.flatMap((entries, i) => entries.includes(example) ? [i] : []);
     if (candidates.length === 0) {
       errors.push(`${htmlName}: example ${JSON.stringify(example)} is missing from ${markdownName}`);
@@ -198,12 +198,12 @@ function compareWebsiteExamples(html, markdown, htmlName, markdownName, errors) 
   for (const match of html.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)) {
     const value = plainText(match[1]);
     if (!value.startsWith(unreleasedNote) || exampleTag.test(match[1])) continue;
-    const next = html.slice(match.index + match[0].length).match(/^\s*<(p|pre|ul|ol)\b[^>]*>([\s\S]*?)<\/\1>/i);
+    const next = html.slice(match.index + match[0].length).match(/^\s*<(p|pre)\b[^>]*>([\s\S]*?)<\/\1>/i);
     if (value !== unreleasedNote || !next || (next[1].toLowerCase() !== "pre" && !exampleTag.test(next[2]))) {
       errors.push(`${htmlName}: put the unreleased note directly above an example`);
     }
   }
-  if (blocks.some((block, i) => block.startsWith(unreleasedNote) && !block.includes("`") && (block !== unreleasedNote || /^\|/.test(blocks[i + 1] ?? "") || !/`[^`]+`|^```|^~~~/.test(blocks[i + 1] ?? "")))) {
+  if (blocks.some((block, i) => block.startsWith(unreleasedNote) && !block.includes("`") && (block !== unreleasedNote || /^(?:[-*+]\s|\d+[.)]\s|\|)/.test(blocks[i + 1] ?? "") || !/`[^`]+`|^```|^~~~/.test(blocks[i + 1] ?? "")))) {
     errors.push(`${markdownName}: put the unreleased note directly above an example`);
   }
 }
