@@ -628,9 +628,10 @@ Create a new destination with `MkdirPath`.
 
 Publication verifies retained payload bytes and creates ordinary file documents
 for the full known attachment inventory in one transaction. Body
-alternatives, multipart containers, and pictures the HTML body shows with
-`<img src="cid:...">` are excluded, as mail programs show those pictures in
-the body instead of listing them. Other inline resources, and any part marked
+alternatives, multipart containers, and PNG, JPEG, or GIF pictures the HTML
+body shows with `<img src="cid:...">` are excluded, as mail programs show those
+pictures in the body instead of listing them. Other inline resources, including
+a non-picture file the body references by `cid:`, and any part marked
 `Content-Disposition: attachment`, are included. Docbank records which content
 IDs the HTML body shows when it decodes the email; an email decoded by an
 earlier Docbank release is decoded again by `EnsureEmailMetadata`. An

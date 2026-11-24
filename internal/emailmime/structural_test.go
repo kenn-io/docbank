@@ -134,10 +134,11 @@ func TestDecodeRelatedGroupDoesNotMarkAmbiguousOrPlainBodyIDs(t *testing.T) {
 
 func TestEmailAttachmentPartsLeaveOutPicturesTheHTMLBodyShows(t *testing.T) {
 	raw := "Content-Type: multipart/mixed; boundary=m\r\n\r\n--m\r\nContent-Type: multipart/related; boundary=r\r\n\r\n" +
-		"--r\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<img src=cid:logo><img src=cid:seal>\r\n" +
-		"--r\r\nContent-Type: image/png\r\nContent-ID: <logo>\r\n\r\nlogo\r\n" +
-		"--r\r\nContent-Type: image/png\r\nContent-ID: <seal>\r\nContent-Disposition: attachment; filename=seal.png\r\n\r\nseal\r\n" +
-		"--r\r\nContent-Type: image/png\r\nContent-ID: <unused>\r\n\r\nunused\r\n--r--\r\n" +
+		"--r\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<img src=cid:logo><img src=cid:seal><img src=cid:report>\r\n" +
+		"--r\r\nContent-Type: image/gif\r\nContent-ID: <logo>\r\n\r\nGIF89a logo\r\n" +
+		"--r\r\nContent-Type: image/gif\r\nContent-ID: <seal>\r\nContent-Disposition: attachment; filename=seal.gif\r\n\r\nGIF89a seal\r\n" +
+		"--r\r\nContent-Type: image/gif\r\nContent-ID: <unused>\r\n\r\nGIF89a unused\r\n" +
+		"--r\r\nContent-Type: application/pdf\r\nContent-ID: <report>\r\n\r\n%PDF-1.4 report\r\n--r--\r\n" +
 		"--m\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=notice.pdf\r\n\r\n%PDF-1.4\r\n--m--\r\n"
 	result := decodeFixture(t, raw)
 
@@ -145,7 +146,8 @@ func TestEmailAttachmentPartsLeaveOutPicturesTheHTMLBodyShows(t *testing.T) {
 	for _, part := range document.EmailAttachmentParts(result.Evidence) {
 		paths = append(paths, part.Path)
 	}
-	assert.Equal(t, []string{"1.1.3", "1.1.4", "1.2"}, paths, "the shown logo is left out; an explicit attachment, an unused picture and the PDF stay")
+	assert.Equal(t, []string{"1.1.3", "1.1.4", "1.1.5", "1.2"}, paths,
+		"the shown logo is left out; an explicit attachment, an unused picture, a referenced PDF and the attached PDF stay")
 }
 
 func TestCanonicalRelatedValidationRejectsTamperedScopeCIDOrderAndShape(t *testing.T) {

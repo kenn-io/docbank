@@ -209,7 +209,7 @@ func EmailAttachmentParts(e EmailV1) []EmailPartV1 {
 			continue
 		}
 		explicit := p.Disposition != nil && strings.EqualFold(*p.Disposition, "attachment")
-		if explicit || p.Path != "1" && !bodies[p.Path] && !shown[p.Path] {
+		if explicit || p.Path != "1" && !bodies[p.Path] && (!shown[p.Path] || !emailEmbeddedPicture(p)) {
 			parts = append(parts, p)
 		}
 	}
@@ -230,6 +230,21 @@ func emailShownInlineParts(messages []EmailMessageV1) map[string]bool {
 		}
 	}
 	return shown
+}
+
+// emailEmbeddedPicture reports whether a part's bytes are a raster format the
+// email PDF embeds. A shown part of any other type stays an attachment, since
+// the body can only show a placeholder for it.
+func emailEmbeddedPicture(p EmailPartV1) bool {
+	if p.Media.Detected == nil {
+		return false
+	}
+	switch *p.Media.Detected {
+	case "image/png", "image/jpeg", "image/gif":
+		return true
+	default:
+		return false
+	}
 }
 
 func EmailDocumentPartOutcome(p EmailPartV1) string {
