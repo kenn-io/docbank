@@ -322,6 +322,11 @@ type EmailResourceV1 struct {
 	CID        *string            `json:"cid"`
 	Candidates []string           `json:"candidates"`
 	State      EmailResourceState `json:"state"`
+	// Referenced reports that the group's HTML body shows this unique ID with
+	// <img src="cid:...">, so the part is a picture in the body, not an
+	// attachment. It is omitted when false, so evidence decoded before the
+	// field existed stays canonical.
+	Referenced bool `json:"referenced,omitzero"`
 }
 type EmailDiagnosticV1 struct {
 	Code        EmailDiagnosticCode `json:"code"`

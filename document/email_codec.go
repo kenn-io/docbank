@@ -851,14 +851,29 @@ func validateEmailRelatedGroups(message EmailMessageV1, parts map[string]EmailPa
 		if got.RootPath != expected.RootPath || !equalOptionalString(got.BodyPath, expected.BodyPath) || got.Resources == nil || len(got.Resources) != len(expected.Resources) {
 			return errors.New("email related group is invalid")
 		}
+		// The decoder reads the HTML body to mark referenced IDs; evidence alone
+		// cannot repeat that, so only check that a mark is possible.
+		htmlBody := got.BodyPath != nil && emailAlternativeKind(message, *got.BodyPath) == EmailBodyHTML
 		for resourceIndex := range expected.Resources {
 			actualResource, expectedResource := got.Resources[resourceIndex], expected.Resources[resourceIndex]
 			if actualResource.Candidates == nil || actualResource.State != expectedResource.State || !equalOptionalString(actualResource.CID, expectedResource.CID) || !slices.Equal(actualResource.Candidates, expectedResource.Candidates) {
 				return errors.New("email related resource inventory is invalid")
 			}
+			if actualResource.Referenced && (!htmlBody || actualResource.State != EmailResourceUnique) {
+				return errors.New("email related resource reference is invalid")
+			}
 		}
 	}
 	return nil
+}
+
+func emailAlternativeKind(message EmailMessageV1, path string) EmailBodyKind {
+	for _, alternative := range message.Alternatives {
+		if alternative.PartPath == path {
+			return alternative.Kind
+		}
+	}
+	return ""
 }
 
 func nearestEmailRelatedRoot(path, messagePath string, parts map[string]EmailPartV1) string {

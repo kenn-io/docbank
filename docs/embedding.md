@@ -627,8 +627,14 @@ is accepted. This operation does not run automatically on import.
 Create a new destination with `MkdirPath`.
 
 Publication verifies retained payload bytes and creates ordinary file documents
-for the full known attachment inventory in one transaction. Inline resources
-are included, but body alternatives and multipart containers are excluded. An
+for the full known attachment inventory in one transaction. Body
+alternatives, multipart containers, and PNG, JPEG, or GIF pictures the HTML
+body shows with `<img src="cid:...">` are excluded, as mail programs show those
+pictures in the body instead of listing them. Other inline resources, including
+a non-picture file the body references by `cid:`, and any part marked
+`Content-Disposition: attachment`, are included. Docbank records which content
+IDs the HTML body shows when it decodes the email; an email decoded by an
+earlier Docbank release is decoded again by `EnsureEmailMetadata`. An
 attached email becomes a child email, whose own attachments can be published
 separately. An explicitly attached single-part root also becomes a child.
 Each child takes its declared media type. A part declared as

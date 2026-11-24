@@ -16,6 +16,7 @@ import (
 	_ "image/jpeg" // Register only supported raster image decoders.
 	_ "image/png"  // Register only supported raster image decoders.
 	"io"
+	"net/url"
 	"strings"
 	"unicode/utf8"
 
@@ -32,6 +33,9 @@ type htmlOutput struct {
 	strings.Builder
 
 	err error
+	// embedded holds the part paths drawn into the body, which the
+	// attachment inventory leaves out.
+	embedded map[string]bool
 }
 
 func (o *htmlOutput) reserve(n int) bool {
@@ -234,7 +238,7 @@ func BuildHTML(ctx context.Context, e document.EmailV1, paper string, open OpenA
 		}
 	}
 	out.WriteString(`<section class="inventory"><h2>Attachment inventory</h2><p>Attachment contents are not included in this PDF.</p><ul>`)
-	for _, p := range document.EmailAttachmentParts(e) {
+	for _, p := range document.EmailAttachmentPartsExcept(e, out.embedded) {
 		size := "size unavailable"
 		if p.Payload != nil {
 			size = fmt.Sprintf("%d bytes", p.Payload.Size)
@@ -318,7 +322,7 @@ func inlineImage(ctx context.Context, out *htmlOutput, n *html.Node, message doc
 	placeholder := func(reason string) {
 		out.WriteString(`<span class="warning">[` + reason + ": " + out.escape(alt) + "]</span>")
 	}
-	scheme, cid, hasScheme := strings.Cut(src, ":")
+	scheme, cid, hasScheme := strings.Cut(strings.TrimSpace(src), ":")
 	if hasScheme && strings.EqualFold(scheme, "data") {
 		placeholder("unsupported embedded image")
 		return nil
@@ -326,6 +330,10 @@ func inlineImage(ctx context.Context, out *htmlOutput, n *html.Node, message doc
 	if !hasScheme || !strings.EqualFold(scheme, "cid") {
 		placeholder("remote resource unavailable")
 		return nil
+	}
+	// Match IDs as the decoder records them: percent-decoded, as a browser resolves cid: URLs.
+	if decoded, err := url.PathUnescape(cid); err == nil {
+		cid = decoded
 	}
 	var candidate string
 	for _, g := range message.RelatedGroups {
@@ -363,6 +371,16 @@ func inlineImage(ctx context.Context, out *htmlOutput, n *html.Node, message doc
 		placeholder("unsupported inline image")
 		return nil //nolint:nilerr // Unsupported raster formats are explicit visible placeholders, never rendered unchecked.
 	}
+	// A valid header can front corrupt pixel data. Decode the whole picture
+	// so only pictures that draw are embedded and left out of the inventory.
+	if _, _, err := image.Decode(bytes.NewReader(b)); err != nil {
+		placeholder("unsupported inline image")
+		return nil //nolint:nilerr // A picture that does not decode is a visible placeholder and stays listed.
+	}
 	out.WriteString(`<img alt="` + out.escape(alt) + `" src="data:image/` + format + `;base64,` + base64.StdEncoding.EncodeToString(b) + `">`)
+	if out.embedded == nil {
+		out.embedded = map[string]bool{}
+	}
+	out.embedded[candidate] = true
 	return nil
 }
