@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -129,6 +130,35 @@ func openCurrentStore(
 	path string, driver docsqlite.Driver, incarnation *metadataProcessingIncarnation,
 ) (*Store, error) {
 	createFromSchemaTemplate(ctx, path, driver)
+	// On Windows, SQLite's winOpen silently downgrades a read-write open to
+	// SQLITE_OPEN_READONLY without retrying when a concurrent file creation or
+	// scanner causes a brief sharing violation. Because the writer pool then
+	// holds a read-only handle, close and reopen until the file opens writable.
+	deadline := time.Now().Add(5 * time.Second)
+	s, err := backoff.Retry(ctx, func() (*Store, error) {
+		s, err := openCurrentStoreOnce(ctx, path, driver, incarnation)
+		if err == nil {
+			return s, nil
+		}
+		if !isTransientReadOnlyOpen(path, err) || time.Now().After(deadline) {
+			return nil, backoff.Permanent(err)
+		}
+		return nil, err
+	}, backoff.WithBackOff(backoff.NewConstantBackOff(10*time.Millisecond)), backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
+	if err != nil {
+		retryErr := backoff.AsRetryError(err)
+		if errors.Is(retryErr.Cause, backoff.ErrPermanent) {
+			return nil, retryErr.LastErr
+		}
+		return nil, fmt.Errorf("opening database: %w", errors.Join(retryErr.Cause, retryErr.LastErr))
+	}
+	return s, nil
+}
+
+func openCurrentStoreOnce(
+	ctx context.Context,
+	path string, driver docsqlite.Driver, incarnation *metadataProcessingIncarnation,
+) (*Store, error) {
 	db, err := driver.Open(path, docsqlite.OpenOptions{
 		Access: docsqlite.Create, TransactionMode: docsqlite.Deferred,
 	})
@@ -150,6 +180,18 @@ func openCurrentStore(
 		return nil, err
 	}
 	return s, nil
+}
+
+func isTransientReadOnlyOpen(path string, err error) bool {
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "readonly database") {
+		return false
+	}
+	file, openErr := os.OpenFile(path, os.O_RDWR, 0)
+	if openErr != nil {
+		return false
+	}
+	_ = file.Close()
+	return true
 }
 
 // bootstrap applies the schema and creates the root node if missing, all in

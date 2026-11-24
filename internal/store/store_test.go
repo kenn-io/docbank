@@ -3,9 +3,11 @@ package store
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -174,21 +176,66 @@ func TestOpenConcurrentBootstrap(t *testing.T) { //nolint:paralleltest // owns c
 		}(i)
 	}
 	wg.Wait()
+	t.Cleanup(func() {
+		for i := range n {
+			if stores[i] != nil {
+				assert.NoError(t, stores[i].Close())
+			}
+		}
+	})
 
 	for i := range n {
 		require.NoError(t, errs[i])
 		assert.Equal(t, stores[0].VaultID(), stores[i].VaultID())
 	}
-	defer func() {
-		for i := range n {
-			require.NoError(t, stores[i].Close())
-		}
-	}()
 
 	var count int
 	require.NoError(t, stores[0].db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM nodes WHERE parent_id IS NULL`).Scan(&count))
 	assert.Equal(t, 1, count)
+}
+
+type transientReadOnlyDriver struct {
+	docsqlite.Driver
+	writerOpens atomic.Int32
+	failCount   int32
+}
+
+func (d *transientReadOnlyDriver) Open(path string, opts docsqlite.OpenOptions) (*sql.DB, error) {
+	if opts.TransactionMode == docsqlite.Immediate && d.writerOpens.Add(1) <= d.failCount {
+		return d.Driver.Open(path, docsqlite.OpenOptions{Access: docsqlite.ReadOnlyImmutable})
+	}
+	return d.Driver.Open(path, opts)
+}
+
+func TestOpenRetriesTransientReadOnlyWriterOpen(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "docbank.db")
+	// Pre-create an empty regular file so the simulated read-only open hits
+	// SQLITE_READONLY on bootstrap while the underlying file stays writable.
+	require.NoError(t, os.WriteFile(dbPath, nil, 0o600))
+
+	drv := &transientReadOnlyDriver{Driver: DefaultSQLiteDriver(), failCount: 1}
+	s, err := Open(t.Context(), dbPath, drv)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	assert.Equal(t, int32(2), drv.writerOpens.Load())
+
+	if runtime.GOOS == "windows" {
+		return
+	}
+	// A genuinely read-only file must fail immediately without retrying.
+	roPath := filepath.Join(t.TempDir(), "readonly.db")
+	require.NoError(t, os.WriteFile(roPath, nil, 0o444))
+	t.Cleanup(func() { _ = os.Chmod(roPath, 0o600) })
+
+	roDrv := &transientReadOnlyDriver{Driver: DefaultSQLiteDriver(), failCount: 5}
+	roStore, err := Open(t.Context(), roPath, roDrv)
+	if roStore != nil {
+		_ = roStore.Close()
+	}
+	require.Error(t, err)
+	assert.Equal(t, int32(1), roDrv.writerOpens.Load())
 }
 
 func TestSchemaForbidsSecondRoot(t *testing.T) {
