@@ -49,7 +49,6 @@ import (
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/telemetry"
-	"go.kenn.io/docbank/internal/vectorworker"
 	"go.kenn.io/docbank/internal/version"
 	docweb "go.kenn.io/docbank/internal/web"
 )
@@ -539,7 +538,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		return err
 	}
 	if err := startVectorIndexWorker(jobSupervisor, func() (embeddingJobRunner, error) {
-		worker, workerErr := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
+		worker, workerErr := processing.NewIndexWorker(processing.IndexWorkerConfig{
 			Mutate:    operationGate.MutateContext,
 			Retryable: vectorIndexRetryPolicy(s.SQLiteDriver().IsBusy),
 			ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {

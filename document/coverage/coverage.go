@@ -13,7 +13,6 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/canonical"
-	"go.kenn.io/docbank/internal/formatqualification"
 )
 
 // Compute joins the document catalog to explicit, fixture-backed source
@@ -167,9 +166,9 @@ func validateMetadataCapabilities(values []MetadataCapability) error {
 }
 
 func localQualification(catalogID string, capability document.CapabilityKey, evidence, implementationID string) bool {
-	_, found := formatqualification.Lookup(formatqualification.Query{
-		CatalogID: catalogID, Capability: formatqualification.Capability(capability), Evidence: evidence,
-		ImplementationID: implementationID, InputKind: formatqualification.InputOriginalFile,
+	_, found := canonical.LookupFormatQualification(canonical.FormatQualificationQuery{
+		CatalogID: catalogID, Capability: canonical.FormatCapability(capability), Evidence: evidence,
+		ImplementationID: implementationID, InputKind: canonical.FormatInputOriginalFile,
 	})
 	return found
 }
@@ -235,15 +234,15 @@ func descriptorSupports(
 
 func providerQualification(
 	descriptor document.RenditionDescriptor, catalogID string, capability document.CapabilityKey,
-) (formatqualification.Qualification, bool) {
-	for _, qualification := range formatqualification.All() {
+) (canonical.FormatQualification, bool) {
+	for _, qualification := range canonical.AllFormatQualifications() {
 		if qualification.DescriptorFingerprint == descriptor.Fingerprint && qualification.CatalogID == catalogID &&
-			qualification.Capability == formatqualification.Capability(capability) &&
-			qualification.InputKind == formatqualification.InputOriginalFile {
+			qualification.Capability == canonical.FormatCapability(capability) &&
+			qualification.InputKind == canonical.FormatInputOriginalFile {
 			return qualification, true
 		}
 	}
-	return formatqualification.Qualification{}, false
+	return canonical.FormatQualification{}, false
 }
 
 func betterCapability(candidate, current document.CapabilityStateV1) bool {

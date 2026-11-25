@@ -1,4 +1,4 @@
-package compattest
+package canonical
 
 import (
 	"crypto/sha256"
@@ -10,10 +10,10 @@ import (
 )
 
 func TestLoadVerifiesRawBundleAndMetadata(t *testing.T) {
-	bundle, raw, err := Load()
+	bundle, raw, err := LoadCompatBundle()
 	require.NoError(t, err)
 	digest := sha256.Sum256(raw)
-	assert.Equal(t, BundleSHA256, hex.EncodeToString(digest[:]))
+	assert.Equal(t, CompatBundleSHA256, hex.EncodeToString(digest[:]))
 	assert.Equal(t, 1, bundle.BundleSchema)
 	assert.Equal(t, "document-compat-v1", bundle.FixtureID)
 	assert.Equal(t, "kenn-io/msgvault#616", bundle.SourcePR)

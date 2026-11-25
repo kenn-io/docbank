@@ -21,8 +21,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/emailmime"
-	"go.kenn.io/docbank/internal/formatqualification"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/packstore"
 )
@@ -484,10 +484,10 @@ func assertQualifiedOOXMLMetadata(t *testing.T, catalogID, familyPart, evidence 
 	pages, found := sourceMetadataInteger(metadata, "page_count")
 	require.True(t, found)
 	assert.Equal(t, int64(7), pages)
-	_, qualified := formatqualification.Lookup(formatqualification.Query{
-		CatalogID: catalogID, Capability: formatqualification.CapabilityMetadata,
+	_, qualified := canonical.LookupFormatQualification(canonical.FormatQualificationQuery{
+		CatalogID: catalogID, Capability: canonical.FormatCapabilityMetadata,
 		Evidence: evidence, ImplementationID: SourceMetadataImplementationID,
-		InputKind: formatqualification.InputOriginalFile,
+		InputKind: canonical.FormatInputOriginalFile,
 	})
 	assert.True(t, qualified, "executed %s fixture is absent from the qualification manifest", catalogID)
 }

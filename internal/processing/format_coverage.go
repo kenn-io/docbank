@@ -3,7 +3,7 @@ package processing
 import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/coverage"
-	"go.kenn.io/docbank/internal/formatqualification"
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/ingest"
 )
 
@@ -13,14 +13,14 @@ func ComputeFormatCoverage(bound []document.RenditionDescriptor, extractorID str
 	sources := coverage.DefaultSources()
 	sources.BoundProviders = bound
 	sources.ExtractorID = extractorID
-	for _, qualification := range formatqualification.All() {
+	for _, qualification := range canonical.AllFormatQualifications() {
 		switch qualification.Capability {
-		case formatqualification.CapabilityMetadata:
+		case canonical.FormatCapabilityMetadata:
 			sources.Metadata = append(sources.Metadata, coverage.MetadataCapability{
 				CatalogID: qualification.CatalogID, Evidence: qualification.Evidence,
 				ImplementationID: extractorID,
 			})
-		case formatqualification.CapabilityRetain:
+		case canonical.FormatCapabilityRetain:
 			sources.Retain = append(sources.Retain, coverage.RetainCapability{
 				CatalogID: qualification.CatalogID, Evidence: qualification.Evidence,
 				ImplementationID: ingest.OriginalRetentionImplementationID,

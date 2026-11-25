@@ -1,6 +1,4 @@
-// Package qmdexport builds disposable QMD-compatible Markdown collections
-// from catalog-authorized Docbank rendition artifacts.
-package qmdexport
+package qmdbridge
 
 import (
 	"bytes"

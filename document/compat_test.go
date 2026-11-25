@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/document/internal/compattest"
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 type normalizationCompatibilityCase struct {
@@ -17,7 +17,7 @@ type normalizationCompatibilityCase struct {
 }
 
 func TestNormalizeDocumentVersionThreePreservesVersionTwoEvidence(t *testing.T) {
-	bundle, _, err := compattest.Load()
+	bundle, _, err := canonical.LoadCompatBundle()
 	require.NoError(t, err)
 	section, ok := bundle.Sections["normalization_v2"]
 	require.True(t, ok)

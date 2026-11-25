@@ -13,7 +13,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"go.kenn.io/docbank/internal/qmdexport"
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -114,7 +113,7 @@ func (client *Client) Search(ctx context.Context, request Request) (Report, erro
 	if err != nil {
 		return Report{}, fmt.Errorf("normalize QMD search scope: %w", err)
 	}
-	before, err := qmdexport.LoadCurrent(client.root)
+	before, err := LoadCurrent(client.root)
 	if err != nil {
 		return Report{}, fmt.Errorf("load active QMD export: %w", err)
 	}
@@ -193,7 +192,7 @@ func (client *Client) Search(ctx context.Context, request Request) (Report, erro
 // results were mapped through. The identity is the manifest checksum, so the
 // pointer alone proves the manifest is unchanged.
 func (client *Client) fenceGeneration(generationID string) error {
-	current, err := qmdexport.CurrentGeneration(client.root)
+	current, err := CurrentGeneration(client.root)
 	if err != nil || current != generationID {
 		return ErrStaleGeneration
 	}
@@ -256,11 +255,11 @@ func (client *Client) validateRequest(request Request) (int, error) {
 	return total, nil
 }
 
-func (client *Client) mapResults(items []wireResult, snapshot qmdexport.Receipt) ([]wireResult, []store.QMDExportSource, error) {
+func (client *Client) mapResults(items []wireResult, snapshot Receipt) ([]wireResult, []store.QMDExportSource, error) {
 	if len(items) > client.profile.MaxCandidates {
 		return nil, nil, ErrInvalidResponse
 	}
-	manifest := make(map[string]qmdexport.Entry, len(snapshot.Manifest.Entries))
+	manifest := make(map[string]Entry, len(snapshot.Manifest.Entries))
 	for _, entry := range snapshot.Manifest.Entries {
 		manifest[entry.URI] = entry
 	}

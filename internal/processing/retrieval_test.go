@@ -15,7 +15,6 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/vectorworker"
 )
 
 func TestHybridSearcherUsesRealStoreBindingAuthority(t *testing.T) {
@@ -50,7 +49,7 @@ func checkHybridSearcherUsesRealStoreBindingAuthority(t *testing.T, makeFixture 
 	spaces, err := fixture.catalog.ListVectorIndexSpaces(t.Context())
 	require.NoError(t, err)
 	require.Len(t, spaces, 1)
-	index, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
+	index, err := NewIndexWorker(IndexWorkerConfig{
 		Catalog: fixture.catalog, Mutate: newTestOperationGate().MutateContext,
 		Owner: "retrieval-test", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
 		ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
@@ -107,7 +106,7 @@ func TestHybridSearchRevalidatesUnembeddedMatchesAfterQueryEmbedding(t *testing.
 			spaces, err := fixture.catalog.ListVectorIndexSpaces(t.Context())
 			require.NoError(t, err)
 			require.Len(t, spaces, 1)
-			index, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
+			index, err := NewIndexWorker(IndexWorkerConfig{
 				Catalog: fixture.catalog, Mutate: newTestOperationGate().MutateContext,
 				Owner: "race-test", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
 				ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {

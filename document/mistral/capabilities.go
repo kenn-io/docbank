@@ -10,8 +10,8 @@ import (
 	"slices"
 	"time"
 
-	"go.kenn.io/docbank/document/internal/manifestjson"
 	"go.kenn.io/docbank/document/mistral/internal/probecontract"
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 const (
@@ -294,14 +294,14 @@ func shortFixtureDigest(fullSHA256 string) (string, error) {
 	return fullSHA256[:16], nil
 }
 
-func lowerHex(value string) bool { return manifestjson.LowerHex(value) }
+func lowerHex(value string) bool { return canonical.LowerHex(value) }
 
 func rejectDuplicateJSONKeys(data []byte, subject string) error {
-	return manifestjson.RejectDuplicateKeys(data, subject)
+	return canonical.RejectDuplicateKeys(data, subject)
 }
 
 func scanJSONValue(decoder *jsontext.Decoder, depth int, subject string) error {
-	return manifestjson.ScanValue(decoder, depth, subject)
+	return canonical.ScanValue(decoder, depth, subject)
 }
 
-func canonicalJSONKey(key string) bool { return manifestjson.CanonicalKey(key) }
+func canonicalJSONKey(key string) bool { return canonical.CanonicalKey(key) }

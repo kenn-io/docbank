@@ -313,7 +313,6 @@ and query adapter for QMD alongside these internal reranking adapters:
 |------------------|---------|
 | [`internal/retrieval/cohere`](https://github.com/kenn-io/docbank/tree/main/internal/retrieval/cohere) | Hosted `rerank-v4.0-pro` or `rerank-v4.0-fast` |
 | [`internal/retrieval/zeroentropy`](https://github.com/kenn-io/docbank/tree/main/internal/retrieval/zeroentropy) | Hosted `zerank-2` reranking |
-| [`internal/qmdexport`](https://github.com/kenn-io/docbank/tree/main/internal/qmdexport) | Export active sanitized Markdown as disposable QMD collections |
 | [`internal/retrieval/qmdbridge`](https://github.com/kenn-io/docbank/tree/main/internal/retrieval/qmdbridge) | Query an operator-hosted QMD endpoint and resolve results through Docbank authority |
 
 A QMD export contains verified Markdown and a manifest mapping QMD URIs back to

@@ -15,7 +15,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"go.kenn.io/docbank/document/internal/manifestjson"
+	"go.kenn.io/docbank/internal/canonical"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -137,7 +137,7 @@ func validateSourceArtifacts(artifacts []SourceEvidenceArtifactV1) (map[string]s
 		if !validEvidenceArtifactRole(artifact.Role) {
 			return nil, fmt.Errorf("source evidence artifact %d has invalid role", index)
 		}
-		if len(artifact.SHA256) != sha256.Size*2 || !manifestjson.LowerHex(artifact.SHA256) {
+		if len(artifact.SHA256) != sha256.Size*2 || !canonical.LowerHex(artifact.SHA256) {
 			return nil, fmt.Errorf("source evidence artifact %d has invalid SHA-256", index)
 		}
 		if err := validateArtifactPointer(artifact.Pointer); err != nil {
@@ -1263,7 +1263,7 @@ func validateNormalizedArtifacts(artifacts []EvidenceArtifactV1) (map[string]str
 	previousID := ""
 	for index, artifact := range artifacts {
 		if !validEvidenceArtifactRole(artifact.Role) || len(artifact.SHA256) != sha256.Size*2 ||
-			!manifestjson.LowerHex(artifact.SHA256) {
+			!canonical.LowerHex(artifact.SHA256) {
 			return nil, fmt.Errorf("normalized evidence artifact %d is invalid", index)
 		}
 		if err := validateArtifactPointer(artifact.Pointer); err != nil {
@@ -2093,7 +2093,7 @@ func validGeometryUnit(value EvidenceGeometryUnit) bool {
 func validEvidenceID(value, kind string) bool {
 	prefix := kind + "_"
 	return strings.HasPrefix(value, prefix) && len(value) == len(prefix)+sha256.Size*2 &&
-		manifestjson.LowerHex(strings.TrimPrefix(value, prefix))
+		canonical.LowerHex(strings.TrimPrefix(value, prefix))
 }
 
 func finite(value float64) bool { return !math.IsNaN(value) && !math.IsInf(value, 0) }

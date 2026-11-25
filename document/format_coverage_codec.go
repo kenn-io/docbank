@@ -11,7 +11,6 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/canonical"
-	"go.kenn.io/docbank/internal/formatqualification"
 )
 
 const (
@@ -243,19 +242,19 @@ func validateCapabilityMap(value FormatCoverageV1, catalogID string, capabilitie
 }
 
 func registeredCoverageClaim(value FormatCoverageV1, catalogID string, key CapabilityKey, state CapabilityStateV1) bool {
-	matches := formatqualification.LookupEvidence(formatqualification.EvidenceQuery{
-		CatalogID: catalogID, Capability: formatqualification.Capability(key), Evidence: state.Evidence,
+	matches := canonical.LookupFormatQualificationEvidence(canonical.FormatQualificationEvidenceQuery{
+		CatalogID: catalogID, Capability: canonical.FormatCapability(key), Evidence: state.Evidence,
 	})
 	for _, qualification := range matches {
 		switch {
 		case state.Provider != "":
 			if qualification.DescriptorFingerprint == state.ProviderFingerprint &&
-				qualification.InputKind == formatqualification.InputOriginalFile {
+				qualification.InputKind == canonical.FormatInputOriginalFile {
 				return true
 			}
 		default:
 			if qualification.ImplementationID == "" || qualification.DescriptorFingerprint != "" ||
-				qualification.InputKind != formatqualification.InputOriginalFile {
+				qualification.InputKind != canonical.FormatInputOriginalFile {
 				continue
 			}
 			if key != CapabilityMetadata ||

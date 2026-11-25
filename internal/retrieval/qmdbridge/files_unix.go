@@ -1,6 +1,6 @@
 //go:build !windows
 
-package qmdexport
+package qmdbridge
 
 import (
 	"errors"

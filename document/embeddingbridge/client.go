@@ -20,8 +20,8 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/internal/manifestjson"
 	"go.kenn.io/docbank/document/internal/providerutil"
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 const (
@@ -179,7 +179,7 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 		}
 		return document.EmbeddingResult{}, classified(ErrorAmbiguousSubmission, response.StatusCode)
 	}
-	if err := manifestjson.RejectDuplicateKeys(body, "embedding bridge response"); err != nil {
+	if err := canonical.RejectDuplicateKeys(body, "embedding bridge response"); err != nil {
 		return document.EmbeddingResult{}, classified(ErrorMalformedResponse, response.StatusCode)
 	}
 	var envelope Response

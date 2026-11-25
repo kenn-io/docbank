@@ -1,4 +1,4 @@
-package qmdexport
+package qmdbridge
 
 import (
 	"bytes"
@@ -222,7 +222,7 @@ func (reader fakeReader) OpenStreamContext(_ context.Context, hash string) (pack
 	if !ok {
 		return nil, 0, os.ErrNotExist
 	}
-	return &verifiedReader{Reader: bytes.NewReader(content)}, int64(len(content)), nil
+	return &exportVerifiedReader{Reader: bytes.NewReader(content)}, int64(len(content)), nil
 }
 
 type countingReader struct {
@@ -236,15 +236,15 @@ func (reader *countingReader) OpenStreamContext(ctx context.Context, hash string
 	return reader.fakeReader.OpenStreamContext(ctx, hash)
 }
 
-type verifiedReader struct {
+type exportVerifiedReader struct {
 	io.Reader
 
 	verified bool
 }
 
-func (reader *verifiedReader) Close() error   { return nil }
-func (reader *verifiedReader) Verify() error  { reader.verified = true; return nil }
-func (reader *verifiedReader) Verified() bool { return reader.verified }
+func (reader *exportVerifiedReader) Close() error   { return nil }
+func (reader *exportVerifiedReader) Verify() error  { reader.verified = true; return nil }
+func (reader *exportVerifiedReader) Verified() bool { return reader.verified }
 
 func source(nodeID int64, versionID, markdown string) (Source, []byte) {
 	digest := sha256.Sum256([]byte(markdown))
@@ -265,7 +265,7 @@ func readFile(t *testing.T, path string) string {
 	return string(content)
 }
 
-var _ io.ReadCloser = (*verifiedReader)(nil)
+var _ io.ReadCloser = (*exportVerifiedReader)(nil)
 
 func TestPublishStreamsIntoStageBeforeSourceEOF(t *testing.T) {
 	root := privateExportTestDir(t)
@@ -273,7 +273,7 @@ func TestPublishStreamsIntoStageBeforeSourceEOF(t *testing.T) {
 	var input io.Reader = bytes.NewReader(markdown)
 	readBytes := 0
 	reader := blobReaderFunc(func(context.Context, string) (packstore.VerifiedReadCloser, int64, error) {
-		return &verifiedReader{Reader: readerFunc(func(p []byte) (int, error) {
+		return &exportVerifiedReader{Reader: readerFunc(func(p []byte) (int, error) {
 			if readBytes >= 32<<10 {
 				paths, err := filepath.Glob(filepath.Join(root, "generations", ".stage-*", "collection", "documents", "*", "*.md"))
 				if err != nil || len(paths) != 1 {
@@ -297,7 +297,7 @@ func TestPublishStreamsIntoStageBeforeSourceEOF(t *testing.T) {
 func TestPublishPreservesReadError(t *testing.T) {
 	item, _ := source(1, "version-1", "# One\n")
 	reader := blobReaderFunc(func(context.Context, string) (packstore.VerifiedReadCloser, int64, error) {
-		return &verifiedReader{Reader: readerFunc(func([]byte) (int, error) {
+		return &exportVerifiedReader{Reader: readerFunc(func([]byte) (int, error) {
 			return 0, io.ErrUnexpectedEOF
 		})}, item.BlobSize, nil
 	})
@@ -363,7 +363,7 @@ func TestPublishCancellationKeepsCurrent(t *testing.T) {
 				sources = []Source{next}
 				var input io.Reader = bytes.NewReader(body)
 				reader = blobReaderFunc(func(context.Context, string) (packstore.VerifiedReadCloser, int64, error) {
-					return &verifiedReader{Reader: readerFunc(func(p []byte) (int, error) {
+					return &exportVerifiedReader{Reader: readerFunc(func(p []byte) (int, error) {
 						n, err := input.Read(p)
 						if errors.Is(err, io.EOF) {
 							cancel()

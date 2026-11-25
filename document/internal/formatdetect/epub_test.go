@@ -1,11 +1,10 @@
-package epubutil
+package formatdetect
 
 import (
 	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/binary"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -147,29 +146,4 @@ func TestMetadataXMLAllowsExternalDOCTYPE(t *testing.T) {
 	require.ErrorContains(t, validateMetadataXML([]byte(`<container><!DOCTYPE container></container>`)), "before the root")
 	require.ErrorContains(t, validateMetadataXML([]byte(`<!DOCTYPE container><!DOCTYPE container><container/>`)), "once")
 	require.ErrorContains(t, validateMetadataXML([]byte("<!DOCTYPE container SYSTEM \"bad\xff\"><container/>")), "invalid character")
-}
-
-type cancelOnOffsetReaderAt struct {
-	reader           *bytes.Reader
-	offset           int64
-	cancel           context.CancelFunc
-	reads            *int
-	readsAfterCancel *int
-	canceled         bool
-}
-
-func (reader *cancelOnOffsetReaderAt) ReadAt(buffer []byte, offset int64) (int, error) {
-	if reader.canceled {
-		*reader.readsAfterCancel++
-	}
-	*reader.reads++
-	read, err := reader.reader.ReadAt(buffer, offset)
-	if offset == reader.offset {
-		reader.cancel()
-		reader.canceled = true
-	}
-	if err != nil {
-		return read, fmt.Errorf("read test data: %w", err)
-	}
-	return read, nil
 }

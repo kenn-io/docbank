@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/internal/formatdetect"
 	"go.kenn.io/docbank/document/mistral/internal/testfixture"
-	"go.kenn.io/docbank/internal/formatqualification"
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 func TestDetectFormatRecognizesBoundedDocumentFamilies(t *testing.T) {
@@ -55,11 +55,11 @@ func TestDetectFormatRecognizesBoundedDocumentFamilies(t *testing.T) {
 			format, err := DetectFormat(bytes.NewReader(test.content), int64(len(test.content)), test.mediaType)
 			require.NoError(t, err)
 			assert.Equal(t, test.wantID, format.ID)
-			_, qualified := formatqualification.Lookup(formatqualification.Query{
-				CatalogID: test.wantID, Capability: formatqualification.CapabilityDetect,
+			_, qualified := canonical.LookupFormatQualification(canonical.FormatQualificationQuery{
+				CatalogID: test.wantID, Capability: canonical.FormatCapabilityDetect,
 				Evidence:         "TestDetectFormatRecognizesBoundedDocumentFamilies",
 				ImplementationID: formatdetect.DetectionImplementationID,
-				InputKind:        formatqualification.InputOriginalFile,
+				InputKind:        canonical.FormatInputOriginalFile,
 			})
 			assert.True(t, qualified, "executed document detector format %s is absent from the qualification manifest", test.wantID)
 		})
@@ -71,11 +71,11 @@ func TestDetectFormatDoesNotQualifyMIMEOnlyGo(t *testing.T) {
 	format, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "text/x-go")
 	require.NoError(t, err)
 	assert.Equal(t, "go", format.ID)
-	_, qualified := formatqualification.Lookup(formatqualification.Query{
-		CatalogID: "go", Capability: formatqualification.CapabilityDetect,
+	_, qualified := canonical.LookupFormatQualification(canonical.FormatQualificationQuery{
+		CatalogID: "go", Capability: canonical.FormatCapabilityDetect,
 		Evidence:         "TestDetectFormatRecognizesBoundedDocumentFamilies",
 		ImplementationID: formatdetect.DetectionImplementationID,
-		InputKind:        formatqualification.InputOriginalFile,
+		InputKind:        canonical.FormatInputOriginalFile,
 	})
 	assert.False(t, qualified, "MIME candidate acceptance is not byte recognition")
 }

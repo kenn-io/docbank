@@ -22,7 +22,6 @@ import (
 	"unicode"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/internal/manifestjson"
 	"go.kenn.io/docbank/document/internal/providerutil"
 	"go.kenn.io/docbank/document/providerhttp"
 	"go.kenn.io/docbank/internal/canonical"
@@ -315,7 +314,7 @@ func (client *EmbeddingClient) embeddingAttempt(ctx context.Context, payload []b
 		}
 		return document.EmbeddingResult{}, "", false, true, fmt.Errorf("%w: bounded response", ErrPermanentResponse)
 	}
-	if err := manifestjson.RejectDuplicateKeys(body, "mistral embedding response"); err != nil {
+	if err := canonical.RejectDuplicateKeys(body, "mistral embedding response"); err != nil {
 		return document.EmbeddingResult{}, "", false, true, fmt.Errorf("%w: duplicate response member", ErrPermanentResponse)
 	}
 	var decoded embeddingWireResponse

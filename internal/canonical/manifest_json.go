@@ -1,6 +1,4 @@
-// Package manifestjson provides strict JSON checks shared by provider
-// capability manifests and provider responses.
-package manifestjson
+package canonical
 
 import (
 	"bytes"

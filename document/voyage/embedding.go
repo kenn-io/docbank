@@ -25,7 +25,6 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/internal/manifestjson"
 	"go.kenn.io/docbank/document/internal/providerutil"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/providerhttp"
@@ -516,7 +515,7 @@ func (client *EmbeddingClient) embeddingAttempt(ctx context.Context, route strin
 		}
 		return nil, -1, false, true, &ProviderError{Kind: ErrMalformedResponse, cause: err}
 	}
-	if err := manifestjson.RejectDuplicateKeys(body, "voyage embedding response"); err != nil {
+	if err := canonical.RejectDuplicateKeys(body, "voyage embedding response"); err != nil {
 		return nil, -1, false, true, &ProviderError{Kind: ErrMalformedResponse}
 	}
 	if client.profile.Mode == EmbeddingModeContextual {

@@ -22,7 +22,6 @@ import (
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/vectorworker"
 )
 
 func TestLocalTextFailedConsentAndSavePreserveSelection(t *testing.T) {
@@ -465,7 +464,7 @@ func TestLocalTextHoldsActivityUntilPublication(t *testing.T) {
 				defer func() { cancel(); require.ErrorIs(t, <-done, ctx.Err()) }()
 				synctest.Wait()
 				require.Equal(t, int64(1), active.Load(), "completed embeddings still need a published vector generation")
-				indexer, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{Catalog: fixture.catalog, ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
+				indexer, err := NewIndexWorker(IndexWorkerConfig{Catalog: fixture.catalog, ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
 					return fixture.catalog.ReadVectorIndexVectorSet(ctx, fixture.blobs, member)
 				}, Mutate: func(_ context.Context, fn func() error) error { return fn() }, Owner: "local-text-publication-test", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Second})
 				require.NoError(t, err)

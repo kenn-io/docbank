@@ -10,7 +10,6 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
-	"go.kenn.io/docbank/internal/redactionfiles"
 )
 
 type publishNumberedPDFInput struct {
@@ -56,10 +55,10 @@ func publishNumberedPDF(ctx context.Context, lease *daemonLease, raw []byte) (ba
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	request, err := redactionfiles.ReadInputs(ctx, input.PreparationPath, input.MasksPath)
+	request, err := daemonconn.ReadRedactionInputs(ctx, input.PreparationPath, input.MasksPath)
 	if err == nil {
 		var review processing.RedactionReview
-		review, err = redactionfiles.ReadReview(ctx, input.ReviewPath, request)
+		review, err = daemonconn.ReadRedactionReview(ctx, input.ReviewPath, request)
 		if err == nil && review.SHA256 != input.ReviewSHA256 {
 			err = processing.ErrRedactionReviewChanged
 		}

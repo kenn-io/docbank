@@ -23,7 +23,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document/providerhttp"
-	"go.kenn.io/docbank/internal/qmdexport"
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/packstore"
@@ -153,7 +152,7 @@ func TestSearchRejectsUnknownDuplicateOversizedAndStaleResults(t *testing.T) {
 		root, _, receipt := exportFixture(t)
 		server := qmdServer(t, `{"results":[{"docid":"#abc","file":"`+receipt.Manifest.Entries[0].URI+`","title":"x","score":0.5,"context":null,"snippet":"x"}]}`, func() {
 			other, body := qmdSource(8, "# Different\n")
-			_, err := qmdexport.Publish(t.Context(), root, "docbank", []store.QMDExportSource{other}, blobReader{other.BlobSHA256: body}, qmdexport.Options{})
+			_, err := Publish(t.Context(), root, "docbank", []store.QMDExportSource{other}, blobReader{other.BlobSHA256: body}, Options{})
 			require.NoError(t, err)
 		})
 		client := newTestClient(t, server, root, &authorizerStub{}, &authorityStub{}, 1<<20)
@@ -167,7 +166,7 @@ func TestSearchRejectsUnknownDuplicateOversizedAndStaleResults(t *testing.T) {
 		authority := &authorityStub{live: []store.QMDExportLiveCandidate{{InScope: true, NodeID: 7, NodeRevision: 4,
 			ContentVersionID: source.ContentVersionID, Path: "/live/document.pdf"}}, before: func() {
 			other, body := qmdSource(8, "# Different\n")
-			_, err := qmdexport.Publish(t.Context(), root, "docbank", []store.QMDExportSource{other}, blobReader{other.BlobSHA256: body}, qmdexport.Options{})
+			_, err := Publish(t.Context(), root, "docbank", []store.QMDExportSource{other}, blobReader{other.BlobSHA256: body}, Options{})
 			require.NoError(t, err)
 		}}
 		client := newTestClient(t, server, root, &authorizerStub{}, authority, 1<<20)
@@ -278,11 +277,11 @@ func (*verifiedReader) Close() error   { return nil }
 func (*verifiedReader) Verify() error  { return nil }
 func (*verifiedReader) Verified() bool { return true }
 
-func exportFixture(t *testing.T) (string, store.QMDExportSource, qmdexport.Receipt) {
+func exportFixture(t *testing.T) (string, store.QMDExportSource, Receipt) {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "qmd")
 	source, body := qmdSource(7, "# Searchable\n")
-	receipt, err := qmdexport.Publish(t.Context(), root, "docbank", []store.QMDExportSource{source}, blobReader{source.BlobSHA256: body}, qmdexport.Options{})
+	receipt, err := Publish(t.Context(), root, "docbank", []store.QMDExportSource{source}, blobReader{source.BlobSHA256: body}, Options{})
 	require.NoError(t, err)
 	return root, source, receipt
 }
@@ -320,8 +319,8 @@ func TestSearchAcceptsDistinctActiveProfiles(t *testing.T) {
 	alternate := source
 	alternate.ProcessingProfileFingerprint = strings.Repeat("c", 64)
 	alternate.AttachmentID += "-alternate"
-	receipt, err := qmdexport.Publish(t.Context(), root, "docbank", []store.QMDExportSource{source, alternate},
-		blobReader{source.BlobSHA256: []byte("# Searchable\n")}, qmdexport.Options{})
+	receipt, err := Publish(t.Context(), root, "docbank", []store.QMDExportSource{source, alternate},
+		blobReader{source.BlobSHA256: []byte("# Searchable\n")}, Options{})
 	require.NoError(t, err)
 	items := []wireResult{
 		{DocID: "first", File: receipt.Manifest.Entries[0].URI, Score: 0.9},
@@ -441,8 +440,8 @@ func (authorizer *consentAuthorizer) AuthorizeQMDQuery(ctx context.Context, _ Op
 func TestSearchFiltersScopeAndReportsTruncation(t *testing.T) {
 	root, first, _ := exportFixture(t)
 	second, body := qmdSource(8, "# Another\n")
-	receipt, err := qmdexport.Publish(t.Context(), root, "docbank", []store.QMDExportSource{first, second},
-		blobReader{first.BlobSHA256: []byte("# Searchable\n"), second.BlobSHA256: body}, qmdexport.Options{})
+	receipt, err := Publish(t.Context(), root, "docbank", []store.QMDExportSource{first, second},
+		blobReader{first.BlobSHA256: []byte("# Searchable\n"), second.BlobSHA256: body}, Options{})
 	require.NoError(t, err)
 	uris := make(map[int64]string)
 	for _, entry := range receipt.Manifest.Entries {

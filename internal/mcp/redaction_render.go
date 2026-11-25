@@ -15,7 +15,6 @@ import (
 	"go.kenn.io/docbank/internal/filepublish"
 	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
-	"go.kenn.io/docbank/internal/redactionfiles"
 )
 
 const (
@@ -72,11 +71,11 @@ func renderNativePDF(ctx context.Context, lease *daemonLease, raw []byte, logger
 	defer reviewedBatesActive.Store(false)
 	ctx, cancel := context.WithTimeout(ctx, renderTimeLimit)
 	defer cancel()
-	inputs, err := redactionfiles.ReadInputs(ctx, input.PreparationPath, input.MasksPath)
+	inputs, err := daemonconn.ReadRedactionInputs(ctx, input.PreparationPath, input.MasksPath)
 	if err != nil {
 		return output, renderInputError(ctx, err)
 	}
-	review, err := redactionfiles.ReadReview(ctx, input.ReviewPath, inputs)
+	review, err := daemonconn.ReadRedactionReview(ctx, input.ReviewPath, inputs)
 	if err != nil {
 		return output, renderInputError(ctx, err)
 	}

@@ -1,4 +1,4 @@
-package vectorworker
+package processing
 
 import (
 	"bytes"
@@ -28,7 +28,7 @@ type IndexRestoreReport struct {
 	Unavailable []UnavailableVectorCoverage
 }
 
-type Catalog interface {
+type VectorIndexCatalog interface {
 	RetireEmptyVectorIndexHead(ctx context.Context, vectorSpaceID string, at time.Time) error
 	AbandonVectorIndexBuild(ctx context.Context, claim store.VectorIndexBuildClaim, at time.Time) error
 	CaptureVectorIndexSource(ctx context.Context, vectorSpaceID string) (store.VectorIndexSource, error)
@@ -52,7 +52,7 @@ type IndexWorkerConfig struct {
 	// Retryable classifies transient errors for Run; nil makes errors terminal.
 	Retryable     func(error) bool
 	ReadVectorSet func(context.Context, store.VectorIndexMember) ([]byte, error)
-	Catalog       Catalog
+	Catalog       VectorIndexCatalog
 	Owner         string
 	BuildLease    time.Duration
 	ReaderLease   time.Duration
@@ -70,7 +70,7 @@ type IndexWorker struct {
 	mutate        func(context.Context, func() error) error
 	retryable     func(error) bool
 	readVectorSet func(context.Context, store.VectorIndexMember) ([]byte, error)
-	catalog       Catalog
+	catalog       VectorIndexCatalog
 	owner         string
 	buildLease    time.Duration
 	readerLease   time.Duration
@@ -365,7 +365,7 @@ func (worker *IndexWorker) Restore(ctx context.Context) (IndexRestoreReport, err
 
 type IndexLease struct {
 	mutate     func(context.Context, func() error) error
-	catalog    Catalog
+	catalog    VectorIndexCatalog
 	lease      store.VectorIndexReaderLease
 	opened     *vectorindex.Generation
 	clock      func() time.Time

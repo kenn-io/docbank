@@ -17,7 +17,6 @@ import (
 	"go.kenn.io/docbank/internal/filepublish"
 	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
-	"go.kenn.io/docbank/internal/redactionfiles"
 )
 
 // PDFium's backing and RSS limit belong to the process, including separate MCP sessions.
@@ -63,11 +62,11 @@ func exportReviewedBatesFile(ctx context.Context, lease *daemonLease, input expo
 	defer reviewedBatesActive.Store(false)
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	request, err := redactionfiles.ReadInputs(ctx, input.PreparationPath, input.MasksPath)
+	request, err := daemonconn.ReadRedactionInputs(ctx, input.PreparationPath, input.MasksPath)
 	if err != nil {
 		return exportBatesFileOutput{}, reviewedBatesInputError(ctx, err)
 	}
-	review, err := redactionfiles.ReadReview(ctx, input.ReviewPath, request)
+	review, err := daemonconn.ReadRedactionReview(ctx, input.ReviewPath, request)
 	if err != nil {
 		return exportBatesFileOutput{}, reviewedBatesInputError(ctx, err)
 	}

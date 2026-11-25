@@ -9,21 +9,20 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
-	"go.kenn.io/docbank/internal/redactionfiles"
 )
 
 func readRedactionInputs(ctx context.Context, preparationPath, masksPath string) (processing.RedactionResolveRequest, error) {
-	inputs, err := redactionfiles.ReadInputs(ctx, preparationPath, masksPath)
+	inputs, err := daemonconn.ReadRedactionInputs(ctx, preparationPath, masksPath)
 	return inputs, redactionInputCLIError(err)
 }
 
 func readRedactionReview(ctx context.Context, path string, request processing.RedactionResolveRequest) (processing.RedactionReview, error) {
-	review, err := redactionfiles.ReadReview(ctx, path, request)
+	review, err := daemonconn.ReadRedactionReview(ctx, path, request)
 	return review, redactionInputCLIError(err)
 }
 
 func redactionInputCLIError(err error) error {
-	if errors.Is(err, redactionfiles.ErrInvalidInput) {
+	if errors.Is(err, daemonconn.ErrInvalidRedactionInput) {
 		return usageError(err)
 	}
 	return redactionCLIError(err)
