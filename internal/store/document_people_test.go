@@ -189,6 +189,42 @@ func checkDocumentPeopleNameAliasIsOnlyASuggestion(t *testing.T, newStore func(*
 	require.Equal(t, person.PersonID, suggestion)
 }
 
+func checkDocumentPeopleSkipsCandidateForControlCharacterAlias(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	t.Parallel()
+	for _, key := range []string{"name_alias:jane example\x00", "name_alias:jane example\x1ejohn example"} {
+		s := newStore(t)
+		// Earlier document-events generations stored these keys from raw file metadata.
+		version := seedDocumentPeopleEvent(t, s, "control.pdf", fakeSHA256([]byte(key)), []document.DocumentEventActorV1{{
+			Role: "author", ActorKey: key, DisplayName: strings.TrimPrefix(key, "name_alias:"), Claim: `"author"`,
+		}})
+		input, err := s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
+		require.NoError(t, err, "a stored key the candidate queue rejects must not fail the version")
+		require.Len(t, input.Actors, 1)
+		require.Empty(t, input.Bindings[key])
+		require.Zero(t, input.CandidateOverflow)
+		candidates, _, err := s.PersonCandidates(t.Context(), "open", 10, 0)
+		require.NoError(t, err)
+		require.Empty(t, candidates)
+
+		raw, err := canonical.Marshal(input)
+		require.NoError(t, err)
+		head, err := s.PublishDocumentPeople(t.Context(), DocumentPeoplePublication{
+			People: document.DocumentPeopleV1{ContractVersion: document.PersonContractV1,
+				ContentVersionID: version.ID, EventGenerationID: input.EventGenerationID,
+				Edges: []document.DocumentPersonEdgeV1{}},
+			Resolution:   DocumentPeopleResolution{UnresolvedActors: 1},
+			InputsSHA256: fakeSHA256(raw), ResolverFingerprint: document.PersonResolverFingerprint(),
+			NodeID: input.NodeID, BindingEpoch: input.BindingEpoch, NodeRevision: input.NodeRevision,
+		})
+		require.NoError(t, err)
+		require.Equal(t, documentPeopleStatePublished, head.State)
+		targets, err := s.MissingDocumentPeopleTargetsAfter(t.Context(), document.PersonResolverFingerprint(), "", 10)
+		require.NoError(t, err)
+		require.Empty(t, targets, "the backfill must stop selecting the published version")
+	}
+}
+
 func checkDocumentPeopleReusedIdentitySuggestsOnlyActiveOwner(t *testing.T, newStore func(*testing.T) *Store) {
 	t.Helper()
 	t.Parallel()
