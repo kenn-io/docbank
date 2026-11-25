@@ -9,6 +9,7 @@ import (
 	"io"
 	"maps"
 	"slices"
+	"uuid"
 
 	"github.com/spf13/cobra"
 
@@ -67,6 +68,9 @@ unchanged. Other providers and this installation's ID are kept.`,
 		if err != nil {
 			return fmt.Errorf("reading the provider configuration: %w", err)
 		}
+		if len(data) > provider.MaxRequestBytes {
+			return usageError(fmt.Errorf("the provider configuration must be at most %d bytes", provider.MaxRequestBytes))
+		}
 		if err := json.Unmarshal(data, &input, json.RejectUnknownMembers(true), jsontext.AllowDuplicateNames(false)); err != nil {
 			return usageError(fmt.Errorf("reading the provider configuration: %w", err))
 		}
@@ -84,11 +88,27 @@ unchanged. Other providers and this installation's ID are kept.`,
 		if err != nil {
 			return err
 		}
-		var discovery provider.Discovery
+		// Ask the helper without holding the configuration lock, so a slow
+		// helper cannot stall setup for other providers. Save only if the
+		// installation ID the helper saw is still the saved one.
+		current, err := store.Load()
+		if err != nil {
+			return err
+		}
+		if current.InstallationID == uuid.Nil() {
+			current.InstallationID = uuid.New()
+		}
+		installation := current.InstallationID
+		discovery, err := discoverVaults(cmd.Context(), input.Name, providers.Connection(current, config), config.Helper)
+		if err != nil {
+			return err
+		}
 		err = store.Update(func(file *providers.File) error {
-			discovery, err = discoverVaults(cmd.Context(), input.Name, providers.Connection(*file, config), config.Helper)
-			if err != nil {
-				return err
+			if file.InstallationID == uuid.Nil() {
+				file.InstallationID = installation
+			}
+			if file.InstallationID != installation {
+				return errors.New("another setup changed this installation's provider configuration; run the setup again")
 			}
 			file.Providers[input.Name] = config
 			return nil

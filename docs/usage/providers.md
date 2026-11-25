@@ -60,8 +60,10 @@ service's setup command normally sends it.
   runs it directly, without a shell.
 
 Docbank asks the helper for your vaults before it saves anything. When the
-helper refuses or fails, the saved connections stay as they were. Configuring
-a name again replaces that connection and keeps the others.
+helper refuses or fails, the saved connections stay as they were. If another
+setup replaces this installation's ID while the helper answers, Docbank saves
+nothing and asks you to run the setup again. Configuring a name again replaces
+that connection and keeps the others.
 
 ## Where connections are saved
 

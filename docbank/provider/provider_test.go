@@ -143,6 +143,7 @@ func TestRequestsNameAnHTTPSOriginAndMountPrefix(t *testing.T) {
 		{InstallationID: installation, Origin: "http://vaults.example.test", MountPrefix: "/documents"},
 		{InstallationID: installation, Origin: "https://vaults.example.test/documents", MountPrefix: "/documents"},
 		{InstallationID: installation, Origin: "https://user@vaults.example.test", MountPrefix: "/documents"},
+		{InstallationID: installation, Origin: "https://:443", MountPrefix: "/documents"},
 		{InstallationID: installation, Origin: "https://vaults.example.test", MountPrefix: "/documents/"},
 		{InstallationID: installation, Origin: "https://vaults.example.test", MountPrefix: "documents"},
 		{InstallationID: uuid.Nil(), Origin: "https://vaults.example.test", MountPrefix: "/documents"},

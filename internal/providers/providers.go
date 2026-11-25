@@ -100,8 +100,9 @@ func (s Store) Load() (File, error) {
 }
 
 // Update applies change to the saved configuration under a lock and replaces
-// the file atomically. When change fails, the file stays as it was. A missing
-// installation ID is created before change runs, so change can use it.
+// the file atomically. When change fails, the file stays as it was. Hold the
+// lock only for the change itself: a slow step such as asking a helper belongs
+// before Update, so it cannot stall other setups.
 func (s Store) Update(change func(*File) error) error {
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return fmt.Errorf("creating %s: %w", s.dir, err)
@@ -114,9 +115,6 @@ func (s Store) Update(change func(*File) error) error {
 	file, err := s.Load()
 	if err != nil {
 		return err
-	}
-	if file.InstallationID == uuid.Nil() {
-		file.InstallationID = uuid.New()
 	}
 	if err := change(&file); err != nil {
 		return err

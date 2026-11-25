@@ -235,7 +235,7 @@ func ValidateConnection(origin, mountPrefix string) error {
 // query, fragment, or user information.
 func ValidateOrigin(origin string) error {
 	parsed, err := url.Parse(origin)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil ||
 		parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" ||
 		strings.HasSuffix(origin, "?") || strings.HasSuffix(origin, "#") || origin != parsed.String() {
 		return fmt.Errorf("origin %q must be an HTTPS origin such as https://vaults.example.org", origin)

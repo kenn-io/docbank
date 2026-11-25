@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json/v2"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"uuid"
 
+	"github.com/BurntSushi/toml"
+	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/docbank/provider"
@@ -15,6 +19,8 @@ import (
 )
 
 const providerTestHelperArg = "docbank-provider-test-helper"
+
+var providerTestSwappedInstallation = uuid.MustParse("66666666-6666-4666-8666-666666666666")
 
 var providerTestVault = provider.Vault{
 	ID:        uuid.MustParse("22222222-2222-4222-8222-222222222222"),
@@ -33,8 +39,11 @@ func runProviderTestHelper(mode, record string) int {
 		return 1
 	}
 	response := provider.Response{Version: provider.Version, Operation: request.Operation, RequestID: request.RequestID}
+	if mode == "swap" && swapProviderInstallation() != nil {
+		return 1
+	}
 	switch mode {
-	case "ready":
+	case "ready", "swap":
 		response.Status = provider.StatusReady
 		response.Discovery = &provider.Discovery{Enabled: true, CanCreate: true, Vaults: []provider.Vault{providerTestVault}}
 	default:
@@ -44,6 +53,25 @@ func runProviderTestHelper(mode, record string) int {
 		return 1
 	}
 	return 0
+}
+
+// swapProviderInstallation saves a different installation ID under the
+// configuration lock, which setup must not be holding while the helper runs.
+func swapProviderInstallation() error {
+	store, err := providers.DefaultStore()
+	if err != nil {
+		return err
+	}
+	lock := flock.New(store.Path() + ".lock")
+	if locked, err := lock.TryLock(); err != nil || !locked {
+		return errors.New("setup holds the configuration lock")
+	}
+	defer func() { _ = lock.Unlock() }()
+	var data bytes.Buffer
+	if toml.NewEncoder(&data).Encode(providers.File{InstallationID: providerTestSwappedInstallation}) != nil {
+		return errors.New("encoding the configuration")
+	}
+	return os.WriteFile(store.Path(), data.Bytes(), 0o600)
 }
 
 func providerDocument(t *testing.T, name, mode, record string) string {
@@ -132,6 +160,12 @@ func TestProviderConfigureRejectsUnsafeConnections(t *testing.T) {
 		"unknown field": func(document string) string {
 			return strings.Replace(document, `{`, `{"token":"x",`, 1)
 		},
+		"origin without host": func(document string) string {
+			return strings.Replace(document, `"origin":"https://vaults.example.test"`, `"origin":"https://:443"`, 1)
+		},
+		"oversized document": func(document string) string {
+			return document + strings.Repeat(" ", provider.MaxRequestBytes)
+		},
 	} {
 		_, err := configureProvider(t, edit(providerDocument(t, "work", "ready", record)))
 		require.Error(t, err, name)
@@ -139,4 +173,24 @@ func TestProviderConfigureRejectsUnsafeConnections(t *testing.T) {
 	}
 	_, err := configureProvider(t, providerDocument(t, "Work Laptop", "ready", record))
 	require.ErrorContains(t, err, "provider name")
+}
+
+func TestProviderConfigureAsksTheHelperWithoutHoldingTheLock(t *testing.T) {
+	t.Setenv(providers.ConfigHomeEnv, t.TempDir())
+	record := filepath.Join(t.TempDir(), "request.json")
+
+	// The helper fails unless it can take the configuration lock, then saves a
+	// different installation ID as another setup would.
+	_, err := configureProvider(t, providerDocument(t, "work", "swap", record))
+	require.ErrorContains(t, err, "run the setup again")
+	store, err := providers.DefaultStore()
+	require.NoError(t, err)
+	file, err := store.Load()
+	require.NoError(t, err)
+	require.Equal(t, providerTestSwappedInstallation, file.InstallationID)
+	require.Empty(t, file.Providers)
+
+	out, err := configureProvider(t, providerDocument(t, "work", "ready", record))
+	require.NoError(t, err, out)
+	require.Equal(t, providerTestSwappedInstallation, recordedRequest(t, record).InstallationID)
 }
