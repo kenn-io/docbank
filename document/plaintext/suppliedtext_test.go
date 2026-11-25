@@ -1,4 +1,4 @@
-package suppliedtext
+package plaintext
 
 import (
 	"bytes"
@@ -16,11 +16,11 @@ import (
 
 func TestSuppliedTextBindingSeparatesSamePDFWithDifferentText(t *testing.T) {
 	source, policy := strings.Repeat("a", 64), strings.Repeat("f", 64)
-	first, err := SourceBinding("p", "row-a", source, strings.Repeat("b", 64), "utf-8", policy)
+	first, err := SuppliedTextSourceBinding("p", "row-a", source, strings.Repeat("b", 64), "utf-8", policy)
 	require.NoError(t, err)
-	repeat, err := SourceBinding("p", "row-a", source, strings.Repeat("b", 64), "utf-8", policy)
+	repeat, err := SuppliedTextSourceBinding("p", "row-a", source, strings.Repeat("b", 64), "utf-8", policy)
 	require.NoError(t, err)
-	second, err := SourceBinding("p", "row-b", source, strings.Repeat("c", 64), "utf-8", policy)
+	second, err := SuppliedTextSourceBinding("p", "row-b", source, strings.Repeat("c", 64), "utf-8", policy)
 	require.NoError(t, err)
 	require.Equal(t, first, repeat)
 	require.NotEqual(t, first, second)
@@ -32,7 +32,7 @@ func TestSuppliedTextBindingSeparatesSamePDFWithDifferentText(t *testing.T) {
 		{"p", "row-a", source, strings.Repeat("b", 64), "windows-1252", policy},
 		{"p", "row-a", source, strings.Repeat("b", 64), "utf-8", strings.Repeat("e", 64)},
 	} {
-		binding, err := SourceBinding(changed[0], changed[1], changed[2], changed[3], changed[4], changed[5])
+		binding, err := SuppliedTextSourceBinding(changed[0], changed[1], changed[2], changed[3], changed[4], changed[5])
 		require.NoError(t, err)
 		require.NotEqual(t, first, binding)
 	}
@@ -43,18 +43,18 @@ func TestSuppliedTextBindingSeparatesSamePDFWithDifferentText(t *testing.T) {
 		{"p", "row-a", source, strings.Repeat("b", 64), "", policy},
 		{"p", "row-a", source, strings.Repeat("b", 64), "utf-8", "bad"},
 	} {
-		_, err := SourceBinding(args[0], args[1], args[2], args[3], args[4], args[5])
+		_, err := SuppliedTextSourceBinding(args[0], args[1], args[2], args[3], args[4], args[5])
 		require.Error(t, err)
 	}
 }
 
 func TestSuppliedTextIsIndexedAndBlankTextCallsNoNativeExtractor(t *testing.T) {
 	source := &countingSource{text: document.SuppliedText{Provider: "package", Text: "quenchwood ledger entry"}}
-	provider, err := New(Profile{Source: source, SourceBinding: strings.Repeat("a", 64), MaxDocumentChars: 4096})
+	provider, err := NewSuppliedTextProvider(SuppliedTextProfile{Source: source, SourceBinding: strings.Repeat("a", 64), MaxDocumentChars: 4096})
 	require.NoError(t, err)
 	require.Equal(t, "supplied-text.in-process-v1", provider.Descriptor().ID)
-	upload := newTestUpload("pdf", "application/pdf")
-	result, err := document.RenderRendition(t.Context(), provider, upload, testAuthorization(provider.Descriptor(), upload.Metadata()))
+	upload := newSuppliedTestUpload("pdf", "application/pdf")
+	result, err := document.RenderRendition(t.Context(), provider, upload, suppliedTestAuthorization(provider.Descriptor(), upload.Metadata()))
 	require.NoError(t, err)
 	require.Len(t, result.Evidence.Units, 1)
 	require.Contains(t, result.Evidence.Units[0].Text, "quenchwood")
@@ -64,34 +64,34 @@ func TestSuppliedTextIsIndexedAndBlankTextCallsNoNativeExtractor(t *testing.T) {
 	require.Equal(t, upload.Metadata().SHA256, source.lastDigest)
 
 	blank := &countingSource{}
-	blankProvider, err := New(Profile{Source: blank, SourceBinding: strings.Repeat("a", 64), MaxDocumentChars: 4096})
+	blankProvider, err := NewSuppliedTextProvider(SuppliedTextProfile{Source: blank, SourceBinding: strings.Repeat("a", 64), MaxDocumentChars: 4096})
 	require.NoError(t, err)
-	_, err = document.RenderRendition(t.Context(), blankProvider, newTestUpload("pdf", "application/pdf"), testAuthorization(blankProvider.Descriptor(), upload.Metadata()))
+	_, err = document.RenderRendition(t.Context(), blankProvider, newSuppliedTestUpload("pdf", "application/pdf"), suppliedTestAuthorization(blankProvider.Descriptor(), upload.Metadata()))
 	var providerErr *document.RenditionProviderError
 	require.ErrorAs(t, err, &providerErr)
 	require.Equal(t, document.RenditionErrorUnsupportedInput, providerErr.Code())
 	require.Equal(t, 1, blank.calls)
-	directUpload := newTestUpload("pdf", "application/pdf")
-	_, err = blankProvider.Render(t.Context(), directUpload, testAuthorization(blankProvider.Descriptor(), directUpload.Metadata()))
+	directUpload := newSuppliedTestUpload("pdf", "application/pdf")
+	_, err = blankProvider.Render(t.Context(), directUpload, suppliedTestAuthorization(blankProvider.Descriptor(), directUpload.Metadata()))
 	require.ErrorAs(t, err, &providerErr)
 	require.Equal(t, document.RenditionErrorUnsupportedInput, providerErr.Code())
 	require.Zero(t, directUpload.reads)
 
 	whitespace := &countingSource{text: document.SuppliedText{Provider: "package", Text: " \n"}}
-	whitespaceProvider, err := New(Profile{Source: whitespace, SourceBinding: strings.Repeat("a", 64), MaxDocumentChars: 4096})
+	whitespaceProvider, err := NewSuppliedTextProvider(SuppliedTextProfile{Source: whitespace, SourceBinding: strings.Repeat("a", 64), MaxDocumentChars: 4096})
 	require.NoError(t, err)
-	_, err = document.RenderRendition(t.Context(), whitespaceProvider, newTestUpload("pdf", "application/pdf"), testAuthorization(whitespaceProvider.Descriptor(), upload.Metadata()))
+	_, err = document.RenderRendition(t.Context(), whitespaceProvider, newSuppliedTestUpload("pdf", "application/pdf"), suppliedTestAuthorization(whitespaceProvider.Descriptor(), upload.Metadata()))
 	require.ErrorAs(t, err, &providerErr)
 	require.Equal(t, document.RenditionErrorUnsupportedInput, providerErr.Code())
 }
 
 func TestSuppliedTextProviderRejectsDifferentInputBindingBeforeSourceCall(t *testing.T) {
 	source := &countingSource{text: document.SuppliedText{Provider: "package", Text: "word"}}
-	provider, err := New(Profile{Source: source, SourceBinding: strings.Repeat("a", 64), MaxDocumentChars: 100})
+	provider, err := NewSuppliedTextProvider(SuppliedTextProfile{Source: source, SourceBinding: strings.Repeat("a", 64), MaxDocumentChars: 100})
 	require.NoError(t, err)
-	upload := newTestUpload("pdf", "application/pdf")
+	upload := newSuppliedTestUpload("pdf", "application/pdf")
 	upload.metadata.InputBinding = strings.Repeat("b", 64)
-	_, err = document.RenderRendition(t.Context(), provider, upload, testAuthorization(provider.Descriptor(), upload.Metadata()))
+	_, err = document.RenderRendition(t.Context(), provider, upload, suppliedTestAuthorization(provider.Descriptor(), upload.Metadata()))
 	var providerErr *document.RenditionProviderError
 	require.ErrorAs(t, err, &providerErr)
 	require.Equal(t, document.RenditionErrorPolicyRejected, providerErr.Code())
@@ -99,19 +99,19 @@ func TestSuppliedTextProviderRejectsDifferentInputBindingBeforeSourceCall(t *tes
 }
 
 func TestSuppliedTextProviderIdentityAndFormats(t *testing.T) {
-	base := Profile{Source: &countingSource{}, SourceBinding: strings.Repeat("a", 64), MaxDocumentChars: 100}
-	first, err := New(base)
+	base := SuppliedTextProfile{Source: &countingSource{}, SourceBinding: strings.Repeat("a", 64), MaxDocumentChars: 100}
+	first, err := NewSuppliedTextProvider(base)
 	require.NoError(t, err)
-	repeat, err := New(base)
+	repeat, err := NewSuppliedTextProvider(base)
 	require.NoError(t, err)
 	require.Equal(t, first.Descriptor(), repeat.Descriptor())
 	base.SourceBinding = strings.Repeat("b", 64)
-	other, err := New(base)
+	other, err := NewSuppliedTextProvider(base)
 	require.NoError(t, err)
 	require.NotEqual(t, first.Descriptor().Fingerprint, other.Descriptor().Fingerprint)
 	base.SourceBinding = strings.Repeat("a", 64)
 	base.MaxDocumentChars++
-	otherPolicy, err := New(base)
+	otherPolicy, err := NewSuppliedTextProvider(base)
 	require.NoError(t, err)
 	require.NotEqual(t, first.Descriptor().PolicyFingerprint, otherPolicy.Descriptor().PolicyFingerprint)
 	formats := first.Descriptor().SupportedFormats
@@ -123,9 +123,9 @@ func TestSuppliedTextProviderIdentityAndFormats(t *testing.T) {
 		}
 		require.True(t, found, mediaType)
 	}
-	_, err = New(Profile{SourceBinding: strings.Repeat("a", 64), MaxDocumentChars: 100})
+	_, err = NewSuppliedTextProvider(SuppliedTextProfile{SourceBinding: strings.Repeat("a", 64), MaxDocumentChars: 100})
 	require.Error(t, err)
-	_, err = New(Profile{Source: &countingSource{}, SourceBinding: "bad", MaxDocumentChars: 100})
+	_, err = NewSuppliedTextProvider(SuppliedTextProfile{Source: &countingSource{}, SourceBinding: "bad", MaxDocumentChars: 100})
 	require.Error(t, err)
 }
 
@@ -135,10 +135,10 @@ func TestSuppliedTextRendersEveryDeclaredFormat(t *testing.T) {
 		{"text", "text/plain"}, {"structured", "application/json"},
 	} {
 		t.Run(format.mediaType, func(t *testing.T) {
-			provider, err := New(Profile{Source: &countingSource{text: document.SuppliedText{Provider: "package", Text: "sender text"}}, SourceBinding: strings.Repeat("a", 64), MaxDocumentChars: 100})
+			provider, err := NewSuppliedTextProvider(SuppliedTextProfile{Source: &countingSource{text: document.SuppliedText{Provider: "package", Text: "sender text"}}, SourceBinding: strings.Repeat("a", 64), MaxDocumentChars: 100})
 			require.NoError(t, err)
-			upload := newTestUpload(format.family, format.mediaType)
-			result, err := document.RenderRendition(t.Context(), provider, upload, testAuthorization(provider.Descriptor(), upload.Metadata()))
+			upload := newSuppliedTestUpload(format.family, format.mediaType)
+			result, err := document.RenderRendition(t.Context(), provider, upload, suppliedTestAuthorization(provider.Descriptor(), upload.Metadata()))
 			require.NoError(t, err)
 			require.Equal(t, format.family, result.Evidence.Family)
 		})
@@ -157,14 +157,14 @@ func (s *countingSource) SuppliedText(_ context.Context, digest string) (documen
 	return s.text, nil
 }
 
-type testUpload struct {
+type suppliedTestUpload struct {
 	*bytes.Reader
 
 	metadata document.AuthorizedUploadMetadata
 	reads    int
 }
 
-func (u *testUpload) Read(p []byte) (int, error) {
+func (u *suppliedTestUpload) Read(p []byte) (int, error) {
 	u.reads++
 	n, err := u.Reader.Read(p)
 	if err != nil {
@@ -173,17 +173,17 @@ func (u *testUpload) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-func newTestUpload(family, mediaType string) *testUpload {
+func newSuppliedTestUpload(family, mediaType string) *suppliedTestUpload {
 	data := []byte("synthetic sealed source")
 	digest := sha256.Sum256(data)
-	return &testUpload{Reader: bytes.NewReader(data), metadata: document.AuthorizedUploadMetadata{
+	return &suppliedTestUpload{Reader: bytes.NewReader(data), metadata: document.AuthorizedUploadMetadata{
 		Filename: "source.pdf", MediaFamily: family, MediaType: mediaType, ByteLength: int64(len(data)), SHA256: hex.EncodeToString(digest[:]),
 		CapabilityRecordChecksum: strings.Repeat("2", 64), ProviderMetadataChecksum: strings.Repeat("3", 64), InputKind: document.RenditionInputOriginalFile,
 	}}
 }
-func (*testUpload) Close() error                                  { return nil }
-func (u *testUpload) Metadata() document.AuthorizedUploadMetadata { return u.metadata }
-func testAuthorization(d document.RenditionDescriptor, m document.AuthorizedUploadMetadata) document.RenditionAuthorization {
+func (*suppliedTestUpload) Close() error                                  { return nil }
+func (u *suppliedTestUpload) Metadata() document.AuthorizedUploadMetadata { return u.metadata }
+func suppliedTestAuthorization(d document.RenditionDescriptor, m document.AuthorizedUploadMetadata) document.RenditionAuthorization {
 	started := time.Now().UTC().Add(-time.Minute)
 	return document.RenditionAuthorization{
 		ProviderID: d.ID, DescriptorFingerprint: d.Fingerprint, PolicyFingerprint: d.PolicyFingerprint,

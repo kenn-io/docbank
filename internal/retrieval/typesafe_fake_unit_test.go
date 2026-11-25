@@ -1,4 +1,4 @@
-package typesafetest
+package retrieval
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 )
 
 func TestFakeRecordsSyntheticRequests(t *testing.T) {
-	fake := New(typesafe.Profile{SecretBinding: "test", EgressPolicy: providerhttp.EgressPolicy{Scheme: "https", Host: "api.typesafe.ai", Port: 443, AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}}}, func(_, candidate string) (float64, error) {
+	fake := newTypesafeFake(typesafe.Profile{SecretBinding: "test", EgressPolicy: providerhttp.EgressPolicy{Scheme: "https", Host: "api.typesafe.ai", Port: 443, AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}}}, func(_, candidate string) (float64, error) {
 		return float64(len(candidate)) / 10, nil
 	})
 	result, err := fake.Rerank(context.Background(), typesafe.RerankRequest{Query: "q", Candidates: []string{"candidate"}})
@@ -28,7 +28,7 @@ func TestFakeRecordsSyntheticRequests(t *testing.T) {
 
 func TestFakeEnforcesClientBounds(t *testing.T) {
 	profile := typesafe.Profile{SecretBinding: "test", MaxQueryBytes: 1, EgressPolicy: providerhttp.EgressPolicy{Scheme: "https", Host: "api.typesafe.ai", Port: 443, AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}}}
-	fake := New(profile, func(_, _ string) (float64, error) { t.Fatal("score function called"); return 0, nil })
+	fake := newTypesafeFake(profile, func(_, _ string) (float64, error) { t.Fatal("score function called"); return 0, nil })
 	if _, err := fake.Rerank(context.Background(), typesafe.RerankRequest{Query: "too long", Candidates: []string{"x"}}); !errors.Is(err, typesafe.ErrCapacityResponse) {
 		t.Fatalf("got %v", err)
 	}
@@ -39,7 +39,7 @@ func TestFakeEnforcesClientBounds(t *testing.T) {
 
 func TestFakeHonorsCanceledContextBeforeRecording(t *testing.T) {
 	profile := typesafe.Profile{SecretBinding: "test", EgressPolicy: providerhttp.EgressPolicy{Scheme: "https", Host: "api.typesafe.ai", Port: 443, AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}}}
-	fake := New(profile, func(_, _ string) (float64, error) {
+	fake := newTypesafeFake(profile, func(_, _ string) (float64, error) {
 		t.Fatal("score function called")
 		return 0, nil
 	})
@@ -59,7 +59,7 @@ func TestFakeStopsScoringAfterCancellation(t *testing.T) {
 	var calls int
 	ctx, cancel := context.WithCancel(context.Background())
 	profile := typesafe.Profile{SecretBinding: "test", EgressPolicy: providerhttp.EgressPolicy{Scheme: "https", Host: "api.typesafe.ai", Port: 443, AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}}}
-	fake := New(profile, func(_, _ string) (float64, error) {
+	fake := newTypesafeFake(profile, func(_, _ string) (float64, error) {
 		calls++
 		cancel()
 		return 0.5, nil
@@ -77,7 +77,7 @@ func TestFakeStopsScoringAfterCancellation(t *testing.T) {
 func TestFakeRejectsCancellationAfterFinalScore(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	profile := typesafe.Profile{SecretBinding: "test", EgressPolicy: providerhttp.EgressPolicy{Scheme: "https", Host: "api.typesafe.ai", Port: 443, AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}}}
-	fake := New(profile, func(_, _ string) (float64, error) {
+	fake := newTypesafeFake(profile, func(_, _ string) (float64, error) {
 		cancel()
 		return 0.5, nil
 	})
@@ -94,19 +94,19 @@ func TestFakeRejectsCancellationAfterFinalScore(t *testing.T) {
 
 func TestFakeMatchesClientReceiptAndRejectsInvalidScores(t *testing.T) {
 	profile := typesafe.Profile{SecretBinding: "test", EgressPolicy: providerhttp.EgressPolicy{Scheme: "https", Host: "api.typesafe.ai", Port: 443, AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}}}
-	fake := New(profile, func(_, _ string) (float64, error) { return 1.1, nil })
+	fake := newTypesafeFake(profile, func(_, _ string) (float64, error) { return 1.1, nil })
 	result, err := fake.Rerank(context.Background(), typesafe.RerankRequest{Query: "q", Candidates: []string{"x"}})
 	if !errors.Is(err, typesafe.ErrPermanentResponse) || len(result.Scores) != 0 {
 		t.Fatalf("invalid score: result=%+v err=%v", result, err)
 	}
 	for _, score := range []float64{math.NaN(), math.Inf(1), -0.1, 1.1} {
-		fake = New(profile, func(_, _ string) (float64, error) { return score, nil })
+		fake = newTypesafeFake(profile, func(_, _ string) (float64, error) { return score, nil })
 		if _, err := fake.Rerank(context.Background(), typesafe.RerankRequest{Query: "q", Candidates: []string{"x"}}); !errors.Is(err, typesafe.ErrPermanentResponse) {
 			t.Errorf("score %v: got %v", score, err)
 		}
 	}
 
-	fake = New(profile, func(_, _ string) (float64, error) { return 0.5, nil })
+	fake = newTypesafeFake(profile, func(_, _ string) (float64, error) { return 0.5, nil })
 	result, err = fake.Rerank(context.Background(), typesafe.RerankRequest{Query: "q", Candidates: []string{"x"}})
 	if err != nil || result.Receipt.PolicyFingerprint == "" || result.Receipt.RequestShape != typesafe.RequestShapePerCandidate {
 		t.Fatalf("receipt=%+v err=%v", result.Receipt, err)
@@ -114,7 +114,7 @@ func TestFakeMatchesClientReceiptAndRejectsInvalidScores(t *testing.T) {
 }
 
 func TestFakeIsSafeForConcurrentUse(t *testing.T) {
-	fake := New(typesafe.Profile{SecretBinding: "test", EgressPolicy: providerhttp.EgressPolicy{Scheme: "https", Host: "api.typesafe.ai", Port: 443, AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}}}, func(_, _ string) (float64, error) { return 0.5, nil })
+	fake := newTypesafeFake(typesafe.Profile{SecretBinding: "test", EgressPolicy: providerhttp.EgressPolicy{Scheme: "https", Host: "api.typesafe.ai", Port: 443, AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}}}, func(_, _ string) (float64, error) { return 0.5, nil })
 	var group sync.WaitGroup
 	for range 8 {
 		group.Go(func() {

@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/internal/providerutil"
-	"go.kenn.io/docbank/document/vision/visiontest"
+	"go.kenn.io/docbank/document/media/mediatest"
 )
 
 func TestUnderstandingRendersSections(t *testing.T) {
@@ -31,7 +31,7 @@ func TestUnderstandingRendersSections(t *testing.T) {
 		assert.Contains(t, body.Messages[0].Content[0].Text, "Each field must be at most 16384 UTF-8 bytes.")
 		assert.Equal(t, "data:image/png;base64,"+base64.StdEncoding.EncodeToString([]byte("synthetic-image")), body.Messages[0].Content[1].ImageURL.URL)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(visiontest.Completion(raw))
+		_, _ = w.Write(mediatest.VisionCompletion(raw))
 	}))
 	defer server.Close()
 	p, err := New(Profile{DescriptorID: UnderstandingProviderID, Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
@@ -63,7 +63,7 @@ func TestUnderstandingRendersSections(t *testing.T) {
 	t.Run("all empty", func(t *testing.T) {
 		empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write(visiontest.Completion(`{"visible_text":"","literal_description":" ","possible_meaning":"","uncertainty":""}`))
+			_, _ = w.Write(mediatest.VisionCompletion(`{"visible_text":"","literal_description":" ","possible_meaning":"","uncertainty":""}`))
 		}))
 		defer empty.Close()
 		p, err := New(Profile{DescriptorID: UnderstandingProviderID, Origin: empty.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, empty.Client())
@@ -76,7 +76,7 @@ func TestUnderstandingRendersSections(t *testing.T) {
 	t.Run("controls in published result", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write(visiontest.Completion(`{"visible_text":"  A\tB\u00a0C\r\nD\u001b[2J\u0007","literal_description":"\u001b\u0007","possible_meaning":"meaning","uncertainty":"unknown"}`))
+			_, _ = w.Write(mediatest.VisionCompletion(`{"visible_text":"  A\tB\u00a0C\r\nD\u001b[2J\u0007","literal_description":"\u001b\u0007","possible_meaning":"meaning","uncertainty":"unknown"}`))
 		}))
 		defer server.Close()
 		p, err := New(Profile{DescriptorID: UnderstandingProviderID, Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())

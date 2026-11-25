@@ -24,7 +24,6 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/vision"
-	"go.kenn.io/docbank/document/vision/visiontest"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/home"
@@ -474,11 +473,11 @@ func seedVisionResult(ctx context.Context, s *store.Store, blobs *blob.Store, sp
 		payload, err := json.Marshal(value)
 		check(err)
 		content := string(payload)
-		if visiontest.IsProbe(body) {
+		if mediatest.IsVisionProbe(body) {
 			content = "red,blue"
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, err = w.Write(visiontest.Completion(content))
+		_, err = w.Write(mediatest.VisionCompletion(content))
 		check(err)
 	}))
 	defer server.Close()

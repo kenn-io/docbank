@@ -1,4 +1,4 @@
-package grounding
+package mcp
 
 import (
 	"strings"
@@ -51,43 +51,43 @@ func TestGrounding(t *testing.T) {
 		{"assignment delimiters", "5 and 6", "x=5;y=6", "grounded", "found", []string{"5", "6"}, []int{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a, err := Prepare(tc.answer)
+			a, err := PrepareGrounding(tc.answer)
 			require.NoError(t, err)
-			report := a.Check([]Citation{{Text: tc.source, TextSHA256: "digest"}})
+			report := a.CheckGrounding([]GroundingCitation{{Text: tc.source, TextSHA256: "digest"}})
 			require.Equal(t, tc.status, report.Status)
-			figures := []Figure{}
+			figures := []GroundingFigure{}
 			for _, value := range tc.figures {
-				figures = append(figures, Figure{Text: value, Status: tc.figureStatus})
+				figures = append(figures, GroundingFigure{Text: value, Status: tc.figureStatus})
 			}
 			require.Equal(t, figures, report.Figures)
-			require.Equal(t, []CitationResult{{Index: 1, Status: "resolved", TextSHA256: "digest"}}, report.Citations)
+			require.Equal(t, []GroundingCitationResult{{Index: 1, Status: "resolved", TextSHA256: "digest"}}, report.Citations)
 			require.Equal(t, tc.unknownMarkers, report.UnknownMarkers)
 		})
 	}
 	t.Run("all resolved citations contribute", func(t *testing.T) {
-		a, err := Prepare("Fee 20 [1] rate 30 [2]")
+		a, err := PrepareGrounding("Fee 20 [1] rate 30 [2]")
 		require.NoError(t, err)
-		report := a.Check([]Citation{{Text: "30", TextSHA256: "digest-30"}, {Text: "20", TextSHA256: "digest-20"}})
+		report := a.CheckGrounding([]GroundingCitation{{Text: "30", TextSHA256: "digest-30"}, {Text: "20", TextSHA256: "digest-20"}})
 		require.Equal(t, "grounded", report.Status)
-		require.Equal(t, []Figure{{Text: "20", Status: "found"}, {Text: "30", Status: "found"}}, report.Figures)
-		require.Equal(t, []CitationResult{{Index: 1, Status: "resolved", TextSHA256: "digest-30"}, {Index: 2, Status: "resolved", TextSHA256: "digest-20"}}, report.Citations)
+		require.Equal(t, []GroundingFigure{{Text: "20", Status: "found"}, {Text: "30", Status: "found"}}, report.Figures)
+		require.Equal(t, []GroundingCitationResult{{Index: 1, Status: "resolved", TextSHA256: "digest-30"}, {Index: 2, Status: "resolved", TextSHA256: "digest-20"}}, report.Citations)
 	})
 	t.Run("unavailable evidence", func(t *testing.T) {
 		for _, tc := range []struct{ answer, status string }{
 			{"20 [1]", "incomplete"}, {"30 [1]", "incomplete"}, {"words", "incomplete"}, {"20 [3]", "ungrounded"},
 		} {
-			a, err := Prepare(tc.answer)
+			a, err := PrepareGrounding(tc.answer)
 			require.NoError(t, err)
-			report := a.Check([]Citation{{Text: "20", TextSHA256: "digest"}, {Err: "citation_unavailable"}})
+			report := a.CheckGrounding([]GroundingCitation{{Text: "20", TextSHA256: "digest"}, {Err: "citation_unavailable"}})
 			require.Equal(t, tc.status, report.Status)
-			require.Equal(t, CitationResult{Index: 2, Status: "citation_unavailable"}, report.Citations[1])
+			require.Equal(t, GroundingCitationResult{Index: 2, Status: "citation_unavailable"}, report.Citations[1])
 		}
 	})
 	t.Run("limits", func(t *testing.T) {
 		for _, token := range []string{"K5 ", "[1] "} {
-			_, err := Prepare(strings.Repeat(token, 512))
+			_, err := PrepareGrounding(strings.Repeat(token, 512))
 			require.NoError(t, err)
-			_, err = Prepare(strings.Repeat(token, 513))
+			_, err = PrepareGrounding(strings.Repeat(token, 513))
 			require.Error(t, err)
 		}
 	})

@@ -1,6 +1,6 @@
 //go:build windows
 
-package push_test
+package main
 
 import (
 	"context"
@@ -16,7 +16,6 @@ import (
 	"golang.org/x/sys/windows"
 
 	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/push"
 )
 
 // A one-shot push never scans again, so a file another program holds open must
@@ -42,8 +41,8 @@ func TestPushReportsAFileAnotherProgramHoldsOpen(t *testing.T) {
 		assert.ErrorIs(t, err, windows.ERROR_SHARING_VIOLATION)
 		return nil
 	}
-	report, err := push.Run(t.Context(), f.connection, opts)
-	require.ErrorIs(t, err, push.ErrFilesFailed)
+	report, err := executePush(t.Context(), f.connection, opts)
+	require.ErrorIs(t, err, errPushFilesFailed)
 	assert.Equal(t, 1, report.Added)
 	assert.Equal(t, 1, report.Failed)
 	assert.Equal(t, []string{"held.txt"}, failed)
@@ -98,7 +97,7 @@ func TestPushWatchUploadsAFileAfterItsByteRangeLockIsReleased(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		done := make(chan error, 1)
-		go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
+		go func() { _, err := executePush(ctx, f.connection, opts); done <- err }()
 
 		next(t, retried, "the locked file to be retried rather than rejected")
 		assert.Empty(t, failures, "a locked file is retried, not reported")

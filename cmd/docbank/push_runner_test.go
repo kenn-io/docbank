@@ -1,4 +1,4 @@
-package push_test
+package main
 
 import (
 	"bytes"
@@ -29,7 +29,6 @@ import (
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/ingest"
-	"go.kenn.io/docbank/internal/push"
 	"go.kenn.io/docbank/internal/store"
 	"uuid"
 )
@@ -214,26 +213,8 @@ func (f *fixture) serveImpostor(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// keyChallenge answers the daemon's API key challenge for key and passes every
-// other request to next.
-func keyChallenge(key string, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != config.DaemonKeyChallengePath {
-			next.ServeHTTP(w, r)
-			return
-		}
-		nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.MarshalWrite(w, map[string]string{"proof": config.DaemonKeyProof(key, nonce)})
-	})
-}
-
-func options(dir string) push.Options {
-	return push.Options{Folder: config.WatchConfig{Name: "laptop", Source: dir, Destination: "/archive", SettleTime: config.Duration(30 * time.Second), ScanInterval: config.Duration(5 * time.Second)}}
+func options(dir string) pushOptions {
+	return pushOptions{Folder: config.WatchConfig{Name: "laptop", Source: dir, Destination: "/archive", SettleTime: config.Duration(30 * time.Second), ScanInterval: config.Duration(5 * time.Second)}}
 }
 
 func TestPushFolderResumesWithoutUploadsAndKeepsDeletedDocuments(t *testing.T) {
@@ -244,7 +225,7 @@ func TestPushFolderResumesWithoutUploadsAndKeepsDeletedDocuments(t *testing.T) {
 	file := filepath.Join(dir, "nested", "notes.txt")
 	require.NoError(t, os.WriteFile(file, []byte("initial"), 0600))
 	opts := options(dir)
-	report, err := push.Run(t.Context(), f.connection, opts)
+	report, err := executePush(t.Context(), f.connection, opts)
 	require.NoError(t, err)
 	assert.Equal(t, 1, report.Added)
 	assert.EqualValues(t, 1, f.uploads.Load())
@@ -257,7 +238,7 @@ func TestPushFolderResumesWithoutUploadsAndKeepsDeletedDocuments(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(secondDir, "nested", "notes.txt"), []byte("initial"), 0600))
 	resumedOpts := opts
 	resumedOpts.Folder.Source = secondDir
-	report, err = push.Run(t.Context(), resumed, resumedOpts)
+	report, err = executePush(t.Context(), resumed, resumedOpts)
 	require.NoError(t, err)
 	assert.Equal(t, 1, report.Skipped)
 	assert.EqualValues(t, 1, f.uploads.Load(), "unchanged re-push must send zero uploads")
@@ -266,7 +247,7 @@ func TestPushFolderResumesWithoutUploadsAndKeepsDeletedDocuments(t *testing.T) {
 	_, _, err = f.store.Move(t.Context(), node.ID, organized.ID, "archive-name.txt", store.UnconditionalRev)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(file, []byte("changed"), 0600))
-	report, err = push.Run(t.Context(), f.connection, opts)
+	report, err = executePush(t.Context(), f.connection, opts)
 	require.NoError(t, err)
 	assert.Equal(t, 1, report.Updated)
 	changed, err := f.store.NodeByID(t.Context(), node.ID)
@@ -275,14 +256,14 @@ func TestPushFolderResumesWithoutUploadsAndKeepsDeletedDocuments(t *testing.T) {
 	assert.Equal(t, "archive-name.txt", changed.Name)
 	assert.Equal(t, organized.ID, *changed.ParentID)
 	require.NoError(t, os.Rename(file, filepath.Join(dir, "nested", "renamed.txt")))
-	report, err = push.Run(t.Context(), f.connection, opts)
+	report, err = executePush(t.Context(), f.connection, opts)
 	require.NoError(t, err)
 	assert.Equal(t, 1, report.Added)
 	renamed, err := f.store.NodeByPath(t.Context(), "/archive/nested/renamed.txt")
 	require.NoError(t, err)
 	assert.NotEqual(t, node.ID, renamed.ID)
 	require.NoError(t, os.Remove(filepath.Join(dir, "nested", "renamed.txt")))
-	report, err = push.Run(t.Context(), f.connection, opts)
+	report, err = executePush(t.Context(), f.connection, opts)
 	require.NoError(t, err)
 	assert.Zero(t, report.Added)
 	kept, err := f.store.NodeByID(t.Context(), renamed.ID)
@@ -297,7 +278,7 @@ func TestPushIdenticalFilesBecomeSeparateDocumentsInOneCollection(t *testing.T) 
 	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("identical"), 0600))
 	}
-	report, err := push.Run(t.Context(), f.connection, options(dir))
+	report, err := executePush(t.Context(), f.connection, options(dir))
 	require.NoError(t, err)
 	assert.Equal(t, 3, report.Added)
 	first, err := f.store.NodeByPath(t.Context(), "/archive/a.txt")
@@ -310,12 +291,12 @@ func TestPushIdenticalFilesBecomeSeparateDocumentsInOneCollection(t *testing.T) 
 	assert.Equal(t, 1, collections, "one push run is one collection")
 
 	before := f.uploads.Load()
-	report, err = push.Run(t.Context(), f.connection, options(dir))
+	report, err = executePush(t.Context(), f.connection, options(dir))
 	require.NoError(t, err)
 	assert.Equal(t, 3, report.Skipped)
 	assert.Equal(t, before, f.uploads.Load())
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("changed"), 0600))
-	report, err = push.Run(t.Context(), f.connection, options(dir))
+	report, err = executePush(t.Context(), f.connection, options(dir))
 	require.NoError(t, err)
 	assert.Equal(t, 1, report.Updated)
 	assert.Equal(t, "identical", readNode(t, f, second.ID), "an edit to one file never changes another document")
@@ -330,10 +311,10 @@ func TestPushResumesAfterServerCommitsButResponseIsLost(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "file.txt"), []byte("durable"), 0600))
 	f.drop.Store(true)
-	report, err := push.Run(t.Context(), f.connection, options(dir))
+	report, err := executePush(t.Context(), f.connection, options(dir))
 	require.Error(t, err)
 	assert.Zero(t, report.Added, "a lost acknowledgment is not success")
-	report, err = push.Run(t.Context(), f.connection, options(dir))
+	report, err = executePush(t.Context(), f.connection, options(dir))
 	require.NoError(t, err)
 	assert.Equal(t, 1, report.Skipped)
 	assert.EqualValues(t, 1, f.uploads.Load())
@@ -358,10 +339,10 @@ func TestPushWatchRecoversAfterCommittedReceiptIsInterrupted(t *testing.T) {
 			cancel()
 			return nil
 		}
-		report, err := push.Run(ctx, f.connection, opts)
+		report, err := executePush(ctx, f.connection, opts)
 		require.ErrorIs(t, err, context.Canceled, "watch must recover by refreshing the committed cursor")
 		assert.Equal(t, []string{"skipped"}, outcomes)
-		assert.Equal(t, push.Report{Skipped: 1}, report)
+		assert.Equal(t, pushReport{Skipped: 1}, report)
 		assert.EqualValues(t, 1, f.uploads.Load(), "the committed upload must not be repeated")
 		node, err := f.store.NodeByPath(t.Context(), "/archive/notes.txt")
 		require.NoError(t, err)
@@ -404,7 +385,7 @@ func TestPushCancellationDoesNotReportSuccess(t *testing.T) {
 	f := newFixture(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	report, err := push.Run(ctx, f.connection, options(t.TempDir()))
+	report, err := executePush(ctx, f.connection, options(t.TempDir()))
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Zero(t, report.Added)
 	assert.Zero(t, f.uploads.Load())
@@ -426,7 +407,7 @@ func TestPushWatchUploadsSettledChangesAndStopsOnCancellation(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		done := make(chan error, 1)
-		go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
+		go func() { _, err := executePush(ctx, f.connection, opts); done <- err }()
 		assert.Equal(t, "added", next(t, events, "the first upload"))
 		require.NoError(t, os.WriteFile(file, []byte("changed"), 0600))
 		assert.Equal(t, "updated", next(t, events, "the settled change"))
@@ -465,7 +446,7 @@ func TestPushWatchUploadsEqualLengthEditsWithRestoredMtime(t *testing.T) {
 		}
 		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 		done := make(chan error, 1)
-		go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
+		go func() { _, err := executePush(ctx, f.connection, opts); done <- err }()
 		t.Cleanup(func() { cancel(); t.Logf("push.Run returned %v", <-done) })
 		select {
 		case outcome := <-events:
@@ -517,7 +498,7 @@ func TestPushRefusesMalformedKnownSourceInsteadOfSkipping(t *testing.T) {
 	t.Cleanup(ts.Close)
 	c, err := daemonconn.NewPushConnection(ts.URL, "synthetic-key")
 	require.NoError(t, err)
-	report, err := push.Run(t.Context(), c, options(dir))
+	report, err := executePush(t.Context(), c, options(dir))
 	require.ErrorContains(t, err, "invalid push cursor page")
 	assert.Zero(t, report.Skipped)
 	assert.False(t, uploaded)
@@ -578,7 +559,7 @@ func TestPushTakesOverDaemonWatchWithZeroUploads(t *testing.T) {
 		localFile := filepath.Join(localDir, "nested", "notes.txt")
 		require.NoError(t, os.WriteFile(localFile, content, 0600))
 		opts := options(localDir)
-		report, err := push.Run(t.Context(), f.connection, opts)
+		report, err := executePush(t.Context(), f.connection, opts)
 		require.NoError(t, err)
 		assert.Equal(t, 1, report.Skipped)
 		assert.Zero(t, report.Added)
@@ -591,7 +572,7 @@ func TestPushTakesOverDaemonWatchWithZeroUploads(t *testing.T) {
 		require.ErrorIs(t, err, store.ErrNotFound, "switch-over must not create a destination or new node")
 
 		require.NoError(t, os.WriteFile(localFile, []byte("push changed"), 0600))
-		report, err = push.Run(t.Context(), f.connection, opts)
+		report, err = executePush(t.Context(), f.connection, opts)
 		require.NoError(t, err)
 		assert.Equal(t, 1, report.Updated)
 		assert.EqualValues(t, 1, f.uploads.Load())
@@ -601,7 +582,7 @@ func TestPushTakesOverDaemonWatchWithZeroUploads(t *testing.T) {
 		assert.NotEqual(t, node.CurrentVersionID, changed.CurrentVersionID)
 		_, err = f.store.NodeByPath(t.Context(), "/archive")
 		require.ErrorIs(t, err, store.ErrNotFound, "changed identities must keep their existing destination")
-		report, err = push.Run(t.Context(), f.connection, opts)
+		report, err = executePush(t.Context(), f.connection, opts)
 		require.NoError(t, err)
 		assert.Equal(t, 1, report.Skipped)
 		assert.EqualValues(t, 1, f.uploads.Load(), "push's accepted hash must replace the old watch cursor for resume")
@@ -614,7 +595,7 @@ func TestPushNeverSendsKeyOrBytesToUnprovenEndpoint(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "file.txt")
 	require.NoError(t, os.WriteFile(file, []byte("first"), 0600))
-	report, err := push.Run(t.Context(), f.connection, options(dir))
+	report, err := executePush(t.Context(), f.connection, options(dir))
 	require.NoError(t, err)
 	require.Equal(t, 1, report.Added)
 
@@ -623,7 +604,7 @@ func TestPushNeverSendsKeyOrBytesToUnprovenEndpoint(t *testing.T) {
 	f.impostor.Store(true)
 	f.server.CloseClientConnections()
 	require.NoError(t, os.WriteFile(file, []byte("second"), 0600))
-	report, err = push.Run(t.Context(), f.connection, options(dir))
+	report, err = executePush(t.Context(), f.connection, options(dir))
 	require.Error(t, err)
 	assert.True(t, daemonconn.IsKeyProofError(err), "unexpected error: %v", err)
 	assert.Zero(t, report.Updated)
@@ -652,8 +633,8 @@ func TestPushContinuesPastARejectedFile(t *testing.T) {
 		assert.ErrorIs(t, err, store.ErrExists)
 		return nil
 	}
-	report, err := push.Run(t.Context(), f.connection, opts)
-	require.ErrorIs(t, err, push.ErrFilesFailed)
+	report, err := executePush(t.Context(), f.connection, opts)
+	require.ErrorIs(t, err, errPushFilesFailed)
 	assert.Equal(t, 2, report.Added, "files after the rejected one are still pushed")
 	assert.Equal(t, 1, report.Failed)
 	assert.Equal(t, []string{"b.txt"}, failed)
@@ -675,7 +656,7 @@ func TestPushWatchRetriesAfterTheDaemonIsUnavailable(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		done := make(chan error, 1)
-		go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
+		go func() { _, err := executePush(ctx, f.connection, opts); done <- err }()
 		assert.Equal(t, "added", next(t, events, "an upload"))
 		assert.EqualValues(t, 2, f.uploads.Load(), "the refused upload is retried")
 		assert.Empty(t, done, "an unavailable daemon does not end watch mode")
@@ -697,7 +678,7 @@ func TestPushRefusesTheNameOfAConfiguredDaemonWatch(t *testing.T) {
 		opts := options(dir)
 		opts.Watch = watch
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-		_, err := push.Run(ctx, f.connection, opts)
+		_, err := executePush(ctx, f.connection, opts)
 		cancel()
 		code, ok := daemonconn.ProblemCode(err)
 		require.True(t, ok, "unexpected error: %v", err)
@@ -713,7 +694,7 @@ func TestPushUpdatesAMovedDocumentAfterItsOldFolderIsTrashed(t *testing.T) {
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "nested"), 0700))
 	file := filepath.Join(dir, "nested", "notes.txt")
 	require.NoError(t, os.WriteFile(file, []byte("first"), 0600))
-	_, err := push.Run(t.Context(), f.connection, options(dir))
+	_, err := executePush(t.Context(), f.connection, options(dir))
 	require.NoError(t, err)
 	node, err := f.store.NodeByPath(t.Context(), "/archive/nested/notes.txt")
 	require.NoError(t, err)
@@ -727,7 +708,7 @@ func TestPushUpdatesAMovedDocumentAfterItsOldFolderIsTrashed(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, os.WriteFile(file, []byte("second"), 0600))
-	report, err := push.Run(t.Context(), f.connection, options(dir))
+	report, err := executePush(t.Context(), f.connection, options(dir))
 	require.NoError(t, err)
 	assert.Equal(t, 1, report.Updated)
 	changed, err := f.store.NodeByID(t.Context(), node.ID)
@@ -745,7 +726,7 @@ func TestPushRetriesAKeyChallengeThatFailedInTransit(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "file.txt"), []byte("first"), 0600))
 
 		f.challengeOutages.Store(1)
-		_, err := push.Run(t.Context(), f.connection, options(dir))
+		_, err := executePush(t.Context(), f.connection, options(dir))
 		require.Error(t, err)
 		assert.False(t, daemonconn.IsKeyProofError(err), "a 503 challenge is not a failed proof: %v", err)
 		assert.True(t, daemonconn.IsTransportError(err), "unexpected error: %v", err)
@@ -759,7 +740,7 @@ func TestPushRetriesAKeyChallengeThatFailedInTransit(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		done := make(chan error, 1)
-		go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
+		go func() { _, err := executePush(ctx, f.connection, opts); done <- err }()
 		assert.Equal(t, "added", next(t, events, "an upload"))
 
 		f.challengeFails.Store(0)
@@ -853,10 +834,10 @@ func TestPushTreatsAnEditDuringUploadAsASourceChange(t *testing.T) {
 				events := make(chan string, 4)
 				opts.Progress = func(_ string, outcome string) error { events <- outcome; return nil }
 				ctx, cancel := context.WithCancel(t.Context())
-				var report push.Report
+				var report pushReport
 				var runErr error
 				done := make(chan struct{})
-				go func() { report, runErr = push.Run(ctx, f.connection, opts); close(done) }()
+				go func() { report, runErr = executePush(ctx, f.connection, opts); close(done) }()
 				t.Cleanup(func() { cancel(); <-done })
 				// Fake time only passes while the watch is idle between scans, so
 				// the timeout does not bound the real uploads and durable writes.
@@ -871,7 +852,7 @@ func TestPushTreatsAnEditDuringUploadAsASourceChange(t *testing.T) {
 				cancel()
 				<-done
 				require.ErrorIs(t, runErr, context.Canceled)
-				require.NotErrorIs(t, runErr, push.ErrFilesFailed)
+				require.NotErrorIs(t, runErr, errPushFilesFailed)
 				assert.Equal(t, 1, report.Added)
 				assert.Zero(t, report.Failed)
 				assert.Zero(t, failures.Load())
@@ -913,9 +894,9 @@ func TestPushReportsRejectionWhenSourceBytesAreUnchanged(t *testing.T) {
 			opts := options(dir)
 			var failures []error
 			opts.Failure = func(_ string, err error) error { failures = append(failures, err); return nil }
-			report, err := push.Run(t.Context(), connection, opts)
-			require.ErrorIs(t, err, push.ErrFilesFailed)
-			assert.Equal(t, push.Report{Failed: 1}, report)
+			report, err := executePush(t.Context(), connection, opts)
+			require.ErrorIs(t, err, errPushFilesFailed)
+			assert.Equal(t, pushReport{Failed: 1}, report)
 			require.Len(t, failures, 1)
 			code, ok := daemonconn.ProblemCode(failures[0])
 			require.True(t, ok)
@@ -943,7 +924,7 @@ func TestPushReportsAFileWhoseDocumentIsInTrash(t *testing.T) {
 	for _, name := range []string{"a.txt", "b.txt"} {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("first "+name), 0600))
 	}
-	_, err := push.Run(t.Context(), f.connection, options(dir))
+	_, err := executePush(t.Context(), f.connection, options(dir))
 	require.NoError(t, err)
 	node, err := f.store.NodeByPath(t.Context(), "/archive/a.txt")
 	require.NoError(t, err)
@@ -960,8 +941,8 @@ func TestPushReportsAFileWhoseDocumentIsInTrash(t *testing.T) {
 		return nil
 	}
 	before := f.uploads.Load()
-	report, err := push.Run(t.Context(), f.connection, opts)
-	require.ErrorIs(t, err, push.ErrFilesFailed)
+	report, err := executePush(t.Context(), f.connection, opts)
+	require.ErrorIs(t, err, errPushFilesFailed)
 	assert.Equal(t, []string{"a.txt"}, failed)
 	assert.Equal(t, 1, report.Updated)
 	assert.Equal(t, before+1, f.uploads.Load(), "a trashed document's file is never uploaded")
@@ -974,7 +955,7 @@ func TestPushWatchPushesADocumentRestoredFromTrash(t *testing.T) {
 		dir := t.TempDir()
 		file := filepath.Join(dir, "a.txt")
 		require.NoError(t, os.WriteFile(file, []byte("first"), 0600))
-		_, err := push.Run(t.Context(), f.connection, options(dir))
+		_, err := executePush(t.Context(), f.connection, options(dir))
 		require.NoError(t, err)
 		node, err := f.store.NodeByPath(t.Context(), "/archive/a.txt")
 		require.NoError(t, err)
@@ -993,7 +974,7 @@ func TestPushWatchPushesADocumentRestoredFromTrash(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		done := make(chan error, 1)
-		go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
+		go func() { _, err := executePush(ctx, f.connection, opts); done <- err }()
 		require.Equal(t, "a.txt", next(t, failures, "the trashed document's rejection"))
 
 		trashed, err := f.store.NodeByID(t.Context(), node.ID)
@@ -1037,7 +1018,7 @@ func TestPushWatchAsksTheDaemonAfterAnUncertainUpload(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		done := make(chan error, 1)
-		go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
+		go func() { _, err := executePush(ctx, f.connection, opts); done <- err }()
 		require.Equal(t, "added", next(t, events, "an upload"))
 
 		// Hold the dropped response until the second version is committed and the
@@ -1087,7 +1068,7 @@ func TestPushWatchSeesTrashAndPurgeAfterStartup(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		done := make(chan error, 1)
-		go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
+		go func() { _, err := executePush(ctx, f.connection, opts); done <- err }()
 		require.Equal(t, "added", next(t, events, "an upload"))
 		node, err := f.store.NodeByPath(t.Context(), "/archive/a.txt")
 		require.NoError(t, err)
@@ -1126,7 +1107,7 @@ func TestPushWatchSurvivesAnOutageAtStartup(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		done := make(chan error, 1)
-		go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
+		go func() { _, err := executePush(ctx, f.connection, opts); done <- err }()
 		assert.Equal(t, "added", next(t, events, "an upload"))
 		assert.EqualValues(t, 1, f.challengeFails.Load(), "the startup read met the outage")
 		assert.Empty(t, done)
@@ -1148,7 +1129,7 @@ func TestPushWatchCaptureOnChangeReachesFolderScanner(t *testing.T) {
 	opts.Progress = func(_ string, outcome string) error { events <- outcome; return nil }
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
-	go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
+	go func() { _, err := executePush(ctx, f.connection, opts); done <- err }()
 	defer func() { cancel(); t.Logf("push.Run returned %v", <-done) }()
 	select {
 	case outcome := <-events:

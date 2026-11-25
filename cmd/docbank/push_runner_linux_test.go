@@ -1,6 +1,6 @@
 //go:build linux
 
-package push_test
+package main
 
 import (
 	"os"
@@ -9,8 +9,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"go.kenn.io/docbank/internal/push"
 )
 
 // Linux filesystems accept filenames that are not UTF-8; Docbank names are.
@@ -28,8 +26,8 @@ func TestPushReportsANonUTF8FilenameAndContinues(t *testing.T) {
 		assert.ErrorContains(t, err, "not valid UTF-8")
 		return nil
 	}
-	report, err := push.Run(t.Context(), f.connection, opts)
-	require.ErrorIs(t, err, push.ErrFilesFailed)
+	report, err := executePush(t.Context(), f.connection, opts)
+	require.ErrorIs(t, err, errPushFilesFailed)
 	assert.Equal(t, 1, report.Added)
 	assert.Equal(t, 1, report.Failed)
 	assert.Equal(t, []string{invalid}, failed)

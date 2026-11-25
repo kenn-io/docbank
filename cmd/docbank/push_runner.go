@@ -1,6 +1,4 @@
-// Package push streams a read-only local folder to an explicitly selected
-// keyed daemon. The server's source cursor is the only resumability authority.
-package push
+package main
 
 import (
 	"context"
@@ -21,32 +19,32 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-// ErrFilesFailed reports that some files were not pushed. Every other file
+// errPushFilesFailed reports that some files were not pushed. Every other file
 // was processed, and running the same command again retries the failed ones.
-var ErrFilesFailed = errors.New("some files were not pushed")
+var errPushFilesFailed = errors.New("some files were not pushed")
 
-// Options defines one folder push. Watch uses the watched-inbox stability
+// pushOptions defines one folder push. Watch uses the watched-inbox stability
 // defaults and rules; a one-shot run processes current files immediately.
 // Progress receives each acknowledged outcome and Failure each file the run
 // skipped after the daemon or the local source rejected it.
-type Options struct {
+type pushOptions struct {
 	Folder   config.WatchConfig
 	Watch    bool
 	Progress func(ref, outcome string) error
 	Failure  func(ref string, err error) error
 }
 
-// Report counts only independently acknowledged file outcomes, plus the files
+// pushReport counts only independently acknowledged file outcomes, plus the files
 // the run skipped after a rejection. Failed runs return their partial report
 // and an error; callers may safely run again.
-type Report struct {
+type pushReport struct {
 	Added   int
 	Updated int
 	Skipped int
 	Failed  int
 }
 
-// Run executes a folder push without discovering or starting a local daemon.
+// executePush executes a folder push without discovering or starting a local daemon.
 // It first reads every cursor of the push name, so a wrong key, a failed key
 // proof, or a push name in use by a daemon watch fails before any scan. Watch
 // mode survives a retryable failure of that first read and rereads the cursors
@@ -56,8 +54,8 @@ type Report struct {
 // watch mode observes the file again after a fresh settle window. A failed key
 // proof, an invalid daemon response, a refused key, or a push name in use by a
 // daemon watch stops either mode.
-func Run(ctx context.Context, connection *daemonconn.Connection, opts Options) (Report, error) {
-	var report Report
+func executePush(ctx context.Context, connection *daemonconn.Connection, opts pushOptions) (pushReport, error) {
+	var report pushReport
 	if connection == nil {
 		return report, errors.New("push requires a daemon connection")
 	}
@@ -76,7 +74,7 @@ func Run(ctx context.Context, connection *daemonconn.Connection, opts Options) (
 		err = scanner.ScanOnce(ctx, 32)
 	}
 	if report.Failed > 0 {
-		err = errors.Join(err, fmt.Errorf("%w: %d failed", ErrFilesFailed, report.Failed))
+		err = errors.Join(err, fmt.Errorf("%w: %d failed", errPushFilesFailed, report.Failed))
 	}
 	return report, err
 }
@@ -89,8 +87,8 @@ func Run(ctx context.Context, connection *daemonconn.Connection, opts Options) (
 type pusher struct {
 	mu         sync.Mutex // Serialize client state and callbacks while uploads overlap.
 	connection *daemonconn.Connection
-	opts       Options
-	report     *Report
+	opts       pushOptions
+	report     *pushReport
 	cursors    map[string]api.PushSourceCursor
 	cursorScan uint64
 	cursorErr  error

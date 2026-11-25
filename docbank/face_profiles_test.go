@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/docbank"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/localface"
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/config"
 )
@@ -21,7 +20,7 @@ func TestEmbeddedFaceProfilesRequireDedicatedSetup(t *testing.T) {
 			t.Parallel()
 			profile, descriptor, err := config.LocalFaces()
 			require.NoError(t, err)
-			provider, err := localface.New(descriptor, func(context.Context) (string, error) {
+			provider, err := document.NewLocalFaceProvider(descriptor, func(context.Context) (string, error) {
 				t.Error("refused file requests must not start the provider")
 				return "", errors.New("unexpected provider start")
 			})

@@ -30,7 +30,6 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/vision"
-	"go.kenn.io/docbank/document/vision/visiontest"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -118,7 +117,7 @@ func (f *photoDescriptionFixture) serve(t *testing.T) http.HandlerFunc {
 			return
 		}
 		f.mu.Lock()
-		probe := visiontest.IsProbe(body)
+		probe := mediatest.IsVisionProbe(body)
 		reply, hook, onProbe := f.reply, f.onDescribe, f.onProbe
 		switch {
 		case probe:
@@ -160,7 +159,7 @@ func (f *photoDescriptionFixture) serve(t *testing.T) http.HandlerFunc {
 			hook()
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(visiontest.Completion(reply))
+		_, _ = w.Write(mediatest.VisionCompletion(reply))
 	}
 }
 

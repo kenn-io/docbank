@@ -13,7 +13,6 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/vision"
-	"go.kenn.io/docbank/document/vision/visiontest"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
@@ -58,11 +57,11 @@ func describePhotoForRoute(t *testing.T, s *testStore, node store.Node, model, a
 			return
 		}
 		reply := answer
-		if visiontest.IsProbe(body) {
+		if mediatest.IsVisionProbe(body) {
 			reply = "red,blue"
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(visiontest.Completion(reply))
+		_, _ = w.Write(mediatest.VisionCompletion(reply))
 	}))
 	t.Cleanup(endpoint.Close)
 	provider, err := vision.New(vision.Profile{DescriptorID: vision.ProviderID, Origin: endpoint.URL, Model: model, TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, endpoint.Client())

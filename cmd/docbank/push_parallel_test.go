@@ -1,4 +1,4 @@
-package push_test
+package main
 
 import (
 	"context"
@@ -17,7 +17,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/push"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/packstore"
 )
@@ -75,7 +74,7 @@ func TestPushOverlapsUploadsAndHandlesCancellation(t *testing.T) {
 			var releaseOnce sync.Once
 			unblock := func() { releaseOnce.Do(func() { close(release) }) }
 			done := make(chan struct{})
-			var report push.Report
+			var report pushReport
 			var runErr error
 			opts := options(source)
 			var acknowledged []string // The caller's callbacks must remain serialized.
@@ -85,7 +84,7 @@ func TestPushOverlapsUploadsAndHandlesCancellation(t *testing.T) {
 			}
 			go func() {
 				defer close(done)
-				report, runErr = push.Run(ctx, connection, opts)
+				report, runErr = executePush(ctx, connection, opts)
 			}()
 			defer func() { cancel(); unblock(); <-done }()
 			arrivalDeadline := time.NewTimer(10 * time.Second)
@@ -110,13 +109,13 @@ func TestPushOverlapsUploadsAndHandlesCancellation(t *testing.T) {
 			require.EqualValues(t, 32, peak.Load())
 			if canceled {
 				require.ErrorIs(t, runErr, context.Canceled)
-				require.Equal(t, push.Report{}, report)
+				require.Equal(t, pushReport{}, report)
 				require.Empty(t, acknowledged)
 				return
 			}
 			require.NoError(t, runErr)
 			require.EqualValues(t, 32, proofs.Load(), "reuse authenticated connections across windows")
-			require.Equal(t, push.Report{Added: 65}, report)
+			require.Equal(t, pushReport{Added: 65}, report)
 			require.Len(t, acknowledged, 65)
 			for _, name := range names {
 				node, err := f.store.NodeByPath(t.Context(), "/archive/"+name)
@@ -132,7 +131,7 @@ func TestPushRecoversIdenticalContentWithoutPhysicalAuthority(t *testing.T) {
 	source := t.TempDir()
 	content := []byte(strings.Repeat("synthetic shared content", 512))
 	require.NoError(t, os.WriteFile(filepath.Join(source, "seed.bin"), content, 0o600))
-	_, err := push.Run(t.Context(), f.connection, options(source))
+	_, err := executePush(t.Context(), f.connection, options(source))
 	require.NoError(t, err)
 	seed, err := f.store.NodeByPath(t.Context(), "/archive/seed.bin")
 	require.NoError(t, err)
@@ -146,9 +145,9 @@ func TestPushRecoversIdenticalContentWithoutPhysicalAuthority(t *testing.T) {
 	}
 	opts := options(source)
 	opts.Folder.Name, opts.Folder.Destination = "recovery", "/recovery"
-	report, err := push.Run(t.Context(), f.connection, opts)
+	report, err := executePush(t.Context(), f.connection, opts)
 	require.NoError(t, err)
-	require.Equal(t, push.Report{Added: 9}, report)
+	require.Equal(t, pushReport{Added: 9}, report)
 	for i := range 8 {
 		node, err := f.store.NodeByPath(t.Context(), fmt.Sprintf("/recovery/copy-%d.bin", i))
 		require.NoError(t, err)

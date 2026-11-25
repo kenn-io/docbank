@@ -22,19 +22,18 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
-	"go.kenn.io/docbank/document/workerprotocol"
 	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/kit/safefileio"
 )
 
 // ServeHTTP implements only authenticated fixed uploaded-file worker routes.
 func (w *Worker) ServeHTTP(out http.ResponseWriter, r *http.Request) {
-	out.Header().Set(workerprotocol.ProtocolHeader, protocol)
+	out.Header().Set(ProtocolHeader, protocol)
 	if len(r.Header.Values("X-Api-Key")) != 1 || subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Api-Key")), []byte(w.options.APIKey)) != 1 {
 		http.Error(out, "worker authentication required", http.StatusUnauthorized)
 		return
 	}
-	if len(r.Header.Values(workerprotocol.BackendHopHeader)) != 0 {
+	if len(r.Header.Values(BackendHopHeader)) != 0 {
 		http.Error(out, "worker gateways cannot be used as backends", http.StatusBadRequest)
 		return
 	}
@@ -52,21 +51,21 @@ func (w *Worker) ServeHTTP(out http.ResponseWriter, r *http.Request) {
 	defer stopBody()
 	r = r.WithContext(ctx)
 	switch {
-	case r.Method == http.MethodPost && r.URL.Path == workerprotocol.SubmitPath:
+	case r.Method == http.MethodPost && r.URL.Path == SubmitPath:
 		w.accept(ctx, out, r)
-	case r.Method == http.MethodGet && r.URL.Path == workerprotocol.ReadyPath:
+	case r.Method == http.MethodGet && r.URL.Path == ReadyPath:
 		if w.errorCode() != nil {
 			http.Error(out, "worker storage unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		status, _, err := w.backendRequest(ctx, http.MethodGet, workerprotocol.ReadyPath, nil, "", w.options.MaxResultBytes)
+		status, _, err := w.backendRequest(ctx, http.MethodGet, ReadyPath, nil, "", w.options.MaxResultBytes)
 		if err != nil || status != 200 {
 			http.Error(out, "worker backend unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		writeJSON(ctx, out, 200, map[string]string{"protocol": protocol})
-	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, workerprotocol.LookupPath):
-		key := strings.TrimPrefix(r.URL.Path, workerprotocol.LookupPath)
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, LookupPath):
+		key := strings.TrimPrefix(r.URL.Path, LookupPath)
 		w.mu.Lock()
 		id := w.keys[key]
 		item, ok := w.jobs[id]
@@ -76,18 +75,18 @@ func (w *Worker) ServeHTTP(out http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(ctx, out, 200, w.task(item))
-	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, workerprotocol.PollPath):
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, PollPath):
 		w.readJob(ctx, out, r, false)
-	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, workerprotocol.ResultPath):
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, ResultPath):
 		w.readJob(ctx, out, r, true)
 	default:
 		http.NotFound(out, r)
 	}
 }
 func (w *Worker) readJob(ctx context.Context, out http.ResponseWriter, r *http.Request, result bool) {
-	prefix := workerprotocol.PollPath
+	prefix := PollPath
 	if result {
-		prefix = workerprotocol.ResultPath
+		prefix = ResultPath
 	}
 	id := strings.TrimPrefix(r.URL.Path, prefix)
 	w.mu.Lock()
@@ -124,8 +123,8 @@ func (w *Worker) readJob(ctx context.Context, out http.ResponseWriter, r *http.R
 }
 func (w *Worker) accept(ctx context.Context, out http.ResponseWriter, r *http.Request) {
 	key := r.Header.Get("Idempotency-Key")
-	digest := r.Header.Get(workerprotocol.SourceSHA256Header)
-	if len(r.Header.Values("Idempotency-Key")) != 1 || len(r.Header.Values(workerprotocol.SourceSHA256Header)) != 1 || !isHex(key, 64) || !isHex(digest, 64) {
+	digest := r.Header.Get(SourceSHA256Header)
+	if len(r.Header.Values("Idempotency-Key")) != 1 || len(r.Header.Values(SourceSHA256Header)) != 1 || !isHex(key, 64) || !isHex(digest, 64) {
 		http.Error(out, "invalid worker submission identity", http.StatusBadRequest)
 		return
 	}

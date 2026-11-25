@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/internal/providerutil"
-	"go.kenn.io/docbank/document/vision/visiontest"
+	"go.kenn.io/docbank/document/media/mediatest"
 )
 
 func TestParseDescription(t *testing.T) {
@@ -146,7 +146,7 @@ func TestRenderSendsImageBytesOnce(t *testing.T) {
 				assert.Equal(t, data, actual)
 				w.Header().Set("Content-Type", "application/json")
 				calls.Add(1)
-				completion := visiontest.Completion(tc.reply)
+				completion := mediatest.VisionCompletion(tc.reply)
 				if tc.finish != "" {
 					completion = bytes.Replace(completion, []byte(`"finish_reason":"stop"`), []byte(`"finish_reason":"`+tc.finish+`"`), 1)
 				}
@@ -213,11 +213,11 @@ func TestProviderSendsItsBearerCredential(t *testing.T) {
 			return
 		}
 		reply := `{"caption":"A dog.","tags":["dog"],"visible_text":""}`
-		if visiontest.IsProbe(body) {
+		if mediatest.IsVisionProbe(body) {
 			reply = "red,blue"
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(visiontest.Completion(reply))
+		_, _ = w.Write(mediatest.VisionCompletion(reply))
 	}))
 	defer server.Close()
 	profile := Profile{DescriptorID: ProviderID, Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20, SecretBinding: "vision-key"}
@@ -269,7 +269,7 @@ func TestProbeSendsSyntheticImageWithoutNamingColors(t *testing.T) {
 		red, _, blue, _ = img.At(48, 16).RGBA()
 		assert.Greater(t, blue, red)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(visiontest.Completion("red,blue"))
+		_, _ = w.Write(mediatest.VisionCompletion("red,blue"))
 	}))
 	defer server.Close()
 	p, err := New(Profile{DescriptorID: ProviderID, Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
@@ -296,7 +296,7 @@ func TestProbeRequiresRecognitionOfSyntheticImage(t *testing.T) {
 			t.Parallel()
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write(visiontest.Completion(tc.answer))
+				_, _ = w.Write(mediatest.VisionCompletion(tc.answer))
 			}))
 			defer server.Close()
 			p, err := New(Profile{DescriptorID: ProviderID, Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())

@@ -1,5 +1,4 @@
-// Package suppliedtext renders caller-supplied text for one sealed package occurrence.
-package suppliedtext
+package plaintext
 
 import (
 	"context"
@@ -16,40 +15,40 @@ import (
 )
 
 const (
-	providerID     = "supplied-text.in-process-v1"
-	profileVersion = "docbank-supplied-text-profile/v1"
-	provider       = providerutil.Provider("supplied-text")
+	suppliedTextProviderID     = "supplied-text.in-process-v1"
+	suppliedTextProfileVersion = "docbank-supplied-text-profile/v1"
+	suppliedTextProvider       = providerutil.Provider("supplied-text")
 )
 
-// Source resolves supplied text for a sealed source digest. Each provider
+// SuppliedTextSource resolves supplied text for a sealed source digest. Each provider
 // instance must hold the source selected for its package occurrence. A missing
 // value is represented by the zero SuppliedText value.
-type Source interface {
+type SuppliedTextSource interface {
 	SuppliedText(ctx context.Context, sealedSourceSHA256 string) (document.SuppliedText, error)
 }
 
-// Profile fixes one occurrence binding and one evidence policy.
-type Profile struct {
-	Source           Source
+// SuppliedTextProfile fixes one occurrence binding and one evidence policy.
+type SuppliedTextProfile struct {
+	Source           SuppliedTextSource
 	SourceBinding    string
 	MaxDocumentChars int
 }
 
-type Provider struct {
+type SuppliedTextProvider struct {
 	descriptor     document.RenditionDescriptor
-	source         Source
+	source         SuppliedTextSource
 	sourceBinding  string
 	evidencePolicy document.EvidencePolicy
 }
 
-type profileIdentity struct {
+type suppliedTextProfileIdentity struct {
 	SourceBinding  string                          `json:"source_binding"`
 	EvidencePolicy document.EvidencePolicyIdentity `json:"evidence_policy"`
 }
 
-// SourceBinding binds one package occurrence, sealed native digest, exact
+// SuppliedTextSourceBinding binds one package occurrence, sealed native digest, exact
 // supplied-text digest, declared encoding, and policy digest into one identity.
-func SourceBinding(packageID, occurrenceID, sourceSHA256, textSHA256, encoding, policySHA256 string) (string, error) {
+func SuppliedTextSourceBinding(packageID, occurrenceID, sourceSHA256, textSHA256, encoding, policySHA256 string) (string, error) {
 	if packageID == "" || occurrenceID == "" || encoding == "" ||
 		!canonical.IsSHA256Hex(sourceSHA256) || !canonical.IsSHA256Hex(textSHA256) || !canonical.IsSHA256Hex(policySHA256) {
 		return "", errors.New("invalid supplied-text binding")
@@ -62,8 +61,8 @@ func SourceBinding(packageID, occurrenceID, sourceSHA256, textSHA256, encoding, 
 	return hex.EncodeToString(digest[:]), nil
 }
 
-// New creates an immutable local provider profile for one selected occurrence.
-func New(profile Profile) (*Provider, error) {
+// NewSuppliedTextProvider creates an immutable local provider profile for one selected occurrence.
+func NewSuppliedTextProvider(profile SuppliedTextProfile) (*SuppliedTextProvider, error) {
 	if providerutil.IsNil(profile.Source) {
 		return nil, errors.New("supplied text: source is required")
 	}
@@ -74,14 +73,14 @@ func New(profile Profile) (*Provider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("supplied text: evidence policy: %w", err)
 	}
-	identity, err := canonical.Marshal(profileIdentity{SourceBinding: profile.SourceBinding, EvidencePolicy: policy.Identity()})
+	identity, err := canonical.Marshal(suppliedTextProfileIdentity{SourceBinding: profile.SourceBinding, EvidencePolicy: policy.Identity()})
 	if err != nil {
 		return nil, fmt.Errorf("supplied text: encode profile: %w", err)
 	}
-	policyInput := append([]byte(profileVersion+"\x00"), identity...)
+	policyInput := append([]byte(suppliedTextProfileVersion+"\x00"), identity...)
 	policyDigest := sha256.Sum256(policyInput)
 	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
-		ID:                providerID,
+		ID:                suppliedTextProviderID,
 		ContractVersion:   document.RenditionProviderContractVersion,
 		PolicyFingerprint: hex.EncodeToString(policyDigest[:]),
 		TrustBoundary:     document.RenditionTrustLocalProcess,
@@ -97,11 +96,11 @@ func New(profile Profile) (*Provider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("supplied text: construct descriptor: %w", err)
 	}
-	return &Provider{descriptor: providerutil.CloneDescriptor(descriptor), source: profile.Source, sourceBinding: profile.SourceBinding, evidencePolicy: policy}, nil
+	return &SuppliedTextProvider{descriptor: providerutil.CloneDescriptor(descriptor), source: profile.Source, sourceBinding: profile.SourceBinding, evidencePolicy: policy}, nil
 }
 
 // Descriptor returns this provider's immutable execution identity.
-func (p *Provider) Descriptor() document.RenditionDescriptor {
+func (p *SuppliedTextProvider) Descriptor() document.RenditionDescriptor {
 	if p == nil {
 		return document.RenditionDescriptor{}
 	}
@@ -109,40 +108,40 @@ func (p *Provider) Descriptor() document.RenditionDescriptor {
 }
 
 // Render resolves only caller-selected text; it never reads or extracts the native.
-func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization) (document.RenditionResult, error) {
+func (p *SuppliedTextProvider) Render(ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization) (document.RenditionResult, error) {
 	if p == nil {
 		return document.RenditionResult{}, errors.New("supplied text: provider is required")
 	}
 	metadata := upload.Metadata()
 	if !providerutil.AllowsArtifact(authorization, document.EvidenceArtifactStructured) {
-		return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected, "authorization does not allow retaining supplied text", nil)
+		return document.RenditionResult{}, suppliedTextProvider.Classified(document.RenditionErrorPolicyRejected, "authorization does not allow retaining supplied text", nil)
 	}
 	if metadata.InputBinding != "" && metadata.InputBinding != p.sourceBinding {
-		return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected, "selected supplied-text binding differs from provider profile", nil)
+		return document.RenditionResult{}, suppliedTextProvider.Classified(document.RenditionErrorPolicyRejected, "selected supplied-text binding differs from provider profile", nil)
 	}
 	if err := ctx.Err(); err != nil {
-		return document.RenditionResult{}, provider.Canceled(err)
+		return document.RenditionResult{}, suppliedTextProvider.Canceled(err)
 	}
 	startedAt := time.Now().UTC()
 	text, err := p.source.SuppliedText(ctx, metadata.SHA256)
 	if err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
-			return document.RenditionResult{}, provider.Canceled(contextErr)
+			return document.RenditionResult{}, suppliedTextProvider.Canceled(contextErr)
 		}
 		if providerErr, ok := errors.AsType[*document.RenditionProviderError](err); ok {
 			return document.RenditionResult{}, providerErr
 		}
-		return document.RenditionResult{}, provider.Classified(document.RenditionErrorTransient, "supplied text could not be resolved", err)
+		return document.RenditionResult{}, suppliedTextProvider.Classified(document.RenditionErrorTransient, "supplied text could not be resolved", err)
 	}
 	if strings.TrimSpace(text.Text) == "" {
-		return document.RenditionResult{}, provider.Classified(document.RenditionErrorUnsupportedInput, "no supplied text for the sealed source digest", nil)
+		return document.RenditionResult{}, suppliedTextProvider.Classified(document.RenditionErrorUnsupportedInput, "no supplied text for the sealed source digest", nil)
 	}
 	sourceEvidence, artifact, err := document.BuildSuppliedTextSourceEvidenceV1(text, p.evidencePolicy)
 	if err != nil {
-		return document.RenditionResult{}, provider.Classified(document.RenditionErrorMalformedEvidence, "supplied text is invalid", err)
+		return document.RenditionResult{}, suppliedTextProvider.Classified(document.RenditionErrorMalformedEvidence, "supplied text is invalid", err)
 	}
 	sourceEvidence.Family = authorization.MediaFamily
-	receipt, err := providerutil.NewReceipt(provider, providerutil.Receipt{
+	receipt, err := providerutil.NewReceipt(suppliedTextProvider, providerutil.Receipt{
 		Descriptor: p.descriptor, Authorization: authorization, SourceSHA256: metadata.SHA256,
 		OperationID: "supplied-text-" + authorization.RenditionRequestFingerprint,
 		StartedAt:   startedAt, CompletedAt: time.Now().UTC(), Warnings: []string{"degraded_provenance"},
@@ -154,4 +153,4 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 	return document.RenditionResult{Evidence: sourceEvidence, Artifacts: []document.RenditionArtifact{artifact}, Receipt: receipt}, nil
 }
 
-var _ document.RenditionProvider = (*Provider)(nil)
+var _ document.RenditionProvider = (*SuppliedTextProvider)(nil)

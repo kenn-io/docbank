@@ -16,7 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/suppliedtext"
+	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/loadfile"
@@ -98,12 +98,12 @@ func PublishPackageSuppliedText(ctx context.Context, catalog *store.Store, blobs
 	if err != nil {
 		return "", err
 	}
-	binding, err := suppliedtext.SourceBinding(packageID, occurrenceID, sealedSource.BlobHash,
+	binding, err := plaintext.SuppliedTextSourceBinding(packageID, occurrenceID, sealedSource.BlobHash,
 		sealedText.BlobHash, encoding, renditionBytesSHA256(policyJSON))
 	if err != nil {
 		return "", err
 	}
-	provider, err := suppliedtext.New(suppliedtext.Profile{Source: packageSuppliedSource{
+	provider, err := plaintext.NewSuppliedTextProvider(plaintext.SuppliedTextProfile{Source: packageSuppliedSource{
 		digest: sealedSource.BlobHash, text: string(decoded),
 	}, SourceBinding: binding, MaxDocumentChars: packageSuppliedTextMaxBytes})
 	if err != nil {
@@ -151,7 +151,7 @@ type packageSuppliedUpload struct {
 func (u *packageSuppliedUpload) Metadata() document.AuthorizedUploadMetadata { return u.metadata }
 
 func publishPackageSuppliedText(ctx context.Context, catalog *store.Store, blobs *blob.Store,
-	provider *suppliedtext.Provider, profileValue document.ProcessingProfileV1,
+	provider *plaintext.SuppliedTextProvider, profileValue document.ProcessingProfileV1,
 	profile store.ProcessingProfileRecord, source store.ContentVersion,
 	family, mediaType, filename, binding string,
 ) (string, error) {
