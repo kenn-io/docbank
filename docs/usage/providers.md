@@ -38,8 +38,8 @@ application and run the command again.
 
 ## Add or replace a connection
 
-`docbank provider configure` reads one JSON document from stdin. The service's
-setup command normally sends it.
+The `provider configure` command reads one JSON document from stdin. The
+service's setup command normally sends it.
 
 ```json
 {
