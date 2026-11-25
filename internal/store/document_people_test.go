@@ -194,6 +194,9 @@ func checkDocumentPeopleSkipsCandidateForControlCharacterAlias(t *testing.T, new
 	t.Parallel()
 	for _, key := range []string{"name_alias:jane example\x00", "name_alias:jane example\x1ejohn example"} {
 		s := newStore(t)
+		if s.postgresSchema != "" && strings.ContainsRune(key, 0) {
+			continue // PostgreSQL text cannot store NUL, so only SQLite vaults hold such keys.
+		}
 		// Earlier document-events generations stored these keys from raw file metadata.
 		version := seedDocumentPeopleEvent(t, s, "control.pdf", fakeSHA256([]byte(key)), []document.DocumentEventActorV1{{
 			Role: "author", ActorKey: key, DisplayName: strings.TrimPrefix(key, "name_alias:"), Claim: `"author"`,
