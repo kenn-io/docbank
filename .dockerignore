@@ -20,6 +20,7 @@ frontend/dist
 internal/web/dist
 !internal/web/dist/.keep
 docbank
+!docbank/**/*.go
 bin
 *.log
 .agents

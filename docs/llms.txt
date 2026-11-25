@@ -33,6 +33,7 @@ Every public page is also published as raw Markdown at the route listed below.
 - [Cite documents in Kata](https://docbank.ai/docs/usage/kata-evidence.md): Quote verified document passages into Kata issues and reopen their evidence with current source status.
 - [Automatic and processing search](https://docbank.ai/docs/usage/search.md): Choose automatic retrieval or an explicit profile and source-version set.
 - [Web application](https://docbank.ai/docs/usage/web.md): Find, read, organize, and export documents in the local, authenticated web app.
+- [Hosted vault providers](https://docbank.ai/docs/usage/providers.md): Connect Docbank to a service that hosts vaults for you, and see which vaults you can open.
 - [Interactive terminal browser](https://docbank.ai/docs/usage/tui.md): Browse documents, inspect their details, storage, backups, and permanent history, and move documents to or from trash in the terminal.
 
 ## Protect and operate

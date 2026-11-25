@@ -307,6 +307,9 @@ func TestMain(m *testing.M) {
 	if os.Getenv("DOCBANK_EDIT_TEST_HELPER") == "1" {
 		os.Exit(runEditHelper())
 	}
+	if len(os.Args) > 3 && os.Args[1] == providerTestHelperArg {
+		os.Exit(runProviderTestHelper(os.Args[2], os.Args[3]))
+	}
 	binaries := ""
 	docbankBinaryDir = os.Getenv(docbankBinaryDirEnv)
 	if docbankBinaryDir == "" {
