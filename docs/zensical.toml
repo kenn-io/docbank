@@ -32,6 +32,7 @@ nav = [
     {"Cite documents in Kata" = "usage/kata-evidence.md"},
     {"Automatic and processing search" = "usage/search.md"},
     {"Web application" = "usage/web.md"},
+    {"Hosted vault providers" = "usage/providers.md"},
     {"Interactive terminal browser" = "usage/tui.md"},
   ]},
   {"Protect and operate" = [
