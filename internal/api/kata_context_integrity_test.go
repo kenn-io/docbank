@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/kataclient"
 	"go.kenn.io/docbank/internal/kataevidence"
 )
 
@@ -21,7 +20,7 @@ func TestKataContextRejectsForgedOriginalQuote(t *testing.T) {
 	node := createFileWithContent(t, ts, s, "/notes.txt", "hello")
 	response, body := do(t, ts, http.MethodPost, "/api/v1/kata/cite", nil, kataevidence.CiteRequest{Title: "Review", IdempotencyKey: "verify-quote", Selector: kataevidence.Selector{NodeID: node.ID, EndRune: 5}})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	client := kataclient.New(config.KataConnection{Endpoint: kata, APIKey: "synthetic-kata-token", Project: "docbank"})
+	client := kataevidence.NewClient(config.KataConnection{Endpoint: kata, APIKey: "synthetic-kata-token", Project: "docbank"})
 	saved, err := client.Get(t.Context(), "docbank#"+issue().Issue.ShortID)
 	require.NoError(t, err)
 	var envelope struct {

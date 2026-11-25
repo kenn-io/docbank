@@ -30,7 +30,6 @@ import (
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	internalprocessing "go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/waitlock"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -148,9 +147,9 @@ type Vault struct {
 	processingErr     error
 	emailSpoolParent  string
 
-	lifecycle    waitlock.RWMutex
-	mutation     waitlock.RWMutex
-	preservation waitlock.RWMutex
+	lifecycle    store.WaitRWMutex
+	mutation     store.WaitRWMutex
+	preservation store.WaitRWMutex
 	closed       bool
 
 	// testAfterRepairPublication exercises the non-cancelable authority handoff
@@ -346,7 +345,7 @@ func openVaultWithCatalog(
 	vault := &Vault{
 		vaultRoot: config.Root, root: root, lock: lock, spoolLock: spoolLock, metadata: metadata, blobs: blobs,
 		emailSpoolParent: layout.BlobTmpDir(),
-		lifecycle:        waitlock.New(), mutation: waitlock.New(), preservation: waitlock.New(),
+		lifecycle:        store.NewWaitRWMutex(), mutation: store.NewWaitRWMutex(), preservation: store.NewWaitRWMutex(),
 	}
 	profiles := make(map[string]internalprocessing.ProfileConfig, len(config.Processing.Profiles))
 	for name, profile := range config.Processing.Profiles {

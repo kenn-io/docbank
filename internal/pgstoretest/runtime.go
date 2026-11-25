@@ -18,7 +18,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/pgtest"
 	"go.kenn.io/docbank/internal/store/pgschema"
-	"go.kenn.io/docbank/internal/store/schemaformat"
 )
 
 // runtimePassword is the password of every runtime test login.
@@ -105,7 +104,7 @@ func renewIdentities(ctx context.Context, setup *sql.DB) error {
 		return fmt.Errorf("renew the copied vault identities: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }() // A committed transaction ignores it.
-	now := time.Now().UTC().Format(schemaformat.TimestampLayout)
+	now := time.Now().UTC().Format(pgschema.TimestampLayout)
 	incarnation := uuid.New().String()
 	schema := pgx.Identifier{templateSchema}.Sanitize()
 	for _, statement := range []struct {

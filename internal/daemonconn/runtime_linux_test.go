@@ -16,8 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 	kitdaemon "go.kenn.io/kit/daemon"
 	"golang.org/x/sys/unix"
-
-	"go.kenn.io/docbank/internal/daemon"
 )
 
 func TestWaitDeadReturnsForUnreapedChild(t *testing.T) {
@@ -39,7 +37,7 @@ func TestWaitDeadReturnsForUnreapedChild(t *testing.T) {
 
 	synctest.Test(t, func(t *testing.T) {
 		started := time.Now()
-		dead, err := waitDead(t.Context(), kitdaemon.RuntimeRecord{PID: cmd.Process.Pid}, daemon.GracefulExitTimeout)
+		dead, err := waitDead(t.Context(), kitdaemon.RuntimeRecord{PID: cmd.Process.Pid}, GracefulExitTimeout)
 		require.NoError(t, err)
 		require.True(t, dead, "an exited child must finish the daemon stop wait")
 		require.Zero(t, time.Since(started), "an unreaped child must end the wait at once")

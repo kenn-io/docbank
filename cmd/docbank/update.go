@@ -2,8 +2,6 @@ package main
 
 import (
 	"github.com/spf13/cobra"
-
-	"go.kenn.io/docbank/internal/update"
 )
 
 var (
@@ -19,7 +17,7 @@ var updateCmd = &cobra.Command{
 	Short:   "Update docbank to the latest GitHub release",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		return update.Run(cmd.Context(), cmd.OutOrStdout(), update.Options{
+		return runUpdate(cmd.Context(), cmd.OutOrStdout(), updateOptions{
 			CheckOnly: updateCheck,
 			Yes:       updateYes,
 			Force:     updateForce,

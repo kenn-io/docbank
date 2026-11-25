@@ -7,27 +7,26 @@ import (
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"go.kenn.io/docbank/internal/apiclient"
-	"go.kenn.io/docbank/internal/kataclient"
 	"go.kenn.io/docbank/internal/kataevidence"
 )
 
-func (c *Connection) CiteKataEvidence(ctx context.Context, request kataevidence.CiteRequest) (kataclient.Issue, error) {
+func (c *Connection) CiteKataEvidence(ctx context.Context, request kataevidence.CiteRequest) (kataevidence.Issue, error) {
 	var response *http.Response
 	_, err := c.apiWithResponse(&response).CiteKataEvidence(runtime.WithStreamingResponse(ctx), &apiclient.CiteKataEvidenceRequestOptions{Body: &request})
 	if err != nil {
-		return kataclient.Issue{}, err
+		return kataevidence.Issue{}, err
 	}
 	defer func() { _ = response.Body.Close() }()
 	var transport struct {
-		kataclient.Issue
+		kataevidence.Issue
 
 		Schema string `json:"$schema,omitzero"`
 	}
 	if err := decodeCitationResponse(response, &transport, 3<<20); err != nil {
-		return kataclient.Issue{}, &responseDecodeError{err: err}
+		return kataevidence.Issue{}, &responseDecodeError{err: err}
 	}
 	if transport.UID == "" || transport.QualifiedRef == "" {
-		return kataclient.Issue{}, &responseDecodeError{err: errors.New("kata issue response is missing its identity; retry creates with the same key")}
+		return kataevidence.Issue{}, &responseDecodeError{err: errors.New("kata issue response is missing its identity; retry creates with the same key")}
 	}
 	return transport.Issue, nil
 }

@@ -18,8 +18,6 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
 	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/daemonauth"
-	"go.kenn.io/docbank/internal/httpboundary"
 )
 
 const requestTimeout = 60 * time.Second
@@ -253,7 +251,7 @@ func authExempt(path string) bool {
 		return true
 	}
 	switch path {
-	case webAuthPath, webLoginPath, "/", "/photos", "/photos/hidden", "/photos/map", "/photos/people", "/health", kitPingPath, daemonauth.ChallengePath, daemonauth.KeyChallengePath,
+	case webAuthPath, webLoginPath, "/", "/photos", "/photos/hidden", "/photos/map", "/photos/people", "/health", kitPingPath, config.DaemonChallengePath, config.DaemonKeyChallengePath,
 		webDownloadFilePath, webUploadSocketPath:
 		return true
 	}
@@ -427,7 +425,7 @@ func hostMiddleware(next http.Handler, cfg config.ServerConfig, webURL string, s
 		hosts = append(hosts, web.Host)
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !httpboundary.Allowed(r.Host, cfg.BindAddr, hosts) {
+		if !config.HTTPAuthorityAllowed(r.Host, cfg.BindAddr, hosts) {
 			writeError(w, NewError(http.StatusForbidden, "host_forbidden", "request Host is not configured"))
 			return
 		}

@@ -27,7 +27,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/backupapp"
-	"go.kenn.io/docbank/internal/daemonauth"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 	kitdaemon "go.kenn.io/kit/daemon"
@@ -51,10 +51,10 @@ func fakeDaemonHandler(t *testing.T, record *kitdaemon.RuntimeRecord, token stri
 		switch r.Method + " " + r.URL.Path {
 		case "GET " + kitdaemon.DefaultPingPath:
 			assert.NoError(t, json.MarshalWrite(w, kitdaemon.PingInfo{OK: true, Service: record.Service, Version: record.Version, PID: record.PID}))
-		case "GET " + daemonauth.ChallengePath:
+		case "GET " + config.DaemonChallengePath:
 			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
 			assert.NoError(t, err)
-			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(token, nonce)}))
+			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": config.DaemonAuthProof(token, nonce)}))
 		default:
 			handler(w, r)
 		}

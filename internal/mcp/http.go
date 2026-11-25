@@ -21,7 +21,6 @@ import (
 
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/httpboundary"
 )
 
 const (
@@ -127,7 +126,7 @@ func wrapHTTPTransport(inner http.Handler, options HTTPOptions, originalDownload
 	if inner == nil || !ValidHTTPBearerToken(options.BearerToken) {
 		return nil, errHTTPConfiguration
 	}
-	if err := httpboundary.ValidateHosts(options.AllowedHosts); err != nil {
+	if err := config.ValidateAllowedHosts(options.AllowedHosts); err != nil {
 		return nil, err
 	}
 	publicOrigin := ""
@@ -376,7 +375,7 @@ func (guard *httpTransportGuard) validatedOrigin(request *http.Request) (string,
 			origin = guard.publicOrigin
 		}
 	}
-	if !publicMatch && !httpboundary.Allowed(request.Host, guard.listenHost, guard.allowedHosts) {
+	if !publicMatch && !config.HTTPAuthorityAllowed(request.Host, guard.listenHost, guard.allowedHosts) {
 		return "", false
 	}
 	values := request.Header.Values("Origin")
@@ -394,7 +393,7 @@ func (guard *httpTransportGuard) validatedOrigin(request *http.Request) (string,
 	return origin, err == nil && requested.Scheme == scheme && requested.User == nil &&
 		requested.Host != "" && requested.Path == "" && requested.RawPath == "" && requested.RawQuery == "" &&
 		!requested.ForceQuery && requested.Fragment == "" && requested.Opaque == "" && !strings.Contains(values[0], "#") &&
-		httpboundary.Same(requested.Host, request.Host)
+		config.SameHTTPAuthority(requested.Host, request.Host)
 }
 
 func (guard *httpTransportGuard) authenticated(header http.Header) bool {

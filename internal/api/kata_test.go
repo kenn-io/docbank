@@ -14,7 +14,6 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/kataclient"
 	"go.kenn.io/docbank/internal/kataevidence"
 	"go.kenn.io/kata/pkg/client/generated"
 	"go.kenn.io/kata/pkg/katatest"
@@ -26,7 +25,7 @@ func realKataForDocbank(t *testing.T) (string, func() *generated.ShowIssueRespon
 	sdk := backend.Client(t)
 	_, err := sdk.InitProject(t.Context(), &generated.InitProjectRequestOptions{Body: &generated.InitProjectBody{Name: new("docbank"), Actor: new("docbank")}})
 	require.NoError(t, err)
-	client := kataclient.New(config.KataConnection{Endpoint: backend.Endpoint, APIKey: "synthetic-kata-token", Project: "docbank"})
+	client := kataevidence.NewClient(config.KataConnection{Endpoint: backend.Endpoint, APIKey: "synthetic-kata-token", Project: "docbank"})
 	_, err = client.Create(t.Context(), "seed", "Synthetic issue", "", nil)
 	require.NoError(t, err)
 	return backend.Endpoint, func() *generated.ShowIssueResponse {

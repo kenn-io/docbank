@@ -37,10 +37,8 @@ import (
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/daemon"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/emailmime"
-	"go.kenn.io/docbank/internal/extract"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/jobs"
@@ -278,7 +276,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	defer func() {
 		// The bounded drain runs after sigCtx ends, so it must not inherit that cancellation.
 		shutdownCtx, cancel := context.WithTimeout(
-			context.WithoutCancel(ctx), daemon.JobDrainTimeout)
+			context.WithoutCancel(ctx), daemonconn.JobDrainTimeout)
 		defer cancel()
 		if err := jobSupervisor.Shutdown(shutdownCtx); err != nil {
 			retErr = errors.Join(retErr, err)
@@ -689,7 +687,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 			return fmt.Errorf("starting watch %q: %w", watchConfig.Name, err)
 		}
 	}
-	textWorker, err := extract.New(s, blobs, operationGate.MutateContext)
+	textWorker, err := processing.NewTextExtractWorker(s, blobs, operationGate.MutateContext)
 	if err != nil {
 		return fmt.Errorf("configuring text extraction: %w", err)
 	}
@@ -884,7 +882,7 @@ func withMCPRoute(api, mcp http.Handler) http.Handler {
 
 // mcpDrainTimeout caps the MCP drain so API shutdown keeps the rest of the
 // shared drain deadline for processing, sessions, and its own listeners.
-const mcpDrainTimeout = daemon.HTTPDrainTimeout / 2
+const mcpDrainTimeout = daemonconn.HTTPDrainTimeout / 2
 
 // serveDaemonHTTP keeps the local API available until MCP reads have drained
 // or their share of the drain deadline expires. drainMCP is nil when the
@@ -916,7 +914,7 @@ func serveDaemonHTTP(ctx context.Context, stopCh <-chan struct{}, servers []serv
 	stopJobs()
 	// The bounded drain runs after ctx ends, so it must not inherit that cancellation.
 	shutdownCtx, cancel := context.WithTimeout(
-		context.WithoutCancel(ctx), daemon.HTTPDrainTimeout)
+		context.WithoutCancel(ctx), daemonconn.HTTPDrainTimeout)
 	defer cancel()
 	// Drain MCP while its API-backed reads can still complete against the API.
 	// A stalled read has its request context canceled.

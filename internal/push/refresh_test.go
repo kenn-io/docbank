@@ -19,7 +19,6 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/store"
@@ -140,14 +139,14 @@ func TestFailedCursorReadDefersTheRestOfItsScan(t *testing.T) {
 	var listings atomic.Int64
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case daemonauth.KeyChallengePath:
+		case config.DaemonKeyChallengePath:
 			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.MarshalWrite(w, map[string]string{"proof": daemonauth.KeyProof("synthetic-key", nonce)})
+			_ = json.MarshalWrite(w, map[string]string{"proof": config.DaemonKeyProof("synthetic-key", nonce)})
 		case "/api/v1/push/sources":
 			if listings.Add(1) == 1 {
 				http.Error(w, "synthetic outage", http.StatusServiceUnavailable)

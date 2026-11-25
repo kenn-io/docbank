@@ -32,7 +32,6 @@ import (
 	"go.kenn.io/docbank/document/pdftext"
 	"go.kenn.io/docbank/document/upload"
 	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/formatcoverage"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/retrieval"
@@ -656,7 +655,7 @@ func NewService(ctx context.Context, config ServiceConfig) (*Service, error) {
 	slices.SortFunc(descriptors, func(left, right document.RenditionDescriptor) int {
 		return strings.Compare(left.Fingerprint, right.Fingerprint)
 	})
-	formatCoverage, err := formatcoverage.Compute(descriptors, SourceMetadataImplementationID)
+	formatCoverage, err := ComputeFormatCoverage(descriptors, SourceMetadataImplementationID)
 	if err != nil {
 		return nil, fmt.Errorf("computing format coverage: %w", err)
 	}

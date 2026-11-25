@@ -25,8 +25,7 @@ import (
 	"go.kenn.io/docbank/internal/apiclient"
 	kitdaemon "go.kenn.io/kit/daemon"
 
-	"go.kenn.io/docbank/internal/daemon"
-	"go.kenn.io/docbank/internal/daemonauth"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/version"
 )
@@ -561,14 +560,14 @@ func start(ctx context.Context, root string, requireVersion, persistent bool) (_
 		rec := kitdaemon.RuntimeRecord{PID: child.Pid}
 		// Reap the child even when ctx ended the startup wait.
 		cleanupCtx := context.WithoutCancel(ctx)
-		if dead, _ := waitProcessExit(cleanupCtx, rec, daemon.GracefulExitTimeout); dead {
+		if dead, _ := waitProcessExit(cleanupCtx, rec, GracefulExitTimeout); dead {
 			return
 		}
 		if err := child.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 			retErr = errors.Join(retErr, fmt.Errorf("terminating unready daemon: %w", err))
 			return
 		}
-		if dead, _ := waitProcessExit(cleanupCtx, rec, daemon.ForcedExitTimeout); !dead {
+		if dead, _ := waitProcessExit(cleanupCtx, rec, ForcedExitTimeout); !dead {
 			retErr = errors.Join(retErr, fmt.Errorf("daemon pid %d did not exit after failed startup", child.Pid))
 		}
 	}()
@@ -701,7 +700,7 @@ func proveOwnershipWithClient(
 	if token == "" {
 		return false, nil
 	}
-	nonce := make([]byte, daemonauth.NonceBytes)
+	nonce := make([]byte, config.DaemonAuthNonceBytes)
 	if _, err := rand.Read(nonce); err != nil {
 		return false, fmt.Errorf("generating daemon ownership challenge: %w", err)
 	}
@@ -725,7 +724,7 @@ func proveOwnershipWithClient(
 	if err := json.UnmarshalRead(limited, &result); err != nil {
 		return false, nil
 	}
-	return daemonauth.Verify(token, nonce, result.Proof), nil
+	return config.VerifyDaemonAuthProof(token, nonce, result.Proof), nil
 }
 
 // Stop gracefully stops the discovered daemon: token endpoint first,
@@ -769,7 +768,7 @@ func stopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 		if _, rejected := ResponseStatus(shutdownErr); rejected {
 			return signalStopRecord(ctx, rec)
 		}
-		dead, err := waitProcessExit(ctx, rec, daemon.GracefulExitTimeout)
+		dead, err := waitProcessExit(ctx, rec, GracefulExitTimeout)
 		if err != nil {
 			return fmt.Errorf("waiting for graceful daemon shutdown: %w", err)
 		}
@@ -792,7 +791,7 @@ func signalStopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 	if err := requestProcessStop(rec.PID); err != nil {
 		return fmt.Errorf("requesting daemon pid %d stop: %w", rec.PID, err)
 	}
-	dead, err := waitProcessExit(ctx, rec, daemon.GracefulExitTimeout)
+	dead, err := waitProcessExit(ctx, rec, GracefulExitTimeout)
 	if err != nil {
 		return fmt.Errorf("waiting for signaled daemon shutdown: %w", err)
 	}
@@ -809,7 +808,7 @@ func forceStopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 	if err := forceTerminateProcess(rec.PID); err != nil {
 		return fmt.Errorf("forcibly terminating daemon pid %d: %w", rec.PID, err)
 	}
-	dead, err := waitProcessExit(ctx, rec, daemon.ForcedExitTimeout)
+	dead, err := waitProcessExit(ctx, rec, ForcedExitTimeout)
 	if err != nil {
 		return fmt.Errorf("waiting for daemon after forced termination: %w", err)
 	}

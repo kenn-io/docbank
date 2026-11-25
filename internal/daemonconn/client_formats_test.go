@@ -12,12 +12,11 @@ import (
 	"go.kenn.io/docbank/document"
 	documentcoverage "go.kenn.io/docbank/document/coverage"
 	"go.kenn.io/docbank/internal/api"
-	internalformatcoverage "go.kenn.io/docbank/internal/formatcoverage"
 	"go.kenn.io/docbank/internal/processing"
 )
 
 func TestClientFormatCapabilitiesValidatesAndPreservesLookup(t *testing.T) {
-	snapshot, err := internalformatcoverage.Compute(nil, processing.SourceMetadataImplementationID)
+	snapshot, err := processing.ComputeFormatCoverage(nil, processing.SourceMetadataImplementationID)
 	require.NoError(t, err)
 	lookup := documentcoverage.Lookup(snapshot, "wpd")
 	snapshot.Formats = []document.FormatCapabilityV1{}
@@ -40,7 +39,7 @@ func TestClientFormatCapabilitiesValidatesAndPreservesLookup(t *testing.T) {
 }
 
 func TestClientFormatCapabilitiesAcceptsFamilyExcludedLookup(t *testing.T) {
-	snapshot, err := internalformatcoverage.Compute(nil, processing.SourceMetadataImplementationID)
+	snapshot, err := processing.ComputeFormatCoverage(nil, processing.SourceMetadataImplementationID)
 	require.NoError(t, err)
 	lookup := documentcoverage.Lookup(snapshot, "pdf")
 	snapshot.Formats = []document.FormatCapabilityV1{}
@@ -56,7 +55,7 @@ func TestClientFormatCapabilitiesAcceptsFamilyExcludedLookup(t *testing.T) {
 }
 
 func TestClientFormatCapabilitiesRejectsInvalidDomainPayload(t *testing.T) {
-	snapshot, err := internalformatcoverage.Compute(nil, processing.SourceMetadataImplementationID)
+	snapshot, err := processing.ComputeFormatCoverage(nil, processing.SourceMetadataImplementationID)
 	require.NoError(t, err)
 	snapshot.Formats[0].Capabilities[document.CapabilityDetect] = document.CapabilityStateV1{
 		State: "invented_state",
@@ -74,7 +73,7 @@ func TestClientFormatCapabilitiesRejectsInvalidDomainPayload(t *testing.T) {
 }
 
 func TestClientFormatCapabilitiesRejectsMismatchedLookup(t *testing.T) {
-	snapshot, err := internalformatcoverage.Compute(nil, processing.SourceMetadataImplementationID)
+	snapshot, err := processing.ComputeFormatCoverage(nil, processing.SourceMetadataImplementationID)
 	require.NoError(t, err)
 	lookup := documentcoverage.Lookup(snapshot, "wpd")
 	lookup.Query = "wrong"
@@ -93,7 +92,7 @@ func TestClientFormatCapabilitiesRejectsMismatchedLookup(t *testing.T) {
 }
 
 func TestClientFormatCapabilitiesStrictResponseJSON(t *testing.T) {
-	base, err := internalformatcoverage.Compute(nil, processing.SourceMetadataImplementationID)
+	base, err := processing.ComputeFormatCoverage(nil, processing.SourceMetadataImplementationID)
 	require.NoError(t, err)
 	lookup := documentcoverage.Lookup(base, "zip")
 	base.Formats = []document.FormatCapabilityV1{*lookup.Format}

@@ -162,6 +162,11 @@ Instructions for autonomous coding agents working in this repository.
   belongs in `internal/api/`, and Go client templates in `scripts/oapi-codegen/`.
 - Write local binaries to ignored `bin/` and temporary work to ignored
   `.superpowers/`. Do not leave reports, captures, or scratch files at the root.
+- Keep the Go package tree flat. Add new code to an existing owning package by
+  default; packages with many files are normal and preferred. Never create a new
+  package for a single feature, wire contract, test helper, or small utility.
+  Create a new package only when an import cycle, binary/visibility boundary,
+  heavy dependency boundary, or explicit public API requires one.
 - Follow the [development guide](docs/internal/development.md) for the layout
   and generated-file workflow.
 

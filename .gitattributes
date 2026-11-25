@@ -24,7 +24,7 @@ document/testdata/chunks-*.golden.json -text
 document/testdata/format_roster.json -text
 document/testdata/format_coverage.json -text
 # The embedded map archives are binary; their decompressed hashes are pinned.
-internal/geo/data/*.geojson.gz -text
+internal/store/geodata/*.geojson.gz -text
 # Scan-assessment fixtures and frozen seeds must retain their exact bytes.
 document/testdata/scanassessment/* -text
 document/internal/scanfixture/testdata/* -text

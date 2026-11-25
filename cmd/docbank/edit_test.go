@@ -24,7 +24,7 @@ import (
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/packagetest"
-	"go.kenn.io/docbank/internal/pdfiumtest"
+	"go.kenn.io/docbank/internal/pdfproduction"
 )
 
 func TestEditCreatesVersionAndSkipsUnchangedContent(t *testing.T) {
@@ -297,7 +297,7 @@ func TestEditUnchangedRejectsConcurrentReplacement(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
-	pdfiumtest.ShareCompiledCode()
+	pdfproduction.ShareCompiledCodeFromEnv()
 	if os.Getenv("DOCBANK_EDIT_TEST_ORPHAN") == "1" {
 		os.Exit(runEditTestOrphan())
 	}

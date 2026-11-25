@@ -30,9 +30,7 @@ import (
 	"go.kenn.io/docbank/document/mistral"
 	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/document/vision"
-	"go.kenn.io/docbank/internal/httpboundary"
 	"go.kenn.io/docbank/internal/query"
-	"go.kenn.io/docbank/internal/storenamespace"
 	"go.kenn.io/kit/embedconfig"
 )
 
@@ -859,7 +857,7 @@ func (c Config) Validate() error {
 	if c.Server.APIKey != "" && !validSecret(c.Server.APIKey) {
 		return errors.New("[server] api_key must contain 1-4096 bytes without whitespace or control bytes")
 	}
-	if err := httpboundary.ValidateHosts(c.Server.AllowedHosts); err != nil {
+	if err := ValidateAllowedHosts(c.Server.AllowedHosts); err != nil {
 		return fmt.Errorf("[server] allowed_hosts: %w", err)
 	}
 	host := c.Server.BindAddr
@@ -884,7 +882,7 @@ func validateMCPConfig(c Config) error {
 	if c.MCP.HTTP.Port < 0 || c.MCP.HTTP.Port > 65535 {
 		return errors.New("[mcp.http] port must be from 0 through 65535")
 	}
-	if err := httpboundary.ValidateHosts(c.MCP.HTTP.AllowedHosts); err != nil {
+	if err := ValidateAllowedHosts(c.MCP.HTTP.AllowedHosts); err != nil {
 		return fmt.Errorf("[mcp.http] allowed_hosts: %w", err)
 	}
 	reference := c.MCP.HTTP.CredentialBinding
@@ -1724,7 +1722,7 @@ func validateStoreBindings(bindings map[string]StoreBindingConfig) error {
 					return fmt.Errorf("%s endpoint %q must use HTTPS", prefix, binding.Endpoint)
 				}
 			}
-			if _, err := storenamespace.CanonicalS3(storenamespace.S3Binding{
+			if _, err := CanonicalS3(S3Binding{
 				Endpoint: binding.Endpoint,
 				Region:   binding.Region,
 				Bucket:   binding.Bucket,

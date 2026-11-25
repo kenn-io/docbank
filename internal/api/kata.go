@@ -10,7 +10,6 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/kataclient"
 	"go.kenn.io/docbank/internal/kataevidence"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/packstore"
@@ -26,13 +25,13 @@ func kataService(d Deps, g *OperationGate) (kataevidence.Service, error) {
 	if err != nil {
 		return kataevidence.Service{}, NewError(503, "kata_unconfigured", err.Error()+"; restart the daemon after changing [integrations.kata]")
 	}
-	return kataevidence.Service{Kata: kataclient.New(cfg), Archive: kataArchive{deps: d, gate: g, originals: make(map[kataOriginalKey]kataOriginal)}}, nil
+	return kataevidence.Service{Kata: kataevidence.NewClient(cfg), Archive: kataArchive{deps: d, gate: g, originals: make(map[kataOriginalKey]kataOriginal)}}, nil
 }
 
 func registerKataRoutes(api huma.API, d Deps, g *OperationGate) {
 	type citeOutput struct {
 		CacheControl string `header:"Cache-Control"`
-		Body         kataclient.Issue
+		Body         kataevidence.Issue
 	}
 	huma.Register(api, huma.Operation{OperationID: "citeKataEvidence", Method: http.MethodPost, Path: kataCitePath,
 		Summary: "Quote a verified document passage into a new or existing Kata issue", MaxBodyBytes: 32 << 10,
@@ -101,7 +100,7 @@ func registerKataRoutes(api huma.API, d Deps, g *OperationGate) {
 }
 
 func kataProblem(err error) error {
-	if failure, ok := errors.AsType[*kataclient.Error](err); ok {
+	if failure, ok := errors.AsType[*kataevidence.ClientError](err); ok {
 		switch code := failure.Code; {
 		case code == "token_invalid":
 			return NewError(403, "kata_token_invalid", "Kata token was rejected; configure Kata with that token")
@@ -146,7 +145,7 @@ func kataProblem(err error) error {
 	case errors.Is(err, context.DeadlineExceeded):
 		return NewError(504, "kata_timeout", "Kata evidence operation timed out; retry creates with the same key")
 	default:
-		if _, ok := errors.AsType[*kataclient.Error](err); !ok {
+		if _, ok := errors.AsType[*kataevidence.ClientError](err); !ok {
 			// Local vault failures keep their storage classification.
 			return FromStoreError(err)
 		}

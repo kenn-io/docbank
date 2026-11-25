@@ -11,10 +11,10 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/filepublish"
 	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
-	"go.kenn.io/docbank/internal/recipientpackage"
 )
 
 const recipientPackageLocalIOCode = "recipient_package_local_io"
@@ -68,7 +68,7 @@ func exportRecipientPackage(ctx context.Context, lease *daemonLease, raw []byte,
 	defer reviewedBatesActive.Store(false)
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
-	selection, err := recipientpackage.ReadSelection(ctx, input.SelectionPath)
+	selection, err := daemonconn.ReadRecipientSelection(ctx, input.SelectionPath)
 	if err != nil {
 		return output, recipientPackageError(ctx, err)
 	}
@@ -80,7 +80,7 @@ func exportRecipientPackage(ctx context.Context, lease *daemonLease, raw []byte,
 		return output, daemonAcquisitionError(err)
 	}
 	defer func() { _ = lease.close(c) }()
-	checked, err := recipientpackage.Preflight(ctx, c, selection)
+	checked, err := daemonconn.PreflightRecipientPackage(ctx, c, selection)
 	if err != nil {
 		return output, recipientPackageError(ctx, err)
 	}
@@ -97,7 +97,7 @@ func exportRecipientPackage(ctx context.Context, lease *daemonLease, raw []byte,
 			}
 		}
 	}()
-	archive, err := recipientpackage.Build(ctx, c, checked, stage.File)
+	archive, err := daemonconn.BuildRecipientPackage(ctx, c, checked, stage.File)
 	if err != nil {
 		return output, recipientPackageError(ctx, err)
 	}
@@ -132,7 +132,7 @@ func recipientPackageError(ctx context.Context, err error) error {
 	case errors.Is(err, processing.ErrRecipientPackageIntegrity):
 		return &reviewedBatesError{code: "redaction_integrity"}
 	}
-	if _, private := errors.AsType[*recipientpackage.InputError](err); private {
+	if _, private := errors.AsType[*daemonconn.RecipientPackageInputError](err); private {
 		return invalidToolArgumentsError()
 	}
 	if _, local := errors.AsType[*os.PathError](err); local {

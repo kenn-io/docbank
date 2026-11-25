@@ -17,8 +17,6 @@ import (
 	"strconv"
 	"syscall"
 	"time"
-
-	"go.kenn.io/docbank/internal/conversionworker"
 )
 
 func main() {
@@ -35,7 +33,7 @@ func main() {
 func run(ctx context.Context, args []string, environment func(string) string, output io.Writer) (retErr error) {
 	flags := flag.NewFlagSet("docbank-conversion-worker", flag.ContinueOnError)
 	flags.SetOutput(output)
-	var options conversionworker.Options
+	var options Options
 	var listen string
 	flags.StringVar(&options.Directory, "directory", "", "private worker spool (required)")
 	flags.StringVar(&options.BackendURL, "backend", "", "exclusive numeric loopback Docling origin (required)")
@@ -67,13 +65,13 @@ func run(ctx context.Context, args []string, environment func(string) string, ou
 	}
 	options.APIKey = environment("DOCBANK_WORKER_API_KEY")
 	options.BackendKey = environment("DOCBANK_WORKER_BACKEND_KEY")
-	worker, err := conversionworker.Open(ctx, options)
+	worker, err := Open(ctx, options)
 	if err != nil {
 		return fmt.Errorf("configure conversion worker: %w", err)
 	}
 	lifetime, cancel := context.WithCancel(ctx)
 	defer cancel()
-	defer func() { retErr = errors.Join(retErr, worker.Close(context.WithoutCancel(ctx))) }()
+	defer func() { retErr = errors.Join(retErr, worker.Close()) }()
 	listener, err := (&net.ListenConfig{}).Listen(lifetime, "tcp", listen)
 	if err != nil {
 		return fmt.Errorf("configure conversion worker: %w", err)

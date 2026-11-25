@@ -2,14 +2,12 @@ package kataevidence
 
 import (
 	"context"
-
-	"go.kenn.io/docbank/internal/kataclient"
 )
 
 type Context struct {
-	Issue      kataclient.Issue `json:"issue"`
-	Passages   []Resolution     `json:"passages"`
-	NextOffset int              `json:"next_offset,omitzero"`
+	Issue      Issue        `json:"issue"`
+	Passages   []Resolution `json:"passages"`
+	NextOffset int          `json:"next_offset,omitzero"`
 }
 
 // Context reads native evidence metadata and never starts processing.

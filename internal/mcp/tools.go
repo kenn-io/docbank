@@ -17,7 +17,7 @@ import (
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/kataclient"
+	"go.kenn.io/docbank/internal/kataevidence"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/report"
 )
@@ -677,7 +677,7 @@ func domainErrorMessage(code string) string {
 	case "kata_issue_unavailable":
 		return "Kata issue or project is unavailable."
 	case "kata_incompatible":
-		return "Kata API schema " + kataclient.SupportedSchemaRange() + " is required."
+		return "Kata API schema " + kataevidence.SupportedSchemaRange() + " is required."
 	case "kata_unconfigured":
 		return "Enable and configure integrations.kata for the selected vault."
 	case "invalid_kata_evidence":

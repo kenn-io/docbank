@@ -32,8 +32,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/daemon"
-	"go.kenn.io/docbank/internal/daemonauth"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/packagetest"
 	"go.kenn.io/docbank/internal/version"
@@ -89,7 +88,7 @@ func recordProcessExitWaits(t *testing.T) *processExitWaits {
 		waits.mu.Lock()
 		waits.budgets = append(waits.budgets, timeout)
 		waits.mu.Unlock()
-		if runtime.GOOS == "windows" && timeout == daemon.GracefulExitTimeout {
+		if runtime.GOOS == "windows" && timeout == GracefulExitTimeout {
 			return !kitdaemon.ProcessAlive(rec.PID), ctx.Err()
 		}
 		return waitDead(ctx, rec, timeout)
@@ -146,22 +145,22 @@ func TestStartCancellationStopsUnreadyChild(t *testing.T) {
 	t.Cleanup(func() {
 		_ = child.Kill()
 		_ = child.Release()
-		_, _ = waitDead(context.Background(), kitdaemon.RuntimeRecord{PID: pid}, daemon.ForcedExitTimeout)
+		_, _ = waitDead(context.Background(), kitdaemon.RuntimeRecord{PID: pid}, ForcedExitTimeout)
 	})
 	cancel()
 	select {
 	case err := <-done:
 		require.ErrorIs(t, err, context.Canceled)
-	case <-time.After(daemon.GracefulExitTimeout + daemon.ForcedExitTimeout + 5*time.Second):
+	case <-time.After(GracefulExitTimeout + ForcedExitTimeout + 5*time.Second):
 		stacktest.Dump(t)
 		t.Fatal("launcher did not return after cancellation")
 	}
 	assert.False(t, kitdaemon.ProcessAlive(pid), "failed startup must release its child process")
-	want := []time.Duration{daemon.GracefulExitTimeout}
+	want := []time.Duration{GracefulExitTimeout}
 	if runtime.GOOS == "windows" {
 		// Nothing can ask the child to stop gracefully, so the launcher kills it
 		// after the graceful budget.
-		want = append(want, daemon.ForcedExitTimeout)
+		want = append(want, ForcedExitTimeout)
 	}
 	assert.Equal(t, want, waits.list())
 }
@@ -336,11 +335,11 @@ func TestEnsureReplacesIncompatibleDaemon(t *testing.T) {
 			_ = json.MarshalWrite(w, kitdaemon.PingInfo{
 				OK: true, Service: Service, Version: version.Version, PID: rec.PID,
 			})
-		} else if r.URL.Path == daemonauth.ChallengePath {
+		} else if r.URL.Path == config.DaemonChallengePath {
 			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
 			assert.NoError(t, err)
 			_ = json.MarshalWrite(w, map[string]string{
-				"proof": daemonauth.Proof(rec.Metadata[metaShutdownToken], nonce),
+				"proof": config.DaemonAuthProof(rec.Metadata[metaShutdownToken], nonce),
 			})
 		} else if started.Load() && r.URL.Path == "/api/v1/text-citations/outline" {
 			assert.Equal(t, http.MethodPost, r.Method)
@@ -448,7 +447,7 @@ func TestEnsureRejectsForgedPingWithoutSendingRuntimeSecrets(t *testing.T) {
 				OK: true, Service: Service, Version: version.Version, PID: rec.PID,
 			})
 
-		case daemonauth.ChallengePath:
+		case config.DaemonChallengePath:
 			_ = json.MarshalWrite(w, map[string]string{"proof": "forged"})
 		default:
 			http.NotFound(w, r)
@@ -479,7 +478,7 @@ func challengeResponse(t *testing.T, r *http.Request, token string) []byte {
 		t.Errorf("decoding challenge nonce: %v", err)
 		return nil
 	}
-	body, err := json.Marshal(map[string]string{"proof": daemonauth.Proof(token, nonce)})
+	body, err := json.Marshal(map[string]string{"proof": config.DaemonAuthProof(token, nonce)})
 	if err != nil {
 		t.Errorf("encoding challenge response: %v", err)
 		return nil
@@ -615,7 +614,7 @@ func TestProvenClientCloseBeforeFirstRequest(t *testing.T) {
 	const token = "synthetic-proof-token"
 	closed := make(chan struct{}, 1)
 	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != daemonauth.ChallengePath {
+		if r.URL.Path != config.DaemonChallengePath {
 			return
 		}
 		_, _ = w.Write(challengeResponse(t, r, token))
@@ -739,14 +738,14 @@ func TestShutdownHTTPRejectionUsesProcessStop(t *testing.T) {
 	_, rec := startUnresponsiveRuntime(t)
 	rec.Metadata[metaShutdownToken] = "rejected-token"
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == daemonauth.ChallengePath {
+		if r.URL.Path == config.DaemonChallengePath {
 			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
 			if err != nil {
 				http.Error(w, "bad nonce", http.StatusBadRequest)
 				return
 			}
 			_ = json.MarshalWrite(w, map[string]string{
-				"proof": daemonauth.Proof(rec.Metadata[metaShutdownToken], nonce),
+				"proof": config.DaemonAuthProof(rec.Metadata[metaShutdownToken], nonce),
 			})
 
 			return
@@ -762,10 +761,10 @@ func TestShutdownHTTPRejectionUsesProcessStop(t *testing.T) {
 	require.NoError(t, stopRecord(t.Context(), rec))
 	assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 	if runtime.GOOS == "windows" {
-		assert.Equal(t, []time.Duration{daemon.GracefulExitTimeout, daemon.ForcedExitTimeout}, waits.list(),
+		assert.Equal(t, []time.Duration{GracefulExitTimeout, ForcedExitTimeout}, waits.list(),
 			"Windows must preserve graceful draining before native termination")
 	} else {
-		assert.Equal(t, []time.Duration{daemon.GracefulExitTimeout}, waits.list(),
+		assert.Equal(t, []time.Duration{GracefulExitTimeout}, waits.list(),
 			"a definitive rejection must take the graceful process-signal path, and SIGTERM stops the process")
 	}
 }
@@ -857,13 +856,13 @@ func TestUnresponsiveDaemonHelper(_ *testing.T) {
 func TestWaitDeadWaitsOutItsBudgetForALiveProcess(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		started := time.Now()
-		dead, err := waitDead(t.Context(), kitdaemon.RuntimeRecord{PID: os.Getpid()}, daemon.GracefulExitTimeout)
+		dead, err := waitDead(t.Context(), kitdaemon.RuntimeRecord{PID: os.Getpid()}, GracefulExitTimeout)
 		require.NoError(t, err)
 		assert.False(t, dead, "this test process is still running")
-		assert.Equal(t, daemon.GracefulExitTimeout, time.Since(started))
+		assert.Equal(t, GracefulExitTimeout, time.Since(started))
 
 		started = time.Now()
-		dead, err = waitDead(t.Context(), kitdaemon.RuntimeRecord{PID: 0}, daemon.GracefulExitTimeout)
+		dead, err = waitDead(t.Context(), kitdaemon.RuntimeRecord{PID: 0}, GracefulExitTimeout)
 		require.NoError(t, err)
 		assert.True(t, dead)
 		assert.Zero(t, time.Since(started), "an exited process ends the wait at once")

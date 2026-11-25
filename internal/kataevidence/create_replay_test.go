@@ -9,7 +9,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/kataclient"
 	"go.kenn.io/kata/pkg/client/generated"
 	"go.kenn.io/kata/pkg/katatest"
 )
@@ -34,7 +33,7 @@ func TestCreateReplayRejectsMovedIssueAfterWindow(t *testing.T) {
 	require.NoError(t, err)
 	other, err := sdk.InitProject(t.Context(), &generated.InitProjectRequestOptions{Body: &generated.InitProjectBody{Name: new("other"), Actor: new("docbank")}})
 	require.NoError(t, err)
-	client := kataclient.New(config.KataConnection{Endpoint: server.Endpoint, APIKey: "synthetic-key", Project: "docbank"})
+	client := NewClient(config.KataConnection{Endpoint: server.Endpoint, APIKey: "synthetic-key", Project: "docbank"})
 	service := Service{Kata: client, Archive: &memoryArchive{}}
 	request := CiteRequest{Title: "Review", IdempotencyKey: "moved-create", Selector: Selector{NodeID: 2, EndRune: 5}}
 	issue, err := service.Cite(t.Context(), request)
@@ -50,7 +49,7 @@ func TestCreateReplayRejectsMovedIssueAfterWindow(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 1, count)
 	_, err = service.Cite(t.Context(), request)
-	failure, ok := errors.AsType[*kataclient.Error](err)
+	failure, ok := errors.AsType[*ClientError](err)
 	require.True(t, ok, "expected moved-issue error, got %v", err)
 	require.Equal(t, "wrong_project", failure.Code)
 	all, err := sdk.ListAllIssues(t.Context(), &generated.ListAllIssuesRequestOptions{})

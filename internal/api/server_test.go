@@ -23,7 +23,6 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -293,8 +292,8 @@ func TestDaemonOwnershipChallengeDoesNotRequireOrRevealCredentials(t *testing.T)
 	t.Parallel()
 	const token = "per-run-shutdown-secret"
 	ts, _ := newTestServer(t, func(d *api.Deps) { d.ShutdownToken = token })
-	nonce := bytes.Repeat([]byte{0x42}, daemonauth.NonceBytes)
-	path := daemonauth.ChallengePath + "?nonce=" + hex.EncodeToString(nonce)
+	nonce := bytes.Repeat([]byte{0x42}, config.DaemonAuthNonceBytes)
+	path := config.DaemonChallengePath + "?nonce=" + hex.EncodeToString(nonce)
 
 	resp, body := get(t, ts, path, map[string]string{"X-Api-Key": ""})
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -302,10 +301,10 @@ func TestDaemonOwnershipChallengeDoesNotRequireOrRevealCredentials(t *testing.T)
 		Proof string `json:"proof"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(body), &result))
-	assert.True(t, daemonauth.Verify(token, nonce, result.Proof))
+	assert.True(t, config.VerifyDaemonAuthProof(token, nonce, result.Proof))
 	assert.NotContains(t, body, token)
 
-	resp, _ = get(t, ts, daemonauth.ChallengePath+"?nonce=short",
+	resp, _ = get(t, ts, config.DaemonChallengePath+"?nonce=short",
 		map[string]string{"X-Api-Key": ""})
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
@@ -313,19 +312,19 @@ func TestDaemonOwnershipChallengeDoesNotRequireOrRevealCredentials(t *testing.T)
 func TestAPIKeyChallengeProvesTheKeyWithoutRevealingIt(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, nil)
-	nonce := bytes.Repeat([]byte{0x24}, daemonauth.NonceBytes)
-	resp, body := get(t, ts, daemonauth.KeyChallengePath+"?nonce="+hex.EncodeToString(nonce),
+	nonce := bytes.Repeat([]byte{0x24}, config.DaemonAuthNonceBytes)
+	resp, body := get(t, ts, config.DaemonKeyChallengePath+"?nonce="+hex.EncodeToString(nonce),
 		map[string]string{"X-Api-Key": ""})
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var result struct {
 		Proof string `json:"proof"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(body), &result))
-	assert.True(t, daemonauth.VerifyKey(testAPIKey, nonce, result.Proof))
-	assert.False(t, daemonauth.VerifyKey("other-key", nonce, result.Proof))
+	assert.True(t, config.VerifyDaemonKeyProof(testAPIKey, nonce, result.Proof))
+	assert.False(t, config.VerifyDaemonKeyProof("other-key", nonce, result.Proof))
 	assert.NotContains(t, body, testAPIKey)
 
-	resp, _ = get(t, ts, daemonauth.KeyChallengePath+"?nonce=short", map[string]string{"X-Api-Key": ""})
+	resp, _ = get(t, ts, config.DaemonKeyChallengePath+"?nonce=short", map[string]string{"X-Api-Key": ""})
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 

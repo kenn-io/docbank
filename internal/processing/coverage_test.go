@@ -11,7 +11,6 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/coverage"
 	"go.kenn.io/docbank/internal/emailmime"
-	internalformatcoverage "go.kenn.io/docbank/internal/formatcoverage"
 )
 
 var updateFormatCoverage = flag.Bool("update", false, "update the pinned format coverage fixture")
@@ -33,7 +32,7 @@ func TestMetadataQualificationSurvivesToolchainChanges(t *testing.T) {
 				fingerprintSourceMetadataExtractor(sourceMetadataExtractorDescriptor, recipe),
 				"stored metadata generations must retain their existing identity")
 			id := sourceMetadataImplementationID(sourceMetadataExtractorDescriptor, recipe)
-			record, err := internalformatcoverage.Compute(nil, id)
+			record, err := ComputeFormatCoverage(nil, id)
 			require.NoError(t, err)
 			assert.Equal(t, SourceMetadataImplementationID, record.GeneratedBy.ExtractorID)
 			assert.Equal(t, document.CapabilityQualified,
@@ -54,7 +53,7 @@ func TestMetadataQualificationRejectsParserChanges(t *testing.T) {
 				recipe.ImplementationRevision++
 			}
 			id := sourceMetadataImplementationID(descriptor, recipe)
-			record, err := internalformatcoverage.Compute(nil, id)
+			record, err := ComputeFormatCoverage(nil, id)
 			require.NoError(t, err)
 			assert.Equal(t, document.CapabilityUnqualified,
 				processingFormatByID(t, record, "xlsx").Capabilities[document.CapabilityMetadata].State)
@@ -64,7 +63,7 @@ func TestMetadataQualificationRejectsParserChanges(t *testing.T) {
 
 func TestFormatCoverageMatchesPinnedFixture(t *testing.T) {
 	t.Parallel()
-	record, err := internalformatcoverage.Compute(nil, SourceMetadataImplementationID)
+	record, err := ComputeFormatCoverage(nil, SourceMetadataImplementationID)
 	require.NoError(t, err)
 	encoded, _, err := document.MarshalFormatCoverageV1(record)
 	require.NoError(t, err)
@@ -79,7 +78,7 @@ func TestFormatCoverageMatchesPinnedFixture(t *testing.T) {
 
 func TestFormatCoverageComposesQualifiedOwnersWithoutInflatingClaims(t *testing.T) {
 	t.Parallel()
-	record, err := internalformatcoverage.Compute(nil, SourceMetadataImplementationID)
+	record, err := ComputeFormatCoverage(nil, SourceMetadataImplementationID)
 	require.NoError(t, err)
 	assert.Len(t, record.Formats, 52)
 	assert.Equal(t, SourceMetadataImplementationID, record.GeneratedBy.ExtractorID)
@@ -116,7 +115,7 @@ func TestFormatCoverageComposesQualifiedOwnersWithoutInflatingClaims(t *testing.
 func TestFormatCoverageUsesExecutedSyntheticProviderQualification(t *testing.T) {
 	t.Parallel()
 	descriptor := syntheticMarkdownCoverageDescriptor(t)
-	record, err := internalformatcoverage.Compute([]document.RenditionDescriptor{descriptor}, SourceMetadataImplementationID)
+	record, err := ComputeFormatCoverage([]document.RenditionDescriptor{descriptor}, SourceMetadataImplementationID)
 	require.NoError(t, err)
 	text := processingFormatByID(t, record, "pdf").Capabilities[document.CapabilityText]
 	assert.Equal(t, document.CapabilityQualified, text.State)
@@ -127,7 +126,7 @@ func TestFormatCoverageUsesExecutedSyntheticProviderQualification(t *testing.T) 
 
 func TestFormatCoverageRequiresTheActiveMetadataExtractorQualification(t *testing.T) {
 	t.Parallel()
-	record, err := internalformatcoverage.Compute(nil, "synthetic-extractor/v2")
+	record, err := ComputeFormatCoverage(nil, "synthetic-extractor/v2")
 	require.NoError(t, err)
 	assert.Equal(t, "synthetic-extractor/v2", record.GeneratedBy.ExtractorID)
 	pdf := processingFormatByID(t, record, "pdf")
@@ -145,7 +144,7 @@ func TestLookupFormatDistinguishesCatalogPendingAndUnknown(t *testing.T) {
 		{query: "wpd", match: document.FormatLookupPending},
 		{query: "qqq", match: document.FormatLookupUnknown},
 	} {
-		record, err := internalformatcoverage.Compute(nil, SourceMetadataImplementationID)
+		record, err := ComputeFormatCoverage(nil, SourceMetadataImplementationID)
 		require.NoError(t, err)
 		lookup := coverage.Lookup(record, testCase.query)
 		assert.Equal(t, testCase.match, lookup.Match)

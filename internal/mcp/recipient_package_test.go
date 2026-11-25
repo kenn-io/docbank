@@ -23,14 +23,14 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/filepublish"
 	"go.kenn.io/docbank/internal/processing"
-	"go.kenn.io/docbank/internal/recipientpackage"
 )
 
 func recipientPackageArguments(t *testing.T, f reviewedBatesFixture) map[string]any {
 	t.Helper()
-	selection := recipientpackage.Selection{Contract: "native-pdf-recipient-selection/v1", Documents: []recipientpackage.Input{{
+	selection := daemonconn.RecipientSelection{Contract: "native-pdf-recipient-selection/v1", Documents: []daemonconn.RecipientPackageInput{{
 		AllocationID: f.receipt.AllocationID, Preparation: f.paths["preparation_path"], Masks: f.paths["masks_path"], Review: f.paths["review_path"],
 	}}}
 	data, err := json.Marshal(selection)
@@ -312,7 +312,7 @@ func TestRecipientPackageTypedLimit(t *testing.T) {
 	args := recipientPackageArguments(t, f)
 	selectionPath, ok := args["selection_path"].(string)
 	require.True(t, ok)
-	data, err := json.Marshal(recipientpackage.Selection{Contract: "native-pdf-recipient-selection/v1", Documents: make([]recipientpackage.Input, 17)})
+	data, err := json.Marshal(daemonconn.RecipientSelection{Contract: "native-pdf-recipient-selection/v1", Documents: make([]daemonconn.RecipientPackageInput, 17)})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(selectionPath, data, 0600))
 	var requests atomic.Int32

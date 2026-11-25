@@ -2,7 +2,6 @@ package config
 
 import (
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/httpboundary"
 	"testing"
 	"time"
 )
@@ -73,7 +72,7 @@ func FuzzWebHostAuthorityRejectsPatternsAndURLs(f *testing.F) {
 			require.NotContains(t, authority, "/")
 			require.NotContains(t, authority, "@")
 			require.NotContains(t, authority, "?")
-			require.True(t, httpboundary.Allowed(authority, "", []string{authority}),
+			require.True(t, HTTPAuthorityAllowed(authority, "", []string{authority}),
 				"the server Host allowlist must admit accepted authority %q", authority)
 		}
 	})

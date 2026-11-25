@@ -31,7 +31,6 @@ import (
 	"go.kenn.io/docbank/internal/mcp"
 	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
-	"go.kenn.io/docbank/internal/recipientpackage"
 	"go.kenn.io/docbank/internal/redactiontest"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -75,7 +74,7 @@ func qualifyRecipientPackage(t *testing.T) {
 	var ns api.BatesNamespace
 	require.NoError(t, json.Unmarshal([]byte(out), &ns))
 	root := t.TempDir()
-	selection := recipientpackage.Selection{Contract: "native-pdf-recipient-selection/v1"}
+	selection := daemonconn.RecipientSelection{Contract: "native-pdf-recipient-selection/v1"}
 	var expectedPDFs, expectedTexts [][]byte
 	var lastSnapshot string
 	for i, texts := range [][]string{{"SECRET KEEP SECRET", "SECRET SECOND PAGE"}, {"SECRET THIRD PAGE"}} {
@@ -118,7 +117,7 @@ func qualifyRecipientPackage(t *testing.T) {
 		files, _ := readNativeRedactionZIP(t, archive)
 		expectedPDFs = append(expectedPDFs, files["redacted.pdf"])
 		expectedTexts = append(expectedTexts, files["redacted.txt"])
-		selection.Documents = append(selection.Documents, recipientpackage.Input{AllocationID: allocation.AllocationID.String(), Preparation: f.preparation, Masks: f.masks, Review: f.review})
+		selection.Documents = append(selection.Documents, daemonconn.RecipientPackageInput{AllocationID: allocation.AllocationID.String(), Preparation: f.preparation, Masks: f.masks, Review: f.review})
 	}
 	stampedID := recipientStampedFixture(t, lastSnapshot, ns.NamespaceID)
 	agent := startWorkflowMCP(t, mcp.ServerOptions{AllowPackageWrites: true})
@@ -295,7 +294,7 @@ func qualifyRecipientPackage(t *testing.T) {
 	stop()
 }
 
-func recipientAdmissionChecks(t *testing.T, address, key string, selection recipientpackage.Selection, stampedID string) {
+func recipientAdmissionChecks(t *testing.T, address, key string, selection daemonconn.RecipientSelection, stampedID string) {
 	t.Helper()
 	target, err := url.Parse(address)
 	require.NoError(t, err)
@@ -318,7 +317,7 @@ func recipientAdmissionChecks(t *testing.T, address, key string, selection recip
 	agent := startWorkflowMCPServer(t, mcp.NewServerWithConnection(c, mcp.ServerOptions{AllowPackageWrites: true}))
 	defer agent.stop(t)
 	selectionPath := filepath.Join(t.TempDir(), "selection.json")
-	checkAgent := func(value recipientpackage.Selection, code string) {
+	checkAgent := func(value daemonconn.RecipientSelection, code string) {
 		encoded, err := json.Marshal(value)
 		require.NoError(t, err)
 		require.NoError(t, os.WriteFile(selectionPath, encoded, 0600))
@@ -343,14 +342,14 @@ func recipientAdmissionChecks(t *testing.T, address, key string, selection recip
 	stamped.Documents = slices.Clone(selection.Documents)
 	stamped.Documents[1].AllocationID = stampedID
 	checkAgent(stamped, "invalid_arguments")
-	_, err = recipientpackage.Preflight(t.Context(), c, stamped)
+	_, err = daemonconn.PreflightRecipientPackage(t.Context(), c, stamped)
 	require.Equal(t, exitUsage, commandExitCode(recipientCLIError(err), true))
 	require.Zero(t, downloads.Load())
 	original, err := os.ReadFile(selection.Documents[1].Review)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(selection.Documents[1].Review, []byte("{"), 0600))
 	checkAgent(selection, "invalid_arguments")
-	_, err = recipientpackage.Preflight(t.Context(), c, selection)
+	_, err = daemonconn.PreflightRecipientPackage(t.Context(), c, selection)
 	require.Equal(t, exitUsage, commandExitCode(recipientCLIError(err), true))
 	require.Zero(t, downloads.Load())
 	require.NoError(t, os.WriteFile(selection.Documents[1].Review, original, 0600))
@@ -359,10 +358,10 @@ func recipientAdmissionChecks(t *testing.T, address, key string, selection recip
 	wrong.Documents[1] = selection.Documents[0]
 	wrong.Documents[1].AllocationID = selection.Documents[1].AllocationID
 	checkAgent(wrong, "redaction_review_changed")
-	_, err = recipientpackage.Preflight(t.Context(), c, wrong)
+	_, err = daemonconn.PreflightRecipientPackage(t.Context(), c, wrong)
 	require.Equal(t, exitStale, commandExitCode(recipientCLIError(err), true))
 	require.Zero(t, downloads.Load())
-	checked, err := recipientpackage.Preflight(t.Context(), c, selection)
+	checked, err := daemonconn.PreflightRecipientPackage(t.Context(), c, selection)
 	require.NoError(t, err)
 	// No racing process: production preflight has completed before this real edit.
 	masks, err := os.ReadFile(selection.Documents[0].Masks)
@@ -376,7 +375,7 @@ func recipientAdmissionChecks(t *testing.T, address, key string, selection recip
 	staged, err := os.CreateTemp(t.TempDir(), "recipient-*.zip")
 	require.NoError(t, err)
 	defer func() { require.NoError(t, staged.Close()) }()
-	_, err = recipientpackage.Build(t.Context(), c, checked, staged)
+	_, err = daemonconn.BuildRecipientPackage(t.Context(), c, checked, staged)
 	require.Equal(t, exitStale, commandExitCode(recipientCLIError(err), true))
 	require.Zero(t, downloads.Load())
 	require.NoError(t, os.WriteFile(selection.Documents[0].Masks, masks, 0600))
@@ -393,7 +392,7 @@ func recipientAdmissionChecks(t *testing.T, address, key string, selection recip
 	require.NoError(t, err)
 	require.Empty(t, entries)
 	failDownload.Store(0)
-	single := recipientpackage.Plan{Inputs: checked.Inputs[:1], Receipts: checked.Receipts[:1], Documents: checked.Documents[:1]}
+	single := daemonconn.RecipientPackagePlan{Inputs: checked.Inputs[:1], Receipts: checked.Receipts[:1], Documents: checked.Documents[:1]}
 	cmd.SetOut(searchFailingWriter{})
 	err = publishRecipientPackage(t.Context(), cmd, destination, true, c, single)
 	require.ErrorContains(t, err, "already saved at")
