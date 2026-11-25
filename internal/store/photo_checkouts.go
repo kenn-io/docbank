@@ -15,7 +15,7 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
-	"go.kenn.io/docbank/internal/filename"
+	"go.kenn.io/docbank/internal/canonical"
 	"golang.org/x/sync/semaphore"
 	"golang.org/x/text/unicode/norm"
 )
@@ -398,7 +398,7 @@ func validateCheckoutFilename(name string) error {
 	if strings.ContainsAny(name, `<>:"\|?*`) || strings.HasSuffix(name, ".") || strings.HasSuffix(name, " ") {
 		return fmt.Errorf("%w: original filename is not portable", ErrInvalidPhotoCheckout)
 	}
-	if filename.IsWindowsDeviceName(name) {
+	if canonical.IsWindowsDeviceName(name) {
 		return fmt.Errorf("%w: reserved Windows device filename", ErrInvalidPhotoCheckout)
 	}
 	for _, r := range name {

@@ -8397,10 +8397,10 @@ components:
         - metadata
         - qualified_ref
       type: object
-      x-go-type: kataclient.Issue
+      x-go-type: kataevidence.Issue
       x-go-type-import:
-        path: go.kenn.io/docbank/internal/kataclient
-        name: kataclient
+        path: go.kenn.io/docbank/internal/kataevidence
+        name: kataevidence
     IssueTermReportDownloadRequest:
       additionalProperties: false
       properties:

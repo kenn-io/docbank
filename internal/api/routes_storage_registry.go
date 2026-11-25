@@ -17,7 +17,6 @@ import (
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/storenamespace"
 )
 
 func registerStorageRegistryRoutes(api huma.API, d Deps, g *gate) {
@@ -407,7 +406,7 @@ func validateStorageNamespace(
 	separationChecked bool,
 ) error {
 	if binding.Kind == "s3" {
-		if _, err := storenamespace.CanonicalS3(storageS3Binding(binding)); err != nil {
+		if _, err := config.CanonicalS3(storageS3Binding(binding)); err != nil {
 			return NewError(
 				http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error(),
 			)
@@ -476,7 +475,7 @@ func validateStorageNamespace(
 		if binding.Kind == "filesystem" {
 			overlap, err = ingest.PathsOverlap(ctx, binding.Path, existingBinding.Path)
 		} else {
-			overlap, err = storenamespace.S3Overlaps(
+			overlap, err = config.S3Overlaps(
 				storageS3Binding(binding), storageS3Binding(existingBinding),
 			)
 		}
@@ -498,8 +497,8 @@ func validateStorageNamespace(
 	return nil
 }
 
-func storageS3Binding(binding config.StoreBindingConfig) storenamespace.S3Binding {
-	return storenamespace.S3Binding{
+func storageS3Binding(binding config.StoreBindingConfig) config.S3Binding {
+	return config.S3Binding{
 		Endpoint: binding.Endpoint,
 		Region:   binding.Region,
 		Bucket:   binding.Bucket,

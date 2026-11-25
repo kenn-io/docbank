@@ -7,7 +7,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/kataclient"
 	"go.kenn.io/docbank/internal/kataevidence"
 	"go.kenn.io/kit/packstore"
 )
@@ -21,21 +20,21 @@ func TestKataProblemClassifiesPermanentReferenceFailures(t *testing.T) {
 		code   string
 		detail string
 	}{
-		{"invalid_reference", &kataclient.Error{Code: "invalid_reference"}, 422, "invalid_kata_evidence", ""},
-		{"wrong_project", &kataclient.Error{Code: "wrong_project"}, 422, "invalid_kata_evidence", ""},
-		{"project_unavailable", &kataclient.Error{Code: "project_unavailable"}, 422, "invalid_kata_evidence", ""},
-		{"incompatible_schema", &kataclient.Error{Code: "incompatible_api"}, 503, "kata_incompatible", "unsupported Kata API schema"},
+		{"invalid_reference", &kataevidence.ClientError{Code: "invalid_reference"}, 422, "invalid_kata_evidence", ""},
+		{"wrong_project", &kataevidence.ClientError{Code: "wrong_project"}, 422, "invalid_kata_evidence", ""},
+		{"project_unavailable", &kataevidence.ClientError{Code: "project_unavailable"}, 422, "invalid_kata_evidence", ""},
+		{"incompatible_schema", &kataevidence.ClientError{Code: "incompatible_api"}, 503, "kata_incompatible", "unsupported Kata API schema"},
 		{"unsupported", kataevidence.ErrUnsupported, 409, "kata_evidence_unsupported", ""},
-		{"unauthorized", &kataclient.Error{Status: 401, Code: "http_error"}, 401, "kata_unauthorized", ""},
-		{"forbidden", &kataclient.Error{Status: 403, Code: "http_error"}, 403, "kata_forbidden", ""},
-		{"unavailable", &kataclient.Error{Status: 404, Code: "http_error"}, 404, "kata_issue_unavailable", ""},
+		{"unauthorized", &kataevidence.ClientError{Status: 401, Code: "http_error"}, 401, "kata_unauthorized", ""},
+		{"forbidden", &kataevidence.ClientError{Status: 403, Code: "http_error"}, 403, "kata_forbidden", ""},
+		{"unavailable", &kataevidence.ClientError{Status: 404, Code: "http_error"}, 404, "kata_issue_unavailable", ""},
 		{"invalid_range", document.ErrInvalidCitationRange, 422, "invalid_kata_evidence", "end_rune or start_rune"},
 		{"invalid_citation", document.ErrInvalidTextCitation, 422, "invalid_kata_evidence", "citation is invalid"},
 		{"entry_limit", kataevidence.ErrEntryLimit, 409, "kata_evidence_limit", "issue already holds the maximum of 64 Docbank quotes"},
-		{"deleted_replay", &kataclient.Error{Status: 409, Code: "idempotency_deleted"}, 409, "kata_idempotency_deleted", "restore the issue or use a new idempotency key"},
-		{"bad_request", &kataclient.Error{Status: 400, Code: "request_failed"}, 400, "invalid_kata_evidence", "Kata rejected"},
-		{"too_large", &kataclient.Error{Status: 413, Code: "request_failed"}, 413, "invalid_kata_evidence", "Kata rejected"},
-		{"unprocessable", &kataclient.Error{Status: 422, Code: "request_failed"}, 422, "invalid_kata_evidence", "Kata rejected"},
+		{"deleted_replay", &kataevidence.ClientError{Status: 409, Code: "idempotency_deleted"}, 409, "kata_idempotency_deleted", "restore the issue or use a new idempotency key"},
+		{"bad_request", &kataevidence.ClientError{Status: 400, Code: "request_failed"}, 400, "invalid_kata_evidence", "Kata rejected"},
+		{"too_large", &kataevidence.ClientError{Status: 413, Code: "request_failed"}, 413, "invalid_kata_evidence", "Kata rejected"},
+		{"unprocessable", &kataevidence.ClientError{Status: 422, Code: "request_failed"}, 422, "invalid_kata_evidence", "Kata rejected"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			problem, ok := errors.AsType[*Error](kataProblem(tc.err))
@@ -53,7 +52,7 @@ func TestKataProblemClassifiesPermanentReferenceFailures(t *testing.T) {
 
 func TestKataProblemKeepsTransientFailuresRetryable(t *testing.T) {
 	t.Parallel()
-	problem, ok := errors.AsType[*Error](kataProblem(&kataclient.Error{Status: 502, Code: "request_failed"}))
+	problem, ok := errors.AsType[*Error](kataProblem(&kataevidence.ClientError{Status: 502, Code: "request_failed"}))
 	require.True(t, ok)
 	require.Equal(t, 502, problem.Status)
 	require.Equal(t, "kata_request_failed", problem.Code)

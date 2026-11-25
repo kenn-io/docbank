@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/daemonauth"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
 	kitdaemon "go.kenn.io/kit/daemon"
 )
@@ -145,7 +145,7 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 		case "GET /api/daemon/challenge":
 			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
 			assert.NoError(t, err)
-			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof("synthetic-token", nonce)}))
+			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": config.DaemonAuthProof("synthetic-token", nonce)}))
 		case "GET /api/v1/search/text-coverage":
 			assert.NoError(t, json.MarshalWrite(w, api.SearchTextCoverage{Families: []string{}}))
 		case "GET /api/v1/search":

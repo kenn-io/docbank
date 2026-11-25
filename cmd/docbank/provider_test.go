@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/docbank/provider"
-	"go.kenn.io/docbank/internal/providers"
+	"go.kenn.io/docbank/internal/config"
 )
 
 const providerTestHelperArg = "docbank-provider-test-helper"
@@ -58,7 +58,7 @@ func runProviderTestHelper(mode, record string) int {
 // swapProviderInstallation saves a different installation ID under the
 // configuration lock, which setup must not be holding while the helper runs.
 func swapProviderInstallation() error {
-	store, err := providers.DefaultStore()
+	store, err := config.DefaultHostedProviderStore()
 	if err != nil {
 		return err
 	}
@@ -68,7 +68,7 @@ func swapProviderInstallation() error {
 	}
 	defer func() { _ = lock.Unlock() }()
 	var data bytes.Buffer
-	if toml.NewEncoder(&data).Encode(providers.File{InstallationID: providerTestSwappedInstallation}) != nil {
+	if toml.NewEncoder(&data).Encode(config.HostedProvidersFile{InstallationID: providerTestSwappedInstallation}) != nil {
 		return errors.New("encoding the configuration")
 	}
 	return os.WriteFile(store.Path(), data.Bytes(), 0o600)
@@ -106,7 +106,7 @@ func recordedRequest(t *testing.T, record string) provider.Request {
 
 func TestProviderConfigureSavesOnlyAfterTheHelperAnswers(t *testing.T) {
 	configHome := t.TempDir()
-	t.Setenv(providers.ConfigHomeEnv, configHome)
+	t.Setenv(config.ProviderConfigHomeEnv, configHome)
 	record := filepath.Join(t.TempDir(), "request.json")
 
 	out, err := configureProvider(t, providerDocument(t, "work", "sign-in", record))
@@ -146,7 +146,7 @@ func TestProviderConfigureSavesOnlyAfterTheHelperAnswers(t *testing.T) {
 }
 
 func TestProviderConfigureRejectsUnsafeConnections(t *testing.T) {
-	t.Setenv(providers.ConfigHomeEnv, t.TempDir())
+	t.Setenv(config.ProviderConfigHomeEnv, t.TempDir())
 	record := filepath.Join(t.TempDir(), "request.json")
 	for name, edit := range map[string]func(string) string{
 		"plain HTTP origin": func(document string) string {
@@ -176,14 +176,14 @@ func TestProviderConfigureRejectsUnsafeConnections(t *testing.T) {
 }
 
 func TestProviderConfigureAsksTheHelperWithoutHoldingTheLock(t *testing.T) {
-	t.Setenv(providers.ConfigHomeEnv, t.TempDir())
+	t.Setenv(config.ProviderConfigHomeEnv, t.TempDir())
 	record := filepath.Join(t.TempDir(), "request.json")
 
 	// The helper fails unless it can take the configuration lock, then saves a
 	// different installation ID as another setup would.
 	_, err := configureProvider(t, providerDocument(t, "work", "swap", record))
 	require.ErrorContains(t, err, "run the setup again")
-	store, err := providers.DefaultStore()
+	store, err := config.DefaultHostedProviderStore()
 	require.NoError(t, err)
 	file, err := store.Load()
 	require.NoError(t, err)

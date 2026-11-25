@@ -10,7 +10,6 @@ import (
 
 	"go.kenn.io/docbank/document"
 	documentcoverage "go.kenn.io/docbank/document/coverage"
-	internalformatcoverage "go.kenn.io/docbank/internal/formatcoverage"
 	"go.kenn.io/docbank/internal/processing"
 )
 
@@ -40,7 +39,7 @@ func registerFormatRoutes(api huma.API, d Deps) {
 	if d.Processing != nil {
 		snapshot = d.Processing.FormatCoverage()
 	} else {
-		snapshot, snapshotErr = internalformatcoverage.Compute(nil, processing.SourceMetadataImplementationID)
+		snapshot, snapshotErr = processing.ComputeFormatCoverage(nil, processing.SourceMetadataImplementationID)
 	}
 
 	type formatCoverageOutput struct{ Body FormatCoverageResponse }

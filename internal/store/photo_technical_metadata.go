@@ -14,7 +14,6 @@ import (
 	"golang.org/x/text/cases"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/geo"
 	"go.kenn.io/docbank/internal/query"
 )
 
@@ -112,12 +111,12 @@ type PhotoTechnicalMetadata struct {
 	SourceChecksum       string
 }
 
-var photoNaturalEarth = sync.OnceValues(geo.NewNaturalEarth)
+var photoNaturalEarth = sync.OnceValues(NewNaturalEarth)
 
 // projectPhotoTechnicalMetadata maps accepted canonical claims into nullable
 // typed columns. It does not choose between repeated claims because the
 // canonical source codec rejects duplicate keys before this function runs.
-func projectPhotoTechnicalMetadata(metadata document.SourceMetadataV1, places *geo.NaturalEarth) PhotoTechnicalFields {
+func projectPhotoTechnicalMetadata(metadata document.SourceMetadataV1, places *NaturalEarth) PhotoTechnicalFields {
 	var result PhotoTechnicalFields
 	var containerWidth, containerHeight, exifWidth, exifHeight *int64
 	for _, field := range metadata.Fields {

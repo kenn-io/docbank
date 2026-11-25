@@ -22,7 +22,6 @@ import (
 	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/exporter"
 	"go.kenn.io/docbank/internal/jobs"
 	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
@@ -476,16 +475,16 @@ func (s *Server) registerChallenge(mux *http.ServeMux) {
 	if s.deps.ShutdownToken == "" {
 		return
 	}
-	mux.HandleFunc("GET "+daemonauth.ChallengePath, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET "+config.DaemonChallengePath, func(w http.ResponseWriter, r *http.Request) {
 		nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
-		if err != nil || len(nonce) != daemonauth.NonceBytes {
+		if err != nil || len(nonce) != config.DaemonAuthNonceBytes {
 			writeError(w, NewError(http.StatusBadRequest, "invalid_challenge",
 				"nonce must be 32 bytes encoded as hexadecimal"))
 			return
 		}
 		writeJSON(w, http.StatusOK, struct {
 			Proof string `json:"proof"`
-		}{Proof: daemonauth.Proof(s.deps.ShutdownToken, nonce)})
+		}{Proof: config.DaemonAuthProof(s.deps.ShutdownToken, nonce)})
 	})
 }
 
@@ -493,16 +492,16 @@ func (s *Server) registerChallenge(mux *http.ServeMux) {
 // holds the API key before the client sends that key or any document bytes.
 // The proof is domain-separated from the key itself and from ownership proofs.
 func (s *Server) registerKeyChallenge(mux *http.ServeMux) {
-	mux.HandleFunc("GET "+daemonauth.KeyChallengePath, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET "+config.DaemonKeyChallengePath, func(w http.ResponseWriter, r *http.Request) {
 		nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
-		if err != nil || len(nonce) != daemonauth.NonceBytes {
+		if err != nil || len(nonce) != config.DaemonAuthNonceBytes {
 			writeError(w, NewError(http.StatusBadRequest, "invalid_challenge",
 				"nonce must be 32 bytes encoded as hexadecimal"))
 			return
 		}
 		writeJSON(w, http.StatusOK, struct {
 			Proof string `json:"proof"`
-		}{Proof: daemonauth.KeyProof(s.deps.Cfg.Server.APIKey, nonce)})
+		}{Proof: config.DaemonKeyProof(s.deps.Cfg.Server.APIKey, nonce)})
 	})
 }
 

@@ -17,7 +17,6 @@ import (
 	api "go.kenn.io/docbank/internal/api"
 	backupapp "go.kenn.io/docbank/internal/backupapp"
 	ingest "go.kenn.io/docbank/internal/ingest"
-	kataclient "go.kenn.io/docbank/internal/kataclient"
 	kataevidence "go.kenn.io/docbank/internal/kataevidence"
 	loadfile "go.kenn.io/docbank/internal/loadfile"
 	mailbox "go.kenn.io/docbank/internal/mailbox"
@@ -29839,7 +29838,7 @@ type CancelStorageOperationResponse = api.StorageOperation
 
 type CancelStorageOperationErrorResponse = Error
 
-type CiteKataEvidenceResponse = kataclient.Issue
+type CiteKataEvidenceResponse = kataevidence.Issue
 
 type CiteKataEvidenceErrorResponse api.Error
 
@@ -31702,7 +31701,7 @@ type InitBackupRepositoryRequest struct {
 	Repo   *string `json:"repo,omitempty"`
 }
 
-type Issue = kataclient.Issue
+type Issue = kataevidence.Issue
 
 type IssueTermReportDownloadRequest struct {
 	// Schema A URL to the JSON Schema for this object.

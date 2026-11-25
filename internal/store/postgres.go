@@ -12,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 
 	"go.kenn.io/docbank/internal/store/pgschema"
-	"go.kenn.io/docbank/internal/waitlock"
 )
 
 // OpenPostgres opens an installed schema through runtime credentials. It owns
@@ -50,7 +49,7 @@ func OpenPostgres(ctx context.Context, connection *pgx.ConnConfig, cfg pgschema.
 	if _, err := pgschema.Validate(ctx, db, cfg); err != nil {
 		return nil, fmt.Errorf("validating postgres metadata: %w", err)
 	}
-	s := &Store{db: db, writeDB: db, postgresSchema: cfg.Schema, postgresConfig: config.Copy(), vaultDir: vaultDir, providerEgressMu: waitlock.New(), photoHiddenSessions: make(map[string]time.Time), photoExportSlot: make(chan struct{}, 1)}
+	s := &Store{db: db, writeDB: db, postgresSchema: cfg.Schema, postgresConfig: config.Copy(), vaultDir: vaultDir, providerEgressMu: NewWaitRWMutex(), photoHiddenSessions: make(map[string]time.Time), photoExportSlot: make(chan struct{}, 1)}
 	if err := db.QueryRowContext(ctx, `SELECT n.id,v.vault_uid,b.store_id,v.primary_storage_bound
 		FROM nodes n CROSS JOIN vault_metadata v CROSS JOIN blob_stores b
 		WHERE n.parent_id IS NULL AND v.singleton=1 AND b.role='primary'`).

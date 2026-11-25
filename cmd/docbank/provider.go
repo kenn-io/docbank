@@ -14,7 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/docbank/provider"
-	"go.kenn.io/docbank/internal/providers"
+	"go.kenn.io/docbank/internal/config"
 )
 
 var (
@@ -77,14 +77,14 @@ unchanged. Other providers and this installation's ID are kept.`,
 		if input.Version != 1 {
 			return usageError(errors.New("the provider configuration must have version 1"))
 		}
-		config := providers.Provider{
+		entry := config.HostedProvider{
 			Origin: input.Origin, MountPrefix: input.MountPrefix,
 			BrowserOrigin: input.BrowserOrigin, Helper: input.Helper,
 		}
-		if err := providers.Validate(input.Name, config); err != nil {
+		if err := config.ValidateHostedProvider(input.Name, entry); err != nil {
 			return usageError(err)
 		}
-		store, err := providers.DefaultStore()
+		store, err := config.DefaultHostedProviderStore()
 		if err != nil {
 			return err
 		}
@@ -99,18 +99,18 @@ unchanged. Other providers and this installation's ID are kept.`,
 			current.InstallationID = uuid.New()
 		}
 		installation := current.InstallationID
-		discovery, err := discoverVaults(cmd.Context(), input.Name, providers.Connection(current, config), config.Helper)
+		discovery, err := discoverVaults(cmd.Context(), input.Name, config.HostedProviderConnection(current, entry), entry.Helper)
 		if err != nil {
 			return err
 		}
-		err = store.Update(func(file *providers.File) error {
+		err = store.Update(func(file *config.HostedProvidersFile) error {
 			if file.InstallationID == uuid.Nil() {
 				file.InstallationID = installation
 			}
 			if file.InstallationID != installation {
 				return errors.New("another setup changed this installation's provider configuration; run the setup again")
 			}
-			file.Providers[input.Name] = config
+			file.Providers[input.Name] = entry
 			return nil
 		})
 		if err != nil {
@@ -169,11 +169,11 @@ var providerVaultsCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		config, ok := file.Providers[args[0]]
+		entry, ok := file.Providers[args[0]]
 		if !ok {
 			return usageError(fmt.Errorf("no provider named %q; run docbank provider list", args[0]))
 		}
-		discovery, err := discoverVaults(cmd.Context(), args[0], providers.Connection(file, config), config.Helper)
+		discovery, err := discoverVaults(cmd.Context(), args[0], config.HostedProviderConnection(file, entry), entry.Helper)
 		if err != nil {
 			return err
 		}
@@ -194,10 +194,10 @@ var providerVaultsCmd = &cobra.Command{
 	},
 }
 
-func loadProviders() (providers.File, error) {
-	store, err := providers.DefaultStore()
+func loadProviders() (config.HostedProvidersFile, error) {
+	store, err := config.DefaultHostedProviderStore()
 	if err != nil {
-		return providers.File{}, err
+		return config.HostedProvidersFile{}, err
 	}
 	return store.Load()
 }

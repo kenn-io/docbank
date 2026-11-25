@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/daemonauth"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/version"
@@ -101,10 +101,10 @@ func TestPhotoFaceDecisionCLIRequest(t *testing.T) {
 		switch r.URL.Path {
 		case kitdaemon.DefaultPingPath:
 			assert.NoError(t, json.MarshalWrite(w, kitdaemon.PingInfo{OK: true, Service: daemonconn.Service, Version: version.Version, PID: record.PID}))
-		case daemonauth.ChallengePath:
+		case config.DaemonChallengePath:
 			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
 			assert.NoError(t, err)
-			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(token, nonce)}))
+			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": config.DaemonAuthProof(token, nonce)}))
 		case "/api/v1/photos/versions/" + versionID + "/face-decisions":
 			requests.Add(1)
 			var request api.PhotoFaceDecisionRequest

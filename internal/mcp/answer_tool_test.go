@@ -17,7 +17,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/docbank/internal/answer"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
@@ -100,7 +99,7 @@ func TestAnswerQuestionPageCoverage(t *testing.T) {
 			require.False(t, out.CoverageComplete)
 			require.Contains(t, out.CoverageReasons, "pages_without_text")
 			require.Contains(t, out.CoverageReasons, "page_coverage_incomplete")
-			require.Equal(t, answer.IncompleteCoverage, out.Status)
+			require.Equal(t, AnswerStatusIncompleteCoverage, out.Status)
 			require.Equal(t, []answerPageGap{{ContentVersionID: version, Pages: [][2]int{{1, 1}, {3, 4}, {7, 7}}}}, out.PagesWithoutText)
 		}},
 	} {
@@ -192,7 +191,7 @@ func TestAnswerQuestionEvidenceAndCoverage(t *testing.T) {
 			}
 			f.report.Truncated = tc.truncated
 			out, _, err := answerQuestion(t.Context(), session, []byte(fmt.Sprintf(`{"question":%q}`, tc.question)))
-			if err != nil || (tc.reason == "" && out.Status != answer.NoMatch) || (tc.reason != "" && !slices.Contains(out.CoverageReasons, tc.reason)) {
+			if err != nil || (tc.reason == "" && out.Status != AnswerStatusNoMatch) || (tc.reason != "" && !slices.Contains(out.CoverageReasons, tc.reason)) {
 				t.Fatalf("out=%+v err=%v", out, err)
 			}
 			if len(f.requests) != 1 || !f.requests[0].ContentFirst {
@@ -210,7 +209,7 @@ func TestAnswerQuestionEvidenceAndCoverage(t *testing.T) {
 	embedding := api.DocumentEvidenceReference{Kind: "embedding", VectorSpaceID: strings.Repeat("c", 64), EmbeddingSetID: strings.Repeat("d", 64), InputGenerationID: strings.Repeat("e", 64), InputID: "input-a", InputKind: "rendition_chunk", BuildID: strings.Repeat("a", 64), SourceManifestChecksum: strings.Repeat("f", 64)}
 	f.results = []api.DocumentSearchResult{{VaultUID: "00000000-0000-4000-8000-000000000001", NodeID: 1, ContentVersionID: "00000000-0000-4000-8000-000000000002", Path: "/example", Rank: 1, LexicalRank: 1, SemanticRank: 1, Excerpt: "example", Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}, embedding}}}
 	out, _, err := answerQuestion(context.Background(), session, []byte(`{"question":"example"}`))
-	if err != nil || out.Status != answer.IncompleteCoverage || len(out.Leads) != 1 {
+	if err != nil || out.Status != AnswerStatusIncompleteCoverage || len(out.Leads) != 1 {
 		t.Fatalf("out=%+v err=%v", out, err)
 	}
 	f.results[0].Evidence = []api.DocumentEvidenceReference{
@@ -218,7 +217,7 @@ func TestAnswerQuestionEvidenceAndCoverage(t *testing.T) {
 		embedding,
 	}
 	out, _, err = answerQuestion(context.Background(), session, []byte(`{"question":"example"}`))
-	if err != nil || out.Status != answer.Answered || len(out.Passages) != 1 || out.Passages[0].Text != "example" || len(out.Passages[0].EvidenceIDs) != 2 || out.Passages[0].EvidenceIDs[0] != `{"kind":"rendition_segment","build_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","segment_id":"segment-a"}` {
+	if err != nil || out.Status != AnswerStatusAnswered || len(out.Passages) != 1 || out.Passages[0].Text != "example" || len(out.Passages[0].EvidenceIDs) != 2 || out.Passages[0].EvidenceIDs[0] != `{"kind":"rendition_segment","build_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","segment_id":"segment-a"}` {
 		t.Fatalf("out=%+v err=%v", out, err)
 	}
 	if !slices.Equal(out.Receipt.VectorSpaceIDs, []string{strings.Repeat("c", 64)}) {
@@ -301,7 +300,7 @@ func TestAnswerQuestionEmptyFenceValidatesWithoutSearch(t *testing.T) {
 			}
 			session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
 			out, links, err := answerQuestion(t.Context(), session, []byte(fmt.Sprintf(`{"question":"example","rerank":%t}`, tc.rerank)))
-			if err != nil || f.validations != 1 || len(f.requests) != 0 || out.Receipt.SearchExecuted || out.Receipt.ExecutedQuerySHA256 != "" || out.Status != answer.NoMatch || !out.CoverageComplete || len(out.CoverageReasons) != 0 {
+			if err != nil || f.validations != 1 || len(f.requests) != 0 || out.Receipt.SearchExecuted || out.Receipt.ExecutedQuerySHA256 != "" || out.Status != AnswerStatusNoMatch || !out.CoverageComplete || len(out.CoverageReasons) != 0 {
 				t.Fatalf("out=%+v err=%v", out, err)
 			}
 			if tc.rerank && (out.Receipt.Reranking == nil || out.Receipt.Reranking.Outcome != "skipped") {

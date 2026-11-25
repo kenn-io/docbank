@@ -10,7 +10,6 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/waitlock"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -87,7 +86,7 @@ func OpenContentReader(ctx context.Context, config ContentReaderConfig) (_ *Cont
 		}
 		return nil, err
 	}
-	return &ContentReader{vault: &Vault{vaultRoot: normalized.Root, root: root, lock: lock, metadata: metadata, blobs: blobs, lifecycle: waitlock.New()}}, nil
+	return &ContentReader{vault: &Vault{vaultRoot: normalized.Root, root: root, lock: lock, metadata: metadata, blobs: blobs, lifecycle: store.NewWaitRWMutex()}}, nil
 }
 
 // ID returns the stable vault identity.

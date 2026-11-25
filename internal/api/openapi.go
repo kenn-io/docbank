@@ -11,7 +11,6 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/daemonauth"
 )
 
 var arraySchemas sync.Once
@@ -52,12 +51,12 @@ func OpenAPIYAML() ([]byte, error) {
 	doc.AddOperation(&huma.Operation{OperationID: "shutdownDaemon", Method: http.MethodPost, Path: "/api/daemon/shutdown",
 		Parameters: []*huma.Param{{Name: "X-Docbank-Daemon-Token", In: "header", Required: true, Schema: &huma.Schema{Type: "string"}}},
 		Responses:  map[string]*huma.Response{"202": {Description: "Shutdown accepted"}}})
-	doc.AddOperation(&huma.Operation{OperationID: "challengeDaemon", Method: http.MethodGet, Path: daemonauth.ChallengePath,
+	doc.AddOperation(&huma.Operation{OperationID: "challengeDaemon", Method: http.MethodGet, Path: config.DaemonChallengePath,
 		Parameters: []*huma.Param{{Name: "nonce", In: openAPIQueryLocation, Required: true, Schema: &huma.Schema{Type: "string"}}},
 		Responses: map[string]*huma.Response{"200": {Description: "Daemon ownership proof", Content: map[string]*huma.MediaType{jsonMediaType: {Schema: huma.SchemaFromType(doc.Components.Schemas, reflect.TypeFor[struct {
 			Proof string `json:"proof"`
 		}]())}}}}})
-	doc.AddOperation(&huma.Operation{OperationID: "challengeAPIKey", Method: http.MethodGet, Path: daemonauth.KeyChallengePath,
+	doc.AddOperation(&huma.Operation{OperationID: "challengeAPIKey", Method: http.MethodGet, Path: config.DaemonKeyChallengePath,
 		Parameters: []*huma.Param{{Name: "nonce", In: openAPIQueryLocation, Required: true, Schema: &huma.Schema{Type: openAPIStringType}}},
 		Responses: map[string]*huma.Response{"200": {Description: "API key possession proof", Content: map[string]*huma.MediaType{jsonMediaType: {Schema: huma.SchemaFromType(doc.Components.Schemas, reflect.TypeFor[struct {
 			Proof string `json:"proof"`

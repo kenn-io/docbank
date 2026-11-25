@@ -27,7 +27,6 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/push"
@@ -100,7 +99,7 @@ func newFixture(t *testing.T, configure ...func(*config.Config)) *fixture {
 			f.serveImpostor(w, r)
 			return
 		}
-		if r.URL.Path == daemonauth.KeyChallengePath && f.challengeOutages.Load() > 0 {
+		if r.URL.Path == config.DaemonKeyChallengePath && f.challengeOutages.Load() > 0 {
 			f.challengeOutages.Add(-1)
 			if f.challengeFails.Add(1) == 1 {
 				w.Header().Set("Connection", "close")
@@ -206,10 +205,10 @@ func (f *fixture) serveImpostor(w http.ResponseWriter, r *http.Request) {
 	if n, _ := io.Copy(io.Discard, r.Body); n > 0 {
 		f.stolenBodies.Add(1)
 	}
-	if r.URL.Path == daemonauth.KeyChallengePath {
+	if r.URL.Path == config.DaemonKeyChallengePath {
 		nonce, _ := hex.DecodeString(r.URL.Query().Get("nonce"))
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.MarshalWrite(w, map[string]string{"proof": daemonauth.KeyProof("guessed-key", nonce)})
+		_ = json.MarshalWrite(w, map[string]string{"proof": config.DaemonKeyProof("guessed-key", nonce)})
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -219,7 +218,7 @@ func (f *fixture) serveImpostor(w http.ResponseWriter, r *http.Request) {
 // other request to next.
 func keyChallenge(key string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != daemonauth.KeyChallengePath {
+		if r.URL.Path != config.DaemonKeyChallengePath {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -229,7 +228,7 @@ func keyChallenge(key string, next http.Handler) http.Handler {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.MarshalWrite(w, map[string]string{"proof": daemonauth.KeyProof(key, nonce)})
+		_ = json.MarshalWrite(w, map[string]string{"proof": config.DaemonKeyProof(key, nonce)})
 	})
 }
 

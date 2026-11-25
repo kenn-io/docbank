@@ -8,8 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"go.kenn.io/docbank/internal/httpboundary"
 )
 
 // minPublicAPIKeyLength keeps a network-exposed key out of online-guessing
@@ -87,7 +85,7 @@ func WebHostAuthority(value string) (string, error) {
 	}
 	// The server Host allowlist parses requests with httpboundary, so reject
 	// authorities it cannot match, such as a trailing DNS dot or underscore.
-	if _, ok := httpboundary.Parse(host); !ok {
+	if _, ok := ParseHTTPAuthority(host); !ok {
 		return "", fmt.Errorf("[web] host %q is not a supported IP or DNS authority", value)
 	}
 	return host, nil

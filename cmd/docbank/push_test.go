@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/docbank/internal/daemonauth"
+	"go.kenn.io/docbank/internal/config"
 )
 
 func TestPushCommandValidatesBeforeContactingDaemon(t *testing.T) {
@@ -97,7 +97,7 @@ func TestPushCommandKeyFileOverridesEnvironment(t *testing.T) {
 // other request to next.
 func keyChallenge(key string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != daemonauth.KeyChallengePath {
+		if r.URL.Path != config.DaemonKeyChallengePath {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -107,7 +107,7 @@ func keyChallenge(key string, next http.Handler) http.Handler {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.MarshalWrite(w, map[string]string{"proof": daemonauth.KeyProof(key, nonce)})
+		_ = json.MarshalWrite(w, map[string]string{"proof": config.DaemonKeyProof(key, nonce)})
 	})
 }
 

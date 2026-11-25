@@ -17,7 +17,6 @@ import (
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/storenamespace"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -276,7 +275,7 @@ func canonicalFilesystemNamespace(path string) (string, error) {
 }
 
 func canonicalS3Endpoint(raw, region string) (string, error) {
-	return storenamespace.CanonicalS3Endpoint(raw, region)
+	return config.CanonicalS3Endpoint(raw, region)
 }
 
 func restoreNamespacesOverlap(ctx context.Context, first, second restoreNamespace) (bool, error) {

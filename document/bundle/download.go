@@ -6,7 +6,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"go.kenn.io/docbank/internal/filename"
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 // DownloadRequest affects Content-Disposition only, never archive paths.
@@ -28,7 +28,7 @@ func DownloadBasename(name string) (string, error) {
 		}
 	}
 	stem := strings.ToUpper(strings.TrimRight(strings.SplitN(name, ".", 2)[0], " ."))
-	if stem == "" || filename.IsWindowsDeviceName(stem) {
+	if stem == "" || canonical.IsWindowsDeviceName(stem) {
 		return invalid()
 	}
 	return name, nil

@@ -20,7 +20,7 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
-	"go.kenn.io/docbank/internal/daemonauth"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -128,7 +128,7 @@ func (p keyProver) prove(ctx context.Context, conn net.Conn) (net.Conn, error) {
 	proofCtx, cancel := context.WithTimeout(ctx, pushProofTimeout)
 	defer cancel()
 	stop := context.AfterFunc(proofCtx, func() { _ = conn.Close() })
-	nonce := make([]byte, daemonauth.NonceBytes)
+	nonce := make([]byte, config.DaemonAuthNonceBytes)
 	if _, err := rand.Read(nonce); err != nil {
 		stop()
 		_ = conn.Close()
@@ -185,7 +185,7 @@ func (c *Connection) answersKeyChallenge(ctx context.Context, nonce []byte, key 
 	if err := json.UnmarshalRead(io.LimitReader(responseHTTP.Body, proofBodyLimit), &result); err != nil {
 		return false, nil
 	}
-	return daemonauth.VerifyKey(key, nonce, result.Proof), nil
+	return config.VerifyDaemonKeyProof(key, nonce, result.Proof), nil
 }
 
 // IsKeyProofError reports whether a request failed because the endpoint did

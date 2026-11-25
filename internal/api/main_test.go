@@ -5,10 +5,10 @@ import (
 	"testing"
 
 	"go.kenn.io/docbank/internal/packagetest"
-	"go.kenn.io/docbank/internal/pdfiumtest"
+	"go.kenn.io/docbank/internal/pdfproduction"
 )
 
 func TestMain(m *testing.M) {
-	pdfiumtest.ShareCompiledCode()
+	pdfproduction.ShareCompiledCodeFromEnv()
 	os.Exit(packagetest.RunShardsWithLockRegistry(m))
 }

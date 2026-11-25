@@ -12,7 +12,6 @@ import (
 
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/home"
-	"go.kenn.io/docbank/internal/httpboundary"
 	docmcp "go.kenn.io/docbank/internal/mcp"
 )
 
@@ -48,7 +47,7 @@ whose environment_variable holds the bearer token.`,
 }
 
 func runMCP(cmd *cobra.Command) (retErr error) {
-	if err := httpboundary.ValidateHosts(mcpAllowedHosts); err != nil {
+	if err := config.ValidateAllowedHosts(mcpAllowedHosts); err != nil {
 		return err
 	}
 	if mcpTransport != "http" && len(mcpAllowedHosts) > 0 {

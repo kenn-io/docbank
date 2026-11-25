@@ -14,7 +14,6 @@ import (
 
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/loadfile"
-	"go.kenn.io/docbank/internal/zipcheck"
 )
 
 // VerifyRecipientPackage checks a completed local ZIP against the metadata and
@@ -55,7 +54,7 @@ func VerifyRecipientPackage(ctx context.Context, reader io.ReaderAt, size int64,
 				limit = MaxRecipientPackageTextBytes
 			}
 		}
-		if !zipcheck.StoredFile(f) || f.Name != want.Path || want.Size < 0 || want.Size > limit || f.UncompressedSize64 != uint64(want.Size) {
+		if !canonical.ZipStoredFile(f) || f.Name != want.Path || want.Size < 0 || want.Size > limit || f.UncompressedSize64 != uint64(want.Size) {
 			return ErrRecipientPackageIntegrity
 		}
 		var buffer bytes.Buffer

@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
-	"go.kenn.io/docbank/internal/answer"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -80,17 +79,17 @@ type answerOutput struct {
 	PagesWithoutText        []answerPageGap `json:"pages_without_text,omitempty"`
 	OmittedPageGapDocuments int             `json:"omitted_page_gap_documents"`
 
-	Status           answer.Status    `json:"status"`
-	CoverageComplete bool             `json:"coverage_complete"`
-	CoverageReasons  []string         `json:"coverage_reasons"`
-	SemanticFailure  string           `json:"semantic_failure,omitempty"`
-	Passages         []answer.Passage `json:"passages"`
-	PassageBytes     int              `json:"passage_bytes"`
-	OmittedPassages  int              `json:"omitted_passages"`
-	Leads            []answer.Lead    `json:"leads"`
-	OmittedLeads     int              `json:"omitted_leads"`
-	OmittedLinks     int              `json:"omitted_links"`
-	Receipt          answerReceipt    `json:"receipt"`
+	Status           AnswerStatus    `json:"status"`
+	CoverageComplete bool            `json:"coverage_complete"`
+	CoverageReasons  []string        `json:"coverage_reasons"`
+	SemanticFailure  string          `json:"semantic_failure,omitempty"`
+	Passages         []AnswerPassage `json:"passages"`
+	PassageBytes     int             `json:"passage_bytes"`
+	OmittedPassages  int             `json:"omitted_passages"`
+	Leads            []AnswerLead    `json:"leads"`
+	OmittedLeads     int             `json:"omitted_leads"`
+	OmittedLinks     int             `json:"omitted_links"`
+	Receipt          answerReceipt   `json:"receipt"`
 }
 
 type answerClient interface {
@@ -179,7 +178,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		input.MaxPassageBytes = 12288
 	}
 	hash := sha256.Sum256([]byte(input.Question))
-	out := answerOutput{privateCache: newPrivateCache(), CoverageReasons: []string{}, Passages: []answer.Passage{}, Leads: []answer.Lead{}, Receipt: answerReceipt{QuestionSHA256: hex.EncodeToString(hash[:]), VectorSpaceIDs: []string{}, Degradations: []string{}, CitedVersions: []answerCitation{}}}
+	out := answerOutput{privateCache: newPrivateCache(), CoverageReasons: []string{}, Passages: []AnswerPassage{}, Leads: []AnswerLead{}, Receipt: answerReceipt{QuestionSHA256: hex.EncodeToString(hash[:]), VectorSpaceIDs: []string{}, Degradations: []string{}, CitedVersions: []answerCitation{}}}
 	type response struct {
 		fence        api.DocumentSourceFenceResolution
 		profile      api.ProcessingProfileSummary
@@ -246,7 +245,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 	})
 	if err != nil {
 		if code, count := stableDomainError(err); code == "scope_too_large" {
-			out.Status = answer.IncompleteCoverage
+			out.Status = AnswerStatusIncompleteCoverage
 			out.CoverageReasons = append(out.CoverageReasons, "scope_too_large")
 			out.Receipt.ObservedScopeCount = count
 			return out, nil, nil
@@ -320,12 +319,12 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		}
 		relevance := searchRerankRelevance(item, index, result.report.Reranking)
 		if answerContentExcerpt(item) {
-			out.Passages = append(out.Passages, answer.Passage{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID, Path: item.Path, Rank: item.Rank, Text: item.Excerpt, TextBytes: len(item.Excerpt), EvidenceIDs: ids, Relevance: relevance})
+			out.Passages = append(out.Passages, AnswerPassage{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID, Path: item.Path, Rank: item.Rank, Text: item.Excerpt, TextBytes: len(item.Excerpt), EvidenceIDs: ids, Relevance: relevance})
 		} else {
-			out.Leads = append(out.Leads, answer.Lead{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID, Path: item.Path, Rank: item.Rank, EvidenceIDs: ids, Relevance: relevance})
+			out.Leads = append(out.Leads, AnswerLead{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID, Path: item.Path, Rank: item.Rank, EvidenceIDs: ids, Relevance: relevance})
 		}
 	}
-	out.Passages, out.PassageBytes, out.OmittedPassages = answer.Budget(out.Passages, input.MaxPassageBytes)
+	out.Passages, out.PassageBytes, out.OmittedPassages = BudgetAnswerPassages(out.Passages, input.MaxPassageBytes)
 	if len(out.Leads) > 20 {
 		out.OmittedLeads = len(out.Leads) - 20
 		out.Leads = out.Leads[:20]
@@ -381,7 +380,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 			return cmp.Compare(a.ContentVersionID, b.ContentVersionID)
 		})
 		omitted := out.OmittedPassages > 0 || out.OmittedLeads > 0 || result.report.Truncated
-		out.Status = answer.Classify(answer.Evidence{Passages: out.Passages, Leads: out.Leads}, out.CoverageComplete, omitted)
+		out.Status = ClassifyAnswer(AnswerEvidence{Passages: out.Passages, Leads: out.Leads}, out.CoverageComplete, omitted)
 		links := linksFor(retained)
 		if linkLimit < 0 {
 			linkLimit = len(links)

@@ -11,7 +11,6 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/kataclient"
 	"go.kenn.io/docbank/internal/kataevidence"
 )
 
@@ -39,7 +38,7 @@ type kataIssueReceipt struct {
 	Title        string `json:"title"`
 }
 
-func kataReceipt(issue kataclient.Issue) kataIssueReceipt {
+func kataReceipt(issue kataevidence.Issue) kataIssueReceipt {
 	title := []rune(issue.Title)
 	if len(title) > 512 {
 		title = append(title[:511], '…')
@@ -150,7 +149,7 @@ func citeKataEvidence(ctx context.Context, lease *daemonLease, raw []byte) (kata
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return kataCiteOutput{}, err
 	}
-	issue, err := daemonProcessingStart(ctx, lease, func(c *daemonconn.Connection) (kataclient.Issue, error) { return c.CiteKataEvidence(ctx, input) })
+	issue, err := daemonProcessingStart(ctx, lease, func(c *daemonconn.Connection) (kataevidence.Issue, error) { return c.CiteKataEvidence(ctx, input) })
 	if err != nil {
 		return kataCiteOutput{}, err
 	}

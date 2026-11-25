@@ -736,7 +736,7 @@ saved-PDF qualification uses an upstream PDFium reader only in tests.
 ### Recipient packages of completed deliveries
 
 The CLI `redaction package` command and opted-in MCP `export_recipient_package`
-share selection, preflight, and assembly in `internal/recipientpackage`. They
+share selection, preflight, and assembly in `internal/daemonconn`. They
 read completed numbered artifacts through the existing daemon API and fully
 verify each one against its supplied review. Neither path captures source
 content or starts a render. All recorded metadata and local reviews are

@@ -8,12 +8,12 @@ import (
 	"go.kenn.io/kit/pack"
 
 	"go.kenn.io/docbank/internal/packagetest"
-	"go.kenn.io/docbank/internal/pdfiumtest"
+	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/pgstoretest"
 )
 
 func TestMain(m *testing.M) {
-	pdfiumtest.ShareCompiledCode()
+	pdfproduction.ShareCompiledCodeFromEnv()
 	// Kit shares one zstd encoder per level. Create it here so its channels
 	// do not belong to whichever synctest bubble compresses a frame first.
 	pack.EncodeFrame(bytes.Repeat([]byte("synctest warm-up "), 512), pack.DefaultZstdLevel)

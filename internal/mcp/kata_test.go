@@ -18,7 +18,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/kataclient"
 	"go.kenn.io/docbank/internal/kataevidence"
 )
 
@@ -77,7 +76,7 @@ func TestKataCiteUsesFakeDaemonWithoutRetry(t *testing.T) {
 					return
 				}
 				w.Header().Set("Content-Type", "application/json")
-				assert.NoError(t, json.MarshalWrite(w, kataclient.Issue{UID: "01TEST", ShortID: "abcd", QualifiedRef: "docbank#abcd", Title: "Synthetic issue", Body: "Unrelated source text"}))
+				assert.NoError(t, json.MarshalWrite(w, kataevidence.Issue{UID: "01TEST", ShortID: "abcd", QualifiedRef: "docbank#abcd", Title: "Synthetic issue", Body: "Unrelated source text"}))
 			}))
 			defer daemon.Close()
 			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
@@ -159,7 +158,7 @@ func TestKataDomainErrorsDoNotExposeDaemonDetails(t *testing.T) {
 			case "kata_evidence_integrity":
 				require.Equal(t, "Stored document failed verification; do not retry", output["message"])
 			case "kata_incompatible":
-				require.Equal(t, "Kata API schema "+kataclient.SupportedSchemaRange()+" is required.", output["message"])
+				require.Equal(t, "Kata API schema "+kataevidence.SupportedSchemaRange()+" is required.", output["message"])
 			}
 			require.NotContains(t, output["message"], "private")
 			require.NotContains(t, output["message"], "secret")
@@ -224,7 +223,7 @@ func TestKataContextReadsFakeDaemonAndProjectsBoundedReceipt(t *testing.T) {
 				assert.NoError(t, json.UnmarshalRead(r.Body, &request))
 				assert.Equal(t, kataevidence.ContextRequest{Issue: "docbank#abcd", Offset: 10}, request)
 				page := kataevidence.Context{
-					Issue:    kataclient.Issue{UID: "01TEST", ShortID: "abcd", QualifiedRef: "docbank#abcd", Title: "Synthetic issue", Body: strings.Repeat("large issue body", 10000)},
+					Issue:    kataevidence.Issue{UID: "01TEST", ShortID: "abcd", QualifiedRef: "docbank#abcd", Title: "Synthetic issue", Body: strings.Repeat("large issue body", 10000)},
 					Passages: tc.passages, NextOffset: tc.nextOffset,
 				}
 				w.Header().Set("Content-Type", "application/json")
@@ -296,7 +295,7 @@ func TestKataContextReturnsDaemonErrors(t *testing.T) {
 }
 
 func TestKataReceiptBoundsExistingIssueTitle(t *testing.T) {
-	issue := kataclient.Issue{UID: "01SYNTHETIC", QualifiedRef: "docbank#abcd", Title: strings.Repeat("🙂", 600)}
+	issue := kataevidence.Issue{UID: "01SYNTHETIC", QualifiedRef: "docbank#abcd", Title: strings.Repeat("🙂", 600)}
 	got := kataReceipt(issue)
 	require.LessOrEqual(t, utf8.RuneCountInString(got.Title), 512)
 	require.True(t, strings.HasSuffix(got.Title, "…"))

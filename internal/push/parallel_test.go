@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/daemonauth"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/push"
 	"go.kenn.io/docbank/internal/store"
@@ -44,7 +44,7 @@ func TestPushOverlapsUploadsAndHandlesCancellation(t *testing.T) {
 			release := make(chan struct{})
 			var active, peak, proofs atomic.Int64
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == daemonauth.KeyChallengePath {
+				if r.URL.Path == config.DaemonKeyChallengePath {
 					proofs.Add(1)
 				}
 				if r.URL.Path == "/api/v1/push/uploads" {

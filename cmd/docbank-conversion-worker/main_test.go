@@ -15,7 +15,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/conversionworker"
 )
 
 const (
@@ -66,7 +65,7 @@ func TestWorkerCommandCancellationReleasesSpool(t *testing.T) {
 	}))
 	defer backend.Close()
 
-	options := conversionworker.Options{
+	options := Options{
 		Directory:      filepath.Join(t.TempDir(), "spool"),
 		APIKey:         testWorkerAPIKey,
 		BackendURL:     backend.URL,
@@ -99,21 +98,21 @@ func TestWorkerCommandCancellationReleasesSpool(t *testing.T) {
 		require.ErrorIs(t, err, context.Canceled)
 	}
 
-	reopened, err := conversionworker.Open(t.Context(), options)
+	reopened, err := Open(t.Context(), options)
 	require.NoError(t, err)
 	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/jobs/by-key/"+testWorkerRequestID, nil)
 	request.Header.Set("X-Api-Key", options.APIKey)
 	response := httptest.NewRecorder()
 	reopened.ServeHTTP(response, request)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	require.NoError(t, reopened.Close(context.WithoutCancel(t.Context())))
+	require.NoError(t, reopened.Close())
 }
 
-func seedWorkerCommandJob(t *testing.T, options conversionworker.Options) {
+func seedWorkerCommandJob(t *testing.T, options Options) {
 	t.Helper()
-	worker, err := conversionworker.Open(t.Context(), options)
+	worker, err := Open(t.Context(), options)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, worker.Close(context.WithoutCancel(t.Context()))) }()
+	defer func() { require.NoError(t, worker.Close()) }()
 
 	source := []byte("synthetic source")
 	var body bytes.Buffer

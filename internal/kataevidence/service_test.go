@@ -19,13 +19,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/kataclient"
 )
 
 // testKata runs real Kata storage and guards. The HTTP faults model an
 // interrupted comment request and a competing writer, which katatest doesn't schedule.
 type testKata struct {
-	*kataclient.Client
+	*Client
 
 	t                  *testing.T
 	api                *client.Client
@@ -46,7 +45,7 @@ func newTestKata(t *testing.T, metadata map[string]jsontext.Value, body string) 
 	project, err := api.InitProject(t.Context(), &generated.InitProjectRequestOptions{Body: &generated.InitProjectBody{Name: new("docbank"), Actor: new("docbank")}})
 	require.NoError(t, err)
 	k := &testKata{t: t, api: api, projectID: project.Project.ID}
-	direct := kataclient.New(config.KataConnection{Endpoint: backend.Endpoint, APIKey: "synthetic-key", Project: "docbank"})
+	direct := NewClient(config.KataConnection{Endpoint: backend.Endpoint, APIKey: "synthetic-key", Project: "docbank"})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues/"+strings.TrimPrefix(k.ref, "docbank#")) {
 			k.reads++
@@ -96,7 +95,7 @@ func newTestKata(t *testing.T, metadata map[string]jsontext.Value, body string) 
 		backend.Service.Handler().ServeHTTP(w, r)
 	}))
 	t.Cleanup(server.Close)
-	k.Client = kataclient.New(config.KataConnection{Endpoint: server.URL, APIKey: "synthetic-key", Project: "docbank"})
+	k.Client = NewClient(config.KataConnection{Endpoint: server.URL, APIKey: "synthetic-key", Project: "docbank"})
 	if metadata != nil {
 		issue, err := direct.Create(t.Context(), "seed", "Synthetic issue", body, metadata)
 		require.NoError(t, err)
@@ -105,7 +104,7 @@ func newTestKata(t *testing.T, metadata map[string]jsontext.Value, body string) 
 	return k
 }
 
-func (k *testKata) snapshot() kataclient.Issue {
+func (k *testKata) snapshot() Issue {
 	issue, err := k.Get(k.t.Context(), k.ref)
 	require.NoError(k.t, err)
 	return issue

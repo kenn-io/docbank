@@ -12,7 +12,6 @@ import (
 	"go.kenn.io/docbank/internal/filepublish"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/processing"
-	"go.kenn.io/docbank/internal/recipientpackage"
 	"go.kenn.io/docbank/internal/redactionfiles"
 )
 
@@ -31,7 +30,7 @@ func newRedactionPackageCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "package <selection.json> <recipient.zip>", Short: "Package reviewed numbered PDFs for recipient import", Args: cobra.ExactArgs(2),
 		Example: "  docbank redaction package selection.json recipient.zip --json",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			selection, err := recipientpackage.ReadSelection(cmd.Context(), args[0])
+			selection, err := daemonconn.ReadRecipientSelection(cmd.Context(), args[0])
 			if err != nil {
 				return recipientCLIError(err)
 			}
@@ -57,7 +56,7 @@ func newRedactionPackageCommand() *cobra.Command {
 				return err
 			}
 			defer func() { _ = c.Close() }()
-			checked, err := recipientpackage.Preflight(ctx, c, selection)
+			checked, err := daemonconn.PreflightRecipientPackage(ctx, c, selection)
 			if err != nil {
 				return recipientCLIError(err)
 			}
@@ -67,7 +66,7 @@ func newRedactionPackageCommand() *cobra.Command {
 	return cmd
 }
 
-func publishRecipientPackage(ctx context.Context, cmd *cobra.Command, destination string, asJSON bool, c *daemonconn.Connection, checked recipientpackage.Plan) (retErr error) {
+func publishRecipientPackage(ctx context.Context, cmd *cobra.Command, destination string, asJSON bool, c *daemonconn.Connection, checked daemonconn.RecipientPackagePlan) (retErr error) {
 	stage, err := filepublish.CreateStage(filepath.Dir(destination), "docbank-recipient-")
 	if err != nil {
 		return err
@@ -79,7 +78,7 @@ func publishRecipientPackage(ctx context.Context, cmd *cobra.Command, destinatio
 			retErr = fmt.Errorf("verified recipient package is already saved at %q: %w", destination, retErr)
 		}
 	}()
-	archive, err := recipientpackage.Build(ctx, c, checked, stage.File)
+	archive, err := daemonconn.BuildRecipientPackage(ctx, c, checked, stage.File)
 	if err != nil {
 		return err
 	}

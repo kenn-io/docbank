@@ -20,7 +20,6 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/daemon"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 	docmcp "go.kenn.io/docbank/internal/mcp"
@@ -467,7 +466,7 @@ func TestDaemonMCPHTTPSharedDrainIsBounded(t *testing.T) {
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 		require.ErrorContains(t, err, "draining daemon MCP HTTP requests")
 		require.NoError(t, apiShutdownErr)
-		assert.Less(t, time.Since(begun), daemon.HTTPDrainTimeout, "the MCP drain gives up within the daemon's drain budget")
+		assert.Less(t, time.Since(begun), daemonconn.HTTPDrainTimeout, "the MCP drain gives up within the daemon's drain budget")
 		<-requestDone
 	})
 }

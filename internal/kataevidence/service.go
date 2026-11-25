@@ -12,15 +12,14 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/canonical"
-	"go.kenn.io/docbank/internal/kataclient"
 )
 
 type Kata interface {
 	CheckProject(ref string) error
-	Get(ctx context.Context, ref string) (kataclient.Issue, error)
-	Create(ctx context.Context, key, title, body string, metadata map[string]jsontext.Value) (kataclient.Issue, error)
-	FindMarker(ctx context.Context, marker string) (*kataclient.Issue, error)
-	Patch(ctx context.Context, ref, key string, previous, value jsontext.Value) (kataclient.Issue, error)
+	Get(ctx context.Context, ref string) (Issue, error)
+	Create(ctx context.Context, key, title, body string, metadata map[string]jsontext.Value) (Issue, error)
+	FindMarker(ctx context.Context, marker string) (*Issue, error)
+	Patch(ctx context.Context, ref, key string, previous, value jsontext.Value) (Issue, error)
 	GetComments(ctx context.Context, ref string) ([]string, error)
 	Comment(ctx context.Context, ref, key, body string) error
 }
@@ -155,12 +154,12 @@ func documentCitationMismatch(p Selector) bool {
 	return p.NodeID != 0 && p.Citation.NodeID != p.NodeID || p.Citation.Start != p.StartRune || p.Citation.End != p.EndRune
 }
 
-func (s Service) Cite(ctx context.Context, r CiteRequest) (kataclient.Issue, error) {
+func (s Service) Cite(ctx context.Context, r CiteRequest) (Issue, error) {
 	if err := validateCiteRequest(r); err != nil {
-		return kataclient.Issue{}, err
+		return Issue{}, err
 	}
 	if s.Archive == nil {
-		return kataclient.Issue{}, ErrUnavailable
+		return Issue{}, ErrUnavailable
 	}
 	if r.Issue != "" {
 		return s.append(ctx, r)
@@ -171,27 +170,27 @@ func (s Service) Cite(ctx context.Context, r CiteRequest) (kataclient.Issue, err
 	marker := createMarker(s.Archive.VaultUID(), r.IdempotencyKey)
 	existing, err := s.Kata.FindMarker(ctx, marker)
 	if err != nil {
-		return kataclient.Issue{}, err
+		return Issue{}, err
 	}
 	if existing != nil {
 		if err := s.Kata.CheckProject(existing.QualifiedRef); err != nil {
-			return kataclient.Issue{}, err
+			return Issue{}, err
 		}
 		var recorded string
 		if json.Unmarshal(existing.Metadata["docbank.request"], &recorded) != nil || recorded != requestHash {
-			return kataclient.Issue{}, ErrIdempotencyConflict
+			return Issue{}, ErrIdempotencyConflict
 		}
 		return *existing, nil
 	}
 	evidence, err := s.Archive.Prepare(ctx, r.Selector)
 	if err != nil {
-		return kataclient.Issue{}, err
+		return Issue{}, err
 	}
 	entry, _ := json.Marshal(Entry{ID: evidence.ID, Reference: evidence.Reference, Quote: evidence.Excerpt, Label: evidence.Label})
 	env := envelope{fields: map[string]jsontext.Value{"version": jsontext.Value("1")}, entries: []jsontext.Value{entry}}
 	data, err := env.encode()
 	if err != nil {
-		return kataclient.Issue{}, err
+		return Issue{}, err
 	}
 	markerJSON, _ := json.Marshal(marker)
 	requestJSON, _ := json.Marshal(requestHash)
@@ -202,19 +201,19 @@ func (s Service) Cite(ctx context.Context, r CiteRequest) (kataclient.Issue, err
 	return s.Kata.Create(ctx, marker, r.Title, body, map[string]jsontext.Value{MetadataKey: data, "docbank.action": markerJSON, "docbank.request": requestJSON})
 }
 
-func (s Service) append(ctx context.Context, r CiteRequest) (kataclient.Issue, error) {
+func (s Service) append(ctx context.Context, r CiteRequest) (Issue, error) {
 	if err := s.Kata.CheckProject(r.Issue); err != nil {
-		return kataclient.Issue{}, err
+		return Issue{}, err
 	}
 
 	// A pinned selection already recorded on the issue is a retry, even if its source is gone.
 	current, err := s.Kata.Get(ctx, r.Issue)
 	if err != nil {
-		return kataclient.Issue{}, err
+		return Issue{}, err
 	}
 	existing, err := parseEnvelope(current.Metadata[MetadataKey])
 	if err != nil {
-		return kataclient.Issue{}, err
+		return Issue{}, err
 	}
 	for _, raw := range existing.entries {
 		entry, valid := parseNative(raw)
@@ -225,16 +224,16 @@ func (s Service) append(ctx context.Context, r CiteRequest) (kataclient.Issue, e
 	}
 	evidence, err := s.Archive.Prepare(ctx, r.Selector)
 	if err != nil {
-		return kataclient.Issue{}, err
+		return Issue{}, err
 	}
 	for range 3 {
 		issue, err := s.Kata.Get(ctx, r.Issue)
 		if err != nil {
-			return kataclient.Issue{}, err
+			return Issue{}, err
 		}
 		env, err := parseEnvelope(issue.Metadata[MetadataKey])
 		if err != nil {
-			return kataclient.Issue{}, err
+			return Issue{}, err
 		}
 		found := false
 		for _, raw := range env.entries {
@@ -245,25 +244,25 @@ func (s Service) append(ctx context.Context, r CiteRequest) (kataclient.Issue, e
 		}
 		if !found {
 			if len(env.entries) >= MaxEntries {
-				return kataclient.Issue{}, ErrEntryLimit
+				return Issue{}, ErrEntryLimit
 			}
 			entry, _ := json.Marshal(Entry{ID: evidence.ID, Reference: evidence.Reference, Quote: evidence.Excerpt, Label: evidence.Label, Pending: &Pending{SavedAt: s.now()}})
 			env.entries = append(env.entries, entry)
 			data, err := env.encode()
 			if err != nil {
-				return kataclient.Issue{}, err
+				return Issue{}, err
 			}
 			issue, err = s.Kata.Patch(ctx, r.Issue, MetadataKey, issue.Metadata[MetadataKey], data)
-			if kataclient.IsGuardConflict(err) {
+			if IsGuardConflict(err) {
 				continue
 			}
 			if err != nil {
-				return kataclient.Issue{}, err
+				return Issue{}, err
 			}
 		}
 		return s.finishPending(ctx, r.Issue, issue, evidence.ID, evidence.Excerpt)
 	}
-	return kataclient.Issue{}, ErrConflict
+	return Issue{}, ErrConflict
 }
 
 func matchesSelection(ref Reference, p Selector, vault string) bool {
@@ -287,13 +286,13 @@ func matchesSelection(ref Reference, p Selector, vault string) bool {
 		d.ContentVersionID == expectedVersion && d.StartRune == p.StartRune && d.EndRune == p.EndRune
 }
 
-func (s Service) finishPending(ctx context.Context, ref string, issue kataclient.Issue, entryID, expectedQuote string) (kataclient.Issue, error) {
+func (s Service) finishPending(ctx context.Context, ref string, issue Issue, entryID, expectedQuote string) (Issue, error) {
 	var comments []string
 	commentsRead := false
 	for range 3 {
 		env, err := parseEnvelope(issue.Metadata[MetadataKey])
 		if err != nil {
-			return kataclient.Issue{}, err
+			return Issue{}, err
 		}
 		changed := false
 		for i, raw := range env.entries {
@@ -302,7 +301,7 @@ func (s Service) finishPending(ctx context.Context, ref string, issue kataclient
 				continue
 			}
 			if entry.Quote != expectedQuote {
-				return kataclient.Issue{}, ErrConflict
+				return Issue{}, ErrConflict
 			}
 			if entry.Pending == nil {
 				continue
@@ -315,11 +314,11 @@ func (s Service) finishPending(ctx context.Context, ref string, issue kataclient
 			if s.now().Sub(entry.Pending.SavedAt) >= 6*24*time.Hour {
 				if !commentsRead {
 					comments, err = s.Kata.GetComments(ctx, ref)
-					if failure, ok := errors.AsType[*kataclient.Error](err); ok && failure.Code == "response_too_large" {
-						return kataclient.Issue{}, fmt.Errorf("stale pending quote can't be verified against the discussion: %w", ErrUnsupported)
+					if failure, ok := errors.AsType[*ClientError](err); ok && failure.Code == "response_too_large" {
+						return Issue{}, fmt.Errorf("stale pending quote can't be verified against the discussion: %w", ErrUnsupported)
 					}
 					if err != nil {
-						return kataclient.Issue{}, err
+						return Issue{}, err
 					}
 					commentsRead = true
 				}
@@ -329,18 +328,18 @@ func (s Service) finishPending(ctx context.Context, ref string, issue kataclient
 			}
 			if !posted {
 				if err := s.Kata.Comment(ctx, ref, key, body); err != nil {
-					return kataclient.Issue{}, err
+					return Issue{}, err
 				}
 			}
 			// Clear only our field; preserve any future fields on the entry.
 			var fields map[string]jsontext.Value
 			if json.Unmarshal(raw, &fields) != nil {
-				return kataclient.Issue{}, ErrUnsupported
+				return Issue{}, ErrUnsupported
 			}
 			delete(fields, "pending")
 			env.entries[i], err = json.Marshal(fields)
 			if err != nil {
-				return kataclient.Issue{}, err
+				return Issue{}, err
 			}
 			changed = true
 		}
@@ -349,18 +348,18 @@ func (s Service) finishPending(ctx context.Context, ref string, issue kataclient
 		}
 		data, err := env.encode()
 		if err != nil {
-			return kataclient.Issue{}, err
+			return Issue{}, err
 		}
 		updated, err := s.Kata.Patch(ctx, ref, MetadataKey, issue.Metadata[MetadataKey], data)
-		if !kataclient.IsGuardConflict(err) {
+		if !IsGuardConflict(err) {
 			return updated, err
 		}
 		issue, err = s.Kata.Get(ctx, ref)
 		if err != nil {
-			return kataclient.Issue{}, err
+			return Issue{}, err
 		}
 	}
-	return kataclient.Issue{}, ErrConflict
+	return Issue{}, ErrConflict
 }
 
 func renderQuote(label, words string) string {

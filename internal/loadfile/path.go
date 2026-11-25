@@ -4,7 +4,7 @@ import (
 	"errors"
 	"strings"
 
-	"go.kenn.io/docbank/internal/filename"
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 var ErrUnsafeReference = errors.New("package_reference_unsafe: load-file reference escapes the approved root")
@@ -18,7 +18,7 @@ func portablePackagePath(value string) (string, error) {
 		if part == "" || part == "." || part == ".." || strings.HasSuffix(part, ".") || strings.HasSuffix(part, " ") {
 			return "", ErrUnsafeReference
 		}
-		if filename.IsWindowsDeviceName(part) {
+		if canonical.IsWindowsDeviceName(part) {
 			return "", ErrUnsafeReference
 		}
 	}
