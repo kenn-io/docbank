@@ -171,7 +171,10 @@ func (s *Store) PrepareDocumentPeopleInputs(ctx context.Context, versionID strin
 						return err
 					}
 					matches = []Person{person}
-				} else if len(matches) != 1 || strings.HasPrefix(claim.ActorKey, "name_alias:") {
+				} else if (len(matches) != 1 || strings.HasPrefix(claim.ActorKey, "name_alias:")) &&
+					// Older event generations stored metadata names with control characters,
+					// such as a trailing NUL. Review cannot hold those keys; skip them.
+					document.ValidPersonIdentityText(claim.ActorKey) {
 					retained, err := s.openActorCandidatesTx(ctx, tx, versionID, claims, matches)
 					if err != nil {
 						return err

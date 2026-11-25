@@ -1022,6 +1022,13 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkDocumentPeopleNameAliasIsOnlyASuggestion(t, newPostgresQueryStore)
 		}},
+		{"DocumentPeopleSkipsCandidateForControlCharacterAlias", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleSkipsCandidateForControlCharacterAlias(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleSkipsCandidateForControlCharacterAlias(t, newPostgresQueryStore)
+		}},
 		{"DocumentPeopleReusedIdentitySuggestsOnlyActiveOwner", func(t *testing.T) {
 			t.Helper()
 			checkDocumentPeopleReusedIdentitySuggestsOnlyActiveOwner(t, newTestStore)
