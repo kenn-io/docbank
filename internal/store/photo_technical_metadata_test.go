@@ -640,7 +640,7 @@ func TestPhotoTechnicalProjectionRecipeIsPinnedToMapData(t *testing.T) {
 		"ne_10m_admin_1_states_provinces.geojson",
 		"ne_10m_populated_places.geojson",
 	} {
-		compressed, err := os.ReadFile(filepath.Join("..", "geo", "data", name+".gz"))
+		compressed, err := os.ReadFile(filepath.Join("geodata", name+".gz"))
 		require.NoError(t, err)
 		reader, err := gzip.NewReader(bytes.NewReader(compressed))
 		require.NoError(t, err)
