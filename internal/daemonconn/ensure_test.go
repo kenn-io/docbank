@@ -652,6 +652,9 @@ func TestProvenClientRejectsIncompleteProofHandoff(t *testing.T) {
 			case "deadline":
 				timeout = 100 * time.Millisecond
 			case "proof timeout":
+				previous := probeTimeout
+				probeTimeout = time.Second
+				t.Cleanup(func() { probeTimeout = previous })
 				timeout = 2 * probeOptions().Timeout
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), timeout)
@@ -898,4 +901,228 @@ func TestRestartPreservesLifetime(t *testing.T) {
 			assert.True(t, wasRunning)
 		})
 	}
+}
+
+func TestFindOwnershipChallengeFailureModes(t *testing.T) {
+	const token = "synthetic-proof-token"
+
+	writeLiveRecord := func(t *testing.T, serverURL string) string {
+		t.Helper()
+		root := t.TempDir()
+		rec := NewRecord(strings.TrimPrefix(serverURL, "http://"), "synthetic-api-key", token, "")
+		_, err := RuntimeStore(root).Write(rec)
+		require.NoError(t, err)
+		return root
+	}
+
+	writePing := func(w http.ResponseWriter) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.MarshalWrite(w, kitdaemon.PingInfo{
+			OK: true, Service: Service, Version: version.Version, PID: os.Getpid(),
+		})
+	}
+
+	t.Run("closes challenge connection", func(t *testing.T) {
+		var sawClose atomic.Bool
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case kitdaemon.DefaultPingPath:
+				writePing(w)
+			case daemonauth.ChallengePath:
+				sawClose.Store(r.Close)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write(challengeResponse(t, r, token))
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		t.Cleanup(server.Close)
+		root := writeLiveRecord(t, server.URL)
+
+		_, _, ok, err := Find(t.Context(), root)
+		require.NoError(t, err)
+		require.True(t, ok)
+		assert.True(t, sawClose.Load(), "discovery challenge must not leave an idle keep-alive socket")
+	})
+
+	t.Run("transport drop reports unreachable", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case kitdaemon.DefaultPingPath:
+				writePing(w)
+			case daemonauth.ChallengePath:
+				hijacker, ok := w.(http.Hijacker)
+				if !assert.True(t, ok) {
+					return
+				}
+				conn, _, err := hijacker.Hijack()
+				if !assert.NoError(t, err) {
+					return
+				}
+				_ = conn.Close()
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		t.Cleanup(server.Close)
+		root := writeLiveRecord(t, server.URL)
+
+		_, _, ok, err := Find(t.Context(), root)
+		assert.False(t, ok)
+		require.ErrorIs(t, err, kitdaemon.ErrDaemonUnreachable)
+	})
+
+	t.Run("caller cancellation propagates", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case kitdaemon.DefaultPingPath:
+				writePing(w)
+			case daemonauth.ChallengePath:
+				cancel()
+				<-r.Context().Done()
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		t.Cleanup(server.Close)
+		root := writeLiveRecord(t, server.URL)
+
+		_, _, ok, err := Find(ctx, root)
+		assert.False(t, ok)
+		require.ErrorIs(t, err, context.Canceled)
+	})
+
+	t.Run("forged proof stays rejected without unreachable error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case kitdaemon.DefaultPingPath:
+				writePing(w)
+			case daemonauth.ChallengePath:
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.MarshalWrite(w, map[string]string{"proof": "forged"})
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		t.Cleanup(server.Close)
+		root := writeLiveRecord(t, server.URL)
+
+		_, _, ok, err := Find(t.Context(), root)
+		require.NoError(t, err)
+		assert.False(t, ok)
+	})
+
+	t.Run("non-200 status stays rejected without unreachable error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case kitdaemon.DefaultPingPath:
+				writePing(w)
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		t.Cleanup(server.Close)
+		root := writeLiveRecord(t, server.URL)
+
+		_, _, ok, err := Find(t.Context(), root)
+		require.NoError(t, err)
+		assert.False(t, ok)
+	})
+}
+
+func TestProveEndpointOwnershipTimeoutBudget(t *testing.T) {
+	const token = "synthetic-proof-token"
+
+	dialPipe := func(conn net.Conn) *http.Client {
+		return &http.Client{
+			Transport: &http.Transport{
+				Proxy:             nil,
+				DisableKeepAlives: true,
+				DialContext: func(context.Context, string, string) (net.Conn, error) {
+					return conn, nil
+				},
+			},
+		}
+	}
+	rec := NewRecord("127.0.0.1:1", "synthetic-api-key", token, "")
+
+	t.Run("accepts five-second stall within probe budget", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			clientConn, serverConn := net.Pipe()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				defer func() { _ = serverConn.Close() }()
+				req, readErr := http.ReadRequest(bufio.NewReader(serverConn))
+				if readErr != nil {
+					t.Errorf("reading challenge request: %v", readErr)
+					return
+				}
+				body := challengeResponse(t, req, token)
+				time.Sleep(5 * time.Second)
+				if _, writeErr := fmt.Fprintf(serverConn, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"+
+					"Content-Length: %d\r\nConnection: close\r\n\r\n%s", len(body), body); writeErr != nil {
+					t.Errorf("writing challenge response: %v", writeErr)
+				}
+			}()
+			owned, err := proveEndpointOwnershipWithClient(t.Context(), rec, dialPipe(clientConn))
+			_ = clientConn.Close()
+			<-done
+			require.NoError(t, err)
+			assert.True(t, owned)
+		})
+	})
+
+	t.Run("header stall past probe budget reports unreachable timeout", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			clientConn, serverConn := net.Pipe()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				defer func() { _ = serverConn.Close() }()
+				if _, readErr := http.ReadRequest(bufio.NewReader(serverConn)); readErr != nil {
+					t.Errorf("reading challenge request: %v", readErr)
+					return
+				}
+				_, _ = io.Copy(io.Discard, serverConn)
+			}()
+			owned, err := proveEndpointOwnershipWithClient(t.Context(), rec, dialPipe(clientConn))
+			_ = clientConn.Close()
+			<-done
+			assert.False(t, owned)
+			require.ErrorIs(t, err, kitdaemon.ErrDaemonUnreachable)
+			require.ErrorIs(t, err, errOwnershipProofTimeout)
+		})
+	})
+
+	t.Run("body stall past probe budget reports unreachable timeout", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			clientConn, serverConn := net.Pipe()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				defer func() { _ = serverConn.Close() }()
+				req, readErr := http.ReadRequest(bufio.NewReader(serverConn))
+				if readErr != nil {
+					t.Errorf("reading challenge request: %v", readErr)
+					return
+				}
+				body := challengeResponse(t, req, token)
+				if _, writeErr := fmt.Fprintf(serverConn, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"+
+					"Content-Length: %d\r\nConnection: close\r\n\r\n", len(body)); writeErr != nil {
+					t.Errorf("writing challenge headers: %v", writeErr)
+					return
+				}
+				_, _ = io.Copy(io.Discard, serverConn)
+			}()
+			owned, err := proveEndpointOwnershipWithClient(t.Context(), rec, dialPipe(clientConn))
+			_ = clientConn.Close()
+			<-done
+			assert.False(t, owned)
+			require.ErrorIs(t, err, kitdaemon.ErrDaemonUnreachable)
+			require.ErrorIs(t, err, errOwnershipProofTimeout)
+		})
+	})
 }

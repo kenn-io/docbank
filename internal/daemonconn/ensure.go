@@ -84,8 +84,14 @@ func WriteDaemonStartProblem(w io.Writer, err error) error {
 	return nil
 }
 
+// probeTimeout bounds each local ping and ownership-challenge HTTP probe.
+// Busy local daemons and loaded Windows CI runners can stall loopback I/O for
+// several seconds; ten seconds absorbs those pauses while keeping wedged-socket
+// probes well inside ensureTimeout.
+var probeTimeout = 10 * time.Second
+
 func probeOptions() kitdaemon.ProbeOptions {
-	return kitdaemon.ProbeOptions{ExpectedService: Service, Timeout: 2 * time.Second}
+	return kitdaemon.ProbeOptions{ExpectedService: Service, Timeout: probeTimeout}
 }
 
 func discoverOptions(requireVersion bool) kitdaemon.DiscoverOptions {
@@ -679,15 +685,37 @@ func discoverWithOptions(
 // without transmitting its API key or shutdown token. A listener that captured
 // the port during teardown can copy ping fields but cannot forge this response.
 func proveEndpointOwnership(ctx context.Context, rec kitdaemon.RuntimeRecord) (bool, error) {
-	probeCtx, cancel := context.WithTimeout(ctx, probeOptions().Timeout)
-	defer cancel()
-	challengeClient := &http.Client{
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return errors.New("daemon ownership challenge must not redirect")
-		},
+	challengeClient := rec.Endpoint().HTTPClient(kitdaemon.HTTPClientOptions{DisableKeepAlives: true})
+	challengeClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return errors.New("daemon ownership challenge must not redirect")
 	}
+	return proveEndpointOwnershipWithClient(ctx, rec, challengeClient)
+}
+
+func proveEndpointOwnershipWithClient(
+	ctx context.Context, rec kitdaemon.RuntimeRecord, challengeClient *http.Client,
+) (bool, error) {
+	probeCtx, cancel := context.WithTimeoutCause(ctx, probeOptions().Timeout, errOwnershipProofTimeout)
+	defer cancel()
 	owned, err := proveOwnershipWithClient(probeCtx, rec, challengeClient)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return false, ctxErr
+	}
+	if probeCtx.Err() != nil {
+		return false, &kitdaemon.UnreachableError{
+			Record:   rec,
+			Endpoint: rec.Endpoint(),
+			Err:      context.Cause(probeCtx),
+		}
+	}
 	if errors.Is(err, errOwnershipChallenge) {
+		if IsTransportError(err) {
+			return false, &kitdaemon.UnreachableError{
+				Record:   rec,
+				Endpoint: rec.Endpoint(),
+				Err:      err,
+			}
+		}
 		return false, nil
 	}
 	return owned, err
