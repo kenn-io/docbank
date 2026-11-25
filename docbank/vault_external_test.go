@@ -1055,9 +1055,15 @@ func TestEmbeddedProcessingIndexesConcurrentDocuments(t *testing.T) {
 			NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "concurrent"}}
 		plan, err := vault.PlanProcessing(t.Context(), request)
 		require.NoError(t, err)
-		requests = append(requests, docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint, Consent: true})
+		requests = append(requests, docbank.StartProcessingRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint})
 		versions = append(versions, receipt.Version.ID)
 	}
+	// Consent covers the profile across documents. Renewing it in each caller
+	// lets the background worker enqueue competing jobs for earlier documents.
+	_, err = vault.GrantProcessingPlanConsent(t.Context(), docbank.ProcessingConsentGrantRequest{
+		PlanRequest: requests[0].PlanRequest, PlanFingerprint: requests[0].PlanFingerprint,
+	})
+	require.NoError(t, err)
 	start := make(chan struct{})
 	results := make(chan error, len(requests))
 	var callers sync.WaitGroup
