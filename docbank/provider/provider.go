@@ -486,7 +486,9 @@ func validateAccess(access Access, request Request) error {
 }
 
 // A mount is an address strictly under the connection's mount prefix, so a
-// result cannot send the credential anywhere else.
+// result cannot send the credential anywhere else. Its path is percent-encoded
+// the one way net/url writes it, so a prefix with a space or non-ASCII letters
+// has exactly one accepted spelling.
 func validateMount(mount string, connection Connection) error {
 	// The root prefix already ends in the slash that separates it from a vault.
 	prefix := strings.TrimSuffix(connection.MountPrefix, "/") + "/"
@@ -494,7 +496,8 @@ func validateMount(mount string, connection Connection) error {
 	if err != nil || parsed.Scheme+"://"+parsed.Host != connection.Origin || parsed.User != nil ||
 		parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" || mount != parsed.String() ||
 		strings.ContainsAny(parsed.Path, "%\\") || path.Clean(parsed.Path) != parsed.Path ||
-		!strings.HasPrefix(parsed.Path, prefix) || parsed.Path == prefix || mount != connection.Origin+parsed.Path {
+		!strings.HasPrefix(parsed.Path, prefix) || parsed.Path == prefix ||
+		mount != connection.Origin+(&url.URL{Path: parsed.Path}).EscapedPath() {
 		return ErrInvalidResponse
 	}
 	return nil

@@ -223,7 +223,8 @@ Docbank enforces these rules on the process and its result:
   whitespace, control characters, or bidi control characters.
 - In `access`, `mount` must be an HTTPS address strictly under the connection's
   `origin` and `mount_prefix`, with a clean path and no user information,
-  percent-encoding, backslashes, query, or fragment.
+  backslashes, query, or fragment. Percent-encode only the characters a URL
+  path requires, such as a space as `%20`, with uppercase hex digits.
 - In `access`, `actions` must be nonempty, sorted, duplicate-free, and limited
   to actions the request asked for.
 - In `access`, `generation` counts credentials for an open starting at `1`, and

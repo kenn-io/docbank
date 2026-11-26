@@ -245,6 +245,48 @@ func TestRootMountPrefixAcceptsVaultsAndRejectsTheRoot(t *testing.T) {
 	}
 }
 
+func TestMountPrefixesThatNeedEscapingHaveOneAcceptedAddress(t *testing.T) {
+	t.Parallel()
+	const vault = "/22222222-2222-4222-8222-222222222222"
+	for prefix, escaped := range map[string]string{
+		"/my documents": "/my%20documents",
+		"/文档":           "/%E6%96%87%E6%A1%A3",
+	} {
+		connection := testConnection
+		connection.MountPrefix = prefix
+		open, err := provider.NewOpenRequest(connection, provider.VaultAccess{
+			VaultID: firstVault.ID, VaultUUID: firstVault.VaultUUID, Actions: []provider.Action{provider.ActionRead},
+		})
+		require.NoError(t, err)
+		renew, err := provider.NewRenewRequest(open, 1)
+		require.NoError(t, err)
+		for _, c := range []struct {
+			request    provider.Request
+			generation int
+		}{{open, 1}, {renew, 2}} {
+			decode := func(mountPath string) (provider.Response, error) {
+				access := strings.NewReplacer("/documents"+vault, mountPath,
+					`"generation":1`, fmt.Sprintf(`"generation":%d`, c.generation)).Replace(readyAccess)
+				return provider.DecodeResponse(strings.NewReader(
+					`{`+envelope(c.request)+`,"status":"ready",`+access+`}`), c.request)
+			}
+			ready, err := decode(escaped + vault)
+			require.NoError(t, err, "%s %s", c.request.Operation, prefix)
+			require.Equal(t, "https://vaults.example.test"+escaped+vault, ready.Access.Mount)
+
+			for _, other := range []string{
+				prefix + vault,                           // not percent-encoded
+				strings.ToLower(escaped) + vault + "%41", // a letter encoded needlessly
+				escaped + "%2F" + vault[1:],              // an encoded separator
+				escaped + "/%2E%2E" + vault,              // an encoded climb
+			} {
+				_, err = decode(other)
+				require.ErrorIs(t, err, provider.ErrInvalidResponse, "%s %q", c.request.Operation, other)
+			}
+		}
+	}
+}
+
 func TestOpenAndRenewRejectResultsOutsideTheContract(t *testing.T) {
 	t.Parallel()
 	open := openRequest(t, provider.ActionRead)
