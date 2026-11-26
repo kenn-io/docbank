@@ -2423,6 +2423,13 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkRenditionJobPublishesCurrentLexicalGenerationWithoutRepeatingEgress(t, newPostgresQueryStore)
 		}},
+		{"RenditionJobPublicationCollectsSupersededGenerations", func(t *testing.T) {
+			t.Helper()
+			checkRenditionJobPublicationCollectsSupersededGenerations(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkRenditionJobPublicationCollectsSupersededGenerations(t, newPostgresQueryStore)
+		}},
 		{"PublishRenditionJobRejectsRevokedEgressAndPreservesPreviousHead", func(t *testing.T) {
 			t.Helper()
 			checkPublishRenditionJobRejectsRevokedEgressAndPreservesPreviousHead(t, newTestStore)

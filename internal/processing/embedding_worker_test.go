@@ -1289,7 +1289,7 @@ func embeddingWorkerWithDescriptorFixture(tb testing.TB, makeFixture publication
 		generation.GenerationChecksum = receipt.Hash
 		generation.Inputs = []store.EmbeddingInputReference{{ID: node.CurrentVersionID, RenderedChecksum: receipt.Hash}}
 	} else {
-		staged := fixture.stage(tb, publicationIDs{"b8", "58", "98"}, strings.Repeat("synthetic chunk evidence ", 12), "Example")
+		staged := fixture.stage(tb, publicationIDs{"b8", "58"}, strings.Repeat("synthetic chunk evidence ", 12), "Example")
 		publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
 		require.NoError(tb, err)
 		_, err = publisher.PublishRendition(tb.Context(), staged)
@@ -1330,7 +1330,7 @@ func embeddingWorkerWithDescriptorFixture(tb testing.TB, makeFixture publication
 	// Enqueue installs the profile before checking consent. Register it through
 	// the existing source-authority path for direct input, which has no rendition.
 	if kind == document.EmbeddingInputOriginalFile {
-		staged := fixture.stage(tb, publicationIDs{"b9", "59", "99"}, "synthetic evidence", "Example")
+		staged := fixture.stage(tb, publicationIDs{"b9", "59"}, "synthetic evidence", "Example")
 		publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
 		require.NoError(tb, err)
 		_, err = publisher.PublishRendition(tb.Context(), staged)
@@ -1508,7 +1508,7 @@ func checkEmbeddingWorkerAbandonsReplacedRendition(t *testing.T, makeFixture pub
 	for _, duringProvider := range []bool{false, true} {
 		t.Run(fmt.Sprintf("during-provider=%t", duringProvider), func(t *testing.T) {
 			fixture, fake, worker, request := embeddingWorkerWithFixture(t, makeFixture, document.EmbeddingInputRenditionChunk)
-			staged := fixture.stage(t, publicationIDs{"ba", "5a", "9a"}, "replacement evidence", "Example")
+			staged := fixture.stage(t, publicationIDs{"ba", "5a"}, "replacement evidence", "Example")
 			// A distinct captured-artifact policy permits a new immutable build for
 			// the same source and processing profile.
 			staged.Build.CapturedArtifactPolicy = []byte(`{"roles":[{"max_count":2,"min_count":1,"role":"normalized_evidence"},{"max_count":1,"min_count":1,"role":"sanitized_markdown"}],"version":1}`)

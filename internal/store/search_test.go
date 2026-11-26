@@ -7,6 +7,7 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -2510,6 +2511,111 @@ func TestPublishCollectsSupersededLexicalGenerationsWithoutCopyingText(t *testin
 	generations, indexRows, ftsRows = counts()
 	assert.Equal(t, []int{1, 4, 4}, []int{generations, indexRows, ftsRows},
 		"the released generation is collected by the next head flip")
+}
+
+// Each rendition publication adds its build to the current head's stream.
+// Copying every earlier build into a new stream made publication slower as
+// the vault grew and left the copies behind for collection.
+func TestPublishRenditionExtendsTheCurrentLexicalHead(t *testing.T) {
+	t.Parallel()
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	words := []string{"mercury", "venus", "mars"}
+	var generations []LexicalGeneration
+	streamIDs := make(map[string]struct{})
+	for index, word := range words {
+		build := lexicalSearchBuild(s, profile, testSHA256([]byte("extend-"+word)), word+" phrase")
+		version := versions[0]
+		if index > 0 {
+			build, version = lexicalSearchReplacementBuild(t, s, profile, build.ID, word+" phrase")
+		}
+		require.NoError(t, s.StageRenditionBuild(ctx, build))
+		attachment := RenditionAttachmentRecord{
+			ID: testSHA256([]byte("extend-attachment-" + word)), VaultID: s.VaultID(), ContentVersionID: version,
+			BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-22T10:00:00.000000000Z",
+		}
+		generation, err := s.PublishRendition(ctx, attachment, RenditionHeadRecord{
+			ContentVersionID: version, ProcessingProfileFingerprint: profile.Fingerprint,
+			AttachmentID: attachment.ID, PublishedAt: "2026-08-22T10:01:00.000000000Z",
+		})
+		require.NoError(t, err)
+		generations = append(generations, generation)
+		var streamID string
+		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT stream_id FROM rendition_lexical_generations
+			WHERE generation_id=$1`, generation.ID).Scan(&streamID))
+		streamIDs[streamID] = struct{}{}
+	}
+	assert.Len(t, streamIDs, 1, "every publication extends the same stream")
+
+	head, err := s.ActiveLexicalGeneration(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, generations[len(generations)-1], head)
+	assert.Equal(t, len(words), head.BuildCount)
+	var liveGenerations, streamBuilds int
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT
+		(SELECT COUNT(*) FROM rendition_lexical_generations),
+		(SELECT COUNT(*) FROM rendition_lexical_stream_builds)`).Scan(&liveGenerations, &streamBuilds))
+	assert.Equal(t, []int{1, len(words)}, []int{liveGenerations, streamBuilds},
+		"one live generation with one membership row per build")
+	for _, word := range words {
+		hits, _, err := s.SearchPage(ctx, word, 10)
+		require.NoError(t, err)
+		assert.Len(t, hits, 1, word)
+	}
+}
+
+// A vault that already holds a large backlog of superseded generations must
+// not stall one publication while it collects all of them. Each head flip
+// takes one batch, and later flips finish the rest.
+func TestPublishDrainsSupersededLexicalBacklogInBatches(t *testing.T) {
+	t.Parallel()
+	s, _ := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	publish := func(index int) {
+		t.Helper()
+		seed := "backlog-" + strconv.Itoa(index)
+		sourceHash := testSHA256([]byte(seed + "-source"))
+		node, err := s.CreateFile(ctx, s.RootID(), seed+".pdf", sourceHash, 7, "application/pdf")
+		require.NoError(t, err)
+		build := lexicalSearchBuild(s, profile, testSHA256([]byte(seed+"-build")), seed+" phrase")
+		build.SourceSHA256 = sourceHash
+		require.NoError(t, s.StageRenditionBuild(ctx, build))
+		attachment := RenditionAttachmentRecord{
+			ID: testSHA256([]byte(seed + "-attachment")), VaultID: s.VaultID(),
+			ContentVersionID: node.CurrentVersionID, BuildID: build.ID, Profile: profile,
+			AttachedAt: "2026-08-22T10:00:00.000000000Z",
+		}
+		require.NoError(t, publishRenditionForTest(t, s, attachment,
+			"2026-08-22T10:01:00.000000000Z", testSHA256([]byte(seed+"-generation"))))
+	}
+	superseded := func() int {
+		t.Helper()
+		var count int
+		require.NoError(t, s.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM rendition_lexical_superseded`).Scan(&count))
+		return count
+	}
+
+	// Reader leases hold every generation, building a backlog the next
+	// flips can collect once the leases go away.
+	var leases []*LexicalGenerationLease
+	for index := range lexicalCollectionBatch + 2 {
+		publish(index)
+		lease, err := s.AcquireLexicalGeneration(ctx)
+		require.NoError(t, err)
+		leases = append(leases, lease)
+	}
+	require.Equal(t, lexicalCollectionBatch+1, superseded())
+	for _, lease := range leases {
+		require.NoError(t, lease.Release())
+	}
+
+	publish(lexicalCollectionBatch + 2)
+	assert.Equal(t, 2, superseded(), "one flip collects one batch")
+	publish(lexicalCollectionBatch + 3)
+	assert.Zero(t, superseded(), "the next flip collects the rest")
 }
 
 // Derivative purge holds its reader gate across a whole write transaction,

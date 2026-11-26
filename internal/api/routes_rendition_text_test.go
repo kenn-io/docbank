@@ -132,22 +132,20 @@ func publishRenditionTextSourceFixture(
 	attachment := store.RenditionAttachmentRecord{ID: attachmentID, VaultID: s.VaultID(),
 		ContentVersionID: node.CurrentVersionID, BuildID: buildID, Profile: profile,
 		AttachedAt: "2026-09-11T12:01:00.000000000Z"}
-	generation := testHash("rendition-generation")
 	publisher, err := processing.NewArtifactPublisher(s.Store, s.Blobs)
 	require.NoError(t, err)
-	_, err = publisher.PublishRendition(t.Context(), processing.StagedRendition{
+	published, err := publisher.PublishRendition(t.Context(), processing.StagedRendition{
 		Rendition: rendition, RenditionPolicy: renditionPolicy, Build: build, Attachment: attachment,
 		Head: store.RenditionHeadRecord{ContentVersionID: node.CurrentVersionID,
 			ProcessingProfileFingerprint: profile.Fingerprint, AttachmentID: attachmentID,
 			PublishedAt: "2026-09-11T12:02:00.000000000Z"},
-		LexicalGenerationID: generation,
 		Artifacts: []processing.StagedArtifact{
 			{ID: build.Artifacts[0].ID, Payload: bytes.NewReader(evidenceBytes)},
 			{ID: artifactID, Payload: bytes.NewReader(rendition.Markdown)},
 		},
 	})
 	require.NoError(t, err)
-	return renditionTextFixture{node: node, profile: profile, generation: generation,
+	return renditionTextFixture{node: node, profile: profile, generation: published.LexicalGeneration.ID,
 		attachment: attachmentID, build: buildID, artifact: artifactID, markdown: rendition.Markdown}
 }
 

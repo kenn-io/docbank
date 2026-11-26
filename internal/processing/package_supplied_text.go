@@ -200,7 +200,6 @@ func publishPackageSuppliedText(ctx context.Context, catalog *store.Store, blobs
 	if err != nil {
 		return "", err
 	}
-	staged.LexicalGenerationID = renditionBytesSHA256([]byte(uuid.NewString()))
 	publisher, err := NewArtifactPublisher(catalog, blobs)
 	if err != nil {
 		return "", err

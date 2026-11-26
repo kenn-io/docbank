@@ -32,13 +32,12 @@ type StagedArtifact struct {
 // StagedRendition contains one complete dormant catalog candidate and the
 // exact version-scoped authority that may publish it.
 type StagedRendition struct {
-	Rendition           document.RenditionV1
-	RenditionPolicy     document.RenditionPolicy
-	Build               store.RenditionBuildRecord
-	Attachment          store.RenditionAttachmentRecord
-	Head                store.RenditionHeadRecord
-	LexicalGenerationID string
-	Artifacts           []StagedArtifact
+	Rendition       document.RenditionV1
+	RenditionPolicy document.RenditionPolicy
+	Build           store.RenditionBuildRecord
+	Attachment      store.RenditionAttachmentRecord
+	Head            store.RenditionHeadRecord
+	Artifacts       []StagedArtifact
 }
 
 // PublishedArtifact is the verified physical receipt for one retained member.
@@ -68,13 +67,10 @@ type renditionPublicationCatalog interface {
 		ctx context.Context, hash string, size int64, physical store.BlobPhysical,
 	) error
 	StageRenditionBuild(ctx context.Context, record store.RenditionBuildRecord) error
-	StageLexicalGeneration(
-		ctx context.Context, generationID string,
-	) (store.LexicalGeneration, error)
-	PublishRenditionAndLexicalHeads(
+	PublishRendition(
 		ctx context.Context, attachment store.RenditionAttachmentRecord,
-		head store.RenditionHeadRecord, generationID string,
-	) error
+		head store.RenditionHeadRecord,
+	) (store.LexicalGeneration, error)
 }
 
 type auxiliaryChecksumCatalog interface {
@@ -222,13 +218,8 @@ func (p *ArtifactPublisher) PublishRendition(
 		if err := p.catalog.StageRenditionBuild(ctx, staged.Build); err != nil {
 			return fmt.Errorf("staging rendition catalog: %w", err)
 		}
-		generation, err := rebuildLexicalGeneration(ctx, p.catalog, staged.LexicalGenerationID)
+		generation, err := p.catalog.PublishRendition(ctx, staged.Attachment, staged.Head)
 		if err != nil {
-			return fmt.Errorf("rebuilding lexical generation: %w", err)
-		}
-		if err := p.catalog.PublishRenditionAndLexicalHeads(
-			ctx, staged.Attachment, staged.Head, generation.ID,
-		); err != nil {
 			return fmt.Errorf("publishing rendition generation: %w", err)
 		}
 		published = PublishedRendition{
@@ -264,7 +255,7 @@ func (p *ArtifactPublisher) recordRenditionReceipt(
 }
 
 func validateStagedRendition(staged StagedRendition) error {
-	if staged.Build.ID == "" || staged.Attachment.ID == "" || staged.LexicalGenerationID == "" {
+	if staged.Build.ID == "" || staged.Attachment.ID == "" {
 		return errors.New("staged rendition lacks exact publication identities")
 	}
 	if staged.Attachment.BuildID != staged.Build.ID || staged.Head.AttachmentID != staged.Attachment.ID ||

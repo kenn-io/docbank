@@ -101,7 +101,8 @@ func checkEmailPublicationRollbackPostgres(t *testing.T) {
 	body := stageEmailBodyForTest(t, s, view)
 	_, err = setup.ExecContext(ctx, "REVOKE INSERT ON documents.email_body_results FROM "+role)
 	require.NoError(t, err)
-	require.ErrorContains(t, s.PublishEmailBody(ctx, body), "permission denied")
+	_, err = s.PublishEmailBody(ctx, body)
+	require.ErrorContains(t, err, "permission denied")
 	current, err := s.EmailMetadata(ctx, view.Version.ID)
 	require.NoError(t, err)
 	require.Equal(t, "pending", current.BodySearch.State)
@@ -112,7 +113,8 @@ func checkEmailPublicationRollbackPostgres(t *testing.T) {
 	require.Zero(t, heads)
 	_, err = setup.ExecContext(ctx, "GRANT INSERT ON documents.email_body_results TO "+role)
 	require.NoError(t, err)
-	require.NoError(t, s.PublishEmailBody(ctx, body))
+	_, err = s.PublishEmailBody(ctx, body)
+	require.NoError(t, err)
 	checkRetentionMetadata(t, s)
 }
 
@@ -195,7 +197,7 @@ func checkEmailPageSnapshotsPostgres(t *testing.T) {
 		before, err := s.EmailMetadata(t.Context(), view.Version.ID)
 		require.NoError(t, err)
 		var writeErr error
-		reader := postgresSnapshotReader(t, s, func() { writeErr = s.PublishEmailBody(t.Context(), body) })
+		reader := postgresSnapshotReader(t, s, func() { _, writeErr = s.PublishEmailBody(t.Context(), body) })
 		during, err := reader.EmailMetadata(t.Context(), view.Version.ID)
 		require.NoError(t, writeErr)
 		require.NoError(t, err)

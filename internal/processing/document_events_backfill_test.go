@@ -175,7 +175,7 @@ func TestDocumentEventRebuildDoesNotRecreatePurgedRendition(t *testing.T) {
 		publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
 		require.NoError(t, err)
 		_, err = publisher.PublishRendition(t.Context(), fixture.stage(
-			t, publicationIDs{"d71", "d72", "d73"},
+			t, publicationIDs{"d71", "d72"},
 			"synthetic timeline evidence", "synthetic timeline markdown",
 		))
 		require.NoError(t, err)

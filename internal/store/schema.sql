@@ -1804,6 +1804,11 @@ CREATE INDEX IF NOT EXISTS rendition_jobs_source ON rendition_jobs(source_sha256
 CREATE INDEX IF NOT EXISTS rendition_jobs_claimable
     ON rendition_jobs(state, available_at, lease_expires_at, job_id);
 
+-- Lexical collection checks each superseded generation against the jobs that
+-- name it; without this every check scans the whole job table.
+CREATE INDEX IF NOT EXISTS rendition_jobs_lexical_generation
+    ON rendition_jobs(lexical_generation_id);
+
 CREATE TABLE IF NOT EXISTS rendition_job_waiters (
     waiter_id                TEXT PRIMARY KEY,
     job_id                   TEXT NOT NULL REFERENCES rendition_jobs(job_id) ON DELETE CASCADE,

@@ -26,7 +26,7 @@ func newEvidenceWindowFixture(t *testing.T) evidenceWindowFixture {
 	publisher, err := NewArtifactPublisher(f.catalog, f.blobs)
 	require.NoError(t, err)
 	published, err := publisher.PublishRendition(t.Context(), f.stage(t,
-		publicationIDs{"evidence-build", "evidence-attachment", "evidence-generation"}, "aé界🙂z", "Synthetic evidence"))
+		publicationIDs{"evidence-build", "evidence-attachment"}, "aé界🙂z", "Synthetic evidence"))
 	require.NoError(t, err)
 	service, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(), SpoolDirectory: filepath.Join(t.TempDir(), "spool")})
 	require.NoError(t, err)
@@ -82,7 +82,7 @@ func TestEvidenceWindowAuthority(t *testing.T) {
 			case "rendition replacement":
 				publisher, e := NewArtifactPublisher(f.catalog, f.blobs)
 				require.NoError(t, e)
-				_, err = publisher.PublishRendition(t.Context(), f.stage(t, publicationIDs{"replacement-build", "replacement-attachment", "replacement-generation"}, "new text", "Replacement evidence"))
+				_, err = publisher.PublishRendition(t.Context(), f.stage(t, publicationIDs{"replacement-build", "replacement-attachment"}, "new text", "Replacement evidence"))
 			case "retirement":
 				_, err = f.catalog.PurgeDerivatives(t.Context(), store.PurgeRequest{AttachmentIDs: []string{f.request.RenditionAttachmentID}})
 			case "trash":

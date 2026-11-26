@@ -74,10 +74,8 @@ func stageEmailBodyForTest(t *testing.T, s *Store, view EmailMetadataView) Email
 	build.CompletedAt = "2099-01-01T00:00:00.000000000Z"
 	require.NoError(t, s.StageEmailBodyBuild(t.Context(), build))
 	a := RenditionAttachmentRecord{ID: RenditionAttachmentID(id, view.Version.ID, profile.Fingerprint), VaultID: s.VaultID(), ContentVersionID: view.Version.ID, BuildID: id, Profile: profile, AttachedAt: nowRFC3339()}
-	generation, err := s.StageLexicalGeneration(t.Context(), lexicalReplacementGenerationIDForTest(t, s))
-	require.NoError(t, err)
 	return EmailBodyPublication{EmailAttachmentID: view.Attachment.ID, PartPath: *path, BodyRecipeFingerprint: recipe, RenditionAttachment: a,
-		RenditionHead: RenditionHeadRecord{ContentVersionID: a.ContentVersionID, ProcessingProfileFingerprint: profile.Fingerprint, AttachmentID: a.ID, PublishedAt: a.AttachedAt}, LexicalGenerationID: generation.ID}
+		RenditionHead: RenditionHeadRecord{ContentVersionID: a.ContentVersionID, ProcessingProfileFingerprint: profile.Fingerprint, AttachmentID: a.ID, PublishedAt: a.AttachedAt}}
 }
 
 func checkEmailBodyPublication(t *testing.T, open func(*testing.T) *Store) {
@@ -87,8 +85,14 @@ func checkEmailBodyPublication(t *testing.T, open func(*testing.T) *Store) {
 	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
 	publication := stageEmailBodyForTest(t, s, view)
-	require.NoError(t, s.PublishEmailBody(t.Context(), publication))
-	require.NoError(t, s.PublishEmailBody(t.Context(), publication), "exact publication replay")
+	generation, err := s.PublishEmailBody(t.Context(), publication)
+	require.NoError(t, err)
+	replayed, err := s.PublishEmailBody(t.Context(), publication)
+	require.NoError(t, err, "exact publication replay")
+	require.Equal(t, generation, replayed, "a replay serves the body from the same generation")
+	head, err := s.ActiveLexicalGeneration(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, generation, head)
 	current, err := s.EmailMetadata(t.Context(), view.Version.ID)
 	require.NoError(t, err)
 	require.Equal(t, "available", current.BodySearch.State)
@@ -102,6 +106,7 @@ func checkEmailBodyPublication(t *testing.T, open func(*testing.T) *Store) {
 	report, err := s.PurgeDerivatives(t.Context(), PurgeRequest{BuildIDs: []string{publication.RenditionAttachment.BuildID}})
 	require.NoError(t, err)
 	require.Equal(t, 1, report.RemovedBuilds)
-	require.ErrorIs(t, s.PublishEmailBody(t.Context(), publication), ErrEmailDerivativeSuppressed)
+	_, err = s.PublishEmailBody(t.Context(), publication)
+	require.ErrorIs(t, err, ErrEmailDerivativeSuppressed)
 	checkRetentionMetadata(t, s)
 }

@@ -214,7 +214,7 @@ func NewTextCitationTestFixture(t *testing.T) TextCitationTestFixture {
 	f := newPublicationFixture(t)
 	publisher, err := NewArtifactPublisher(f.catalog, f.blobs)
 	require.NoError(t, err)
-	ids := publicationIDs{"citation-build", "citation-attachment", "citation-generation"}
+	ids := publicationIDs{"citation-build", "citation-attachment"}
 	staged := f.stage(t, ids,
 		"aé界🙂z", "Synthetic quote")
 	_, err = publisher.PublishRendition(t.Context(), staged)
@@ -263,7 +263,7 @@ func TestResolveTextCitationLifecycle(t *testing.T) {
 			publisher, err := NewArtifactPublisher(f.Catalog, f.Blobs)
 			require.NoError(t, err)
 			_, err = publisher.PublishRendition(t.Context(), f.fixture.stage(t,
-				publicationIDs{"next-citation-build", "next-citation-attachment", "next-citation-generation"},
+				publicationIDs{"next-citation-build", "next-citation-attachment"},
 				"replacement rendition", "Other quote"))
 			require.NoError(t, err)
 			f.ReplaceSource(t)
