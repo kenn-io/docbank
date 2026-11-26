@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"hash/fnv"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -12,6 +13,20 @@ import (
 
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
+
+var schemaTemplatePathLocks [64]sync.Mutex
+
+func lockSchemaTemplatePath(path string) func() {
+	clean := path
+	if abs, err := filepath.Abs(path); err == nil {
+		clean = abs
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(filepath.Clean(clean)))
+	mu := &schemaTemplatePathLocks[h.Sum32()%uint32(len(schemaTemplatePathLocks))]
+	mu.Lock()
+	return mu.Unlock
+}
 
 // The default driver's empty current-schema database, built once per process.
 // Opening an existing vault compares its columns with the template's, and a
@@ -56,6 +71,11 @@ func createFromSchemaTemplate(ctx context.Context, path string, driver docsqlite
 	}
 	template, err := defaultSchemaTemplate(ctx, filepath.Dir(path))
 	if err != nil {
+		return
+	}
+	unlock := lockSchemaTemplatePath(path)
+	defer unlock()
+	if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
 		return
 	}
 	// SQLite creates databases with mode 0644 less the umask. WriteNew never
