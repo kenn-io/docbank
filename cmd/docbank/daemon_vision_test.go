@@ -17,7 +17,6 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/vision"
-	"go.kenn.io/docbank/document/vision/visiontest"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/config"
@@ -85,11 +84,11 @@ func startVisionDaemonWithPhoto(t *testing.T, task, reply string) (*daemonconn.C
 			return
 		}
 		answer := reply
-		if visiontest.IsProbe(body) {
+		if mediatest.IsVisionProbe(body) {
 			answer = "red,blue"
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(visiontest.Completion(answer))
+		_, _ = w.Write(mediatest.VisionCompletion(answer))
 	}))
 	t.Cleanup(provider.Close)
 	cfg := visionProcessingConfig(t, provider.URL, task)

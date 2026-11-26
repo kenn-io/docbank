@@ -1,4 +1,4 @@
-package push_test
+package main
 
 import (
 	"fmt"
@@ -14,7 +14,6 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/push"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -60,18 +59,18 @@ func BenchmarkPushFolder(b *testing.B) {
 					require.NoError(b, err)
 					defer func() { require.NoError(b, connection.Close()) }()
 					if resume {
-						report, err := push.Run(b.Context(), connection, options(source))
+						report, err := executePush(b.Context(), connection, options(source))
 						require.NoError(b, err)
-						require.Equal(b, push.Report{Added: 128}, report)
+						require.Equal(b, pushReport{Added: 128}, report)
 					}
 					b.StartTimer()
-					report, err := push.Run(b.Context(), connection, options(source))
+					report, err := executePush(b.Context(), connection, options(source))
 					b.StopTimer()
 					require.NoError(b, err)
 					if resume {
-						require.Equal(b, push.Report{Skipped: 128}, report)
+						require.Equal(b, pushReport{Skipped: 128}, report)
 					} else {
-						require.Equal(b, push.Report{Added: 128}, report)
+						require.Equal(b, pushReport{Added: 128}, report)
 					}
 				}()
 				b.StartTimer()

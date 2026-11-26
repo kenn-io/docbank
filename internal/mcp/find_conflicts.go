@@ -11,7 +11,6 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/grounding"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -33,7 +32,7 @@ type conflictPassage struct {
 
 type findConflictsOutput struct {
 	privateCache
-	grounding.Comparison
+	GroundingComparison
 
 	VaultID   string            `json:"vault_id,omitempty"`
 	Truncated bool              `json:"truncated"`
@@ -46,13 +45,13 @@ func findConflicts(ctx context.Context, lease *daemonLease, raw []byte) (findCon
 		return findConflictsOutput{}, nil, err
 	}
 	input.Mode = "lexical"
-	var sources []grounding.Source
+	var sources []Source
 	result, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (documentSearchResponse, error) {
 		result, err := runDocumentSearch(ctx, daemonDocumentClient{c}, input, true, nil)
 		if err != nil {
 			return result, err
 		}
-		sources = make([]grounding.Source, len(result.report.Results))
+		sources = make([]Source, len(result.report.Results))
 		for i, hit := range result.report.Results {
 			if !answerContentExcerpt(hit) {
 				continue
@@ -63,7 +62,7 @@ func findConflicts(ctx context.Context, lease *daemonLease, raw []byte) (findCon
 			}
 			needle := strings.Trim(hit.Excerpt, " …")
 			if at := strings.Index(text, needle); needle != "" && at >= 0 && !strings.Contains(text[at+1:], needle) {
-				sources[i] = grounding.Source{Text: text, Start: at, End: at + len(needle)}
+				sources[i] = Source{Text: text, Start: at, End: at + len(needle)}
 			}
 		}
 		return result, ctx.Err()
@@ -71,7 +70,7 @@ func findConflicts(ctx context.Context, lease *daemonLease, raw []byte) (findCon
 	if err != nil {
 		return findConflictsOutput{}, nil, err
 	}
-	out := findConflictsOutput{privateCache: newPrivateCache(), Comparison: grounding.Compare(sources),
+	out := findConflictsOutput{privateCache: newPrivateCache(), GroundingComparison: CompareGrounding(sources),
 		VaultID: result.vaultID, Truncated: result.report.Truncated,
 		Passages: make([]conflictPassage, len(sources))}
 	for i, hit := range result.report.Results {

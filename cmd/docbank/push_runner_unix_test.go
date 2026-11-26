@@ -1,6 +1,6 @@
 //go:build unix
 
-package push_test
+package main
 
 import (
 	"context"
@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/push"
 )
 
 // lockedFolder creates a readable file, an unreadable file, and an unreadable
@@ -41,8 +40,8 @@ func TestPushReportsUnreadableEntriesAndContinues(t *testing.T) {
 	opts := options(dir)
 	var failed []string
 	opts.Failure = func(ref string, _ error) error { failed = append(failed, ref); return nil }
-	report, err := push.Run(t.Context(), f.connection, opts)
-	require.ErrorIs(t, err, push.ErrFilesFailed)
+	report, err := executePush(t.Context(), f.connection, opts)
+	require.ErrorIs(t, err, errPushFilesFailed)
 	assert.Equal(t, 1, report.Added)
 	assert.Equal(t, 2, report.Failed)
 	assert.Equal(t, []string{"a.txt", "sealed"}, failed)
@@ -64,7 +63,7 @@ func TestPushWatchReportsAnUnreadableFileOnceUntilItIsReadable(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		done := make(chan error, 1)
-		go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
+		go func() { _, err := executePush(ctx, f.connection, opts); done <- err }()
 		assert.Equal(t, "added", next(t, events, "b.txt to be pushed"))
 		// A new file needs a full settle window, so many scans pass before it is pushed.
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "d.txt"), []byte("later"), 0o600))
@@ -100,8 +99,8 @@ func TestPushReportsAFileThatBecomesUnreadableDuringUpload(t *testing.T) {
 		assert.ErrorIs(t, err, os.ErrPermission)
 		return nil
 	}
-	report, err := push.Run(t.Context(), f.connection, opts)
-	require.ErrorIs(t, err, push.ErrFilesFailed)
+	report, err := executePush(t.Context(), f.connection, opts)
+	require.ErrorIs(t, err, errPushFilesFailed)
 	assert.Equal(t, []string{"a.txt"}, failed)
 	assert.Equal(t, 1, report.Failed)
 	b, err := f.store.NodeByPath(t.Context(), "/archive/b.txt")

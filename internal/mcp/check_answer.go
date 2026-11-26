@@ -5,7 +5,6 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/grounding"
 )
 
 var checkAnswerTool = toolDefinition{
@@ -20,7 +19,7 @@ type checkAnswerInput struct {
 }
 type checkAnswerOutput struct {
 	privateCache
-	grounding.Report
+	GroundingReport
 }
 
 func checkAnswer(ctx context.Context, lease *daemonLease, raw []byte) (checkAnswerOutput, error) {
@@ -33,14 +32,14 @@ func checkAnswer(ctx context.Context, lease *daemonLease, raw []byte) (checkAnsw
 			return checkAnswerOutput{}, invalidToolArgumentsError()
 		}
 	}
-	answer, err := grounding.Prepare(input.Answer)
+	answer, err := PrepareGrounding(input.Answer)
 	if err != nil {
 		return checkAnswerOutput{}, invalidToolArgumentsError()
 	}
-	resolved, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) ([]grounding.Citation, error) {
-		result := make([]grounding.Citation, 0, len(input.Citations))
+	resolved, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) ([]GroundingCitation, error) {
+		result := make([]GroundingCitation, 0, len(input.Citations))
 		for _, citation := range input.Citations {
-			var entry grounding.Citation
+			var entry GroundingCitation
 			quote, err := c.ResolveTextCitation(ctx, citation)
 			if err != nil {
 				code, _ := stableDomainError(err)
@@ -58,5 +57,5 @@ func checkAnswer(ctx context.Context, lease *daemonLease, raw []byte) (checkAnsw
 	if err != nil {
 		return checkAnswerOutput{}, err
 	}
-	return checkAnswerOutput{privateCache: newPrivateCache(), Report: answer.Check(resolved)}, nil
+	return checkAnswerOutput{privateCache: newPrivateCache(), GroundingReport: answer.CheckGrounding(resolved)}, nil
 }

@@ -10,7 +10,6 @@ import (
 
 	"go.kenn.io/docbank/document/providerhttp"
 	wire "go.kenn.io/docbank/document/typesafe"
-	"go.kenn.io/docbank/document/typesafe/typesafetest"
 )
 
 func typesafeIdentity(number int64) DocumentIdentity {
@@ -19,7 +18,7 @@ func typesafeIdentity(number int64) DocumentIdentity {
 
 func TestRerankSendsOnlyExcerptsAndMapsEveryIdentity(t *testing.T) {
 	profile := wire.Profile{SecretBinding: "test", EgressPolicy: providerhttp.EgressPolicy{Scheme: "https", Host: "api.typesafe.ai", Port: 443, AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}}}
-	fake := typesafetest.New(profile, func(_, candidate string) (float64, error) {
+	fake := newTypesafeFake(profile, func(_, candidate string) (float64, error) {
 		if candidate == "excerpt-0" {
 			return 0.2, nil
 		}
@@ -48,7 +47,7 @@ func TestRerankSendsOnlyExcerptsAndMapsEveryIdentity(t *testing.T) {
 
 func TestRerankRejectsIncompleteOrDuplicateIdentitiesBeforeProvider(t *testing.T) {
 	profile := wire.Profile{SecretBinding: "test", EgressPolicy: providerhttp.EgressPolicy{Scheme: "https", Host: "api.typesafe.ai", Port: 443, AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}}}
-	fake := typesafetest.New(profile, func(_, _ string) (float64, error) { return 0.5, nil })
+	fake := newTypesafeFake(profile, func(_, _ string) (float64, error) { return 0.5, nil })
 	client, err := NewTypesafeClient(fake)
 	if err != nil {
 		t.Fatal(err)

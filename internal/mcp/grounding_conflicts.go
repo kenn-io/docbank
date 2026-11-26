@@ -1,4 +1,4 @@
-package grounding
+package mcp
 
 import (
 	"regexp"
@@ -10,23 +10,23 @@ import (
 	"github.com/rivo/uniseg"
 )
 
-type ComparedFigure struct {
+type GroundingComparedFigure struct {
 	Passage int    `json:"passage"`
 	Text    string `json:"text"`
 	Value   string `json:"value"`
 	Quote   string `json:"quote"`
 }
 
-type Conflict struct {
-	Kind    string           `json:"kind"`
-	Unit    string           `json:"unit"`
-	Figures []ComparedFigure `json:"figures"`
+type GroundingConflict struct {
+	Kind    string                    `json:"kind"`
+	Unit    string                    `json:"unit"`
+	Figures []GroundingComparedFigure `json:"figures"`
 }
 
-type Comparison struct {
-	Status    string     `json:"status"`
-	Conflicts []Conflict `json:"conflicts"`
-	Compared  []bool     `json:"-"`
+type GroundingComparison struct {
+	Status    string              `json:"status"`
+	Conflicts []GroundingConflict `json:"conflicts"`
+	Compared  []bool              `json:"-"`
 }
 
 type Source struct {
@@ -40,15 +40,15 @@ var (
 	hardWrap             = strings.NewReplacer("\n", " ", "\r", " ")
 )
 
-// Compare returns disagreements only between complete, unambiguous sentences
+// CompareGrounding returns disagreements only between complete, unambiguous sentences
 // with the same words around a supported figure. Passage references start at 1.
-func Compare(sources []Source) Comparison {
-	out := Comparison{Status: "NOT_COMPARABLE", Conflicts: []Conflict{}, Compared: make([]bool, len(sources))}
+func CompareGrounding(sources []Source) GroundingComparison {
+	out := GroundingComparison{Status: "NOT_COMPARABLE", Conflicts: []GroundingConflict{}, Compared: make([]bool, len(sources))}
 	type key struct{ kind, unit, subject string }
-	groups := map[key][]ComparedFigure{}
+	groups := map[key][]GroundingComparedFigure{}
 	var order []key
 	for i, source := range sources {
-		local := map[key][]ComparedFigure{}
+		local := map[key][]GroundingComparedFigure{}
 		var localOrder []key
 		for _, sentence := range sourceSentences(source) {
 			quote := decodeFigureText(strings.Join(strings.Fields(sentence), " "))
@@ -80,11 +80,11 @@ func Compare(sources []Source) Comparison {
 			if _, ok := local[k]; !ok {
 				localOrder = append(localOrder, k)
 			}
-			local[k] = append(local[k], ComparedFigure{Passage: i + 1, Text: figure.text + suffix, Value: value, Quote: quote})
+			local[k] = append(local[k], GroundingComparedFigure{Passage: i + 1, Text: figure.text + suffix, Value: value, Quote: quote})
 		}
 		for _, k := range localOrder {
 			figures := local[k]
-			if slices.ContainsFunc(figures, func(f ComparedFigure) bool { return f.Value != figures[0].Value }) {
+			if slices.ContainsFunc(figures, func(f GroundingComparedFigure) bool { return f.Value != figures[0].Value }) {
 				continue
 			}
 			if _, ok := groups[k]; !ok {
@@ -95,15 +95,15 @@ func Compare(sources []Source) Comparison {
 	}
 	for _, k := range order {
 		figures := groups[k]
-		if !slices.ContainsFunc(figures, func(f ComparedFigure) bool { return f.Passage != figures[0].Passage }) {
+		if !slices.ContainsFunc(figures, func(f GroundingComparedFigure) bool { return f.Passage != figures[0].Passage }) {
 			continue
 		}
 		for _, figure := range figures {
 			out.Compared[figure.Passage-1] = true
 		}
 		out.Status = "NO_CONFLICT"
-		if slices.ContainsFunc(figures, func(f ComparedFigure) bool { return f.Value != figures[0].Value }) {
-			out.Conflicts = append(out.Conflicts, Conflict{Kind: k.kind, Unit: k.unit, Figures: figures})
+		if slices.ContainsFunc(figures, func(f GroundingComparedFigure) bool { return f.Value != figures[0].Value }) {
+			out.Conflicts = append(out.Conflicts, GroundingConflict{Kind: k.kind, Unit: k.unit, Figures: figures})
 		}
 	}
 	if len(out.Conflicts) > 0 {

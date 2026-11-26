@@ -1,5 +1,4 @@
-// Package workerprotocol names the bounded durable conversion worker contract.
-package workerprotocol
+package main
 
 const (
 	// Contract identifies authenticated, idempotent uploaded-file processing.
@@ -15,7 +14,7 @@ const (
 	// BackendHopHeader prevents recursive forwarding through worker gateways.
 	BackendHopHeader = "X-Docbank-Worker-Backend-Hop"
 	// SourceSHA256Header binds accepted bytes to the client-verified digest.
-	SourceSHA256Header = "X-Docbank-Source-SHA256"
+	SourceSHA256Header = "X-Docbank-Source-Sha256"
 	// SubmitPath accepts exactly one fixed-format multipart source.
 	SubmitPath = "/v1/convert/file/async"
 	// PollPath prefixes the issued task identifier.

@@ -14,7 +14,6 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/push"
 )
 
 func newPushCmd() *cobra.Command {
@@ -50,7 +49,7 @@ are reported and skipped, and then the exit code is nonzero.`,
 			if err != nil {
 				return fmt.Errorf("--to: %w", err)
 			}
-			return runPush(cmd, connection, push.Options{
+			return runPush(cmd, connection, pushOptions{
 				Folder: config.WatchConfig{
 					Name: name, Source: args[0], Destination: dest, SettleTime: config.Duration(settle),
 					MinimumAge: config.Duration(age), ScanInterval: config.Duration(interval), Exclude: excludes,
@@ -95,7 +94,7 @@ func readPushKey(keyFile string) (string, error) {
 
 // runPush prints each outcome and a final summary. An interrupt stops the run
 // cleanly: the summary still prints, and stopping a watch is not an error.
-func runPush(cmd *cobra.Command, connection *daemonconn.Connection, opts push.Options) error {
+func runPush(cmd *cobra.Command, connection *daemonconn.Connection, opts pushOptions) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	opts.Progress = func(ref, outcome string) error {
@@ -110,12 +109,12 @@ func runPush(cmd *cobra.Command, connection *daemonconn.Connection, opts push.Op
 		}
 		return nil
 	}
-	report, runErr := push.Run(ctx, connection, opts)
+	report, runErr := executePush(ctx, connection, opts)
 	interrupted := ctx.Err() != nil && cmd.Context().Err() == nil
 	if interrupted && opts.Watch && errors.Is(runErr, context.Canceled) {
 		runErr = nil
 		if report.Failed > 0 {
-			runErr = fmt.Errorf("%w: %d failed", push.ErrFilesFailed, report.Failed)
+			runErr = fmt.Errorf("%w: %d failed", errPushFilesFailed, report.Failed)
 		}
 	}
 	_, outputErr := fmt.Fprintf(cmd.OutOrStdout(),

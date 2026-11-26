@@ -19,7 +19,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/localface"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
@@ -88,7 +87,7 @@ func faceEmbeddingFixtureWithPhoto(t *testing.T, unmatched bool, f *photoDescrip
 	server.Start()
 	profile, descriptor, err := config.LocalFaces()
 	require.NoError(t, err)
-	provider, err := localface.New(descriptor, func(context.Context) (string, error) { return server.URL, nil })
+	provider, err := document.NewLocalFaceProvider(descriptor, func(context.Context) (string, error) { return server.URL, nil })
 	require.NoError(t, err)
 	service, err := NewService(ctx, ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx, Principal: "synthetic-operator", Scope: "document-processing", Profiles: map[string]ProfileConfig{config.LocalFacesProfile: {Profile: profile, EmbeddingProviders: map[string]document.EmbeddingProvider{config.LocalFacesProfile: provider}, EmbeddingClassifiers: map[string]func(error) (EmbeddingProviderFailure, time.Duration){config.LocalFacesProfile: func(error) (EmbeddingProviderFailure, time.Duration) { return EmbeddingProviderPermanent, 0 }}}}})
 	require.NoError(t, err)

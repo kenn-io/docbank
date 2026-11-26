@@ -1,6 +1,4 @@
-// Package typesafetest provides a synthetic TypeSafe client for application tests.
-// It never performs egress, and its scores are not Jev observations.
-package typesafetest
+package retrieval
 
 import (
 	"context"
@@ -14,18 +12,18 @@ import (
 
 type ScoreFunc func(query, candidate string) (float64, error)
 
-type Fake struct {
+type typesafeFake struct {
 	profile  typesafe.Profile
 	score    ScoreFunc
 	mu       sync.Mutex
 	requests []typesafe.RerankRequest
 }
 
-func New(profile typesafe.Profile, score ScoreFunc) *Fake {
-	return &Fake{profile: profile, score: score}
+func newTypesafeFake(profile typesafe.Profile, score ScoreFunc) *typesafeFake {
+	return &typesafeFake{profile: profile, score: score}
 }
 
-func (fake *Fake) Rerank(ctx context.Context, request typesafe.RerankRequest) (typesafe.Result, error) {
+func (fake *typesafeFake) Rerank(ctx context.Context, request typesafe.RerankRequest) (typesafe.Result, error) {
 	if fake == nil || fake.score == nil {
 		return typesafe.Result{}, errors.New("typesafetest: score function is required")
 	}
@@ -74,7 +72,7 @@ func effectiveRequestShape(profile typesafe.Profile) typesafe.RequestShape {
 	return profile.RequestShape
 }
 
-func (fake *Fake) Requests() []typesafe.RerankRequest {
+func (fake *typesafeFake) Requests() []typesafe.RerankRequest {
 	if fake == nil {
 		return nil
 	}

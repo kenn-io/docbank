@@ -21,14 +21,13 @@ import (
 
 	"golang.org/x/net/http/httpguts"
 
-	"go.kenn.io/docbank/document/workerprotocol"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/safefileio"
 )
 
-const protocol = workerprotocol.Contract
+const protocol = Contract
 const overhead = int64(4096)
 const manifestVersion = 1
 const stateFailure = "failure"

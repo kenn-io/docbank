@@ -1,4 +1,4 @@
-package grounding
+package mcp
 
 import (
 	"strings"

@@ -1,4 +1,4 @@
-package push
+package main
 
 import (
 	"context"
@@ -57,8 +57,8 @@ func TestPushWatchStartsOneCollectionPerScanThatUploads(t *testing.T) {
 	connection, s := newPushTestDaemon(t, nil)
 	dir := t.TempDir()
 	p := &pusher{
-		connection: connection, report: &Report{},
-		opts: Options{Watch: true, Folder: config.WatchConfig{
+		connection: connection, report: &pushReport{},
+		opts: pushOptions{Watch: true, Folder: config.WatchConfig{
 			Name: "laptop", Source: dir, Destination: "/archive",
 			SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second),
 		}},
@@ -72,7 +72,7 @@ func TestPushWatchStartsOneCollectionPerScanThatUploads(t *testing.T) {
 		}
 		require.NoError(t, scanner.ScanOnce(t.Context(), 1))
 	}
-	assert.Equal(t, Report{Added: 2, Updated: 2}, *p.report)
+	assert.Equal(t, pushReport{Added: 2, Updated: 2}, *p.report)
 	collections, total, err := s.Collections(t.Context(), 100, 0)
 	require.NoError(t, err)
 	require.Equal(t, 2, total, "each scan creates one collection containing both files")
@@ -106,8 +106,8 @@ func TestPushReportsAnUploadReadFailureAndContinues(t *testing.T) {
 	require.NoError(t, err)
 	var failed []string
 	p := &pusher{
-		connection: connection, report: &Report{}, cursors: cursors,
-		opts: Options{Folder: config.WatchConfig{
+		connection: connection, report: &pushReport{}, cursors: cursors,
+		opts: pushOptions{Folder: config.WatchConfig{
 			Name: "laptop", Source: dir, Destination: "/archive",
 			SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second),
 		}, Failure: func(ref string, err error) error {
@@ -125,7 +125,7 @@ func TestPushReportsAnUploadReadFailureAndContinues(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, scanner.ScanOnce(t.Context(), 1), "a source read failure must not abort the scan")
 	assert.Equal(t, []string{"a.txt"}, failed)
-	assert.Equal(t, Report{Added: 1, Failed: 1}, *p.report)
+	assert.Equal(t, pushReport{Added: 1, Failed: 1}, *p.report)
 	_, err = s.NodeByPath(t.Context(), "/archive/b.txt")
 	require.NoError(t, err, "the readable sibling must reach the archive")
 }
@@ -162,8 +162,8 @@ func TestFailedCursorReadDefersTheRestOfItsScan(t *testing.T) {
 	connection, err := daemonconn.NewPushConnection(ts.URL, "synthetic-key")
 	require.NoError(t, err)
 	p := &pusher{
-		connection: connection, report: &Report{},
-		opts: Options{Watch: true, Folder: config.WatchConfig{Name: "laptop"}},
+		connection: connection, report: &pushReport{},
+		opts: pushOptions{Watch: true, Folder: config.WatchConfig{Name: "laptop"}},
 	}
 	path := filepath.Join(t.TempDir(), "file.txt")
 	require.NoError(t, os.WriteFile(path, []byte("synthetic"), 0o600))

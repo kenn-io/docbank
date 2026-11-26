@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/localface"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/config"
@@ -146,7 +145,7 @@ func TestFaceCandidateBrowserWithholdsUnreadableReferenceMatch(t *testing.T) {
 	inference.Start()
 	profile, descriptor, err := config.LocalFaces()
 	require.NoError(t, err)
-	provider, err := localface.New(descriptor, func(context.Context) (string, error) { return inference.URL, nil })
+	provider, err := document.NewLocalFaceProvider(descriptor, func(context.Context) (string, error) { return inference.URL, nil })
 	require.NoError(t, err)
 	var service *processing.Service
 	ts, s := newTestServer(t, func(deps *api.Deps) {

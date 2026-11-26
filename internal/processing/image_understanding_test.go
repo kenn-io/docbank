@@ -20,7 +20,6 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/vision"
-	"go.kenn.io/docbank/document/vision/visiontest"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -36,7 +35,7 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 			http.Error(w, "invalid response", http.StatusInternalServerError)
 			return
 		}
-		_, _ = w.Write(visiontest.Completion(string(raw)))
+		_, _ = w.Write(mediatest.VisionCompletion(string(raw)))
 	}))
 	defer server.Close()
 	renderer, err := vision.New(vision.Profile{DescriptorID: vision.UnderstandingProviderID, Origin: server.URL, Model: model, TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
@@ -174,7 +173,7 @@ func TestImageUnderstandingInvalidRepliesStopAfterAllowedAttempts(t *testing.T) 
 	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(visiontest.Completion(`{}`))
+		_, _ = w.Write(mediatest.VisionCompletion(`{}`))
 	}))
 	defer server.Close()
 	renderer, err := vision.New(vision.Profile{DescriptorID: vision.UnderstandingProviderID, Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())

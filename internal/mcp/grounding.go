@@ -1,5 +1,4 @@
-// Package grounding compares answer figures with saved citations.
-package grounding
+package mcp
 
 import (
 	"errors"
@@ -9,23 +8,23 @@ import (
 	"unicode"
 )
 
-type Citation struct{ Text, Err, TextSHA256 string }
-type CitationResult struct {
+type GroundingCitation struct{ Text, Err, TextSHA256 string }
+type GroundingCitationResult struct {
 	Index      int    `json:"index"`
 	Status     string `json:"status"`
 	TextSHA256 string `json:"text_sha256,omitempty"`
 }
-type Figure struct {
+type GroundingFigure struct {
 	Text   string `json:"text"`
 	Status string `json:"status"`
 }
-type Report struct {
-	Status         string           `json:"status"`
-	Citations      []CitationResult `json:"citations"`
-	Figures        []Figure         `json:"figures"`
-	UnknownMarkers []int            `json:"unknown_markers"`
+type GroundingReport struct {
+	Status         string                    `json:"status"`
+	Citations      []GroundingCitationResult `json:"citations"`
+	Figures        []GroundingFigure         `json:"figures"`
+	UnknownMarkers []int                     `json:"unknown_markers"`
 }
-type Answer struct {
+type GroundingAnswer struct {
 	figures []normalizedFigure
 	markers []int
 }
@@ -69,8 +68,8 @@ func extractDecoded(text string) []string {
 	}
 	return figures
 }
-func Prepare(answer string) (Answer, error) {
-	a := Answer{markers: []int{}}
+func PrepareGrounding(answer string) (GroundingAnswer, error) {
+	a := GroundingAnswer{markers: []int{}}
 	answer = markers.ReplaceAllStringFunc(answer, func(m string) string {
 		n, _ := strconv.Atoi(m[1 : len(m)-1])
 		a.markers = append(a.markers, n)
@@ -78,12 +77,12 @@ func Prepare(answer string) (Answer, error) {
 	})
 	a.figures = normalizedFigures(answer)
 	if len(a.figures) > 512 || len(a.markers) > 512 {
-		return Answer{}, errors.New("answer exceeds figure or marker limit")
+		return GroundingAnswer{}, errors.New("answer exceeds figure or marker limit")
 	}
 	return a, nil
 }
-func (a Answer) Check(citations []Citation) Report {
-	report := Report{Citations: []CitationResult{}, Figures: []Figure{}, UnknownMarkers: []int{}}
+func (a GroundingAnswer) CheckGrounding(citations []GroundingCitation) GroundingReport {
+	report := GroundingReport{Citations: []GroundingCitationResult{}, Figures: []GroundingFigure{}, UnknownMarkers: []int{}}
 	values, unavailable := map[figureKey]bool{}, false
 	for i, c := range citations {
 		status := c.Err
@@ -102,7 +101,7 @@ func (a Answer) Check(citations []Citation) Report {
 		} else {
 			unavailable = true
 		}
-		report.Citations = append(report.Citations, CitationResult{Index: i + 1, Status: status, TextSHA256: c.TextSHA256})
+		report.Citations = append(report.Citations, GroundingCitationResult{Index: i + 1, Status: status, TextSHA256: c.TextSHA256})
 	}
 	missing := false
 	for _, figure := range a.figures {
@@ -120,7 +119,7 @@ func (a Answer) Check(citations []Citation) Report {
 			}
 		}
 		missing = missing || status == "missing"
-		report.Figures = append(report.Figures, Figure{Text: figure.text, Status: status})
+		report.Figures = append(report.Figures, GroundingFigure{Text: figure.text, Status: status})
 	}
 	for _, n := range a.markers {
 		if n < 1 || n > len(citations) {

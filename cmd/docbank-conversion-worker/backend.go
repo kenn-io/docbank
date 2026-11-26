@@ -18,7 +18,6 @@ import (
 	"strings"
 	"time"
 
-	"go.kenn.io/docbank/document/workerprotocol"
 	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/kit/safefileio"
 )
@@ -108,7 +107,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 			item.Retryable = true
 			return true, w.save(ctx, item)
 		}
-		status, _, err := w.backendRequest(ctx, http.MethodGet, workerprotocol.ReadyPath, nil, "", w.options.MaxResultBytes)
+		status, _, err := w.backendRequest(ctx, http.MethodGet, ReadyPath, nil, "", w.options.MaxResultBytes)
 		if err != nil || status != 200 {
 			return true, nil
 		}
@@ -163,7 +162,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 			return true, err
 		}
 	}
-	status, body, err := w.backendRequest(ctx, http.MethodGet, workerprotocol.PollPath+item.BackendID, nil, "", w.options.MaxResultBytes)
+	status, body, err := w.backendRequest(ctx, http.MethodGet, PollPath+item.BackendID, nil, "", w.options.MaxResultBytes)
 	if err != nil {
 		if errors.Is(err, errBackendOutput) {
 			item.State = stateFailure
@@ -195,7 +194,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 		item.State = stateFailure
 		return true, w.save(ctx, item)
 	}
-	status, body, err = w.backendRequest(ctx, http.MethodGet, workerprotocol.ResultPath+item.BackendID, nil, "", item.MaxResultBytes)
+	status, body, err = w.backendRequest(ctx, http.MethodGet, ResultPath+item.BackendID, nil, "", item.MaxResultBytes)
 	if err != nil {
 		if errors.Is(err, errBackendOutput) {
 			item.State = stateFailure
@@ -238,7 +237,7 @@ func (w *Worker) backendRequest(ctx context.Context, method, path string, body i
 		return 0, nil, err
 	}
 	req.Header.Set("X-Api-Key", w.options.BackendKey)
-	req.Header.Set(workerprotocol.BackendHopHeader, "1")
+	req.Header.Set(BackendHopHeader, "1")
 	req.Header.Set("Accept", "application/json")
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
@@ -248,7 +247,7 @@ func (w *Worker) backendRequest(ctx context.Context, method, path string, body i
 		return 0, nil, err
 	}
 	defer func() { _ = response.Body.Close() }()
-	if path == workerprotocol.ReadyPath || method == http.MethodPost || strings.HasPrefix(path, workerprotocol.PollPath) {
+	if path == ReadyPath || method == http.MethodPost || strings.HasPrefix(path, PollPath) {
 		limit = 16 << 10
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
@@ -306,7 +305,7 @@ func (w *Worker) submitBackendStream(ctx context.Context, item job, source io.Re
 		_ = writer.CloseWithError(err)
 		done <- err
 	}()
-	status, body, requestErr := w.backendRequest(ctx, http.MethodPost, workerprotocol.SubmitPath, reader, multi.FormDataContentType(), w.options.MaxResultBytes)
+	status, body, requestErr := w.backendRequest(ctx, http.MethodPost, SubmitPath, reader, multi.FormDataContentType(), w.options.MaxResultBytes)
 	_ = reader.Close()
 	writeErr := <-done
 	if requestErr == nil && status >= 200 && status < 300 {

@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/localface"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/kit/embedlocal"
@@ -15,7 +14,7 @@ func localFaceProfile() (processing.ProfileConfig, error) {
 	if err != nil {
 		return processing.ProfileConfig{}, err
 	}
-	provider, err := localface.New(descriptor, func(ctx context.Context) (string, error) { return localEmbeddingOrigin(ctx, embedlocal.FaceModel, nil) })
+	provider, err := document.NewLocalFaceProvider(descriptor, func(ctx context.Context) (string, error) { return localEmbeddingOrigin(ctx, embedlocal.FaceModel, nil) })
 	if err != nil {
 		return processing.ProfileConfig{}, err
 	}

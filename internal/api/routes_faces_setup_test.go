@@ -10,7 +10,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/localface"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
@@ -22,7 +21,7 @@ func TestFaceSetupRoutesRequireReviewedConsent(t *testing.T) {
 	ts, _ := newTestServer(t, func(deps *api.Deps) {
 		profile, descriptor, err := config.LocalFaces()
 		require.NoError(t, err)
-		provider, err := localface.New(descriptor, func(context.Context) (string, error) {
+		provider, err := document.NewLocalFaceProvider(descriptor, func(context.Context) (string, error) {
 			return "", errors.New("setup must not invoke inference")
 		})
 		require.NoError(t, err)

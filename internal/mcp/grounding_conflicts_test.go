@@ -1,4 +1,4 @@
-package grounding
+package mcp
 
 import (
 	"strings"
@@ -51,7 +51,7 @@ func TestCompare(t *testing.T) {
 		{"unsupported count", "The device limit is 3 devices.", "The device limit is 5 devices.", "NOT_COMPARABLE", "", "", nil, []bool{false, false}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := Compare([]Source{{tc.a, 0, len(tc.a)}, {tc.b, 0, len(tc.b)}})
+			got := CompareGrounding([]Source{{tc.a, 0, len(tc.a)}, {tc.b, 0, len(tc.b)}})
 			require.Equal(t, tc.status, got.Status)
 			require.Equal(t, tc.compared, got.Compared)
 			if tc.status != "CONFLICTING" {
@@ -98,7 +98,7 @@ func TestCompareSourceSpans(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			at := strings.Index(tc.text, tc.needle)
 			require.GreaterOrEqual(t, at, 0)
-			got := Compare([]Source{{tc.text, at, at + len(tc.needle)}, {tc.other, 0, len(tc.other)}})
+			got := CompareGrounding([]Source{{tc.text, at, at + len(tc.needle)}, {tc.other, 0, len(tc.other)}})
 			require.Equal(t, tc.status, got.Status)
 			require.Equal(t, tc.compared, got.Compared)
 			if tc.status == "CONFLICTING" {
@@ -110,7 +110,7 @@ func TestCompareSourceSpans(t *testing.T) {
 			}
 		})
 	}
-	got := Compare([]Source{{}, {Text: "The fee is $5.", Start: 0, End: 14}})
+	got := CompareGrounding([]Source{{}, {Text: "The fee is $5.", Start: 0, End: 14}})
 	require.Equal(t, "NOT_COMPARABLE", got.Status)
 	require.Equal(t, []bool{false, false}, got.Compared)
 }
