@@ -212,6 +212,39 @@ func TestOpenRenewAndReleaseResults(t *testing.T) {
 	require.Equal(t, provider.StatusReleased, released.Status)
 }
 
+func TestRootMountPrefixAcceptsVaultsAndRejectsTheRoot(t *testing.T) {
+	t.Parallel()
+	connection := testConnection
+	connection.MountPrefix = "/"
+	open, err := provider.NewOpenRequest(connection, provider.VaultAccess{
+		VaultID: firstVault.ID, VaultUUID: firstVault.VaultUUID, Actions: []provider.Action{provider.ActionRead},
+	})
+	require.NoError(t, err)
+	renew, err := provider.NewRenewRequest(open, 1)
+	require.NoError(t, err)
+	access := func(mountPath string, generation int) string {
+		return strings.NewReplacer("/documents/22222222-2222-4222-8222-222222222222", mountPath,
+			`"generation":1`, fmt.Sprintf(`"generation":%d`, generation)).Replace(readyAccess)
+	}
+	const vaultPath = "/22222222-2222-4222-8222-222222222222"
+
+	for _, c := range []struct {
+		request    provider.Request
+		generation int
+	}{{open, 1}, {renew, 2}} {
+		ready, err := provider.DecodeResponse(strings.NewReader(
+			`{`+envelope(c.request)+`,"status":"ready",`+access(vaultPath, c.generation)+`}`), c.request)
+		require.NoError(t, err, c.request.Operation)
+		require.Equal(t, "https://vaults.example.test"+vaultPath, ready.Access.Mount)
+
+		for _, root := range []string{"/", "", "//" + vaultPath[1:]} {
+			_, err = provider.DecodeResponse(strings.NewReader(
+				`{`+envelope(c.request)+`,"status":"ready",`+access(root, c.generation)+`}`), c.request)
+			require.ErrorIs(t, err, provider.ErrInvalidResponse, "%s %q", c.request.Operation, root)
+		}
+	}
+}
+
 func TestOpenAndRenewRejectResultsOutsideTheContract(t *testing.T) {
 	t.Parallel()
 	open := openRequest(t, provider.ActionRead)

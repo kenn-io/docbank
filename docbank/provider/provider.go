@@ -488,11 +488,13 @@ func validateAccess(access Access, request Request) error {
 // A mount is an address strictly under the connection's mount prefix, so a
 // result cannot send the credential anywhere else.
 func validateMount(mount string, connection Connection) error {
+	// The root prefix already ends in the slash that separates it from a vault.
+	prefix := strings.TrimSuffix(connection.MountPrefix, "/") + "/"
 	parsed, err := url.Parse(mount)
 	if err != nil || parsed.Scheme+"://"+parsed.Host != connection.Origin || parsed.User != nil ||
 		parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" || mount != parsed.String() ||
 		strings.ContainsAny(parsed.Path, "%\\") || path.Clean(parsed.Path) != parsed.Path ||
-		!strings.HasPrefix(parsed.Path, connection.MountPrefix+"/") || mount != connection.Origin+parsed.Path {
+		!strings.HasPrefix(parsed.Path, prefix) || parsed.Path == prefix || mount != connection.Origin+parsed.Path {
 		return ErrInvalidResponse
 	}
 	return nil
