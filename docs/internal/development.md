@@ -1536,12 +1536,23 @@ the head flip. Retained staged builds resume publication against current heads.
 A failed replacement leaves the old heads and waiting job intact. Successful
 replacement removes stale chunk-embedding heads and failures, and collects
 superseded lexical generations only when no root or reader still needs them.
+A completed job's record of the generation it published does not keep that
+generation; collection clears the record. Each head flip collects at most 64
+generations, so an existing backlog drains over later publications.
 
 Lexical generations share an append-only stream of build membership. Each
 generation names the ordinals up to its fixed cutoff. Collection trims only the
 stream tail above every remaining generation's cutoff. The stored chain digest
 is vault-local; metadata export computes portable digests from the generation's
 members.
+
+Rendition jobs, email bodies and package-supplied text all publish by
+appending their build to the current head's stream inside the publication
+transaction. A complete generation on a new stream is staged only when no head
+exists or another generation already extends the head's stream. When the new
+generation extends the head, publication validates only the builds after the
+head's cutoff and checks current rendition heads by membership. Any other
+generation is validated in full, which reads every segment it serves.
 
 Build reads, active rendition views and exact text resolution use repeatable-read
 snapshots. A purge committed during a read affects the next request. PostgreSQL

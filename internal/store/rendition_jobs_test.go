@@ -1677,6 +1677,65 @@ func checkRenditionJobPublishesCurrentLexicalGenerationWithoutRepeatingEgress(t 
 	assert.Equal(t, 1, completed.ProviderAttempts)
 }
 
+// A completed job remembers the generation it published, but that record
+// must not keep the generation alive once the head moves on. Otherwise every
+// publication leaves one more generation behind and the next head flip
+// rechecks all of them.
+func checkRenditionJobPublicationCollectsSupersededGenerations(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	t.Parallel()
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
+	profile := catalogProcessingProfile(t, false)
+	now := time.Now().UTC().Add(time.Second)
+	const publications = 4
+	for index := range publications {
+		request := renditionJobTestRequest(versions[index%len(versions)], profile)
+		request.Authorization.Principal = "operator:publication-" + strconv.Itoa(index)
+		// A distinct captured policy gives each publication its own job and build.
+		policy := []byte(`{"roles":[{"max_count":` + strconv.Itoa(index+1) +
+			`,"min_count":1,"role":"normalized_evidence"},{"max_count":1,"min_count":1,"role":"sanitized_markdown"},{"max_count":1,"min_count":0,"role":"structured_evidence"}],"version":1}`)
+		request.CapturedArtifactPolicy = policy
+		grantRenditionJobConsent(t, s, request)
+		job, waiter, err := s.EnqueueRenditionJob(t.Context(), request)
+		require.NoError(t, err)
+		at := now.Add(time.Duration(index) * time.Minute)
+		claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "worker:collect", at, time.Minute)
+		require.NoError(t, err)
+		_, err = s.BeginRenditionProvider(t.Context(), claim, waiter.ID,
+			at.Add(time.Second), renditionJobTestSnapshot(request))
+		require.NoError(t, err)
+		build := catalogRenditionBuild(s, profile)
+		build.ID = job.ID
+		build.CapturedArtifactPolicy = policy
+		build.CapturedArtifactPolicyFingerprint = testSHA256(policy)
+		require.NoError(t, s.StageRenditionJobBuild(t.Context(), claim, build, at.Add(2*time.Second)))
+		_, err = s.PublishRenditionJob(t.Context(), claim, at.Add(3*time.Second))
+		require.NoError(t, err)
+	}
+
+	head, err := s.ActiveLexicalGeneration(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, publications, head.BuildCount)
+	var generations, superseded, streamBuilds, jobReferences int
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT
+		(SELECT COUNT(*) FROM rendition_lexical_generations),
+		(SELECT COUNT(*) FROM rendition_lexical_superseded),
+		(SELECT COUNT(*) FROM rendition_lexical_stream_builds),
+		(SELECT COUNT(*) FROM rendition_jobs
+		 WHERE lexical_generation_id IS NOT NULL AND lexical_generation_id<>$1)`, head.ID,
+	).Scan(&generations, &superseded, &streamBuilds, &jobReferences))
+	assert.Equal(t, []int{1, 0, publications, 0},
+		[]int{generations, superseded, streamBuilds, jobReferences},
+		"only the head survives, membership stays one row per build, and completed jobs name no collected generation")
+
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())),
+		"collected generations leave no dangling job reference behind")
+}
+
 func checkPublishRenditionJobRejectsRevokedEgressAndPreservesPreviousHead(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	t.Parallel()

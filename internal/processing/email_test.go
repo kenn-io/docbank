@@ -186,7 +186,7 @@ type emailFaultCatalog struct {
 	*store.Store
 
 	inventory func(context.Context, store.EmailPublication) (store.EmailMetadataView, error)
-	body      func(context.Context, store.EmailBodyPublication) error
+	body      func(context.Context, store.EmailBodyPublication) (store.LexicalGeneration, error)
 	stage     func(context.Context, store.RenditionBuildRecord) error
 	buildRead func(context.Context, string) (store.RenditionBuildRecord, error)
 }
@@ -197,7 +197,7 @@ func (f emailFaultCatalog) PublishEmailGeneration(ctx context.Context, p store.E
 	}
 	return f.Store.PublishEmailGeneration(ctx, p)
 }
-func (f emailFaultCatalog) PublishEmailBody(ctx context.Context, p store.EmailBodyPublication) error {
+func (f emailFaultCatalog) PublishEmailBody(ctx context.Context, p store.EmailBodyPublication) (store.LexicalGeneration, error) {
 	if f.body != nil {
 		return f.body(ctx, p)
 	}
@@ -285,7 +285,9 @@ func TestEmailPipelineFailureBoundariesAndRetry(t *testing.T) {
 					return store.EmailMetadataView{}, injected
 				}
 			case "body publication":
-				catalog.body = func(context.Context, store.EmailBodyPublication) error { return injected }
+				catalog.body = func(context.Context, store.EmailBodyPublication) (store.LexicalGeneration, error) {
+					return store.LexicalGeneration{}, injected
+				}
 			case "body bytes":
 				blobs.open = func(ctx context.Context, hash string) (packstore.VerifiedReadCloser, int64, error) {
 					r, size, err := f.blobs.OpenStreamContext(ctx, hash)
@@ -439,12 +441,12 @@ func TestEmailPipelineBackfillJoinsFailuresAndProgresses(t *testing.T) {
 	two := f.add(t, "two.eml", emailPipelineSource, "message/rfc822")
 	three := f.add(t, "three.eml", emailPipelineSource, "message/rfc822")
 	firstErr, secondErr := errors.New("synthetic first"), errors.New("synthetic second")
-	catalog := emailFaultCatalog{Store: f.catalog, body: func(ctx context.Context, p store.EmailBodyPublication) error {
+	catalog := emailFaultCatalog{Store: f.catalog, body: func(ctx context.Context, p store.EmailBodyPublication) (store.LexicalGeneration, error) {
 		switch p.RenditionAttachment.ContentVersionID {
 		case one.Version.ID:
-			return firstErr
+			return store.LexicalGeneration{}, firstErr
 		case two.Version.ID:
-			return secondErr
+			return store.LexicalGeneration{}, secondErr
 		}
 		return f.catalog.PublishEmailBody(ctx, p)
 	}}
@@ -487,7 +489,7 @@ func TestEmailPipelinePreservesLegacyAndUnrelatedHeads(t *testing.T) {
 	pf := publicationFixture{catalog: f.catalog, blobs: f.blobs, profile: processingProfile(t), evidencePolicy: ep, renditionPolicy: rp, versionID: target.Version.ID}
 	p, err := NewArtifactPublisher(f.catalog, f.blobs)
 	require.NoError(t, err)
-	_, err = p.PublishRendition(t.Context(), pf.stageForSource(t, publicationIDs{build: processingHash("other build"), attachment: processingHash("other attachment"), generation: processingHash("other projection")}, "unrelatedpreservedmarker", "unrelatedpreservedmarker", target.Version.ID, target.Version.BlobHash))
+	_, err = p.PublishRendition(t.Context(), pf.stageForSource(t, publicationIDs{build: processingHash("other build"), attachment: processingHash("other attachment")}, "unrelatedpreservedmarker", "unrelatedpreservedmarker", target.Version.ID, target.Version.BlobHash))
 	require.NoError(t, err)
 	old, err := f.catalog.EmailMetadata(t.Context(), target.Version.ID)
 	require.NoError(t, err)
@@ -567,7 +569,7 @@ func TestEmailPipelineSuppressionRaces(t *testing.T) {
 					return f.catalog.StageEmailBodyBuild(ctx, b)
 				}
 			default:
-				catalog.body = func(ctx context.Context, p store.EmailBodyPublication) error {
+				catalog.body = func(ctx context.Context, p store.EmailBodyPublication) (store.LexicalGeneration, error) {
 					pause()
 					return f.catalog.PublishEmailBody(ctx, p)
 				}
@@ -629,12 +631,12 @@ func TestEmailPipelineStaleProjectionRebuilds(t *testing.T) {
 	target := f.add(t, "message.eml", emailPipelineSource, "message/rfc822")
 	later := f.add(t, "later.eml", "Content-Type: text/plain\r\n\r\nlaterprojectionmarker", "message/rfc822")
 	first := true
-	catalog := emailFaultCatalog{Store: f.catalog, body: func(ctx context.Context, p store.EmailBodyPublication) error {
+	catalog := emailFaultCatalog{Store: f.catalog, body: func(ctx context.Context, p store.EmailBodyPublication) (store.LexicalGeneration, error) {
 		if first {
 			first = false
 			_, err := EnsureEmailTarget(ctx, f.catalog, f.blobs, f.spool, later)
 			if err != nil {
-				return err
+				return store.LexicalGeneration{}, err
 			}
 		}
 		return f.catalog.PublishEmailBody(ctx, p)
@@ -695,7 +697,9 @@ func TestEmailPipelineBodyObservationsAndStagedRetry(t *testing.T) {
 			staged = b
 			return f.catalog.StageEmailBodyBuild(ctx, b)
 		},
-		body: func(context.Context, store.EmailBodyPublication) error { return injected },
+		body: func(context.Context, store.EmailBodyPublication) (store.LexicalGeneration, error) {
+			return store.LexicalGeneration{}, injected
+		},
 	}
 	view, err := ensureEmailTarget(t.Context(), catalog, f.blobs, f.spool, target)
 	require.ErrorIs(t, err, injected)
@@ -754,7 +758,9 @@ func TestEmailPipelineConcurrentFirstBuildInsertionReusesCompletion(t *testing.T
 		target := f.add(t, "message.eml", emailPipelineSource, "message/rfc822")
 		injected := errors.New("synthetic competing staged-only producer")
 		var first store.RenditionBuildRecord
-		competing := emailFaultCatalog{Store: f.catalog, body: func(context.Context, store.EmailBodyPublication) error { return injected }}
+		competing := emailFaultCatalog{Store: f.catalog, body: func(context.Context, store.EmailBodyPublication) (store.LexicalGeneration, error) {
+			return store.LexicalGeneration{}, injected
+		}}
 		catalog := emailFaultCatalog{Store: f.catalog, buildRead: func(ctx context.Context, id string) (store.RenditionBuildRecord, error) {
 			// Hold the actual absent read result across the competing first insertion.
 			absent, err := f.catalog.RenditionBuild(ctx, id)

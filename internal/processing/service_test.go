@@ -786,7 +786,7 @@ func TestProcessingServiceCoverageReportsRebuildWhilePreviousGenerationServes(t 
 	publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
 	require.NoError(t, err)
 	_, err = publisher.PublishRendition(t.Context(), fixture.stage(t,
-		publicationIDs{"coverage-old-build", "coverage-old-attachment", "coverage-old-generation"},
+		publicationIDs{"coverage-old-build", "coverage-old-attachment"},
 		"old searchable evidence", "old markdown",
 	))
 	require.NoError(t, err)

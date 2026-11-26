@@ -309,9 +309,11 @@ func validateEmailBodyBuild(v EmailMetadataView, build RenditionBuildRecord) err
 
 // PublishEmailBody uses the ordinary rendition publisher's transaction so the
 // exact email association, selected rendition, and complete lexical projection
-// either become visible together or remain unchanged.
-func (s *Store) PublishEmailBody(ctx context.Context, p EmailBodyPublication) error {
-	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+// either become visible together or remain unchanged. It returns the lexical
+// generation that now serves the body.
+func (s *Store) PublishEmailBody(ctx context.Context, p EmailBodyPublication) (LexicalGeneration, error) {
+	var generation LexicalGeneration
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		v, err := selectedEmailAttachment(ctx, tx, p.EmailAttachmentID)
 		if err != nil {
 			return err
@@ -345,9 +347,17 @@ func (s *Store) PublishEmailBody(ctx context.Context, p EmailBodyPublication) er
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			return err
 		}
-		if err := s.publishRenditionAttachmentsAndLexicalHeadsTx(ctx, tx, []renditionPublicationPair{{attachment: a, head: p.RenditionHead}}, p.LexicalGenerationID, nil); err != nil {
+		generation, err = extendLexicalHeadTx(ctx, tx, []string{a.BuildID}, s.postgresSchema != "")
+		if err != nil {
+			return err
+		}
+		if err := s.publishRenditionAttachmentsAndLexicalHeadsTx(ctx, tx, []renditionPublicationPair{{attachment: a, head: p.RenditionHead}}, generation.ID, nil); err != nil {
 			return err
 		}
 		return insertEmailBodyResult(ctx, tx, v.Version.ID, r)
 	})
+	if err != nil {
+		return LexicalGeneration{}, err
+	}
+	return generation, nil
 }

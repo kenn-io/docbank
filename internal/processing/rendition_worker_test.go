@@ -1197,16 +1197,8 @@ func checkRenditionWorkerReclaimsStagedBuildWithoutCallingProviderAgain(t *testi
 	result, err := document.RenderRenditionWithResume(
 		t.Context(), provider, execution.Upload, execution.Authorization, nil, nil)
 	require.NoError(t, err)
-	staged, err := buildRenditionJobCandidate(
-		work, execution, result, claim.Epoch, started)
+	staged, err := buildRenditionJobCandidate(work, execution, result, started)
 	require.NoError(t, err)
-	assert.Equal(t, renditionJobGenerationID(job.ID, claim.Epoch), staged.LexicalGenerationID)
-	nextEpoch := claim.Epoch + 1
-	reclaimedCandidate, err := buildRenditionJobCandidate(
-		work, execution, result, nextEpoch, started)
-	require.NoError(t, err)
-	assert.Equal(t, renditionJobGenerationID(job.ID, nextEpoch),
-		reclaimedCandidate.LexicalGenerationID)
 	crashedWorker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs, Runtime: runtime,
 		Gate:  newTestOperationGate(),
