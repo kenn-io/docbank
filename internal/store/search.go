@@ -1616,7 +1616,14 @@ func appendLexicalGenerationTx(ctx context.Context, tx *sql.Tx, buildIDs []strin
 }
 
 // dropLexicalGenerationTx trims only the tail no retained generation can read.
+// A completed job's record of the generation it published is history, not a
+// reader, so it is cleared rather than left dangling.
 func dropLexicalGenerationTx(ctx context.Context, tx *sql.Tx, generationID string) (int, error) {
+	if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET lexical_generation_id=NULL
+		WHERE phase='published' AND lexical_generation_id=$1`, generationID); err != nil {
+		return 0, fmt.Errorf("releasing collected lexical generation %s from completed jobs: %w",
+			generationID, err)
+	}
 	var streamID string
 	if err := tx.QueryRowContext(ctx, `SELECT stream_id FROM rendition_lexical_generations
 		WHERE generation_id=$1`, generationID).Scan(&streamID); err != nil {
@@ -1785,10 +1792,16 @@ func (s *Store) publishLexicalHeadTx(ctx context.Context, tx *sql.Tx, generation
 	return err
 }
 
-// collectSupersededLexicalGenerationsTx removes every superseded generation
-// nothing can read any more: not the head, not held by an active root, not
-// pinned by a live reader lease, and not the staged generation of a rendition
-// job. Index rows for builds that no remaining generation names go with them.
+// lexicalCollectionBatch bounds how many superseded generations one head flip
+// collects. A large backlog then drains across later publications instead of
+// holding the writer for one long transaction.
+const lexicalCollectionBatch = 64
+
+// collectSupersededLexicalGenerationsTx removes up to lexicalCollectionBatch
+// superseded generations nothing can read any more: not the head, not held by
+// an active root, not pinned by a live reader lease, and not the staged
+// generation of an unfinished rendition job. Index rows for builds that no
+// remaining generation names go with them.
 func (s *Store) collectSupersededLexicalGenerationsTx(
 	ctx context.Context, tx *sql.Tx,
 ) (int, error) {
@@ -1800,7 +1813,8 @@ func (s *Store) collectSupersededLexicalGenerationsTx(
 		                  WHERE r.target_kind='lexical_generation' AND r.target_id=g.generation_id
 		                    AND r.active=1 AND (r.expires_at IS NULL OR r.expires_at>$1))
 		  AND NOT EXISTS (SELECT 1 FROM rendition_jobs j
-		                  WHERE j.lexical_generation_id=g.generation_id)
+		                  WHERE j.lexical_generation_id=g.generation_id
+		                    AND j.phase<>'published')
 		ORDER BY g.generation_id`, nowRFC3339())
 	if err != nil {
 		return 0, err
@@ -1808,6 +1822,9 @@ func (s *Store) collectSupersededLexicalGenerationsTx(
 	pinned := s.pinnedLexicalGenerationIDs()
 	removed := 0
 	for _, generationID := range candidates {
+		if removed == lexicalCollectionBatch {
+			break
+		}
 		if _, live := pinned[generationID]; live {
 			continue
 		}

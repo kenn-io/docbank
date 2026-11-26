@@ -1623,8 +1623,8 @@ func TestProcessingMetadataClearsPublishedJobGenerationAfterCollection(t *testin
 			AttachmentID: publishedWaiter.AttachmentID, PublishedAt: now.Add(5 * time.Second).Format(timestampLayout)},
 		newGeneration.ID))
 
-	// Published job generations survive metadata restoration even after their
-	// inactive job roots have been discarded from the export.
+	// The head flip collects the generation the job published. Restoring
+	// twice proves the export no longer names it anywhere.
 	for range 2 {
 		var exported bytes.Buffer
 		require.NoError(t, s.ExportMetadata(t.Context(), &exported))
@@ -1633,9 +1633,6 @@ func TestProcessingMetadataClearsPublishedJobGenerationAfterCollection(t *testin
 		s = restored
 	}
 
-	report, err := s.PurgeDerivatives(t.Context(), PurgeRequest{})
-	require.NoError(t, err)
-	assert.Equal(t, 1, report.RemovedLexicalGenerations)
 	require.NoError(t, s.ValidateMetadata(t.Context()))
 	var retainedGeneration sql.NullString
 	require.NoError(t, s.db.QueryRowContext(t.Context(),

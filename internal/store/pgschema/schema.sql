@@ -2443,6 +2443,9 @@ CREATE INDEX rendition_artifacts_blob
 CREATE INDEX rendition_jobs_claimable
     ON {{schema}}.rendition_jobs(state, available_at, lease_expires_at, job_id);
 
+CREATE INDEX rendition_jobs_lexical_generation
+    ON {{schema}}.rendition_jobs(lexical_generation_id);
+
 CREATE INDEX current_rendition_roots_target
     ON {{schema}}.current_rendition_roots(target_kind, target_id, root_kind);
 

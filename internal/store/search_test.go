@@ -7,6 +7,7 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -2510,6 +2511,59 @@ func TestPublishCollectsSupersededLexicalGenerationsWithoutCopyingText(t *testin
 	generations, indexRows, ftsRows = counts()
 	assert.Equal(t, []int{1, 4, 4}, []int{generations, indexRows, ftsRows},
 		"the released generation is collected by the next head flip")
+}
+
+// A vault that already holds a large backlog of superseded generations must
+// not stall one publication while it collects all of them. Each head flip
+// takes one batch, and later flips finish the rest.
+func TestPublishDrainsSupersededLexicalBacklogInBatches(t *testing.T) {
+	t.Parallel()
+	s, _ := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	publish := func(index int) {
+		t.Helper()
+		seed := "backlog-" + strconv.Itoa(index)
+		sourceHash := testSHA256([]byte(seed + "-source"))
+		node, err := s.CreateFile(ctx, s.RootID(), seed+".pdf", sourceHash, 7, "application/pdf")
+		require.NoError(t, err)
+		build := lexicalSearchBuild(s, profile, testSHA256([]byte(seed+"-build")), seed+" phrase")
+		build.SourceSHA256 = sourceHash
+		require.NoError(t, s.StageRenditionBuild(ctx, build))
+		attachment := RenditionAttachmentRecord{
+			ID: testSHA256([]byte(seed + "-attachment")), VaultID: s.VaultID(),
+			ContentVersionID: node.CurrentVersionID, BuildID: build.ID, Profile: profile,
+			AttachedAt: "2026-08-22T10:00:00.000000000Z",
+		}
+		require.NoError(t, publishRenditionForTest(t, s, attachment,
+			"2026-08-22T10:01:00.000000000Z", testSHA256([]byte(seed+"-generation"))))
+	}
+	superseded := func() int {
+		t.Helper()
+		var count int
+		require.NoError(t, s.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM rendition_lexical_superseded`).Scan(&count))
+		return count
+	}
+
+	// Reader leases hold every generation, building a backlog the next
+	// flips can collect once the leases go away.
+	var leases []*LexicalGenerationLease
+	for index := range lexicalCollectionBatch + 2 {
+		publish(index)
+		lease, err := s.AcquireLexicalGeneration(ctx)
+		require.NoError(t, err)
+		leases = append(leases, lease)
+	}
+	require.Equal(t, lexicalCollectionBatch+1, superseded())
+	for _, lease := range leases {
+		require.NoError(t, lease.Release())
+	}
+
+	publish(lexicalCollectionBatch + 2)
+	assert.Equal(t, 2, superseded(), "one flip collects one batch")
+	publish(lexicalCollectionBatch + 3)
+	assert.Zero(t, superseded(), "the next flip collects the rest")
 }
 
 // Derivative purge holds its reader gate across a whole write transaction,
