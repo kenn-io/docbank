@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/reporting"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/report"
 	"io"
@@ -310,9 +309,9 @@ func TestMCPReportLargeSummaryKeepsHandle(t *testing.T) {
 	member := f.addFile(t, "alpha.txt", "alpha")
 	budget := report.NewBudget(report.DefaultBudgetBytes)
 	defer func() { _ = budget.Close() }()
-	cache := reporting.NewCache(time.Now, budget)
+	cache := store.NewReportCache(time.Now, budget)
 	defer cache.InvalidateAll()
-	service := &reporting.Service{Source: warningReportSource{f.catalog}}
+	service := &store.ReportService{Source: warningReportSource{f.catalog}}
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/search-exports"), "/")

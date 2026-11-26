@@ -32,7 +32,6 @@ import (
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
-	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -1699,10 +1698,10 @@ func TestStorageRepackRoundTrip(t *testing.T) {
 	// pack is old enough for min_age without the test waiting.
 	c, _, _ := newTrackedClient(t, serverKey, func(deps *api.Deps) {
 		deps.RepackPage = func(ctx context.Context, s *store.Store, blobs *blob.Store,
-			opts internalmaintenance.RepackOptions,
-		) (internalmaintenance.RepackReport, error) {
+			opts processing.RepackOptions,
+		) (processing.RepackReport, error) {
 			opts.Now = time.Now().Add(time.Second)
-			return internalmaintenance.Repack(ctx, s, blobs, opts)
+			return processing.Repack(ctx, s, blobs, opts)
 		}
 	})
 	for name, content := range map[string]string{

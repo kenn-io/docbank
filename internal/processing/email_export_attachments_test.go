@@ -18,7 +18,6 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/canonical"
-	"go.kenn.io/docbank/internal/exporter"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -137,7 +136,7 @@ func TestExportAttachmentVolumeJobRetryAndReadback(t *testing.T) {
 	request := bundle.JobRequest{OperationID: uuid.NewString(), PlanID: plan.ID, Fingerprint: plan.Fingerprint}
 	job, err := f.catalog.QueueExportJob(t.Context(), "owner", request)
 	require.NoError(t, err)
-	worker, err := exporter.New(f.catalog, f.blobs, t.TempDir(), newTestOperationGate())
+	worker, err := NewExportWorker(f.catalog, f.blobs, t.TempDir(), newTestOperationGate())
 	require.NoError(t, err)
 	processed, err := worker.RunOne(t.Context())
 	require.NoError(t, err)

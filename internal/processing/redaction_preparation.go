@@ -11,7 +11,6 @@ import (
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/pdfproduction"
-	"go.kenn.io/docbank/internal/production"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -31,7 +30,7 @@ type RedactionPreparationRequest struct {
 }
 
 type RedactionPreparation struct {
-	production.NativePreparation
+	pdfproduction.NativePreparation
 
 	Contract  string            `json:"contract"`
 	Selection store.PageBinding `json:"selection"`
@@ -66,7 +65,7 @@ func validateRedactionPreparation(result RedactionPreparation, maxBytes int64) e
 	if result.Selection.Source != result.Evidence.Source {
 		return ErrRedactionPreparationIntegrity
 	}
-	if err := production.ValidateNativePreparation(result.NativePreparation); err != nil {
+	if err := pdfproduction.ValidateNativePreparation(result.NativePreparation); err != nil {
 		return err
 	}
 	if _, exceeded, err := canonical.BoundedSize(result, maxBytes); err != nil {
@@ -111,7 +110,7 @@ func (service *Service) prepareNativePDF(ctx context.Context, request RedactionP
 	if err != nil {
 		return result, preparationFailure(err)
 	}
-	prepared, err := production.PrepareNativePDF(runCtx, production.NativePreparationInput{
+	prepared, err := pdfproduction.PrepareNativePDF(runCtx, pdfproduction.NativePreparationInput{
 		PDF: pdfproduction.Source{StagingDirectory: op.directory, Reader: bytes.NewReader(data), Size: int64(len(data)),
 			SHA256: request.Selection.Source.SHA256},
 		Inspection: inspection, PageRuntimeFingerprint: runtime.Fingerprint(),
@@ -136,7 +135,7 @@ func (service *Service) prepareNativePDF(ctx context.Context, request RedactionP
 
 func preparationFailure(err error) error {
 	var renderProblem *redaction.Problem
-	var alignmentProblem *production.Problem
+	var alignmentProblem *pdfproduction.Problem
 	switch {
 	case errors.Is(err, pagerender.ErrUnavailable):
 		return fmt.Errorf("%w: %w", ErrRedactionPreparationUnavailable, err)
@@ -144,7 +143,7 @@ func preparationFailure(err error) error {
 		return fmt.Errorf("%w: %w", ErrRedactionPreparationIntegrity, err)
 	case errors.Is(err, pagerender.ErrUnsupported):
 		return fmt.Errorf("%w: %w", ErrRedactionPreparationUnsupported, err)
-	case errors.Is(err, production.ErrNativePreparationLimit),
+	case errors.Is(err, pdfproduction.ErrNativePreparationLimit),
 		errors.As(err, &renderProblem) && renderProblem.Code == "render_limit":
 		return fmt.Errorf("%w: %w", ErrRedactionPreparationLimit, err)
 	case errors.As(err, &alignmentProblem) && alignmentProblem.Code == "mapping_incomplete":

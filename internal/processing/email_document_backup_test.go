@@ -13,7 +13,6 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/backup"
@@ -93,7 +92,7 @@ func TestEmailDocumentsRealBackupRestoreAndRetry(t *testing.T) {
 		for i, item := range page.Items {
 			require.Equal(t, receipt.Relations[i], item.Relation)
 		}
-		_, err = maintenance.GarbageCollect(t.Context(), restored, bs, maintenance.GCOptions{})
+		_, err = processing.GarbageCollect(t.Context(), restored, bs, processing.GCOptions{})
 		require.NoError(t, err)
 		for _, identity := range []document.EmailDocumentIdentity{request.Parent, *receipt.Relations[0].Child} {
 			stream, size, err := bs.OpenStreamContext(t.Context(), identity.SHA256)

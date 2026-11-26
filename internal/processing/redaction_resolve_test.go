@@ -14,7 +14,7 @@ import (
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/canonical"
-	"go.kenn.io/docbank/internal/production"
+	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/redactiontest"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -82,7 +82,7 @@ func TestRedactionResolveFreshEvidence(t *testing.T) {
 	forged.Map.EvidenceSHA256 = forged.EvidenceSHA256
 	_, forged.Map.SHA256, err = redaction.CanonicalTextMap(forged.Map)
 	require.NoError(t, err)
-	require.NoError(t, production.ValidateNativePreparationDerivation(forged.NativePreparation))
+	require.NoError(t, pdfproduction.ValidateNativePreparationDerivation(forged.NativePreparation))
 	masks := []RedactionMask{{ID: uuid.New(), Selector: redaction.Selector{Kind: "page", MapSHA256: forged.Map.SHA256, Pages: []int{1}}}}
 	_, err = f.service.ResolveNativePDF(t.Context(), RedactionResolveRequest{Preparation: forged, Masks: masks}, runtime)
 	require.ErrorIs(t, err, ErrRedactionPreparationChanged)

@@ -14,7 +14,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"go.kenn.io/docbank/internal/ingest"
-	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -81,7 +81,7 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 	}) (*storagePackOutput, error) {
 		out := &storagePackOutput{}
 		err := g.maintainContext(ctx, func() error {
-			report, err := internalmaintenance.Pack(ctx, d.Store, d.Blobs, in.Body.MaxBytes)
+			report, err := processing.Pack(ctx, d.Store, d.Blobs, in.Body.MaxBytes)
 			if err != nil {
 				return FromMaintenanceError(err)
 			}
@@ -414,7 +414,7 @@ func ingestSizeClass(class ingest.SizeClass) IngestSizeClass {
 	return IngestSizeClass{Files: class.Files, Bytes: class.Bytes}
 }
 
-func storagePackReport(report internalmaintenance.PackReport) StoragePackReport {
+func storagePackReport(report processing.PackReport) StoragePackReport {
 	stats := report.Stats
 	return StoragePackReport{
 		PacksSealed: stats.PacksSealed, BlobsPacked: stats.BlobsPacked, BytesPacked: stats.BytesPacked,
@@ -431,7 +431,7 @@ func storagePackReport(report internalmaintenance.PackReport) StoragePackReport 
 	}
 }
 
-func storageRepackReport(stats internalmaintenance.RepackReport) StorageRepackReport {
+func storageRepackReport(stats processing.RepackReport) StorageRepackReport {
 	return StorageRepackReport{
 		MappingsPruned: stats.MappingsPruned, PacksSelected: stats.PacksSelected,
 		PacksRewritten: stats.PacksRewritten, PacksSealed: stats.PacksSealed,
@@ -443,12 +443,12 @@ func storageRepackReport(stats internalmaintenance.RepackReport) StorageRepackRe
 
 func runRepack(
 	ctx context.Context, d Deps, maxBytes int64, minAge time.Duration, minDeadBytes int64,
-) (internalmaintenance.RepackReport, error) {
-	var total internalmaintenance.RepackReport
+) (processing.RepackReport, error) {
+	var total processing.RepackReport
 	var cursor string
 	repackPage := d.RepackPage
 	if repackPage == nil {
-		repackPage = internalmaintenance.Repack
+		repackPage = processing.Repack
 	}
 	for {
 		remainingBytes := maxBytes
@@ -460,9 +460,9 @@ func runRepack(
 			}
 		}
 		page, err := repackPage(ctx, d.Store, d.Blobs,
-			internalmaintenance.RepackOptions{
-				Budget: internalmaintenance.Budget{
-					MaxObjects: internalmaintenance.DefaultMaxObjects,
+			processing.RepackOptions{
+				Budget: processing.MaintenanceBudget{
+					MaxObjects: processing.DefaultMaintenanceMaxObjects,
 					MaxBytes:   remainingBytes,
 					Cursor:     cursor,
 				},
@@ -485,7 +485,7 @@ func runRepack(
 	}
 }
 
-func addRepackReport(total *internalmaintenance.RepackReport, page internalmaintenance.RepackReport) {
+func addRepackReport(total *processing.RepackReport, page processing.RepackReport) {
 	total.MappingsPruned += page.MappingsPruned
 	total.PacksSelected += page.PacksSelected
 	total.PacksRewritten += page.PacksRewritten
@@ -559,10 +559,10 @@ func runGC(ctx context.Context, d Deps, run bool) (GCReport, error) {
 	}
 	var cursor string
 	for {
-		page, err := internalmaintenance.GarbageCollect(ctx, d.Store, d.Blobs,
-			internalmaintenance.GCOptions{
-				Budget: internalmaintenance.Budget{
-					MaxObjects: internalmaintenance.DefaultMaxObjects, Cursor: cursor,
+		page, err := processing.GarbageCollect(ctx, d.Store, d.Blobs,
+			processing.GCOptions{
+				Budget: processing.MaintenanceBudget{
+					MaxObjects: processing.DefaultMaintenanceMaxObjects, Cursor: cursor,
 				},
 				DryRun: !run,
 			})
@@ -640,13 +640,13 @@ func runVerify(ctx context.Context, d Deps) (VerifyReport, error) {
 	}
 	verifyPage := d.VerifyPage
 	if verifyPage == nil {
-		verifyPage = internalmaintenance.Verify
+		verifyPage = processing.Verify
 	}
 	var cursor string
 	for {
 		page, err := verifyPage(ctx, d.Store, d.Blobs,
-			internalmaintenance.VerifyOptions{Budget: internalmaintenance.Budget{
-				MaxObjects: internalmaintenance.DefaultMaxObjects, Cursor: cursor,
+			processing.VerifyOptions{Budget: processing.MaintenanceBudget{
+				MaxObjects: processing.DefaultMaintenanceMaxObjects, Cursor: cursor,
 			}})
 		if err != nil {
 			if ctx.Err() != nil {

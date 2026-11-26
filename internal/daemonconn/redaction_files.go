@@ -10,7 +10,6 @@ import (
 
 	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
-	"go.kenn.io/docbank/internal/production"
 )
 
 var ErrInvalidRedactionInput = errors.New("invalid redaction input")
@@ -70,7 +69,7 @@ func ReadRedactionInputs(ctx context.Context, preparationPath, masksPath string)
 	if err := processing.ValidateRedactionPreparation(result.Preparation); err != nil {
 		return result, invalidRedactionInput(err)
 	}
-	if err := production.ValidateNativePreparationDerivation(result.Preparation.NativePreparation); err != nil {
+	if err := pdfproduction.ValidateNativePreparationDerivation(result.Preparation.NativePreparation); err != nil {
 		return result, invalidRedactionInput(err)
 	}
 	data, err = ReadRedactionFile(ctx, masksPath, processing.MaxRedactionMaskBytes)

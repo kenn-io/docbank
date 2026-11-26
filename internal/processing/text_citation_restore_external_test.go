@@ -10,7 +10,6 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/backup"
@@ -27,9 +26,9 @@ func TestResolveTextCitationPhysicalRestore(t *testing.T) {
 		require.NoError(t, err)
 		require.Contains(t, original.Text, "aé界🙂z")
 		f.ReplaceSource(t)
-		_, err = maintenance.GarbageCollect(t.Context(), f.Catalog, f.Blobs, maintenance.GCOptions{})
+		_, err = processing.GarbageCollect(t.Context(), f.Catalog, f.Blobs, processing.GCOptions{})
 		require.NoError(t, err)
-		_, err = maintenance.Pack(t.Context(), f.Catalog, f.Blobs, 1<<20)
+		_, err = processing.Pack(t.Context(), f.Catalog, f.Blobs, 1<<20)
 		require.NoError(t, err)
 		physical, err := f.Catalog.PhysicalContent(t.Context(), f.Citation.RenditionSHA256)
 		require.NoError(t, err)

@@ -23,7 +23,7 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/exporter"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -168,7 +168,7 @@ func exportTestLease(t *testing.T, url string) *daemonLease {
 type nativeExportFixture struct {
 	catalog      *store.Store
 	blobs        *blob.Store
-	worker       *exporter.Worker
+	worker       *processing.ExportWorker
 	connection   *daemonconn.Connection
 	address      string
 	lease        *daemonLease
@@ -187,7 +187,7 @@ func newNativeExportFixture(t *testing.T) *nativeExportFixture {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
 	gate := api.NewOperationGate()
-	worker, err := exporter.New(catalog, blobs, root, gate)
+	worker, err := processing.NewExportWorker(catalog, blobs, root, gate)
 	require.NoError(t, err)
 	cfg := config.Default()
 	cfg.Server.APIKey = "synthetic-export-key"

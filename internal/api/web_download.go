@@ -25,7 +25,7 @@ import (
 	"sync"
 	"time"
 
-	"go.kenn.io/docbank/internal/reporting"
+	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/safefileio"
 	_ "golang.org/x/image/webp" // Register WebP decoding for browser previews.
 )
@@ -227,7 +227,7 @@ func registerWebDownload(
 	d Deps,
 	downloads *webDownloadRegistry,
 	sessions *webSessionRegistry,
-	reports *reporting.Cache,
+	reports *store.ReportCache,
 ) {
 	mux.HandleFunc("POST "+webDownloadPreparePath, func(w http.ResponseWriter, r *http.Request) {
 		if !enabled || d.WebURL == "" {

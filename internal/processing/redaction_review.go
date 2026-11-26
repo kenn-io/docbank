@@ -6,7 +6,6 @@ import (
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/pdfproduction"
-	"go.kenn.io/docbank/internal/production"
 )
 
 // BuildRedactionReview binds a decision to an explicit qualified native recipe.
@@ -74,7 +73,7 @@ func prepareRedactionReview(prep RedactionPreparation, masks []RedactionMask,
 	if err := ValidateRedactionPreparation(prep); err != nil {
 		return result, nil, fmt.Errorf("%w: %w", ErrRedactionInvalidPreparation, err)
 	}
-	if err := production.ValidateNativePreparationDerivation(prep.NativePreparation); err != nil {
+	if err := pdfproduction.ValidateNativePreparationDerivation(prep.NativePreparation); err != nil {
 		return result, nil, fmt.Errorf("%w: %w", ErrRedactionInvalidPreparation, err)
 	}
 	decisions := make([]redaction.Decision, len(masks))
@@ -117,7 +116,7 @@ func resolveRedactionReview(textMap redaction.TextMap, result RedactionReview,
 
 func redactionPreparationDigest(prep RedactionPreparation) (string, error) {
 	projection := struct {
-		production.NativePreparation
+		pdfproduction.NativePreparation
 
 		Contract  string             `json:"contract"`
 		Selection NativePDFSelection `json:"selection"`

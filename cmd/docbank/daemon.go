@@ -43,7 +43,6 @@ import (
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/mailbox"
-	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	docmcp "go.kenn.io/docbank/internal/mcp"
 	"go.kenn.io/docbank/internal/pdfstamp"
 	"go.kenn.io/docbank/internal/processing"
@@ -716,18 +715,18 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		return fmt.Errorf("starting package import worker: %w", err)
 	}
 	if cfg.Storage.PackInterval.Std() > 0 {
-		packRun := func(ctx context.Context) (internalmaintenance.PackReport, error) {
-			var report internalmaintenance.PackReport
+		packRun := func(ctx context.Context) (processing.PackReport, error) {
+			var report processing.PackReport
 			err := operationGate.MaintainContext(ctx, func() error {
 				var err error
-				report, err = internalmaintenance.Pack(
+				report, err = processing.Pack(
 					ctx, s, blobs, cfg.Storage.PackMaxBytes)
 				return err
 			})
 			return report, err
 		}
 		if err := jobSupervisor.StartWorker("storage:pack", func(ctx context.Context) error {
-			return internalmaintenance.RunPackSchedule(
+			return processing.RunPackSchedule(
 				ctx, cfg.Storage.PackInterval.Std(), packRun, logger)
 		}); err != nil {
 			return fmt.Errorf("starting automatic packing: %w", err)
@@ -986,12 +985,12 @@ func listenLocalDiscovery(ctx context.Context, listener net.Listener) (net.Liste
 var repackNow func() time.Time
 
 func daemonRepackPage(
-	ctx context.Context, s *store.Store, blobs *blob.Store, opts internalmaintenance.RepackOptions,
-) (internalmaintenance.RepackReport, error) {
+	ctx context.Context, s *store.Store, blobs *blob.Store, opts processing.RepackOptions,
+) (processing.RepackReport, error) {
 	if repackNow != nil {
 		opts.Now = repackNow()
 	}
-	return internalmaintenance.Repack(ctx, s, blobs, opts)
+	return processing.Repack(ctx, s, blobs, opts)
 }
 
 // renditionWorkerClock is the rendition workers' clock; nil means the current

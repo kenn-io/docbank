@@ -22,7 +22,7 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	internalconfig "go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/ingest"
-	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -310,19 +310,19 @@ func TestScheduledPackDeadlineClearsAdmissionAfterBackupCapture(t *testing.T) {
 		var returnOnce sync.Once
 		schedulerDone := make(chan error, 1)
 		go func() {
-			schedulerDone <- internalmaintenance.RunPackSchedule(
+			schedulerDone <- processing.RunPackSchedule(
 				schedulerCtx, time.Minute,
-				func(runCtx context.Context) (internalmaintenance.PackReport, error) {
+				func(runCtx context.Context) (processing.PackReport, error) {
 					runCount++
 					if runCount > 1 {
 						<-runCtx.Done()
-						return internalmaintenance.PackReport{}, runCtx.Err()
+						return processing.PackReport{}, runCtx.Err()
 					}
 					close(packStarted)
-					var report internalmaintenance.PackReport
+					var report processing.PackReport
 					err := g.MaintainContext(runCtx, func() error {
 						var err error
-						report, err = internalmaintenance.Pack(
+						report, err = processing.Pack(
 							runCtx, metadata, blobs, 1<<20)
 						return err
 					})

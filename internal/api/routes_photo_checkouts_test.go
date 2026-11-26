@@ -16,7 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/checkout"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
@@ -167,7 +166,7 @@ func TestPhotoCheckoutOperationRoutesStartFailure(t *testing.T) {
 	for _, action := range []string{"scan", "rebind", "commit"} {
 		t.Run(action, func(t *testing.T) {
 			supervisor := jobs.New(t.Context(), nil)
-			var service checkout.Service
+			var service api.PhotoCheckoutService
 			ts, catalog := newTestServer(t, func(d *api.Deps) {
 				d.Jobs = supervisor
 				service = api.NewPhotoCheckoutService(*d)
@@ -208,7 +207,7 @@ func TestPhotoCheckoutJobsProjectLaneProgressResultsAndPausedCommit(t *testing.T
 	synctest.Test(t, func(t *testing.T) {
 		supervisor := jobs.New(t.Context(), nil)
 		defer func() { require.NoError(t, supervisor.Shutdown(context.WithoutCancel(t.Context()))) }()
-		var service checkout.Service
+		var service api.PhotoCheckoutService
 		ts, catalog := newBubbleTestServer(t, func(d *api.Deps) { d.Jobs = supervisor; service = api.NewPhotoCheckoutService(*d) })
 		hash, size, err := catalog.Blobs.WriteContext(t.Context(), strings.NewReader("photo"))
 		require.NoError(t, err)

@@ -23,7 +23,6 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/packstore"
 )
@@ -514,7 +513,7 @@ func TestPublishRenditionExcludesDerivativePurgeAcrossEveryStagingBoundary(t *te
 
 				purgeDone := make(chan error, 1)
 				go func() {
-					_, purgeErr := maintenance.PurgeDerivatives(
+					_, purgeErr := PurgeDerivatives(
 						t.Context(), fixture.catalog, fixture.blobs, store.PurgeRequest{})
 					purgeDone <- purgeErr
 				}()

@@ -5,7 +5,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/maintenance"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/backup"
 	"io"
@@ -53,7 +53,7 @@ func TestMailboxPortableBackupRetainsSourceChildrenAndTombstone(t *testing.T) {
 	bs, err := blob.New(store.NewPackCatalog(restored), filepath.Join(destination, "blobs"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, bs.Close()) })
-	_, err = maintenance.GarbageCollect(ctx, restored, bs, maintenance.GCOptions{})
+	_, err = processing.GarbageCollect(ctx, restored, bs, processing.GCOptions{})
 	require.NoError(t, err)
 	spool, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)

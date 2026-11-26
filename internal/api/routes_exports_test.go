@@ -30,7 +30,7 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/exporter"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/backup"
 	"uuid"
@@ -70,11 +70,11 @@ func TestExportRevocationInterruptsActiveWorkBehindMaintenance(t *testing.T) {
 		time.Sleep(time.Until(now))
 		gate := api.NewOperationGate()
 		paused := &pausedExportGate{gate: gate, opening: make(chan struct{}), resume: make(chan struct{}), interrupted: make(chan struct{})}
-		var worker *exporter.Worker
+		var worker *processing.ExportWorker
 		s, key := newTestAPIServer(t, func(d *api.Deps) {
 			d.Gate = gate
 			var err error
-			worker, err = exporter.New(d.Store, d.Blobs, d.VaultRoot, paused)
+			worker, err = processing.NewExportWorker(d.Store, d.Blobs, d.VaultRoot, paused)
 			require.NoError(t, err)
 			d.Exports = worker
 		})
@@ -144,11 +144,11 @@ func TestExportRevocationInterruptsActiveWorkBehindMaintenance(t *testing.T) {
 
 func TestExportAPIWorkerVerifiedTicketPreservesRetainedArchive(t *testing.T) {
 	t.Parallel()
-	var worker *exporter.Worker
+	var worker *processing.ExportWorker
 	ts, s := newTestServer(t, func(d *api.Deps) {
 		var err error
 		d.Gate = api.NewOperationGate()
-		worker, err = exporter.New(d.Store, d.Blobs, d.VaultRoot, d.Gate)
+		worker, err = processing.NewExportWorker(d.Store, d.Blobs, d.VaultRoot, d.Gate)
 		require.NoError(t, err)
 		d.Exports = worker
 	})
@@ -306,11 +306,11 @@ func TestExportSavedQueryRetryDoesNotRerunChangedDefinition(t *testing.T) {
 
 func TestExportBrowserOwnersReleaseAndRevocationFenceJobs(t *testing.T) {
 	t.Parallel()
-	var worker *exporter.Worker
+	var worker *processing.ExportWorker
 	ts, s := newTestServer(t, func(d *api.Deps) {
 		d.Gate = api.NewOperationGate()
 		var err error
-		worker, err = exporter.New(d.Store, d.Blobs, d.VaultRoot, d.Gate)
+		worker, err = processing.NewExportWorker(d.Store, d.Blobs, d.VaultRoot, d.Gate)
 		require.NoError(t, err)
 		d.Exports = worker
 	})
@@ -374,14 +374,14 @@ func TestExportBrowserOwnersReleaseAndRevocationFenceJobs(t *testing.T) {
 
 func TestExportDerivedRolesFreezeReceiptsAcrossHeadReplacement(t *testing.T) {
 	t.Parallel()
-	var worker *exporter.Worker
+	var worker *processing.ExportWorker
 	var cfg config.Config
 	ts, s := newTestServer(t, func(d *api.Deps) {
 		renditionTextConfig(d)
 		cfg = d.Cfg
 		d.Gate = api.NewOperationGate()
 		var err error
-		worker, err = exporter.New(d.Store, d.Blobs, d.VaultRoot, d.Gate)
+		worker, err = processing.NewExportWorker(d.Store, d.Blobs, d.VaultRoot, d.Gate)
 		require.NoError(t, err)
 		d.Exports = worker
 	})

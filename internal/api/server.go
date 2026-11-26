@@ -22,11 +22,8 @@ import (
 	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/exporter"
 	"go.kenn.io/docbank/internal/jobs"
-	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/processing"
-	"go.kenn.io/docbank/internal/reporting"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/telemetry"
 	"go.kenn.io/docbank/internal/version"
@@ -38,14 +35,14 @@ const kitPingPath = kitdaemon.DefaultPingPath
 // VerifyPageFunc performs one bounded content-verification page. The optional
 // dependency lets embedders test legacy route error reporting at this boundary.
 type VerifyPageFunc func(
-	context.Context, *store.Store, *blob.Store, internalmaintenance.VerifyOptions,
-) (internalmaintenance.VerifyReport, error)
+	context.Context, *store.Store, *blob.Store, processing.VerifyOptions,
+) (processing.VerifyReport, error)
 
 // RepackPageFunc performs one bounded packed-maintenance page. The optional
 // dependency lets embedders exercise legacy route continuation behavior.
 type RepackPageFunc func(
-	context.Context, *store.Store, *blob.Store, internalmaintenance.RepackOptions,
-) (internalmaintenance.RepackReport, error)
+	context.Context, *store.Store, *blob.Store, processing.RepackOptions,
+) (processing.RepackReport, error)
 
 // EnsureEmailFunc builds and publishes one version's verified email metadata.
 // Keeping the processor behind this dependency preserves the API package as a
@@ -93,7 +90,7 @@ type Deps struct {
 	DocumentCursorKey []byte
 	DocumentCursorNow func() time.Time
 	PageRuntime       *pagerender.Runtime // nil reports optional page rendering unavailable
-	Exports           *exporter.Worker
+	Exports           *processing.ExportWorker
 	TelemetryCapture  telemetry.CaptureEndpoint // nil leaves POST /api/daemon/telemetry/events unregistered
 }
 
@@ -107,7 +104,7 @@ type Server struct {
 	webSessions   *webSessionRegistry
 	webDownloads  *webDownloadRegistry
 	snapshots     *store.QuerySnapshotService
-	termReports   *reporting.Cache
+	termReports   *store.ReportCache
 	reportBudget  report.Budget
 	masterOwner   string
 
@@ -178,7 +175,7 @@ func NewServer(d Deps) *Server {
 	}
 	if d.Store != nil {
 		s.reportBudget = report.NewBudget(report.DefaultBudgetBytes)
-		s.termReports = reporting.NewCache(time.Now, s.reportBudget)
+		s.termReports = store.NewReportCache(time.Now, s.reportBudget)
 	}
 	g := d.Gate
 	if g == nil {

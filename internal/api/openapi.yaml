@@ -10249,10 +10249,10 @@ components:
         - renderer_sha256
         - pages
       type: object
-      x-go-type: production.NativePDFEvidence
+      x-go-type: pdfproduction.NativePDFEvidence
       x-go-type-import:
-        path: go.kenn.io/docbank/internal/production
-        name: production
+        path: go.kenn.io/docbank/internal/pdfproduction
+        name: pdfproduction
     NativePDFSelection:
       additionalProperties: false
       properties:

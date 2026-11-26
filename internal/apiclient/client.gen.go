@@ -23,7 +23,6 @@ import (
 	pdfproduction "go.kenn.io/docbank/internal/pdfproduction"
 	pdfstamp "go.kenn.io/docbank/internal/pdfstamp"
 	processing "go.kenn.io/docbank/internal/processing"
-	production "go.kenn.io/docbank/internal/production"
 	query "go.kenn.io/docbank/internal/query"
 	store "go.kenn.io/docbank/internal/store"
 	report "go.kenn.io/docbank/report"
@@ -31848,7 +31847,7 @@ type MovePhotoRejectsRequest = api.MovePhotoRejectsRequest
 
 type NativeGlyph = pdfproduction.NativeGlyph
 
-type NativePDFEvidence = production.NativePDFEvidence
+type NativePDFEvidence = pdfproduction.NativePDFEvidence
 
 type NativePDFSelection = processing.NativePDFSelection
 
