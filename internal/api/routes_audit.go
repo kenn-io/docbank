@@ -9,7 +9,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -176,7 +176,7 @@ func registerAuditRoutes(
 			out.Body.Evidence = auditEvidence(verification.Evidence)
 			out.Body.ProtectedBlobs = len(verification.ProtectedBlobs)
 			out.Body.ProtectedBytes = verification.ProtectedBytes
-			locationVerifier := internalmaintenance.NewBlobLocationVerifier(
+			locationVerifier := processing.NewBlobLocationVerifier(
 				d.Store, d.Blobs,
 			)
 			for _, blob := range verification.ProtectedBlobs {

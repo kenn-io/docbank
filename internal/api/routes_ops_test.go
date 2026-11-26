@@ -22,7 +22,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
-	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
@@ -435,7 +435,7 @@ func TestInventoryReadsDuringPacking(t *testing.T) {
 	go func() {
 		defer close(done)
 		packErr = gate.MaintainContext(ctx, func() error {
-			_, err := internalmaintenance.Pack(ctx, s.Store, s.Blobs, 0)
+			_, err := processing.Pack(ctx, s.Store, s.Blobs, 0)
 			return err
 		})
 	}()
@@ -609,10 +609,10 @@ func TestStorageRepackContinuesFromEmptyMappingHighWater(t *testing.T) {
 	ts, s := newTestServer(t, func(deps *api.Deps) {
 		deps.RepackPage = func(
 			ctx context.Context, metadata *store.Store, blobs *blob.Store,
-			opts internalmaintenance.RepackOptions,
-		) (internalmaintenance.RepackReport, error) {
+			opts processing.RepackOptions,
+		) (processing.RepackReport, error) {
 			opts.Budget.MaxObjects = 1
-			return internalmaintenance.Repack(ctx, metadata, blobs, opts)
+			return processing.Repack(ctx, metadata, blobs, opts)
 		}
 	})
 	db, err := s.SQLiteDriver().Open(s.DBPath, docsqlite.OpenOptions{
@@ -832,7 +832,7 @@ func TestGCEndpointAdvancesPastLiveOnlyRawPage(t *testing.T) {
 		map[string]any{"run": true})
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 
-	for i := range internalmaintenance.DefaultMaxObjects {
+	for i := range processing.DefaultMaintenanceMaxObjects {
 		_, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("live-gc-%03d", i),
 			fmt.Sprintf("!live-gc-%03d", i), 1, "application/octet-stream")
 		require.NoError(t, err)
@@ -940,7 +940,7 @@ func TestVerifyEndpointContinuesPastMalformedHashAtPageBoundary(t *testing.T) {
 		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
 	})
 	require.NoError(t, err)
-	for i := range internalmaintenance.DefaultMaxObjects - 1 {
+	for i := range processing.DefaultMaintenanceMaxObjects - 1 {
 		_, err = db.ExecContext(t.Context(),
 			`INSERT INTO blobs (hash, size, created_at) VALUES (?, 1, ?)`,
 			fmt.Sprintf("%064x", i), "2026-07-21T00:00:00.000000000Z")
@@ -963,7 +963,7 @@ func TestVerifyEndpointContinuesPastMalformedHashAtPageBoundary(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &report))
 	require.Len(t, report.MetadataProblems, 1)
 	assert.Contains(t, report.MetadataProblems[0], "invalid blob hash")
-	require.Len(t, report.Problems, internalmaintenance.DefaultMaxObjects+1)
+	require.Len(t, report.Problems, processing.DefaultMaintenanceMaxObjects+1)
 	assert.Equal(t, "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
 		report.Problems[len(report.Problems)-1].Hash)
 }
@@ -1000,13 +1000,13 @@ func TestVerifyEndpointReportsBlobInventoryFailureAlongsideMetadataFailure(t *te
 	ts, s := newTestServer(t, func(deps *api.Deps) {
 		deps.VerifyPage = func(
 			_ context.Context, metadata *store.Store, blobs *blob.Store,
-			opts internalmaintenance.VerifyOptions,
-		) (internalmaintenance.VerifyReport, error) {
+			opts processing.VerifyOptions,
+		) (processing.VerifyReport, error) {
 			calls++
 			assert.NotNil(t, metadata)
 			assert.NotNil(t, blobs)
 			assert.Empty(t, opts.Budget.Cursor)
-			return internalmaintenance.VerifyReport{}, sentinel
+			return processing.VerifyReport{}, sentinel
 		}
 	})
 	created := createFileWithContent(t, ts, s, "/malformed-and-faulted.txt", "content")
@@ -1047,11 +1047,11 @@ func TestMaintenanceGateReportsBusyToMutations(t *testing.T) {
 	ts, s := newTestServer(t, func(d *api.Deps) {
 		d.Gate = gate
 		d.VerifyPage = func(
-			context.Context, *store.Store, *blob.Store, internalmaintenance.VerifyOptions,
-		) (internalmaintenance.VerifyReport, error) {
+			context.Context, *store.Store, *blob.Store, processing.VerifyOptions,
+		) (processing.VerifyReport, error) {
 			close(maintenanceEntered)
 			<-releaseMaintenance
-			return internalmaintenance.VerifyReport{}, nil
+			return processing.VerifyReport{}, nil
 		}
 	})
 	created := createFileWithContent(t, ts, s, "/existing.txt", "old content")

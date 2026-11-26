@@ -24,7 +24,6 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/backup"
@@ -192,7 +191,7 @@ func TestRealPageAPIBackupRestoreAndGC(t *testing.T) { //nolint:paralleltest // 
 		pngSelection := add("density.png", "image/png", pageProofPNG())
 		native := run(pngSelection, []int{1}, 0)
 		require.Equal(t, int64(254), native.Results[0].Width)
-		report, err := maintenance.GarbageCollect(t.Context(), catalog, blobs, maintenance.GCOptions{Budget: maintenance.Budget{MaxObjects: 1000}})
+		report, err := processing.GarbageCollect(t.Context(), catalog, blobs, processing.GCOptions{Budget: processing.MaintenanceBudget{MaxObjects: 1000}})
 		require.NoError(t, err)
 		require.Zero(t, report.RemovedBlobs)
 		require.NoError(t, catalog.VerifyPageImageBytes(t.Context(), blobs))

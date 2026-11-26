@@ -91,7 +91,7 @@ backend-coverage:
 # Limit package and test parallelism to leave PostgreSQL connections for
 # readers, schema setup, and database cleanup. Processing has its own phase
 # because its long worker scenarios compete with Store for CPU and database I/O.
-PG_STEPS := pgschema store backup embedded ingest checkout exporter mailbox
+PG_STEPS := pgschema store backup embedded ingest checkout mailbox
 
 test-pg:
 	@test -n "$${DOCBANK_TEST_POSTGRES_DSN:-}" || (echo 'Set DOCBANK_TEST_POSTGRES_DSN to a disposable PostgreSQL test server' >&2; exit 1)
@@ -113,9 +113,7 @@ test-pg-embedded:
 test-pg-ingest:
 	$(call gotestsum,$(PG_SUITE)-ingest,./internal/ingest) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
 test-pg-checkout:
-	$(call gotestsum,$(PG_SUITE)-checkout,./internal/checkout) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
-test-pg-exporter:
-	$(call gotestsum,$(PG_SUITE)-exporter,./internal/exporter) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
+	$(call gotestsum,$(PG_SUITE)-checkout,./internal/api) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
 test-pg-mailbox:
 	$(call gotestsum,$(PG_SUITE)-mailbox,./internal/mailbox) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
 # Allow time for the large face and media search scenarios on slower runners.

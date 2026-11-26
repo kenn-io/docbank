@@ -5,7 +5,6 @@ import (
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
-	"go.kenn.io/docbank/internal/checkout"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -30,8 +29,8 @@ type PhotoCheckoutRebindRequest struct {
 	Destination string `json:"destination" minLength:"1" maxLength:"4096"`
 }
 
-func NewPhotoCheckoutService(d Deps) checkout.Service {
-	s := checkout.Service{Store: d.Store, Blobs: d.Blobs, VaultRoot: d.VaultRoot, Config: d.Cfg}
+func NewPhotoCheckoutService(d Deps) PhotoCheckoutService {
+	s := PhotoCheckoutService{Store: d.Store, Blobs: d.Blobs, VaultRoot: d.VaultRoot, Config: d.Cfg}
 	if d.Gate != nil {
 		s.Mutate = d.Gate.MutateContext
 	}

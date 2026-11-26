@@ -9,7 +9,6 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/query"
-	"go.kenn.io/docbank/internal/reporting"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/report"
 )
@@ -29,24 +28,24 @@ func termReportError(err error) *Error {
 		return problem
 	}
 	switch {
-	case errors.Is(err, reporting.ErrUnavailable):
+	case errors.Is(err, store.ErrReportUnavailable):
 		return NewError(http.StatusGone, "report_unavailable", "This report handle is no longer available.")
-	case errors.Is(err, reporting.ErrRetained):
+	case errors.Is(err, store.ErrReportRetained):
 		return NewError(http.StatusConflict, "report_retained",
 			"An active download retains this report; retry release after it closes.")
-	case errors.Is(err, reporting.ErrCapacity):
+	case errors.Is(err, store.ErrReportCapacity):
 		return NewError(http.StatusServiceUnavailable, "report_capacity", "Report capacity is exhausted; retry later.")
 	case errors.Is(err, report.ErrBudgetExhausted), errors.Is(err, report.ErrReportLimit):
 		return NewError(http.StatusRequestEntityTooLarge, "report_limit", "The report exceeds a resource limit.")
-	case errors.Is(err, reporting.ErrIncompleteCoverage):
+	case errors.Is(err, store.ErrReportIncompleteCoverage):
 		return NewError(http.StatusUnprocessableEntity, "incomplete_coverage", "This date-scoped report has incomplete search or family coverage.")
-	case errors.Is(err, reporting.ErrIncompleteDateCoverage):
+	case errors.Is(err, store.ErrReportIncompleteDateCoverage):
 		return NewError(http.StatusUnprocessableEntity, "incomplete_date_coverage", "Some report dates need review before strict counts can be produced.")
-	case errors.Is(err, reporting.ErrInvalidRevision), errors.Is(err, report.ErrInvalidChoice):
+	case errors.Is(err, store.ErrReportInvalidRevision), errors.Is(err, report.ErrInvalidChoice):
 		return NewError(http.StatusBadRequest, "invalid_report_choice", err.Error())
-	case errors.Is(err, report.ErrStaleChoice), errors.Is(err, reporting.ErrStaleRenditionEvidence):
+	case errors.Is(err, report.ErrStaleChoice), errors.Is(err, store.ErrStaleRenditionEvidence):
 		return NewError(http.StatusConflict, "stale_evidence", "The reviewed or captured evidence does not match this report.")
-	case errors.Is(err, reporting.ErrReviewRequired):
+	case errors.Is(err, store.ErrReportReviewRequired):
 		return NewError(http.StatusConflict, "date_review_required", "Review the report dates before downloading counts.")
 	case errors.Is(err, context.DeadlineExceeded):
 		return NewError(http.StatusServiceUnavailable, "report_timeout", "The report did not finish within its time limit.")
@@ -66,7 +65,7 @@ func termReportError(err error) *Error {
 	}
 }
 
-func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *reporting.Cache,
+func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *store.ReportCache,
 	downloads *webDownloadRegistry, sessions *webSessionRegistry,
 ) {
 	termReportOwner := func(ctx context.Context) (string, error) {
@@ -79,9 +78,9 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 		}
 		return owner, nil
 	}
-	serviceFor := func(profile string) *reporting.Service {
-		return &reporting.Service{Source: d.Store,
-			Text: reporting.CapturedTextReader{Open: d.Blobs.OpenStreamContext},
+	serviceFor := func(profile string) *store.ReportService {
+		return &store.ReportService{Source: d.Store,
+			Text: store.CapturedReportTextReader{Open: d.Blobs.OpenStreamContext},
 			Coverage: func(context.Context) (report.CoverageSelection, error) {
 				selection, err := selectCollectionProfile(d, profile, false)
 				if err != nil {

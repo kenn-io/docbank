@@ -16,7 +16,6 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
-	"go.kenn.io/docbank/internal/production"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -117,7 +116,7 @@ func prepareNativePDF(ctx context.Context, lease *daemonLease, raw []byte, logge
 	if err != nil {
 		return prepareNativePDFOutput{}, preparationRequestError(ctx, err)
 	}
-	if err := production.ValidateNativePreparationDerivation(prepared.NativePreparation); err != nil {
+	if err := pdfproduction.ValidateNativePreparationDerivation(prepared.NativePreparation); err != nil {
 		return prepareNativePDFOutput{}, preparationRequestError(ctx, errors.Join(daemonconn.ErrIntegrity, err))
 	}
 	data, err := json.Marshal(prepared)

@@ -9,7 +9,6 @@ import (
 	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/pdfproduction"
-	"go.kenn.io/docbank/internal/production"
 )
 
 type admittedRedaction struct {
@@ -48,7 +47,7 @@ func (service *Service) freshRedactionReview(ctx context.Context, op *nativePDFO
 	if err := ValidateRedactionPreparation(request.Preparation); err != nil {
 		return result, fmt.Errorf("%w: %w", ErrRedactionInvalidPreparation, err)
 	}
-	if err := production.ValidateNativePreparationDerivation(request.Preparation.NativePreparation); err != nil {
+	if err := pdfproduction.ValidateNativePreparationDerivation(request.Preparation.NativePreparation); err != nil {
 		return result, fmt.Errorf("%w: %w", ErrRedactionInvalidPreparation, err)
 	}
 	selected := NativePDFSelection{NodeID: request.Preparation.Selection.NodeID, Source: request.Preparation.Selection.Source}
@@ -86,7 +85,7 @@ func (service *Service) reviewCapturedPDF(ctx context.Context, op *nativePDFOper
 	if err != nil {
 		return result, preparationFailure(err)
 	}
-	fresh, err := production.PrepareNativePDF(ctx, production.NativePreparationInput{
+	fresh, err := pdfproduction.PrepareNativePDF(ctx, pdfproduction.NativePreparationInput{
 		PDF:        pdfproduction.Source{Reader: bytes.NewReader(data), Size: int64(len(data)), SHA256: selected.Source.SHA256, StagingDirectory: op.directory},
 		Inspection: inspection, PageRuntimeFingerprint: runtime.Fingerprint()})
 	if err != nil {

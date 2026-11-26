@@ -21,7 +21,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/exporter"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 	"uuid"
@@ -29,11 +29,11 @@ import (
 
 func TestPhotoExportAPIPlanZIPAndTicket(t *testing.T) {
 	t.Parallel()
-	var worker *exporter.Worker
+	var worker *processing.ExportWorker
 	ts, s := newTestServer(t, func(d *api.Deps) {
 		var err error
 		d.Gate = api.NewOperationGate()
-		worker, err = exporter.New(d.Store, d.Blobs, d.VaultRoot, d.Gate)
+		worker, err = processing.NewExportWorker(d.Store, d.Blobs, d.VaultRoot, d.Gate)
 		require.NoError(t, err)
 		d.Exports = worker
 	})

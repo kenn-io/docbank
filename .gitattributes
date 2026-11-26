@@ -32,7 +32,7 @@ document/internal/scanfixture/testdata/* -text
 document/testdata/scanassessment/*.pdf binary
 document/internal/scanfixture/testdata/*.pdf binary
 # The native geometry control binds identities to these exact PDF bytes.
-internal/production/testdata/native-geometry-control.pdf binary
+internal/pdfproduction/testdata/native-geometry-control.pdf binary
 # Transfer canonical bytes must survive Windows checkout unchanged.
 document/transfer/testdata/msgvault-transfer-v1.golden.jsonl -text
 # The embedded schema uses LF blank lines to separate executable groups.

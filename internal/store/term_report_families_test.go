@@ -7,7 +7,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/reporting"
 	"go.kenn.io/docbank/report"
 )
 
@@ -40,7 +39,7 @@ func TestTermReportFamilyLimitExcludesEmptyPublications(t *testing.T) {
 			defer func() { _ = budget.Close() }()
 			request := termFrameRequest()
 			request.AllDocuments, request.CollectionIDs = false, []string{tc.collectionID}
-			service := reporting.Service{Source: s, Budget: budget}
+			service := ReportService{Source: s, Budget: budget}
 			frame, err := service.Prepare(t.Context(), request)
 			require.NoError(t, err)
 			require.Len(t, frame.Members, 1)
@@ -67,7 +66,7 @@ func TestTermReportFamilyLimitCountsOnlyConnectedRelations(t *testing.T) {
 	repeatTermReportPublication(t, s, request, receipt)
 	budget := report.NewBudget(128 << 20)
 	defer func() { _ = budget.Close() }()
-	service := reporting.Service{Source: s, Budget: budget}
+	service := ReportService{Source: s, Budget: budget}
 	reportRequest := termFrameRequest()
 	reportRequest.AllDocuments, reportRequest.CollectionIDs = false, []string{selected.ID()}
 	frame, err := service.Prepare(t.Context(), reportRequest)
@@ -141,7 +140,7 @@ func checkTermReportFamilyFollowsSelectedChildToCurrentExternalParents(t *testin
 	request.AllDocuments, request.CollectionIDs = false, []string{selected.ID()}
 	budget := report.NewBudget(8 << 20)
 	defer func() { _ = budget.Close() }()
-	service := reporting.Service{Source: s, Budget: budget}
+	service := ReportService{Source: s, Budget: budget}
 	frame, err := service.Prepare(t.Context(), request)
 	require.NoError(t, err)
 	require.Len(t, frame.Members, 1)

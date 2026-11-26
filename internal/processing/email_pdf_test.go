@@ -14,7 +14,6 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/emailpdf"
 	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -126,7 +125,7 @@ func RunEmailPDFRetentionTest(t *testing.T, released bool,
 	_, _, err = f.catalog.Restore(t.Context(), target.Version.NodeID, store.UnconditionalRev)
 	require.NoError(t, err)
 	restored, bs := restore(f.catalog, f.blobs)
-	_, err = maintenance.GarbageCollect(t.Context(), restored, bs, maintenance.GCOptions{})
+	_, err = GarbageCollect(t.Context(), restored, bs, GCOptions{})
 	require.NoError(t, err)
 	got, err := restored.EmailPDFReceipt(t.Context(), target.Version.ID, request.Profile.Fingerprint)
 	require.NoError(t, err)

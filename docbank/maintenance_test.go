@@ -18,7 +18,7 @@ import (
 	"go.kenn.io/kit/packstore"
 
 	internalblob "go.kenn.io/docbank/internal/blob"
-	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/sqlite"
 	"go.kenn.io/docbank/sqlite/modernc"
@@ -848,8 +848,8 @@ func TestRepackStopsAfterNonSourceFailureBeforeLaterPackMutation(t *testing.T) {
 		failListPack: candidates[0].Usage.PackID, laterPack: candidates[1].Usage.PackID,
 		listErr: sentinel}
 
-	report, err := internalmaintenance.Repack(t.Context(), vault.metadata, vault.blobs,
-		internalmaintenance.RepackOptions{Budget: internalmaintenance.Budget{
+	report, err := processing.Repack(t.Context(), vault.metadata, vault.blobs,
+		processing.RepackOptions{Budget: processing.MaintenanceBudget{
 			MaxObjects: 8, MaxBytes: 1,
 		}, MinAge: time.Nanosecond, MinDeadBytes: 1, Catalog: catalog})
 	require.ErrorIs(t, err, sentinel)
@@ -869,8 +869,8 @@ func TestRepackProbesWorkAfterPostRewriteRetirementError(t *testing.T) {
 	catalog := &repackFaultCatalog{Catalog: store.NewPackCatalog(vault.metadata),
 		retirePack: candidates[1].Usage.PackID, retireThenErr: sentinel}
 
-	report, err := internalmaintenance.Repack(t.Context(), vault.metadata, vault.blobs,
-		internalmaintenance.RepackOptions{Budget: internalmaintenance.Budget{MaxObjects: 8},
+	report, err := processing.Repack(t.Context(), vault.metadata, vault.blobs,
+		processing.RepackOptions{Budget: processing.MaintenanceBudget{MaxObjects: 8},
 			MinAge: time.Nanosecond, MinDeadBytes: 1, Catalog: catalog})
 	require.ErrorIs(t, err, sentinel)
 	assert.Positive(t, report.BytesRepacked)
@@ -878,8 +878,8 @@ func TestRepackProbesWorkAfterPostRewriteRetirementError(t *testing.T) {
 	assert.True(t, report.More, "the replacement summary still needs bounded selection scanning")
 	require.NotEmpty(t, report.NextCursor)
 
-	resumed, resumeErr := internalmaintenance.Repack(t.Context(), vault.metadata, vault.blobs,
-		internalmaintenance.RepackOptions{Budget: internalmaintenance.Budget{
+	resumed, resumeErr := processing.Repack(t.Context(), vault.metadata, vault.blobs,
+		processing.RepackOptions{Budget: processing.MaintenanceBudget{
 			MaxObjects: 2, Cursor: report.NextCursor,
 		}, MinAge: time.Nanosecond, MinDeadBytes: 1})
 	require.NoError(t, resumeErr)

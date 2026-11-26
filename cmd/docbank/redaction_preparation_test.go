@@ -21,7 +21,6 @@ import (
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/pdfproduction"
-	"go.kenn.io/docbank/internal/production"
 	"go.kenn.io/docbank/internal/redactiontest"
 )
 
@@ -106,7 +105,7 @@ func qualifyRedactionSource(t *testing.T, fixture redactionFixture, runtime *pag
 	// The PDF worker's RSS ceiling counts the whole test binary, so return the
 	// freed heap from the daemon, earlier tests, and the text read to the OS before measuring.
 	debug.FreeOSMemory()
-	mapping, err := production.Align(t.Context(), production.AlignmentInput{
+	mapping, err := pdfproduction.Align(t.Context(), pdfproduction.AlignmentInput{
 		PDF: source, Pages: frames, Evidence: evidence, EvidenceSHA256: evidence.Checksum, PageRuntime: runtime,
 	})
 	require.NoError(t, err)

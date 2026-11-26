@@ -33,7 +33,6 @@ import (
 	"go.kenn.io/docbank/document/upload"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/jobs"
-	"go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/packstore"
@@ -1097,7 +1096,7 @@ func (service *Service) RunDerivativePurge(ctx context.Context,
 		if request.PlanFingerprint == "" || request.PlanFingerprint != plan.Fingerprint {
 			return ErrPurgePlanChanged
 		}
-		report, purgeErr := maintenance.PurgeDerivatives(ctx, service.catalog, service.blobs, store.PurgeRequest{
+		report, purgeErr := PurgeDerivatives(ctx, service.catalog, service.blobs, store.PurgeRequest{
 			ContentVersionIDs: plan.Request.ContentVersionIDs, AttachmentIDs: plan.Request.AttachmentIDs,
 			BuildIDs: plan.Request.BuildIDs, All: plan.Request.All})
 		if !report.CatalogCommitted {

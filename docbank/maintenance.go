@@ -4,15 +4,15 @@ import (
 	"context"
 	"time"
 
-	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
+	"go.kenn.io/docbank/internal/processing"
 )
 
 const (
-	DefaultMaintenanceMaxObjects = internalmaintenance.DefaultMaxObjects
-	MaxMaintenanceObjects        = internalmaintenance.MaxObjectsPerOperation
+	DefaultMaintenanceMaxObjects = processing.DefaultMaintenanceMaxObjects
+	MaxMaintenanceObjects        = processing.MaxMaintenanceObjectsPerOperation
 )
 
-var ErrInvalidMaintenanceCursor = internalmaintenance.ErrInvalidCursor
+var ErrInvalidMaintenanceCursor = processing.ErrInvalidMaintenanceCursor
 
 // WorkBudget bounds one embedded maintenance pass. MaxObjects zero uses
 // DefaultMaintenanceMaxObjects and values above MaxMaintenanceObjects are
@@ -103,11 +103,11 @@ func (v *Vault) GarbageCollect(ctx context.Context, opts GCOptions) (GCReport, e
 		return GCReport{}, err
 	}
 	defer v.mutation.Unlock()
-	var report internalmaintenance.GCReport
+	var report processing.GCReport
 	err := v.blobs.WithMutation(ctx, func() error {
 		var err error
-		report, err = internalmaintenance.GarbageCollect(ctx, v.metadata, v.blobs,
-			internalmaintenance.GCOptions{Budget: internalBudget(opts.Budget), DryRun: opts.DryRun})
+		report, err = processing.GarbageCollect(ctx, v.metadata, v.blobs,
+			processing.GCOptions{Budget: internalBudget(opts.Budget), DryRun: opts.DryRun})
 		return err
 	})
 	return fromMaintenanceGC(report), err
@@ -128,8 +128,8 @@ func (v *Vault) Verify(ctx context.Context, opts VerifyOptions) (VerifyReport, e
 		return VerifyReport{}, err
 	}
 	defer v.mutation.Unlock()
-	report, err := internalmaintenance.Verify(ctx, v.metadata, v.blobs,
-		internalmaintenance.VerifyOptions{Budget: internalBudget(opts.Budget)})
+	report, err := processing.Verify(ctx, v.metadata, v.blobs,
+		processing.VerifyOptions{Budget: internalBudget(opts.Budget)})
 	return fromMaintenanceVerify(report), err
 }
 
@@ -148,20 +148,20 @@ func (v *Vault) Repack(ctx context.Context, opts RepackOptions) (RepackReport, e
 		return RepackReport{}, err
 	}
 	defer v.mutation.Unlock()
-	report, err := internalmaintenance.Repack(ctx, v.metadata, v.blobs,
-		internalmaintenance.RepackOptions{
+	report, err := processing.Repack(ctx, v.metadata, v.blobs,
+		processing.RepackOptions{
 			Budget: internalBudget(opts.Budget), MinAge: opts.MinAge, MinDeadBytes: opts.MinDeadBytes,
 		})
 	return fromMaintenanceRepack(report), err
 }
 
-func internalBudget(budget WorkBudget) internalmaintenance.Budget {
-	return internalmaintenance.Budget{
+func internalBudget(budget WorkBudget) processing.MaintenanceBudget {
+	return processing.MaintenanceBudget{
 		MaxObjects: budget.MaxObjects, MaxBytes: budget.MaxBytes, Cursor: budget.Cursor,
 	}
 }
 
-func fromMaintenanceGC(report internalmaintenance.GCReport) GCReport {
+func fromMaintenanceGC(report processing.GCReport) GCReport {
 	return GCReport{
 		NextCursor: report.NextCursor, More: report.More,
 		CandidateBlobs: report.CandidateBlobs, UntrackedFiles: report.UntrackedFiles,
@@ -172,7 +172,7 @@ func fromMaintenanceGC(report internalmaintenance.GCReport) GCReport {
 	}
 }
 
-func fromMaintenanceVerify(report internalmaintenance.VerifyReport) VerifyReport {
+func fromMaintenanceVerify(report processing.VerifyReport) VerifyReport {
 	out := VerifyReport{
 		NextCursor: report.NextCursor, More: report.More, OK: report.OK, MetadataProblems: report.MetadataProblems}
 	for _, problem := range report.Problems {
@@ -181,7 +181,7 @@ func fromMaintenanceVerify(report internalmaintenance.VerifyReport) VerifyReport
 	return out
 }
 
-func fromMaintenanceRepack(report internalmaintenance.RepackReport) RepackReport {
+func fromMaintenanceRepack(report processing.RepackReport) RepackReport {
 	return RepackReport{
 		NextCursor: report.NextCursor, More: report.More,
 		MappingsPruned: report.MappingsPruned, PacksSelected: report.PacksSelected,

@@ -17,7 +17,6 @@ import (
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
-	"go.kenn.io/docbank/internal/production"
 	"go.kenn.io/docbank/internal/redactiontest"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -37,7 +36,7 @@ func redactionClientPreparation(t *testing.T) processing.RedactionPreparation {
 	request.Selection.Source.Size = int64(len(data))
 	inspection, err := runtime.Inspect(t.Context(), data, request.Selection.Source, "application/pdf")
 	require.NoError(t, err)
-	prepared, err := production.PrepareNativePDF(t.Context(), production.NativePreparationInput{
+	prepared, err := pdfproduction.PrepareNativePDF(t.Context(), pdfproduction.NativePreparationInput{
 		PDF: pdfproduction.Source{Reader: bytes.NewReader(data), SHA256: request.Selection.Source.SHA256,
 			Size: int64(len(data)), StagingDirectory: t.TempDir(),
 		}, Inspection: inspection, PageRuntimeFingerprint: runtime.Fingerprint()})

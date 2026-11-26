@@ -9,7 +9,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/reporting"
 	"go.kenn.io/docbank/report"
 )
 
@@ -125,7 +124,7 @@ func checkTermReportNativeTextProducesFrozenContentDate(t *testing.T, open func(
 	}))
 	budget := report.NewBudget(8 << 20)
 	defer func() { _ = budget.Close() }()
-	svc := &reporting.Service{Source: s, Budget: budget}
+	svc := &ReportService{Source: s, Budget: budget}
 	frame, err := svc.Prepare(ctx, termFrameRequest())
 	require.NoError(t, err)
 	require.Len(t, frame.Texts, 1)
@@ -151,7 +150,7 @@ func TestTermReportPrepareReleasesNativeTextBudget(t *testing.T) {
 	}))
 	budget := report.NewBudget(8 << 20)
 	defer func() { _ = budget.Close() }()
-	svc := reporting.Service{Source: s, Budget: budget}
+	svc := ReportService{Source: s, Budget: budget}
 	frame, err := svc.Prepare(t.Context(), termFrameRequest())
 	require.NoError(t, err)
 	require.Len(t, frame.Texts, 1)
@@ -244,7 +243,7 @@ func TestTermReportSharedChildJoinsExactVersionFamily(t *testing.T) {
 			{NodeID: parentNode.ID, VersionID: parentNode.CurrentVersionID, SHA256: parentNode.BlobHash},
 			{NodeID: other.ID, VersionID: other.CurrentVersionID, SHA256: other.BlobHash},
 		}}
-		svc := reporting.Service{Source: s, Budget: budget}
+		svc := ReportService{Source: s, Budget: budget}
 		selectedFrame, err := svc.Prepare(t.Context(), request)
 		require.NoError(t, err)
 		require.Len(t, selectedFrame.Members, 2)
@@ -281,7 +280,7 @@ func TestTermReportSharedChildJoinsExactVersionFamily(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			request := termFrameRequest()
 			request.AllDocuments, request.CollectionIDs = false, []string{tc.collectionID}
-			svc := reporting.Service{Source: s, Budget: budget}
+			svc := ReportService{Source: s, Budget: budget}
 			frame, err := svc.Prepare(t.Context(), request)
 			require.NoError(t, err)
 			require.Len(t, frame.Members, 1)
@@ -318,7 +317,7 @@ func TestTermReportFamilyStaysWithinCollectionAndCurrentVersions(t *testing.T) {
 	defer func() { _ = budget.Close() }()
 	request := termFrameRequest()
 	request.AllDocuments, request.CollectionIDs = false, []string{run.ID()}
-	svc := reporting.Service{Source: s, Budget: budget}
+	svc := ReportService{Source: s, Budget: budget}
 	frame, err := svc.Prepare(t.Context(), request)
 	require.NoError(t, err)
 	require.Len(t, frame.Members, 1)
@@ -353,7 +352,7 @@ func TestTermReportPartialFamilyWithoutPublishedAttachments(t *testing.T) {
 	require.Empty(t, receipt.Relations)
 	budget := report.NewBudget(8 << 20)
 	defer func() { _ = budget.Close() }()
-	svc := reporting.Service{Source: s, Budget: budget}
+	svc := ReportService{Source: s, Budget: budget}
 	frame, err := svc.Prepare(t.Context(), termFrameRequest())
 	require.NoError(t, err)
 	require.Equal(t, "incomplete", frame.Members[0].Coverage.FamilyState)

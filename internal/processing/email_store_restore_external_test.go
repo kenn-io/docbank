@@ -11,7 +11,6 @@ import (
 
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -59,7 +58,7 @@ func TestEmailStoreArchivePhysicalPortabilityAndMaintenance(t *testing.T) {
 		body := f.Email.Evidence.Inventory.Parts[0].BodyUTF8
 		_, err = f.Catalog.CreateFile(t.Context(), f.Catalog.RootID(), "independent-body.txt", body.SHA256, body.Size, "text/plain")
 		require.NoError(t, err)
-		report, err := maintenance.PurgeDerivatives(t.Context(), f.Catalog, f.Blobs, store.PurgeRequest{All: true})
+		report, err := processing.PurgeDerivatives(t.Context(), f.Catalog, f.Blobs, store.PurgeRequest{All: true})
 		require.NoError(t, err)
 		require.Equal(t, 1, report.Purge.RemovedEmailGenerations)
 		require.Equal(t, len(f.Email.Generation.Artifacts), report.Purge.RemovedEmailPartArtifacts)

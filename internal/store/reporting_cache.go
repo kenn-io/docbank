@@ -1,0 +1,742 @@
+package store
+
+import (
+	"bytes"
+	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json/v2"
+	"errors"
+	"io"
+	"slices"
+	"sync"
+	"time"
+
+	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/docbank/report"
+)
+
+var (
+	ErrReportUnavailable     = errors.New("report handle unavailable")
+	ErrReportCapacity        = errors.New("report capacity exhausted")
+	ErrReportRetained        = errors.New("report retained by an active download")
+	ErrReportInvalidRevision = errors.New("invalid report revision")
+)
+
+type sharedFrame struct {
+	value report.Frame
+	scope report.Budget
+	refs  int
+}
+
+type cacheEntry struct {
+	owner    string
+	frame    *sharedFrame
+	artifact *report.Artifact
+	summary  report.Summary
+	choices  []report.DateChoice
+	selected []report.DateSelection
+	scope    report.Budget
+	pins     int
+	readers  map[*pinnedReader]struct{}
+	removed  bool
+}
+
+type activeBuild struct {
+	owner       string
+	cancel      context.CancelFunc
+	invalidated bool
+}
+
+type ReportCache struct {
+	mu           sync.Mutex
+	now          func() time.Time
+	budget       report.Budget
+	entries      map[string]*cacheEntry
+	builders     map[*activeBuild]struct{}
+	ownerHandles map[string]int
+	ownerPending map[string]int
+	secret       [32]byte
+	closed       bool
+	wg           sync.WaitGroup
+}
+
+func NewReportCache(now func() time.Time, budget report.Budget) *ReportCache {
+	if now == nil {
+		now = time.Now
+	}
+	cache := &ReportCache{now: now, budget: budget, entries: make(map[string]*cacheEntry),
+		builders: make(map[*activeBuild]struct{}), ownerHandles: make(map[string]int),
+		ownerPending: make(map[string]int)}
+	if _, err := rand.Read(cache.secret[:]); err != nil {
+		panic("report cursor randomness unavailable")
+	}
+	return cache
+}
+
+func (c *ReportCache) startBuild(parent context.Context, owner string) (context.Context, *activeBuild, error) {
+	if c == nil || c.budget == nil || owner == "" {
+		return nil, nil, ErrReportUnavailable
+	}
+	ctx, cancel := context.WithTimeout(parent, report.DefaultTimeout)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sweepExpiredLocked()
+	if c.closed {
+		cancel()
+		return nil, nil, ErrReportUnavailable
+	}
+	if len(c.builders) >= 2 || len(c.entries)+len(c.builders) >= 64 ||
+		c.ownerHandles[owner]+c.ownerPending[owner] >= 8 {
+		cancel()
+		return nil, nil, ErrReportCapacity
+	}
+	build := &activeBuild{owner: owner, cancel: cancel}
+	c.builders[build] = struct{}{}
+	c.ownerPending[owner]++
+	c.wg.Add(1)
+	return ctx, build, nil
+}
+
+func (c *ReportCache) finishReportBuild(build *activeBuild) {
+	c.mu.Lock()
+	delete(c.builders, build)
+	c.ownerPending[build.owner]--
+	if c.ownerPending[build.owner] == 0 {
+		delete(c.ownerPending, build.owner)
+	}
+	c.mu.Unlock()
+	build.cancel()
+	c.wg.Done()
+}
+
+func (c *ReportCache) Create(ctx context.Context, owner string, service *ReportService, request report.Request) (report.Summary, error) {
+	if service == nil {
+		return report.Summary{}, ErrReportUnavailable
+	}
+	ctx, build, err := c.startBuild(ctx, owner)
+	if err != nil {
+		return report.Summary{}, err
+	}
+	defer c.finishReportBuild(build)
+	frameScope := c.budget.Child()
+	serviceCopy := *service
+	serviceCopy.Budget = frameScope
+	frame, err := serviceCopy.Prepare(ctx, request)
+	if err != nil {
+		_ = frameScope.Close()
+		return report.Summary{}, err
+	}
+	shared := &sharedFrame{value: frame, scope: frameScope, refs: 1}
+	entry, err := c.makeEntry(ctx, owner, "", shared, service)
+	if err != nil {
+		_ = frameScope.Close()
+		return report.Summary{}, err
+	}
+	if err := c.publish(build, entry); err != nil {
+		c.releaseEntry(entry)
+		return report.Summary{}, err
+	}
+	return cloneSummary(entry.summary), nil
+}
+
+func (c *ReportCache) Revise(ctx context.Context, owner, id string, service *ReportService, choices []report.DateChoice) (report.Summary, error) {
+	if service == nil {
+		return report.Summary{}, ErrReportUnavailable
+	}
+	c.mu.Lock()
+	c.sweepExpiredLocked()
+	parent, err := c.lookupLocked(owner, id)
+	if err != nil {
+		c.mu.Unlock()
+		return report.Summary{}, err
+	}
+	parent.frame.refs++
+	shared := parent.frame
+	expires := parent.summary.ExpiresAt
+	mergedChoices := slices.Clone(parent.choices)
+	c.mu.Unlock()
+	ctx, build, err := c.startBuild(ctx, owner)
+	if err != nil {
+		c.releaseFrame(shared)
+		return report.Summary{}, err
+	}
+	defer c.finishReportBuild(build)
+	if !c.now().Before(expires) {
+		c.releaseFrame(shared)
+		return report.Summary{}, ErrReportUnavailable
+	}
+	incoming := shared.value.Request
+	incoming.DateChoices = choices
+	if _, err := report.NormalizeRequest(incoming); err != nil {
+		c.releaseFrame(shared)
+		return report.Summary{}, errors.Join(ErrReportInvalidRevision, err)
+	}
+	frame := shared.value
+	choiceIndex := make(map[report.Identity]int, len(mergedChoices))
+	for index, choice := range mergedChoices {
+		choiceIndex[choice.Document] = index
+	}
+	for _, choice := range choices {
+		if index, exists := choiceIndex[choice.Document]; exists {
+			mergedChoices[index] = choice
+		} else {
+			choiceIndex[choice.Document] = len(mergedChoices)
+			mergedChoices = append(mergedChoices, choice)
+		}
+	}
+	frame.Request.DateChoices = mergedChoices
+	if _, err := report.NormalizeRequest(frame.Request); err != nil {
+		c.releaseFrame(shared)
+		return report.Summary{}, errors.Join(ErrReportInvalidRevision, err)
+	}
+	entry, err := c.makeEntryWithFrame(ctx, owner, id, shared, frame, service)
+	if err != nil {
+		c.releaseFrame(shared)
+		return report.Summary{}, err
+	}
+	if err := c.publish(build, entry); err != nil {
+		c.releaseEntry(entry)
+		return report.Summary{}, err
+	}
+	return cloneSummary(entry.summary), nil
+}
+
+func (c *ReportCache) makeEntry(ctx context.Context, owner, parent string, shared *sharedFrame,
+	service *ReportService,
+) (*cacheEntry, error) {
+	return c.makeEntryWithFrame(ctx, owner, parent, shared, shared.value, service)
+}
+
+func (c *ReportCache) makeEntryWithFrame(ctx context.Context, owner, parent string, shared *sharedFrame,
+	frame report.Frame, service *ReportService,
+) (*cacheEntry, error) {
+	id, err := randomReportID()
+	if err != nil {
+		return nil, err
+	}
+	expires := shared.value.ObservedAt.Add(30 * time.Minute)
+	if shared.value.ObservedAt.IsZero() || !c.now().Before(expires) {
+		return nil, ErrReportUnavailable
+	}
+	artifactScope := c.budget.Child()
+	calculationScope := c.budget.Child()
+	defer func() { _ = calculationScope.Close() }()
+	serviceCopy := *service
+	serviceCopy.Budget = calculationScope
+	result, err := serviceCopy.Finalize(ctx, frame, nil)
+	entry := &cacheEntry{owner: owner, frame: shared, scope: artifactScope,
+		readers: make(map[*pinnedReader]struct{}), summary: report.Summary{
+			ID: id, ParentID: parent, ObservedAt: shared.value.ObservedAt, ExpiresAt: expires,
+			Terms: slices.Clone(frame.Request.Terms),
+		}}
+	entry.choices = slices.Clone(frame.Request.DateChoices)
+	entry.selected = make([]report.DateSelection, len(frame.Members))
+	if errors.Is(err, ErrReportReviewRequired) {
+		_ = artifactScope.Close()
+		entry.scope = nil
+		entry.summary.State = "needs_review"
+		choiceByDocument := make(map[report.Identity]*report.DateChoice, len(entry.choices))
+		for i := range entry.choices {
+			choiceByDocument[entry.choices[i].Document] = &entry.choices[i]
+		}
+		for i, member := range frame.Members {
+			selection, err := report.SelectDate(member.Kind, member.Candidates,
+				choiceByDocument[member.Identity], frame.Request)
+			entry.selected[i] = selection
+			if err != nil {
+				entry.summary.UnresolvedDates++
+			}
+		}
+		if err := checkSummaryLimit(entry.summary); err != nil {
+			return nil, err
+		}
+		return entry, nil
+	}
+	if err != nil {
+		_ = artifactScope.Close()
+		return nil, err
+	}
+	var csv bytes.Buffer
+	if err := report.WriteCSV(ctx, &csv, result); err != nil {
+		_ = artifactScope.Close()
+		return nil, err
+	}
+	if _, err := artifactScope.Reserve(ctx, int64(csv.Len())); err != nil {
+		_ = artifactScope.Close()
+		return nil, err
+	}
+	bundle, err := report.BuildBundle(ctx, artifactScope, result)
+	if err != nil {
+		_ = artifactScope.Close()
+		return nil, err
+	}
+	entry.artifact = &report.Artifact{ID: id, CSV: csv.Bytes(), Bundle: bundle, ExpiresAt: expires}
+	const reportStateComplete = "complete"
+	entry.summary.State = reportStateComplete
+	for i, member := range result.Frame.Members {
+		entry.selected[i] = member.Selection
+	}
+	entry.summary.Counts = slices.Clone(result.Counts)
+	entry.summary.Coverage = result.Frame.Coverage
+	entry.summary.RowCoverage = slices.Clone(result.Frame.RowCoverage)
+	entry.summary.CSVBytes = int64(csv.Len())
+	entry.summary.BundleBytes = int64(len(bundle))
+	entry.summary.CSVSHA256 = digestBytes(csv.Bytes())
+	entry.summary.BundleSHA256 = digestBytes(bundle)
+	if err := checkSummaryLimit(entry.summary); err != nil {
+		_ = artifactScope.Close()
+		return nil, err
+	}
+	return entry, nil
+}
+
+func checkSummaryLimit(summary report.Summary) error {
+	encoded, err := json.Marshal(summary)
+	if err != nil {
+		return errors.Join(report.ErrReportLimit, err)
+	}
+	if len(encoded) > report.MaxRequestSummaryJSONBytes {
+		return report.ErrReportLimit
+	}
+	return nil
+}
+
+func digestBytes(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func randomReportID() (string, error) {
+	var raw [24]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", errors.Join(ErrReportUnavailable, err)
+	}
+	return hex.EncodeToString(raw[:]), nil
+}
+
+func (c *ReportCache) publish(build *activeBuild, entry *cacheEntry) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed || build.invalidated || !c.now().Before(entry.summary.ExpiresAt) {
+		return ErrReportUnavailable
+	}
+	if entry.summary.ParentID != "" {
+		parent := c.entries[entry.summary.ParentID]
+		if parent == nil || parent.owner != entry.owner || parent.frame != entry.frame {
+			return ErrReportUnavailable
+		}
+	}
+	if _, exists := c.entries[entry.summary.ID]; exists {
+		return ErrReportCapacity
+	}
+	c.entries[entry.summary.ID] = entry
+	c.ownerHandles[entry.owner]++
+	return nil
+}
+
+func (c *ReportCache) Summary(owner, id string) (report.Summary, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sweepExpiredLocked()
+	entry, err := c.lookupLocked(owner, id)
+	if err != nil {
+		return report.Summary{}, err
+	}
+	return cloneSummary(entry.summary), nil
+}
+
+// Request returns the reusable shape of a frozen run. Reviewed evidence is
+// deliberately omitted because it belongs to that observation only.
+func (c *ReportCache) Request(owner, id string) (report.Request, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sweepExpiredLocked()
+	entry, err := c.lookupLocked(owner, id)
+	if err != nil {
+		return report.Request{}, err
+	}
+	request := entry.frame.value.Request
+	request.CollectionIDs = slices.Clone(request.CollectionIDs)
+	request.Terms = slices.Clone(request.Terms)
+	request.DateChoices = nil
+	if selected := request.SelectedDocuments; selected != nil {
+		request.SelectedDocuments = &report.SelectedDocuments{Documents: slices.Clone(selected.Documents)}
+	}
+	return request, nil
+}
+
+// Release frees an owned handle without interrupting its active downloads.
+func (c *ReportCache) Release(owner, id string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sweepExpiredLocked()
+	entry, err := c.lookupLocked(owner, id)
+	if err != nil {
+		return err
+	}
+	if entry.pins > 0 {
+		return ErrReportRetained
+	}
+	c.removeEntryLocked(id, entry)
+	return nil
+}
+
+func (c *ReportCache) Drop(owner, id string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if entry := c.entries[id]; entry != nil && entry.owner == owner {
+		c.removeEntryLocked(id, entry)
+	}
+}
+
+func cloneSummary(summary report.Summary) report.Summary {
+	summary.Terms = slices.Clone(summary.Terms)
+	summary.Counts = slices.Clone(summary.Counts)
+	summary.RowCoverage = slices.Clone(summary.RowCoverage)
+	summary.Coverage.Warnings = slices.Clone(summary.Coverage.Warnings)
+	return summary
+}
+
+func (c *ReportCache) lookupLocked(owner, id string) (*cacheEntry, error) {
+	entry := c.entries[id]
+	if owner == "" || entry == nil || entry.owner != owner || entry.removed ||
+		!c.now().Before(entry.summary.ExpiresAt) {
+		return nil, ErrReportUnavailable
+	}
+	return entry, nil
+}
+
+type dateCursor struct {
+	Owner     string `json:"owner"`
+	ID        string `json:"id"`
+	Member    int    `json:"member"`
+	Candidate int    `json:"candidate"`
+}
+
+func (c *ReportCache) encodeReportDateCursor(cursor dateCursor) string {
+	raw, _ := canonical.Marshal(cursor)
+	mac := hmac.New(sha256.New, c.secret[:])
+	_, _ = mac.Write(raw)
+	return base64.RawURLEncoding.EncodeToString(raw) + "." +
+		base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func (c *ReportCache) decodeReportDateCursor(encoded, owner, id string) (dateCursor, error) {
+	var cursor dateCursor
+	parts := bytes.Split([]byte(encoded), []byte{'.'})
+	if len(parts) != 2 {
+		return cursor, ErrReportUnavailable
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(string(parts[0]))
+	if err != nil {
+		return cursor, ErrReportUnavailable
+	}
+	sig, err := base64.RawURLEncoding.DecodeString(string(parts[1]))
+	if err != nil {
+		return cursor, ErrReportUnavailable
+	}
+	mac := hmac.New(sha256.New, c.secret[:])
+	_, _ = mac.Write(raw)
+	if !hmac.Equal(sig, mac.Sum(nil)) {
+		return cursor, ErrReportUnavailable
+	}
+	if err := json.Unmarshal(raw, &cursor); err != nil || cursor.Owner != owner ||
+		cursor.ID != id || cursor.Member < 0 || cursor.Candidate < 0 {
+		return dateCursor{}, ErrReportUnavailable
+	}
+	return cursor, nil
+}
+
+func (c *ReportCache) Dates(ctx context.Context, owner, id string, page report.DatePageRequest) (report.DatePage, error) {
+	if page.Limit == 0 {
+		page.Limit = 50
+	}
+	if page.Limit < 1 || page.Limit > 100 {
+		return report.DatePage{}, report.ErrReportLimit
+	}
+	if _, err := page.ByteLimit(); err != nil {
+		return report.DatePage{}, err
+	}
+	c.mu.Lock()
+	c.sweepExpiredLocked()
+	entry, err := c.lookupLocked(owner, id)
+	if err != nil {
+		c.mu.Unlock()
+		return report.DatePage{}, err
+	}
+	entry.frame.refs++
+	snapshot := *entry
+	c.mu.Unlock()
+	defer c.releaseFrame(snapshot.frame)
+	cursor := dateCursor{Owner: owner, ID: id}
+	if page.Cursor != "" {
+		cursor, err = c.decodeReportDateCursor(page.Cursor, owner, id)
+		if err != nil {
+			return report.DatePage{}, err
+		}
+	}
+	if cursor.Member > len(snapshot.frame.value.Members) {
+		return report.DatePage{}, ErrReportUnavailable
+	}
+	return c.datePage(ctx, cursor, page, &snapshot)
+}
+
+func (c *ReportCache) datePage(ctx context.Context, cursor dateCursor,
+	request report.DatePageRequest, entry *cacheEntry,
+) (report.DatePage, error) {
+	maxBytes, _ := request.ByteLimit()
+	members := entry.frame.value.Members
+	result := report.DatePage{Members: make([]report.DateReviewMember, 0, request.Limit)}
+	choices := make(map[report.Identity]*report.DateChoice, len(entry.choices))
+	for i := range entry.choices {
+		choices[entry.choices[i].Document] = &entry.choices[i]
+	}
+	candidates := 0
+	for cursor.Member < len(members) && len(result.Members) < request.Limit && candidates < 1000 {
+		if err := ctx.Err(); err != nil {
+			return report.DatePage{}, err
+		}
+		member := members[cursor.Member]
+		if cursor.Candidate > len(member.Candidates) {
+			return report.DatePage{}, ErrReportUnavailable
+		}
+		remaining := min(len(member.Candidates)-cursor.Candidate, 1000-candidates)
+		item := report.DateReviewMember{Document: member.Identity,
+			Selection: entry.selected[cursor.Member], Choice: choices[member.Identity]}
+		previous := result.NextCursor
+		result.Members = append(result.Members, item)
+		// Measure the complete response, including the cursor to the next item.
+		fits := func(count int) (bool, error) {
+			item.Candidates = member.Candidates[cursor.Candidate : cursor.Candidate+count]
+			item.CandidatesComplete = cursor.Candidate+count == len(member.Candidates)
+			result.Members[len(result.Members)-1] = item
+			next := cursor
+			next.Candidate += count
+			if item.CandidatesComplete {
+				next.Member++
+				next.Candidate = 0
+			}
+			result.NextCursor = ""
+			if next.Member < len(members) {
+				result.NextCursor = c.encodeReportDateCursor(next)
+			}
+			_, exceeded, err := canonical.BoundedSize(result, int64(maxBytes))
+			return !exceeded, err
+		}
+		fitsAll, err := fits(remaining)
+		if err != nil {
+			return report.DatePage{}, err
+		}
+		consumed := remaining
+		if !fitsAll {
+			// A partial list grows monotonically. Check the complete list first because
+			// its terminal cursor may disappear, making it smaller than a partial page.
+			lo, hi := 1, remaining-1
+			consumed = 0
+			for lo <= hi {
+				mid := lo + (hi-lo)/2
+				ok, err := fits(mid)
+				if err != nil {
+					return report.DatePage{}, err
+				}
+				if ok {
+					consumed = mid
+					lo = mid + 1
+				} else {
+					hi = mid - 1
+				}
+			}
+			if consumed == 0 {
+				result.Members = result.Members[:len(result.Members)-1]
+				result.NextCursor = previous
+				if len(result.Members) == 0 {
+					return report.DatePage{}, report.ErrReportLimit
+				}
+				return result, nil
+			}
+			if _, err := fits(consumed); err != nil {
+				return report.DatePage{}, err
+			}
+		}
+		// Returned slices must not let a caller mutate the retained evidence.
+		result.Members[len(result.Members)-1].Candidates = slices.Clone(item.Candidates)
+		if item.Choice != nil {
+			choice := *item.Choice
+			result.Members[len(result.Members)-1].Choice = &choice
+		}
+		candidates += consumed
+		cursor.Candidate += consumed
+		if item.CandidatesComplete {
+			cursor.Member++
+			cursor.Candidate = 0
+		} else {
+			return result, nil
+		}
+	}
+	return result, nil
+}
+
+type pinnedReader struct {
+	cache  *ReportCache
+	entry  *cacheEntry
+	reader *bytes.Reader
+	ctx    context.Context
+	cancel context.CancelFunc
+	once   sync.Once
+}
+
+func (reader *pinnedReader) Read(out []byte) (int, error) {
+	if err := reader.ctx.Err(); err != nil {
+		return 0, err
+	}
+	n, err := reader.reader.Read(out)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return n, errors.Join(ErrReportUnavailable, err)
+	}
+	if errors.Is(err, io.EOF) {
+		return n, io.EOF
+	}
+	return n, nil
+}
+
+func (reader *pinnedReader) Close() error {
+	reader.once.Do(func() {
+		reader.cancel()
+		reader.cache.mu.Lock()
+		delete(reader.entry.readers, reader)
+		reader.entry.pins--
+		if reader.entry.removed && reader.entry.pins == 0 {
+			reader.cache.releaseEntryLocked(reader.entry)
+		}
+		reader.cache.mu.Unlock()
+	})
+	return nil
+}
+
+func (c *ReportCache) Acquire(ctx context.Context, owner, id, format string) (io.ReadCloser, int64, string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sweepExpiredLocked()
+	entry, err := c.lookupLocked(owner, id)
+	if err != nil {
+		return nil, 0, "", err
+	}
+	if entry.artifact == nil {
+		return nil, 0, "", ErrReportReviewRequired
+	}
+	var raw []byte
+	var digest string
+	switch format {
+	case "csv":
+		raw, digest = entry.artifact.CSV, entry.summary.CSVSHA256
+	case "bundle":
+		raw, digest = entry.artifact.Bundle, entry.summary.BundleSHA256
+	default:
+		return nil, 0, "", report.ErrReportLimit
+	}
+	readerCtx, cancel := context.WithCancel(ctx)
+	reader := &pinnedReader{cache: c, entry: entry, reader: bytes.NewReader(raw),
+		ctx: readerCtx, cancel: cancel}
+	entry.pins++
+	entry.readers[reader] = struct{}{}
+	return reader, int64(len(raw)), digest, nil
+}
+
+func (c *ReportCache) Revoke(owner string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for id, entry := range c.entries {
+		if entry.owner == owner {
+			c.removeEntryLocked(id, entry)
+		}
+	}
+	for build := range c.builders {
+		if build.owner == owner {
+			build.invalidated = true
+			build.cancel()
+		}
+	}
+}
+
+func (c *ReportCache) InvalidateAll() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for id, entry := range c.entries {
+		c.removeEntryLocked(id, entry)
+	}
+	for build := range c.builders {
+		build.invalidated = true
+		build.cancel()
+	}
+}
+
+func (c *ReportCache) Shutdown(ctx context.Context) error {
+	c.mu.Lock()
+	c.closed = true
+	c.mu.Unlock()
+	c.InvalidateAll()
+	done := make(chan struct{})
+	go func() { c.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (c *ReportCache) sweepExpiredLocked() {
+	for id, entry := range c.entries {
+		if !c.now().Before(entry.summary.ExpiresAt) {
+			c.removeEntryLocked(id, entry)
+		}
+	}
+}
+
+func (c *ReportCache) removeEntryLocked(id string, entry *cacheEntry) {
+	delete(c.entries, id)
+	c.ownerHandles[entry.owner]--
+	if c.ownerHandles[entry.owner] == 0 {
+		delete(c.ownerHandles, entry.owner)
+	}
+	entry.removed = true
+	for reader := range entry.readers {
+		reader.cancel()
+	}
+	if entry.pins == 0 {
+		c.releaseEntryLocked(entry)
+	}
+}
+
+func (c *ReportCache) releaseEntry(entry *cacheEntry) {
+	c.mu.Lock()
+	c.releaseEntryLocked(entry)
+	c.mu.Unlock()
+}
+
+func (c *ReportCache) releaseEntryLocked(entry *cacheEntry) {
+	if entry.scope != nil {
+		_ = entry.scope.Close()
+		entry.scope = nil
+	}
+	if entry.frame != nil {
+		entry.frame.refs--
+		if entry.frame.refs == 0 {
+			_ = entry.frame.scope.Close()
+		}
+		entry.frame = nil
+	}
+}
+
+func (c *ReportCache) releaseFrame(frame *sharedFrame) {
+	c.mu.Lock()
+	frame.refs--
+	if frame.refs == 0 {
+		_ = frame.scope.Close()
+	}
+	c.mu.Unlock()
+}

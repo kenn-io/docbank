@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document/bundle"
-	"go.kenn.io/docbank/internal/exporter"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -109,7 +109,7 @@ func checkMailboxCollectionArchive(t *testing.T, f *Service, job store.MailboxJo
 		OperationID: uuid.New().String(), PlanID: plan.ID, Fingerprint: plan.Fingerprint,
 	})
 	require.NoError(t, err)
-	w, err := exporter.New(f.Store, f.Blobs, f.Spool, mailboxArchiveGate{})
+	w, err := processing.NewExportWorker(f.Store, f.Blobs, f.Spool, mailboxArchiveGate{})
 	require.NoError(t, err)
 	processed, err := w.RunOne(ctx)
 	require.NoError(t, err)

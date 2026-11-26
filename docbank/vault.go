@@ -27,7 +27,6 @@ import (
 	"go.kenn.io/docbank/internal/emailmime"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/mailbox"
-	internalmaintenance "go.kenn.io/docbank/internal/maintenance"
 	internalprocessing "go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/sqlite"
@@ -1674,7 +1673,7 @@ func (v *Vault) Pack(ctx context.Context, opts PackOptions) (PackReport, error) 
 		return PackReport{}, err
 	}
 	defer v.mutation.Unlock()
-	report, err := internalmaintenance.Pack(ctx, v.metadata, v.blobs, opts.MaxBytes)
+	report, err := internalprocessing.Pack(ctx, v.metadata, v.blobs, opts.MaxBytes)
 	out := fromPackStats(report.Stats)
 	out.More = report.More
 	return out, err

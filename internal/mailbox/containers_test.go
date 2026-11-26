@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/maintenance"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/sqlite"
 	"io"
@@ -96,9 +96,9 @@ func TestAbandonedMailboxChunksAreCollected(t *testing.T) {
 						require.NoError(t, f.Store.CleanupMailboxContainers(ctx))
 					}
 				}
-				var report maintenance.GCReport
+				var report processing.GCReport
 				require.NoError(t, f.Blobs.WithMaintenance(ctx, func() error {
-					report, err = maintenance.GarbageCollect(ctx, f.Store, f.Blobs, maintenance.GCOptions{})
+					report, err = processing.GarbageCollect(ctx, f.Store, f.Blobs, processing.GCOptions{})
 					return err
 				}))
 				require.Equal(t, 1, report.RemovedBlobs)
@@ -141,9 +141,9 @@ func TestAbortedMailboxUploadPreservesSharedBlob(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, f.UploadChunk(ctx, c.Owner, c.ID, 0, c.SHA256, c.Size, bytes.NewReader(raw)))
 			require.NoError(t, f.Store.AbortMailboxContainer(ctx, c.Owner, c.ID))
-			var report maintenance.GCReport
+			var report processing.GCReport
 			require.NoError(t, f.Blobs.WithMaintenance(ctx, func() error {
-				report, err = maintenance.GarbageCollect(ctx, f.Store, f.Blobs, maintenance.GCOptions{})
+				report, err = processing.GarbageCollect(ctx, f.Store, f.Blobs, processing.GCOptions{})
 				return err
 			}))
 			require.Zero(t, report.RemovedBlobs)
@@ -171,7 +171,7 @@ func checkFailedMailboxTransferIsCollected(t *testing.T, f *Service) {
 	}, bytes.NewReader(raw))
 	require.ErrorIs(t, err, store.ErrNotFound)
 	require.NoError(t, f.Blobs.WithMaintenance(ctx, func() error {
-		_, err := maintenance.GarbageCollect(ctx, f.Store, f.Blobs, maintenance.GCOptions{})
+		_, err := processing.GarbageCollect(ctx, f.Store, f.Blobs, processing.GCOptions{})
 		return err
 	}))
 	physical, err := f.Blobs.ListDetailed()
