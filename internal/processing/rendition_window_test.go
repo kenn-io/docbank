@@ -119,7 +119,7 @@ func TestRenditionTextWindowBindsTheCurrentLiveTuple(t *testing.T) {
 	publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
 	require.NoError(t, err)
 	published, err := publisher.PublishRendition(t.Context(), fixture.stage(t,
-		publicationIDs{"window-build", "window-attachment", "window-generation"},
+		publicationIDs{"window-build", "window-attachment"},
 		"alpha écho 界🙂 omega", "Synthetic heading",
 	))
 	require.NoError(t, err)
@@ -190,7 +190,7 @@ func TestRenditionTextWindowRejectsInactiveAndSupersededAuthority(t *testing.T) 
 		publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
 		require.NoError(t, err)
 		published, err := publisher.PublishRendition(t.Context(), fixture.stage(t,
-			publicationIDs{"authority-build", "authority-attachment", "authority-generation"},
+			publicationIDs{"authority-build", "authority-attachment"},
 			"synthetic authority", "Synthetic authority",
 		))
 		require.NoError(t, err)
@@ -243,7 +243,7 @@ func TestRenditionTextWindowAcceptsAnEmptyActiveMarkdownArtifact(t *testing.T) {
 	t.Parallel()
 	fixture := newPublicationFixture(t)
 	staged := fixture.stage(t,
-		publicationIDs{"empty-build", "empty-attachment", "empty-generation"},
+		publicationIDs{"empty-build", "empty-attachment"},
 		"synthetic searchable evidence", "Synthetic heading",
 	)
 	empty, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(nil))
@@ -277,11 +277,8 @@ func TestRenditionTextWindowAcceptsAnEmptyActiveMarkdownArtifact(t *testing.T) {
 			processingBlobPhysical(t, receipt)))
 	}
 	require.NoError(t, fixture.catalog.StageRenditionBuild(t.Context(), staged.Build))
-	generation, err := fixture.catalog.StageLexicalGeneration(t.Context(), staged.LexicalGenerationID)
+	_, err = fixture.catalog.PublishRendition(t.Context(), staged.Attachment, staged.Head)
 	require.NoError(t, err)
-	require.NoError(t, fixture.catalog.PublishRenditionAndLexicalHeads(
-		t.Context(), staged.Attachment, staged.Head, generation.ID,
-	))
 	service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 		Gate: newWorkerTestGate(), SpoolDirectory: filepath.Join(t.TempDir(), "spool")})
 	require.NoError(t, err)

@@ -10,7 +10,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/google/uuid"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
 	"golang.org/x/net/html"
@@ -177,14 +176,13 @@ func (c emailRenditionCatalog) StageRenditionBuild(ctx context.Context, record s
 	return c.StageEmailBodyBuild(ctx, record)
 }
 
-func (c emailRenditionCatalog) PublishRenditionAndLexicalHeads(ctx context.Context, attachment store.RenditionAttachmentRecord, head store.RenditionHeadRecord, generationID string) error {
+func (c emailRenditionCatalog) PublishRendition(ctx context.Context, attachment store.RenditionAttachmentRecord, head store.RenditionHeadRecord) (store.LexicalGeneration, error) {
 	return c.PublishEmailBody(ctx,
 		store.EmailBodyPublication{EmailAttachmentID: c.attachmentID,
 			PartPath:              c.partPath,
 			BodyRecipeFingerprint: c.recipe,
 			RenditionAttachment:   attachment,
-			RenditionHead:         head,
-			LexicalGenerationID:   generationID})
+			RenditionHead:         head})
 }
 func publishEmailBody(ctx context.Context, catalog emailCatalog, blobs emailBlobs, view store.EmailMetadataView) error {
 	recipe, err := EmailBodyRecipeFingerprint(view.Evidence.Recipe)
@@ -252,21 +250,8 @@ func publishEmailBody(ctx context.Context, catalog emailCatalog, blobs emailBlob
 	if err != nil {
 		return err
 	}
-	// A complete projection is immutable. Each attempt gets a fresh generation,
-	// and stale publication restages against current authority without reparsing.
-	for range 3 {
-		staged.LexicalGenerationID = renditionBytesSHA256([]byte(uuid.NewString()))
-		_, err = publisher.PublishRendition(ctx, staged)
-		if !errors.Is(err, store.ErrLexicalGenerationStale) {
-			return err
-		}
-		// Publisher consumes readers; regenerate only the bounded body candidate.
-		staged, err = stageEmailBody(ctx, catalog, view, *selected, text)
-		if err != nil {
-			return err
-		}
-	}
-	return store.ErrLexicalGenerationStale
+	_, err = publisher.PublishRendition(ctx, staged)
+	return err
 }
 func stageEmailBody(ctx context.Context, catalog emailCatalog, view store.EmailMetadataView, selected document.EmailAlternativeV1, text string) (StagedRendition, error) {
 	profile, err := document.EmailBodyProfileV1(view.Evidence.Recipe)

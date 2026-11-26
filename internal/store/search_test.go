@@ -2513,6 +2513,58 @@ func TestPublishCollectsSupersededLexicalGenerationsWithoutCopyingText(t *testin
 		"the released generation is collected by the next head flip")
 }
 
+// Each rendition publication adds its build to the current head's stream.
+// Copying every earlier build into a new stream made publication slower as
+// the vault grew and left the copies behind for collection.
+func TestPublishRenditionExtendsTheCurrentLexicalHead(t *testing.T) {
+	t.Parallel()
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	words := []string{"mercury", "venus", "mars"}
+	var generations []LexicalGeneration
+	streamIDs := make(map[string]struct{})
+	for index, word := range words {
+		build := lexicalSearchBuild(s, profile, testSHA256([]byte("extend-"+word)), word+" phrase")
+		version := versions[0]
+		if index > 0 {
+			build, version = lexicalSearchReplacementBuild(t, s, profile, build.ID, word+" phrase")
+		}
+		require.NoError(t, s.StageRenditionBuild(ctx, build))
+		attachment := RenditionAttachmentRecord{
+			ID: testSHA256([]byte("extend-attachment-" + word)), VaultID: s.VaultID(), ContentVersionID: version,
+			BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-22T10:00:00.000000000Z",
+		}
+		generation, err := s.PublishRendition(ctx, attachment, RenditionHeadRecord{
+			ContentVersionID: version, ProcessingProfileFingerprint: profile.Fingerprint,
+			AttachmentID: attachment.ID, PublishedAt: "2026-08-22T10:01:00.000000000Z",
+		})
+		require.NoError(t, err)
+		generations = append(generations, generation)
+		var streamID string
+		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT stream_id FROM rendition_lexical_generations
+			WHERE generation_id=$1`, generation.ID).Scan(&streamID))
+		streamIDs[streamID] = struct{}{}
+	}
+	assert.Len(t, streamIDs, 1, "every publication extends the same stream")
+
+	head, err := s.ActiveLexicalGeneration(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, generations[len(generations)-1], head)
+	assert.Equal(t, len(words), head.BuildCount)
+	var liveGenerations, streamBuilds int
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT
+		(SELECT COUNT(*) FROM rendition_lexical_generations),
+		(SELECT COUNT(*) FROM rendition_lexical_stream_builds)`).Scan(&liveGenerations, &streamBuilds))
+	assert.Equal(t, []int{1, len(words)}, []int{liveGenerations, streamBuilds},
+		"one live generation with one membership row per build")
+	for _, word := range words {
+		hits, _, err := s.SearchPage(ctx, word, 10)
+		require.NoError(t, err)
+		assert.Len(t, hits, 1, word)
+	}
+}
+
 // A vault that already holds a large backlog of superseded generations must
 // not stall one publication while it collects all of them. Each head flip
 // takes one batch, and later flips finish the rest.

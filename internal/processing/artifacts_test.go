@@ -39,12 +39,14 @@ func TestPublishRenditionPublishesVerifiedArtifactsAndHeads(t *testing.T) {
 	require.NoError(t, err)
 
 	published, err := publisher.PublishRendition(t.Context(), fixture.stage(t,
-		publicationIDs{"b1", "51", "91"}, "searchable mercury evidence", "first markdown",
+		publicationIDs{"b1", "51"}, "searchable mercury evidence", "first markdown",
 	))
 	require.NoError(t, err)
 	assert.Equal(t, processingHash("b1"), published.BuildID)
 	assert.Equal(t, processingHash("51"), published.AttachmentID)
-	assert.Equal(t, processingHash("91"), published.LexicalGeneration.ID)
+	head, err := fixture.catalog.ActiveLexicalGeneration(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, head, published.LexicalGeneration, "the publication reports the generation now serving search")
 	require.Len(t, published.Artifacts, 2)
 	for _, artifact := range published.Artifacts {
 		physical, err := fixture.catalog.PhysicalContent(t.Context(), artifact.Hash)
@@ -85,7 +87,7 @@ func TestPublishRenditionExactRetryIgnoresDerivedMD5(t *testing.T) {
 	fixture := newPublicationFixture(t)
 	publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
 	require.NoError(t, err)
-	ids := publicationIDs{"b1", "51", "91"}
+	ids := publicationIDs{"b1", "51"}
 
 	first := fixture.stage(t, ids, "searchable mercury evidence", "first markdown")
 	first.Build.Warnings = nil
@@ -174,7 +176,7 @@ func TestPublishRenditionRejectsLexicalSegmentLimitOutsideCanonicalProfile(t *te
 	publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
 	require.NoError(t, err)
 	staged := fixture.stage(t,
-		publicationIDs{"b1", "51", "91"}, "short searchable evidence", "short markdown",
+		publicationIDs{"b1", "51"}, "short searchable evidence", "short markdown",
 	)
 	staged.RenditionPolicy, err = document.NewRenditionPolicy(document.RenditionLimits{
 		MaxDocumentChars: 100_000, MaxUnitRunes: 1000, MaxSegmentRunes: 4_000,
@@ -193,7 +195,7 @@ func TestPublishRenditionRejectsArtifactReceiptMismatchBeforeCatalogAuthority(t 
 	publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
 	require.NoError(t, err)
 	staged := fixture.stage(t,
-		publicationIDs{"b1", "51", "91"}, "searchable mercury evidence", "first markdown",
+		publicationIDs{"b1", "51"}, "searchable mercury evidence", "first markdown",
 	)
 	actualHash := staged.Build.Artifacts[0].BlobHash
 	staged.Build.Artifacts[0].Size++
@@ -290,7 +292,7 @@ func TestPublishRenditionRejectsRetentionAndConcreteProfileBoundsBeforeWriting(t
 			fixture := newPublicationFixture(t)
 			publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
 			require.NoError(t, err)
-			staged := fixture.stage(t, publicationIDs{"ba", "5a", "9a"},
+			staged := fixture.stage(t, publicationIDs{"ba", "5a"},
 				strings.Repeat("x", 101), "bounded markdown")
 			testCase.mutate(t, &staged)
 
@@ -310,7 +312,7 @@ func TestPublishRenditionStopsReadingArtifactPastDeclaredSize(t *testing.T) {
 	fixture := newPublicationFixture(t)
 	publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
 	require.NoError(t, err)
-	staged := fixture.stage(t, publicationIDs{"bc", "5c", "9c"}, "bounded evidence", "bounded markdown")
+	staged := fixture.stage(t, publicationIDs{"bc", "5c"}, "bounded evidence", "bounded markdown")
 	oversized := bytes.NewReader(append(bytes.Repeat([]byte("x"),
 		int(staged.Build.Artifacts[0].Size)+1), bytes.Repeat([]byte("unread"), 1<<16)...))
 	staged.Artifacts[0].Payload = oversized
@@ -421,7 +423,7 @@ func TestPublishRenditionRejectsForgedProducerGraph(t *testing.T) {
 			publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
 			require.NoError(t, err)
 			staged := fixture.stage(t,
-				publicationIDs{"bf", "5f", "9f"}, "canonical searchable text", "canonical heading",
+				publicationIDs{"bf", "5f"}, "canonical searchable text", "canonical heading",
 			)
 			testCase.mutate(t, &staged)
 
@@ -449,7 +451,7 @@ func TestPublishRenditionFailureAfterBlobClosePreservesPriorHeads(t *testing.T) 
 	publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
 	require.NoError(t, err)
 	first, err := publisher.PublishRendition(t.Context(), fixture.stage(t,
-		publicationIDs{"b1", "51", "91"}, "prior mercury evidence", "first markdown",
+		publicationIDs{"b1", "51"}, "prior mercury evidence", "first markdown",
 	))
 	require.NoError(t, err)
 
@@ -457,7 +459,7 @@ func TestPublishRenditionFailureAfterBlobClosePreservesPriorHeads(t *testing.T) 
 	failingPublisher, err := NewArtifactPublisher(fixture.catalog, failingWriter)
 	require.NoError(t, err)
 	_, err = failingPublisher.PublishRendition(t.Context(), fixture.stage(t,
-		publicationIDs{"b2", "52", "92"}, "replacement venus evidence", "second markdown",
+		publicationIDs{"b2", "52"}, "replacement venus evidence", "second markdown",
 	))
 	require.ErrorIs(t, err, errInjectedPublication)
 	assertPriorPublicationServes(t, fixture, first)
@@ -471,7 +473,7 @@ func TestPublishRenditionFailureAfterCatalogStagePreservesPriorHeads(t *testing.
 	publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
 	require.NoError(t, err)
 	first, err := publisher.PublishRendition(t.Context(), fixture.stage(t,
-		publicationIDs{"b1", "51", "91"}, "prior mercury evidence", "first markdown",
+		publicationIDs{"b1", "51"}, "prior mercury evidence", "first markdown",
 	))
 	require.NoError(t, err)
 
@@ -479,7 +481,7 @@ func TestPublishRenditionFailureAfterCatalogStagePreservesPriorHeads(t *testing.
 	failingPublisher, err := NewArtifactPublisher(failingCatalog, fixture.blobs)
 	require.NoError(t, err)
 	second := fixture.replacementStage(t,
-		publicationIDs{"b2", "52", "92"}, "replacement venus evidence", "second markdown",
+		publicationIDs{"b2", "52"}, "replacement venus evidence", "second markdown",
 	)
 	_, err = failingPublisher.PublishRendition(t.Context(), second)
 	require.ErrorIs(t, err, errInjectedPublication)
@@ -491,7 +493,7 @@ func TestPublishRenditionFailureAfterCatalogStagePreservesPriorHeads(t *testing.
 
 func TestPublishRenditionExcludesDerivativePurgeAcrossEveryStagingBoundary(t *testing.T) {
 	t.Parallel()
-	for _, boundary := range []string{"receipt", "build", "lexical"} {
+	for _, boundary := range []string{"receipt", "build"} {
 		t.Run(boundary, func(t *testing.T) {
 			// The blob coordinator's queue lives in the bubble, so a blocked
 			// lease durably blocks its goroutine.
@@ -503,7 +505,7 @@ func TestPublishRenditionExcludesDerivativePurgeAcrossEveryStagingBoundary(t *te
 				}
 				publisher, err := NewArtifactPublisher(blocking, fixture.blobs)
 				require.NoError(t, err)
-				staged := fixture.stage(t, publicationIDs{"bc", "5c", "9c"},
+				staged := fixture.stage(t, publicationIDs{"bc", "5c"},
 					"concurrent synthetic evidence", "concurrent markdown")
 				publicationDone := make(chan error, 1)
 				go func() {
@@ -553,7 +555,7 @@ type publicationFixture struct {
 }
 
 type publicationIDs struct {
-	build, attachment, generation string
+	build, attachment string
 }
 
 func newPublicationFixture(tb testing.TB) publicationFixture {
@@ -697,7 +699,6 @@ func (f publicationFixture) stageForSource(
 			ContentVersionID: versionID, ProcessingProfileFingerprint: f.profile.Fingerprint,
 			AttachmentID: attachment.ID, PublishedAt: "2026-08-22T10:01:00.000000000Z",
 		},
-		LexicalGenerationID: processingHash(ids.generation),
 		Artifacts: []StagedArtifact{
 			{ID: build.Artifacts[0].ID, Payload: bytes.NewReader(evidence)},
 			{ID: build.Artifacts[1].ID, Payload: bytes.NewReader(markdownBytes)},
@@ -849,17 +850,6 @@ func (c *blockingPublicationCatalog) StageRenditionBuild(
 	}
 	c.block("build")
 	return nil
-}
-
-func (c *blockingPublicationCatalog) StageLexicalGeneration(
-	ctx context.Context, generationID string,
-) (store.LexicalGeneration, error) {
-	generation, err := c.renditionPublicationCatalog.StageLexicalGeneration(ctx, generationID)
-	if err != nil {
-		return store.LexicalGeneration{}, err
-	}
-	c.block("lexical")
-	return generation, nil
 }
 
 func (c *failAfterCatalogStage) StageRenditionBuild(

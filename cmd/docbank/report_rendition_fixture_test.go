@@ -132,7 +132,6 @@ func (f reportRenditionFixture) publish(
 		Head: store.RenditionHeadRecord{ContentVersionID: node.CurrentVersionID,
 			ProcessingProfileFingerprint: f.profile, AttachmentID: attachment.ID,
 			PublishedAt: "2026-09-11T12:02:00.000000000Z"},
-		LexicalGenerationID: sha256Hex("generation:" + publicationID),
 		Artifacts: []processing.StagedArtifact{
 			{ID: build.Artifacts[0].ID, Payload: bytes.NewReader(evidence)},
 			{ID: build.Artifacts[1].ID, Payload: bytes.NewReader(rendition.Markdown)},

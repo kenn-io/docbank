@@ -2273,40 +2273,93 @@ type providerPublicationAuthorization struct {
 	renditionRequestFingerprint string
 }
 
+// PublishRendition inserts one version-scoped attachment and flips its
+// rendition head together with a lexical generation that adds the
+// attachment's build to the current head. The generation is created under
+// the publication writer lock, so a concurrent publication cannot make it
+// stale, and the text of builds the head already serves is not read again.
+func (s *Store) PublishRendition(
+	ctx context.Context, attachment RenditionAttachmentRecord, head RenditionHeadRecord,
+) (LexicalGeneration, error) {
+	normalized, err := s.normalizeRenditionPublication(attachment, head, nil)
+	if err != nil {
+		return LexicalGeneration{}, err
+	}
+	var generation LexicalGeneration
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		generation, err = extendLexicalHeadTx(ctx, tx, []string{normalized.BuildID}, s.postgresSchema != "")
+		if err != nil {
+			return err
+		}
+		return s.publishRenditionAttachmentsAndLexicalHeadsTx(ctx, tx,
+			[]renditionPublicationPair{{attachment: normalized, head: head}}, generation.ID, nil)
+	})
+	if err != nil {
+		return LexicalGeneration{}, err
+	}
+	return generation, nil
+}
+
+// extendLexicalHeadTx returns a generation that serves the current head plus
+// buildIDs. It appends to the head's stream when it can. Without a head, or
+// when another generation already extends the head's stream, it stages a
+// complete generation instead.
+func extendLexicalHeadTx(
+	ctx context.Context, tx *sql.Tx, buildIDs []string, postgres bool,
+) (LexicalGeneration, error) {
+	generation, err := appendLexicalGenerationTx(ctx, tx, buildIDs, postgres)
+	if errors.Is(err, ErrNotFound) {
+		return stageLexicalGenerationExcludingTx(ctx, tx, nil, postgres)
+	}
+	return generation, err
+}
+
 func (s *Store) publishRenditionAndLexicalHeads(
 	ctx context.Context, attachment RenditionAttachmentRecord,
 	head RenditionHeadRecord, generationID string,
 	authorization *providerPublicationAuthorization,
 ) error {
-	normalized, err := normalizeRenditionAttachmentRecord(attachment)
-	if err != nil {
-		return fmt.Errorf("publishing rendition attachment: %w", err)
-	}
-	if err := validateRenditionHeadRecord(head); err != nil {
-		return fmt.Errorf("publishing rendition head: %w", err)
-	}
 	if err := validateCatalogSHA256(generationID, "lexical generation ID"); err != nil {
 		return err
+	}
+	normalized, err := s.normalizeRenditionPublication(attachment, head, authorization)
+	if err != nil {
+		return err
+	}
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return s.publishRenditionAttachmentsAndLexicalHeadsTx(ctx, tx,
+			[]renditionPublicationPair{{attachment: normalized, head: head}}, generationID, authorization)
+	})
+}
+
+func (s *Store) normalizeRenditionPublication(
+	attachment RenditionAttachmentRecord, head RenditionHeadRecord,
+	authorization *providerPublicationAuthorization,
+) (RenditionAttachmentRecord, error) {
+	normalized, err := normalizeRenditionAttachmentRecord(attachment)
+	if err != nil {
+		return RenditionAttachmentRecord{}, fmt.Errorf("publishing rendition attachment: %w", err)
+	}
+	if err := validateRenditionHeadRecord(head); err != nil {
+		return RenditionAttachmentRecord{}, fmt.Errorf("publishing rendition head: %w", err)
 	}
 	if head.ContentVersionID != normalized.ContentVersionID ||
 		head.ProcessingProfileFingerprint != normalized.Profile.Fingerprint ||
 		head.AttachmentID != normalized.ID {
-		return errors.New("rendition head does not resolve through its exact attachment")
+		return RenditionAttachmentRecord{}, errors.New("rendition head does not resolve through its exact attachment")
 	}
 	if normalized.VaultID != s.vaultID {
-		return fmt.Errorf("publishing rendition attachment: vault %q does not match store vault %q",
+		return RenditionAttachmentRecord{}, fmt.Errorf(
+			"publishing rendition attachment: vault %q does not match store vault %q",
 			normalized.VaultID, s.vaultID)
 	}
 	if authorization != nil &&
 		(authorization.consent.ProfileFingerprint != normalized.Profile.Fingerprint ||
 			authorization.consent.DisclosureFingerprint != normalized.Profile.RenditionDisclosureFingerprint) {
-		return errors.New("provider authorization does not match rendition publication policy")
+		return RenditionAttachmentRecord{}, errors.New("provider authorization does not match rendition publication policy")
 	}
-
-	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return s.publishRenditionAttachmentsAndLexicalHeadsTx(ctx, tx,
-			[]renditionPublicationPair{{attachment: normalized, head: head}}, generationID, authorization)
-	})
+	return normalized, nil
 }
 
 type renditionPublicationPair struct {

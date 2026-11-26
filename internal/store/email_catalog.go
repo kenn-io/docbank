@@ -80,7 +80,6 @@ type EmailBodyPublication struct {
 	BodyRecipeFingerprint string
 	RenditionAttachment   RenditionAttachmentRecord
 	RenditionHead         RenditionHeadRecord
-	LexicalGenerationID   string
 }
 
 func emailArtifacts(e document.EmailV1) []EmailPartArtifactRecord {

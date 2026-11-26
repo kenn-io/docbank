@@ -1645,10 +1645,7 @@ func (s *Store) publishRenditionJob(
 			}
 			// Capture the final manifest under the publication writer lock so
 			// another publisher cannot make it stale before the head flip.
-			generation, err := appendLexicalGenerationTx(ctx, tx, []string{job.ID}, s.postgresSchema != "")
-			if errors.Is(err, ErrNotFound) {
-				generation, err = stageLexicalGenerationExcludingTx(ctx, tx, nil, s.postgresSchema != "")
-			}
+			generation, err := extendLexicalHeadTx(ctx, tx, []string{job.ID}, s.postgresSchema != "")
 			if err != nil {
 				return err
 			}

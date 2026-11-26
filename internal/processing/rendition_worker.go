@@ -632,7 +632,7 @@ func (worker *RenditionWorker) runClaim(ctx context.Context,
 		return true, worker.classifyPublicationError(ctx, claim, err)
 	}
 	staged, err := buildRenditionJobCandidate(
-		work, execution, result, claim.Epoch, worker.clock().UTC())
+		work, execution, result, worker.clock().UTC())
 	if err != nil {
 		return true, worker.markFailed(
 			ctx, claim, store.RenditionFailureTerminal, worker.clock().UTC())
@@ -1104,7 +1104,7 @@ func validateRenditionExecutionSnapshot(
 
 func buildRenditionJobCandidate(
 	work store.RenditionJobWork, execution RenditionExecution,
-	result document.RenditionResult, claimEpoch int64, at time.Time,
+	result document.RenditionResult, at time.Time,
 ) (StagedRendition, error) {
 	normalized, err := document.NormalizeEvidenceV1(result.Evidence, execution.EvidencePolicy)
 	if err != nil {
@@ -1219,7 +1219,6 @@ func buildRenditionJobCandidate(
 		ContentVersionID: work.Waiter.ContentVersionID, BuildID: build.ID,
 		Profile: work.Profile, AttachedAt: at.Format("2006-01-02T15:04:05.000000000Z"),
 	}
-	generationID := renditionJobGenerationID(work.Job.ID, claimEpoch)
 	return StagedRendition{
 		Rendition: rendition, RenditionPolicy: execution.RenditionPolicy,
 		Build: build, Attachment: attachment,
@@ -1228,19 +1227,13 @@ func buildRenditionJobCandidate(
 			ProcessingProfileFingerprint: work.Profile.Fingerprint,
 			AttachmentID:                 attachment.ID, PublishedAt: attachment.AttachedAt,
 		},
-		LexicalGenerationID: generationID, Artifacts: payloads,
+		Artifacts: payloads,
 	}, nil
 }
 
 func renditionArtifactID(buildID, role string, ordinal int, checksum string) string {
 	digest := sha256.Sum256([]byte("docbank:rendition-artifact:v1\x00" + buildID + "\x00" +
 		role + "\x00" + strconv.Itoa(ordinal) + "\x00" + checksum))
-	return hex.EncodeToString(digest[:])
-}
-
-func renditionJobGenerationID(jobID string, epoch int64) string {
-	digest := sha256.Sum256([]byte("docbank:rendition-generation:v1\x00" + jobID + "\x00" +
-		strconv.FormatInt(epoch, 10)))
 	return hex.EncodeToString(digest[:])
 }
 

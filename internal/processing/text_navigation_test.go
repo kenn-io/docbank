@@ -47,7 +47,7 @@ func TestTextNavigationService(t *testing.T) {
 	publisher, err := NewArtifactPublisher(f.Catalog, f.Blobs)
 	require.NoError(t, err)
 	_, err = publisher.PublishRendition(t.Context(), f.fixture.stage(t,
-		publicationIDs{"navigation-next-build", "navigation-next-attachment", "navigation-next-index"},
+		publicationIDs{"navigation-next-build", "navigation-next-attachment"},
 		"replacement rendition", "Other quote"))
 	require.NoError(t, err)
 	f.ReplaceSource(t)

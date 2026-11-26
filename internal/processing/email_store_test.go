@@ -144,7 +144,7 @@ func (f emailStoreFixture) bodyStage(t *testing.T) StagedRendition {
 		build.Warnings = append(build.Warnings, w.Code)
 	}
 	attachment := store.RenditionAttachmentRecord{ID: processingHash(f.versionID + buildID + f.profile.Fingerprint), VaultID: f.catalog.VaultID(), ContentVersionID: f.versionID, BuildID: buildID, Profile: f.profile, AttachedAt: "2026-09-09T10:01:00.000000000Z"}
-	return StagedRendition{Rendition: rendition, RenditionPolicy: f.renditionPolicy, Build: build, Attachment: attachment, Head: store.RenditionHeadRecord{ContentVersionID: f.versionID, ProcessingProfileFingerprint: f.profile.Fingerprint, AttachmentID: attachment.ID, PublishedAt: attachment.AttachedAt}, LexicalGenerationID: processingHash(buildID + "projection"), Artifacts: []StagedArtifact{{ID: build.Artifacts[0].ID, Payload: bytes.NewReader(evidence)}, {ID: build.Artifacts[1].ID, Payload: bytes.NewReader(rendition.Markdown)}}}
+	return StagedRendition{Rendition: rendition, RenditionPolicy: f.renditionPolicy, Build: build, Attachment: attachment, Head: store.RenditionHeadRecord{ContentVersionID: f.versionID, ProcessingProfileFingerprint: f.profile.Fingerprint, AttachmentID: attachment.ID, PublishedAt: attachment.AttachedAt}, Artifacts: []StagedArtifact{{ID: build.Artifacts[0].ID, Payload: bytes.NewReader(evidence)}, {ID: build.Artifacts[1].ID, Payload: bytes.NewReader(rendition.Markdown)}}}
 }
 
 type emailStoreAdapter struct {
@@ -155,11 +155,11 @@ type emailStoreAdapter struct {
 	mutate                func(*store.EmailBodyPublication)
 }
 
-func (a emailStoreAdapter) PublishRenditionAndLexicalHeads(ctx context.Context, attachment store.RenditionAttachmentRecord, head store.RenditionHeadRecord, generationID string) error {
+func (a emailStoreAdapter) PublishRendition(ctx context.Context, attachment store.RenditionAttachmentRecord, head store.RenditionHeadRecord) (store.LexicalGeneration, error) {
 	if a.fail {
-		return errors.New("synthetic transient publication failure")
+		return store.LexicalGeneration{}, errors.New("synthetic transient publication failure")
 	}
-	p := store.EmailBodyPublication{EmailAttachmentID: a.emailID, PartPath: a.path, BodyRecipeFingerprint: a.recipe, RenditionAttachment: attachment, RenditionHead: head, LexicalGenerationID: generationID}
+	p := store.EmailBodyPublication{EmailAttachmentID: a.emailID, PartPath: a.path, BodyRecipeFingerprint: a.recipe, RenditionAttachment: attachment, RenditionHead: head}
 	if a.mutate != nil {
 		a.mutate(&p)
 	}
@@ -195,7 +195,7 @@ func TestEmailStoreBodyPublisherAtomicRetryAndAssociation(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Len(t, targets, 1)
-	for _, tc := range []string{"part", "version", "recipe", "head", "lexical"} {
+	for _, tc := range []string{"part", "version", "recipe", "head"} {
 		t.Run(tc, func(t *testing.T) {
 			_, err := f.publisher(t, func(a *emailStoreAdapter) {
 				a.mutate = func(p *store.EmailBodyPublication) {
@@ -208,8 +208,6 @@ func TestEmailStoreBodyPublisherAtomicRetryAndAssociation(t *testing.T) {
 						p.BodyRecipeFingerprint = processingHash("wrong recipe")
 					case "head":
 						p.RenditionHead.AttachmentID = processingHash("wrong head")
-					case "lexical":
-						p.LexicalGenerationID = processingHash("wrong projection")
 					}
 				}
 			}).PublishRendition(t.Context(), f.bodyStage(t))

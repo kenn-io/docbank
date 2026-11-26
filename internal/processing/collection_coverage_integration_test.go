@@ -35,7 +35,7 @@ func (r coverageRuntime) Prepare(ctx context.Context, work store.RenditionJobWor
 	execution.Provider = coverageProvider{base: r.base, mode: r.mode, check: func(result document.RenditionResult) {
 		r.t.Helper()
 		require.NoError(r.t, document.ValidateRenditionResult(r.base.Descriptor(), execution.Authorization, result))
-		candidate, err := buildRenditionJobCandidate(work, execution, result, 1, now)
+		candidate, err := buildRenditionJobCandidate(work, execution, result, now)
 		if r.mode == "blank" {
 			require.ErrorContains(r.t, err, "evidence produced no readable text")
 			return

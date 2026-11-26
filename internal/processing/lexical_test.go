@@ -15,7 +15,7 @@ func TestLexicalGenerationRebuildRemainsUnreachableUntilPublication(t *testing.T
 	publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
 	require.NoError(t, err)
 	first, err := publisher.PublishRendition(t.Context(), fixture.stage(t,
-		publicationIDs{"b1", "51", "91"}, "prior mercury evidence", "first markdown",
+		publicationIDs{"b1", "51"}, "prior mercury evidence", "first markdown",
 	))
 	require.NoError(t, err)
 
@@ -23,7 +23,7 @@ func TestLexicalGenerationRebuildRemainsUnreachableUntilPublication(t *testing.T
 	failingPublisher, err := NewArtifactPublisher(failingCatalog, fixture.blobs)
 	require.NoError(t, err)
 	_, err = failingPublisher.PublishRendition(t.Context(), fixture.replacementStage(t,
-		publicationIDs{"b2", "52", "92"}, "replacement venus evidence", "second markdown",
+		publicationIDs{"b2", "52"}, "replacement venus evidence", "second markdown",
 	))
 	require.ErrorIs(t, err, errInjectedPublication)
 
