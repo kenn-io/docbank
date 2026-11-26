@@ -1973,62 +1973,100 @@ func lexicalBuildDigest(buildIDs []string) string {
 func loadAndValidateLexicalGenerationTx(
 	ctx context.Context, tx *sql.Tx, generationID string,
 ) (LexicalGeneration, error) {
+	generation, streamID, err := readLexicalGenerationTx(ctx, tx, generationID)
+	if err != nil {
+		return LexicalGeneration{}, err
+	}
+	if err := validateLexicalStreamTx(ctx, tx, generation, streamID, LexicalGeneration{}); err != nil {
+		return LexicalGeneration{}, err
+	}
+	return generation, nil
+}
+
+// readLexicalGenerationTx reads a generation's recorded counts and digest
+// without checking them against its stream.
+func readLexicalGenerationTx(
+	ctx context.Context, tx *sql.Tx, generationID string,
+) (LexicalGeneration, string, error) {
 	generation := LexicalGeneration{ID: generationID}
+	var streamID string
 	var manifestDigest sql.NullString
 	err := tx.QueryRowContext(ctx, `
-		SELECT g.segment_count,g.build_count,m.manifest_digest
+		SELECT g.stream_id,g.segment_count,g.build_count,m.manifest_digest
 		FROM rendition_lexical_generations g
 		LEFT JOIN rendition_lexical_generation_manifests m
 		  ON m.generation_id=g.generation_id
 		WHERE g.generation_id=$1`, generationID,
-	).Scan(&generation.SegmentCount, &generation.BuildCount, &manifestDigest)
+	).Scan(&streamID, &generation.SegmentCount, &generation.BuildCount, &manifestDigest)
 	if errors.Is(err, sql.ErrNoRows) {
-		return LexicalGeneration{}, ErrNotFound
+		return LexicalGeneration{}, "", ErrNotFound
 	}
 	if err != nil {
-		return LexicalGeneration{}, fmt.Errorf("reading lexical generation %s: %w", generationID, err)
+		return LexicalGeneration{}, "", fmt.Errorf("reading lexical generation %s: %w", generationID, err)
 	}
-	segments, err := readLexicalManifestRowsTx(ctx, tx, generationID, "")
+	if !manifestDigest.Valid {
+		return LexicalGeneration{}, "", fmt.Errorf(
+			"lexical generation %s has a different immutable manifest", generationID)
+	}
+	generation.ManifestDigest = manifestDigest.String
+	return generation, streamID, nil
+}
+
+// validateLexicalStreamTx recomputes a generation's counts and manifest chain
+// from its stream. Validation resumes after base, an already validated
+// generation on the same stream that generation extends; an empty base
+// validates every build.
+func validateLexicalStreamTx(
+	ctx context.Context, tx *sql.Tx, generation LexicalGeneration, streamID string,
+	base LexicalGeneration,
+) (retErr error) {
+	segmentRows, err := tx.QueryContext(ctx, `
+		SELECT i.build_id,i.segment_id,i.text
+		FROM rendition_lexical_stream_builds b
+		JOIN rendition_lexical_index i ON i.build_id=b.build_id
+		WHERE b.stream_id=$1 AND b.ordinal>$2 AND b.ordinal<=$3`,
+		streamID, base.BuildCount, generation.BuildCount)
 	if err != nil {
-		return LexicalGeneration{}, err
+		return fmt.Errorf("reading lexical generation %s manifest: %w", generation.ID, err)
+	}
+	segments, err := scanLexicalManifestRows(segmentRows, "lexical generation "+generation.ID+" manifest")
+	if err != nil {
+		return err
 	}
 	byBuild := make(map[string][]lexicalManifestRow)
 	for _, row := range segments {
 		byBuild[row.buildID] = append(byBuild[row.buildID], row)
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT b.ordinal,b.build_id
-		FROM rendition_lexical_generations g JOIN rendition_lexical_stream_builds b
-		ON b.stream_id=g.stream_id AND b.ordinal<=g.build_count
-		WHERE g.generation_id=$1 ORDER BY b.ordinal`, generationID)
+	rows, err := tx.QueryContext(ctx, `SELECT ordinal,build_id
+		FROM rendition_lexical_stream_builds
+		WHERE stream_id=$1 AND ordinal>$2 AND ordinal<=$3 ORDER BY ordinal`,
+		streamID, base.BuildCount, generation.BuildCount)
 	if err != nil {
-		return LexicalGeneration{}, fmt.Errorf("reading lexical stream manifest: %w", err)
+		return fmt.Errorf("reading lexical stream manifest: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	count := 0
-	manifestChain := ""
+	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+	count := base.BuildCount
+	manifestChain := base.ManifestDigest
 	for rows.Next() {
 		var ordinal int
 		var buildID string
 		if err := rows.Scan(&ordinal, &buildID); err != nil {
-			return LexicalGeneration{}, fmt.Errorf("reading lexical stream manifest row: %w", err)
+			return fmt.Errorf("reading lexical stream manifest row: %w", err)
 		}
 		count++
 		manifestChain = lexicalChain(manifestChain, buildID, byBuild[buildID])
 		if ordinal != count {
-			return LexicalGeneration{}, fmt.Errorf("lexical generation %s has a different immutable manifest", generationID)
+			return fmt.Errorf("lexical generation %s has a different immutable manifest", generation.ID)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return LexicalGeneration{}, fmt.Errorf("reading lexical stream manifest rows: %w", err)
+		return fmt.Errorf("reading lexical stream manifest rows: %w", err)
 	}
-	if !manifestDigest.Valid ||
-		len(segments) != generation.SegmentCount || count != generation.BuildCount ||
-		manifestChain != manifestDigest.String {
-		return LexicalGeneration{}, fmt.Errorf(
-			"lexical generation %s has a different immutable manifest", generationID)
+	if base.SegmentCount+len(segments) != generation.SegmentCount ||
+		count != generation.BuildCount || manifestChain != generation.ManifestDigest {
+		return fmt.Errorf("lexical generation %s has a different immutable manifest", generation.ID)
 	}
-	generation.ManifestDigest = manifestDigest.String
-	return generation, nil
+	return nil
 }
 
 // ActiveLexicalGeneration returns the exact complete projection selected by
@@ -2327,15 +2365,73 @@ func (s *Store) publishRenditionAttachmentsAndLexicalHeadsTx(
 	if allEmailPDF {
 		return nil
 	}
-	if _, err := loadAndValidateLexicalGenerationTx(ctx, tx, generationID); errors.Is(err, ErrNotFound) {
-		return fmt.Errorf("lexical generation %s: %w", generationID, ErrNotFound)
-	} else if err != nil {
-		return err
-	}
-	if err := validateLexicalGenerationCoversCurrentHeadsTx(ctx, tx, generationID); err != nil {
+	if err := validateLexicalPublicationTx(ctx, tx, generationID); err != nil {
 		return err
 	}
 	return s.publishLexicalHeadTx(ctx, tx, generationID)
+}
+
+// validateLexicalPublicationTx proves that generationID may become the
+// lexical head. Full validation reads every segment the generation serves,
+// so doing it on every publication makes each one slower as the vault grows.
+// A generation that extends the current head on the head's stream shares the
+// builds the head was validated with. Only the builds after the head's cutoff
+// are read again, and current rendition heads are checked by membership.
+// validateRenditionPublicationTx has already checked the exact text of the
+// builds this publication makes current. Any other generation is validated
+// in full.
+func validateLexicalPublicationTx(ctx context.Context, tx *sql.Tx, generationID string) error {
+	generation, streamID, err := readLexicalGenerationTx(ctx, tx, generationID)
+	if errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("lexical generation %s: %w", generationID, ErrNotFound)
+	}
+	if err != nil {
+		return err
+	}
+	var headID string
+	err = tx.QueryRowContext(ctx,
+		`SELECT generation_id FROM rendition_lexical_heads WHERE singleton=1`).Scan(&headID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("reading current lexical head: %w", err)
+	}
+	if err == nil {
+		head, headStreamID, err := readLexicalGenerationTx(ctx, tx, headID)
+		if err != nil {
+			return err
+		}
+		if headStreamID == streamID && head.BuildCount <= generation.BuildCount {
+			if err := validateLexicalStreamTx(ctx, tx, generation, streamID, head); err != nil {
+				return err
+			}
+			return validateLexicalStreamCoversCurrentHeadsTx(ctx, tx, generation, streamID)
+		}
+	}
+	if err := validateLexicalStreamTx(ctx, tx, generation, streamID, LexicalGeneration{}); err != nil {
+		return err
+	}
+	return validateLexicalGenerationCoversCurrentHeadsTx(ctx, tx, generationID)
+}
+
+// validateLexicalStreamCoversCurrentHeadsTx proves that every current
+// rendition head's build is a member of generation, without reading text.
+func validateLexicalStreamCoversCurrentHeadsTx(
+	ctx context.Context, tx *sql.Tx, generation LexicalGeneration, streamID string,
+) error {
+	var missing string
+	err := tx.QueryRowContext(ctx, `
+		SELECT a.build_id FROM rendition_heads h
+		JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
+		WHERE NOT EXISTS (SELECT 1 FROM rendition_lexical_stream_builds b
+		                  WHERE b.stream_id=$1 AND b.build_id=a.build_id AND b.ordinal<=$2)
+		ORDER BY a.build_id LIMIT 1`, streamID, generation.BuildCount).Scan(&missing)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("checking lexical generation %s coverage: %w", generation.ID, err)
+	}
+	return fmt.Errorf("lexical generation %s does not cover published rendition build %s (current rendition head build): %w",
+		generation.ID, missing, ErrLexicalGenerationStale)
 }
 
 // validateRenditionPublicationTx proves that one attachment names an exact
