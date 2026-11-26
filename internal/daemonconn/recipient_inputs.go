@@ -12,7 +12,6 @@ import (
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/processing"
-	"go.kenn.io/docbank/internal/redactionfiles"
 )
 
 type RecipientSelection struct {
@@ -37,7 +36,7 @@ func ReadRecipientSelection(ctx context.Context, path string) (selection Recipie
 			err = &RecipientPackageInputError{err}
 		}
 	}()
-	data, err := redactionfiles.ReadFile(ctx, path, 256<<10)
+	data, err := ReadRedactionFile(ctx, path, 256<<10)
 	if err != nil {
 		return selection, err
 	}
@@ -137,11 +136,11 @@ func readRecipientReview(ctx context.Context, input RecipientPackageInput) (revi
 			err = &RecipientPackageInputError{err}
 		}
 	}()
-	request, err := redactionfiles.ReadInputs(ctx, input.Preparation, input.Masks)
+	request, err := ReadRedactionInputs(ctx, input.Preparation, input.Masks)
 	if err != nil {
 		return processing.RedactionReview{}, err
 	}
-	review, err = redactionfiles.ReadReview(ctx, input.Review, request)
+	review, err = ReadRedactionReview(ctx, input.Review, request)
 	if err != nil {
 		return review, err
 	}

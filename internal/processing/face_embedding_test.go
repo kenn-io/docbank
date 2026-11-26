@@ -23,7 +23,6 @@ import (
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/vectorworker"
 	docsqlite "go.kenn.io/docbank/sqlite"
 	"go.kenn.io/kit/embedclient"
 	"go.kenn.io/kit/packstore"
@@ -440,7 +439,7 @@ func checkFacePickerPayloadScopeAndIndexFreshness(t *testing.T, open faceEmbeddi
 				}
 				return
 			}
-			index, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
+			index, err := NewIndexWorker(IndexWorkerConfig{
 				Catalog: x.f.catalog, Mutate: newTestOperationGate().MutateContext, Owner: "face-picker-index",
 				BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
 				ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {

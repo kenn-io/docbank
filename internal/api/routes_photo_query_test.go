@@ -18,7 +18,6 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/vectorworker"
 	"go.kenn.io/kit/packstore"
 	"image"
 	"image/color"
@@ -881,7 +880,7 @@ func photoImageHTTPProfilesFixture(t *testing.T, providers map[string]document.E
 	spaces, err := catalog.ListVectorIndexSpaces(t.Context())
 	require.NoError(t, err)
 	// The fixture calls Rebuild directly; IdleDelay only paces Run, which never starts here.
-	indexer, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{Catalog: catalog.Store, Owner: "syntax-images", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Minute, Mutate: api.NewOperationGate().MutateContext, ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
+	indexer, err := processing.NewIndexWorker(processing.IndexWorkerConfig{Catalog: catalog.Store, Owner: "syntax-images", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Minute, Mutate: api.NewOperationGate().MutateContext, ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
 		reader, err := catalog.Blobs.OpenContext(ctx, member.PayloadBlobHash)
 		if err != nil {
 			return nil, err

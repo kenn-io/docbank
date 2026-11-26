@@ -17,7 +17,6 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/processing"
-	"go.kenn.io/docbank/internal/redactionfiles"
 )
 
 const (
@@ -99,7 +98,7 @@ func resolveNativePDF(ctx context.Context, lease *daemonLease, raw []byte, logge
 	}
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	request, err := redactionfiles.ReadInputs(ctx, input.PreparationPath, input.MasksPath)
+	request, err := daemonconn.ReadRedactionInputs(ctx, input.PreparationPath, input.MasksPath)
 	if err != nil {
 		if ctx.Err() != nil || errors.Is(err, pdfproduction.ErrVerifierVersion) {
 			return resolveNativePDFOutput{}, resolutionRequestError(ctx, err)

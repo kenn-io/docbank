@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/internal/epubutil"
 	"go.kenn.io/docbank/document/internal/formatdetect"
 	"go.kenn.io/docbank/document/internal/providerutil"
 )
@@ -90,7 +89,7 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 	if err := ctx.Err(); err != nil {
 		return document.RenditionResult{}, provider.Canceled(err)
 	}
-	archive, err := epubutil.NewReaderContext(ctx, bytes.NewReader(data), int64(len(data)))
+	archive, err := formatdetect.NewReaderContext(ctx, bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return document.RenditionResult{}, provider.Canceled(ctxErr)
@@ -100,7 +99,7 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 	if err := ctx.Err(); err != nil {
 		return document.RenditionResult{}, provider.Canceled(err)
 	}
-	records, err := epubutil.ReadPackagesContext(ctx, archive.File, min(p.profile.MaxDocumentBytes, maxXHTMLBytes))
+	records, err := formatdetect.ReadPackagesContext(ctx, archive.File, min(p.profile.MaxDocumentBytes, maxXHTMLBytes))
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return document.RenditionResult{}, provider.Canceled(ctxErr)
@@ -131,7 +130,7 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 			return document.RenditionResult{}, rejected("EPUB expanded work exceeds its limit")
 		}
 		work += entryBytes
-		content, err := epubutil.ReadZIPEntryContext(ctx, entry, min(p.profile.MaxDocumentBytes, maxXHTMLBytes))
+		content, err := formatdetect.ReadZIPEntryContext(ctx, entry, min(p.profile.MaxDocumentBytes, maxXHTMLBytes))
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return document.RenditionResult{}, provider.Canceled(ctxErr)

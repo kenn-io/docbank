@@ -4,7 +4,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/internal/formatdetect"
 	"go.kenn.io/docbank/document/media"
-	"go.kenn.io/docbank/internal/formatqualification"
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 type DetectCapability struct {
@@ -47,8 +47,8 @@ func DefaultSources() Sources {
 		documentFormats[format.ID] = true
 	}
 	detect := []DetectCapability{}
-	for _, qualification := range formatqualification.All() {
-		if qualification.Capability != formatqualification.CapabilityDetect {
+	for _, qualification := range canonical.AllFormatQualifications() {
+		if qualification.Capability != canonical.FormatCapabilityDetect {
 			continue
 		}
 		matchesMedia := qualification.ImplementationID == media.DetectionImplementationID &&

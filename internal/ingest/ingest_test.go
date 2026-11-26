@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/formatqualification"
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/blob"
@@ -526,11 +526,11 @@ func TestPrepareUploadRetainsOriginalBytesForEveryCatalogFormat(t *testing.T) {
 			require.NoError(t, errors.Join(readErr, reader.Close()))
 			assert.Equal(t, content, retained)
 
-			_, qualified := formatqualification.Lookup(formatqualification.Query{
-				CatalogID: format.ID, Capability: formatqualification.CapabilityRetain,
+			_, qualified := canonical.LookupFormatQualification(canonical.FormatQualificationQuery{
+				CatalogID: format.ID, Capability: canonical.FormatCapabilityRetain,
 				Evidence:         "TestPrepareUploadRetainsOriginalBytesForEveryCatalogFormat",
 				ImplementationID: OriginalRetentionImplementationID,
-				InputKind:        formatqualification.InputOriginalFile,
+				InputKind:        canonical.FormatInputOriginalFile,
 			})
 			assert.True(t, qualified, "executed retention format %s is absent from the qualification manifest", format.ID)
 		})

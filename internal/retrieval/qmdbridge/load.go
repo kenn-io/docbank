@@ -1,4 +1,4 @@
-package qmdexport
+package qmdbridge
 
 import (
 	"crypto/sha256"

@@ -36,7 +36,6 @@ import (
 	"go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/vectorworker"
 	"go.kenn.io/kit/packstore"
 	"uuid"
 )
@@ -1949,7 +1948,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 }
 
 func (service *Service) rebuildVectorSpaces(ctx context.Context, vectorSpaces []string) error {
-	indexer, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{Catalog: service.catalog,
+	indexer, err := NewIndexWorker(IndexWorkerConfig{Catalog: service.catalog,
 		ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
 			return service.catalog.ReadVectorIndexVectorSet(ctx, service.blobs, member)
 		},

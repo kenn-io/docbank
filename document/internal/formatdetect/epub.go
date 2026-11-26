@@ -1,5 +1,4 @@
-// Package epubutil owns bounded EPUB package reads and archive reference resolution.
-package epubutil
+package formatdetect
 
 import (
 	"archive/zip"
@@ -515,38 +514,6 @@ func NewReaderContext(ctx context.Context, reader io.ReaderAt, size int64) (*zip
 		return nil, fmt.Errorf("open ZIP container: %w", err)
 	}
 	return archive, nil
-}
-
-type contextReaderAt struct {
-	ctx    context.Context
-	reader io.ReaderAt
-}
-
-func (reader contextReaderAt) ReadAt(buffer []byte, offset int64) (int, error) {
-	if err := reader.ctx.Err(); err != nil {
-		return 0, err
-	}
-	read, err := reader.reader.ReadAt(buffer, offset)
-	if contextErr := reader.ctx.Err(); contextErr != nil {
-		return read, contextErr
-	}
-	return read, err
-}
-
-type contextReader struct {
-	ctx    context.Context
-	reader io.Reader
-}
-
-func (reader contextReader) Read(p []byte) (int, error) {
-	if err := reader.ctx.Err(); err != nil {
-		return 0, err
-	}
-	n, err := reader.reader.Read(p)
-	if contextErr := reader.ctx.Err(); contextErr != nil {
-		return n, contextErr
-	}
-	return n, err
 }
 
 // ManifestBases preserves every intermediate XML-base interpretation.

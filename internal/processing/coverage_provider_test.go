@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/formatqualification"
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 func TestSyntheticMarkdownPDFOutput(t *testing.T) {
@@ -50,10 +50,10 @@ func TestSyntheticMarkdownPDFOutput(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "synthetic coverage fixture\n", string(result.ProviderMarkdown))
 	assert.Equal(t, 1, upload.closes)
-	_, found := formatqualification.Lookup(formatqualification.Query{
-		CatalogID: "pdf", Capability: formatqualification.CapabilityText,
+	_, found := canonical.LookupFormatQualification(canonical.FormatQualificationQuery{
+		CatalogID: "pdf", Capability: canonical.FormatCapabilityText,
 		Evidence: "TestSyntheticMarkdownPDFOutput", DescriptorFingerprint: descriptor.Fingerprint,
-		InputKind: formatqualification.InputOriginalFile,
+		InputKind: canonical.FormatInputOriginalFile,
 	})
 	assert.True(t, found, "executed provider descriptor %s is absent from the immutable qualification manifest", descriptor.Fingerprint)
 }

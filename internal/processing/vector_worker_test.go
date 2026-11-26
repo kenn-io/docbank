@@ -1,4 +1,4 @@
-package vectorworker
+package processing
 
 import (
 	"bytes"
@@ -19,6 +19,7 @@ import (
 )
 
 func TestIndexWorkerRebuildPublishesValidatedSearchableGeneration(t *testing.T) {
+	t.Parallel()
 	catalog, space := newIndexCatalogFixture(t)
 	worker := newIndexWorkerForTest(t, catalog)
 
@@ -40,6 +41,7 @@ func TestIndexWorkerRebuildPublishesValidatedSearchableGeneration(t *testing.T) 
 }
 
 func TestIndexWorkerCorruptCandidateAndDriftLeavePriorGenerationActive(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name    string
 		arrange func(*fakeIndexCatalog)
@@ -64,6 +66,7 @@ func TestIndexWorkerCorruptCandidateAndDriftLeavePriorGenerationActive(t *testin
 }
 
 func TestIndexWorkerConcurrentRebuildSharesOneBuild(t *testing.T) {
+	t.Parallel()
 	catalog, space := newIndexCatalogFixture(t)
 	catalog.readStarted = make(chan struct{})
 	catalog.allowRead = make(chan struct{})
@@ -82,6 +85,7 @@ func TestIndexWorkerConcurrentRebuildSharesOneBuild(t *testing.T) {
 }
 
 func TestIndexWorkerRestoreRebuildsIncludedAndReportsOmittedWithoutProvider(t *testing.T) {
+	t.Parallel()
 	included, includedSpace := newIndexCatalogFixture(t)
 	missingPayload := included.source.Members[0]
 	missingPayload.PayloadBlobHash = indexWorkerHash("missing-payload")
@@ -111,6 +115,7 @@ func TestIndexWorkerRestoreRebuildsIncludedAndReportsOmittedWithoutProvider(t *t
 }
 
 func TestIndexWorkerRestoreSkipsSpacesWithoutEligibleMembership(t *testing.T) {
+	t.Parallel()
 	catalog, includedSpace := newIndexCatalogFixture(t)
 	staleSpace := indexWorkerHash("stale-space")
 	catalog.spaces = []string{staleSpace, includedSpace}
@@ -290,6 +295,7 @@ func indexWorkerTime(value time.Time) string {
 }
 
 func TestIndexWorkerSharedVectorsKeepDistinctMembershipGenerations(t *testing.T) {
+	t.Parallel()
 	catalog, space := newIndexCatalogFixture(t)
 	worker := newIndexWorkerForTest(t, catalog)
 	first, err := worker.Rebuild(t.Context(), space)
@@ -313,6 +319,7 @@ func (c *fakeIndexCatalog) AbandonVectorIndexBuild(context.Context, store.Vector
 }
 
 func TestIndexWorkerRunReturnsDiscoveryFailure(t *testing.T) {
+	t.Parallel()
 	metadata, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "index.db"))
 	require.NoError(t, err)
 	require.NoError(t, metadata.Close())
@@ -327,6 +334,7 @@ func TestIndexWorkerRunReturnsDiscoveryFailure(t *testing.T) {
 }
 
 func TestIndexWorkerRebuildReturnsReclaimFailure(t *testing.T) {
+	t.Parallel()
 	catalog, space := newIndexCatalogFixture(t)
 	catalog.reclaimErr = errors.New("synthetic cleanup failure")
 	_, err := newIndexWorkerForTest(t, catalog).Rebuild(t.Context(), space)
@@ -338,6 +346,7 @@ func (c *fakeIndexCatalog) RetireEmptyVectorIndexHead(context.Context, string, t
 }
 
 func TestIndexWorkerRunRetriesTransientErrorsWithBoundedBackoff(t *testing.T) {
+	t.Parallel()
 	for _, failures := range []int{2, 3} {
 		synctest.Test(t, func(t *testing.T) {
 			catalog, _ := newIndexCatalogFixture(t)
@@ -365,6 +374,7 @@ func TestIndexWorkerRunRetriesTransientErrorsWithBoundedBackoff(t *testing.T) {
 }
 
 func TestIndexWorkerRunDoesNotHideCleanupFailureBehindMembershipDrift(t *testing.T) {
+	t.Parallel()
 	catalog, _ := newIndexCatalogFixture(t)
 	catalog.publishErr = store.ErrVectorIndexSourceStale
 	catalog.abandonErr = errors.New("synthetic abandonment failure")
@@ -375,6 +385,7 @@ func TestIndexWorkerRunDoesNotHideCleanupFailureBehindMembershipDrift(t *testing
 }
 
 func TestIndexWorkerScanDoesNotReloadUnchangedGeneration(t *testing.T) {
+	t.Parallel()
 	catalog, space := newIndexCatalogFixture(t)
 	worker := newIndexWorkerForTest(t, catalog)
 	_, err := worker.Rebuild(t.Context(), space)
@@ -387,6 +398,7 @@ func TestIndexWorkerScanDoesNotReloadUnchangedGeneration(t *testing.T) {
 }
 
 func TestIndexWorkerScanRecoversWhenMissingPayloadReturns(t *testing.T) {
+	t.Parallel()
 	catalog, _ := newIndexCatalogFixture(t)
 	member := catalog.source.Members[0]
 	catalog.unavailable[member.PayloadBlobHash] = true
@@ -410,6 +422,7 @@ func (c *fakeIndexCatalog) ActiveVectorIndexHead(_ context.Context, space string
 }
 
 func TestIndexWorkerRestoresAndSearchesLargeDimensionVectors(t *testing.T) {
+	t.Parallel()
 	catalog, space := newIndexCatalogFixture(t)
 	// Exercise the canonical format's largest supported dimension. The catalog
 	// accepts this vector, so rebuilding its disposable projection must also work.

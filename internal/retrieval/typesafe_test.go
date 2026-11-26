@@ -1,4 +1,4 @@
-package typesafe
+package retrieval
 
 import (
 	"context"
@@ -11,11 +11,10 @@ import (
 	"go.kenn.io/docbank/document/providerhttp"
 	wire "go.kenn.io/docbank/document/typesafe"
 	"go.kenn.io/docbank/document/typesafe/typesafetest"
-	"go.kenn.io/docbank/internal/retrieval"
 )
 
-func identity(number int64) retrieval.DocumentIdentity {
-	return retrieval.DocumentIdentity{VaultID: "vault", NodeID: number, ContentVersionID: fmt.Sprintf("version-%d", number)}
+func typesafeIdentity(number int64) DocumentIdentity {
+	return DocumentIdentity{VaultID: "vault", NodeID: number, ContentVersionID: fmt.Sprintf("version-%d", number)}
 }
 
 func TestRerankSendsOnlyExcerptsAndMapsEveryIdentity(t *testing.T) {
@@ -26,13 +25,13 @@ func TestRerankSendsOnlyExcerptsAndMapsEveryIdentity(t *testing.T) {
 		}
 		return 0.8, nil
 	})
-	client, err := New(fake)
+	client, err := NewTypesafeClient(fake)
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := retrieval.RerankingRequest{Query: "query", Candidates: []retrieval.RerankingCandidate{
-		{Document: identity(1), Excerpt: "excerpt-0", Evidence: []retrieval.EvidenceReference{{VaultID: "vault-private"}}},
-		{Document: identity(2), Excerpt: "excerpt-1", Evidence: []retrieval.EvidenceReference{{BuildID: "build-private"}}},
+	request := RerankingRequest{Query: "query", Candidates: []RerankingCandidate{
+		{Document: typesafeIdentity(1), Excerpt: "excerpt-0", Evidence: []EvidenceReference{{VaultID: "vault-private"}}},
+		{Document: typesafeIdentity(2), Excerpt: "excerpt-1", Evidence: []EvidenceReference{{BuildID: "build-private"}}},
 	}}
 	scores, err := client.Rerank(context.Background(), request)
 	if err != nil || len(scores) != 2 || scores[0].Document != request.Candidates[0].Document || scores[1].Score != 0.8 {
@@ -50,13 +49,13 @@ func TestRerankSendsOnlyExcerptsAndMapsEveryIdentity(t *testing.T) {
 func TestRerankRejectsIncompleteOrDuplicateIdentitiesBeforeProvider(t *testing.T) {
 	profile := wire.Profile{SecretBinding: "test", EgressPolicy: providerhttp.EgressPolicy{Scheme: "https", Host: "api.typesafe.ai", Port: 443, AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}}}
 	fake := typesafetest.New(profile, func(_, _ string) (float64, error) { return 0.5, nil })
-	client, err := New(fake)
+	client, err := NewTypesafeClient(fake)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, bad := range []retrieval.RerankingRequest{
-		{Query: "q", Candidates: []retrieval.RerankingCandidate{{Document: retrieval.DocumentIdentity{VaultID: "vault"}}}},
-		{Query: "q", Candidates: []retrieval.RerankingCandidate{{Document: identity(1)}, {Document: identity(1)}}},
+	for _, bad := range []RerankingRequest{
+		{Query: "q", Candidates: []RerankingCandidate{{Document: DocumentIdentity{VaultID: "vault"}}}},
+		{Query: "q", Candidates: []RerankingCandidate{{Document: typesafeIdentity(1)}, {Document: typesafeIdentity(1)}}},
 	} {
 		if _, err := client.Rerank(context.Background(), bad); err == nil || len(fake.Requests()) != 0 {
 			t.Fatalf("err=%v requests=%v", err, fake.Requests())

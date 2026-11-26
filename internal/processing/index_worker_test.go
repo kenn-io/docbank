@@ -12,7 +12,6 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/vectorindex"
-	"go.kenn.io/docbank/internal/vectorworker"
 )
 
 func TestVectorIndexFailedReadReleasesBuildClaim(t *testing.T) {
@@ -29,7 +28,7 @@ func checkVectorIndexFailedReadReleasesBuildClaim(t *testing.T, makeFixture publ
 	require.NoError(t, err)
 	require.Len(t, spaces, 1)
 	failRead := true
-	worker, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
+	worker, err := NewIndexWorker(IndexWorkerConfig{
 		Mutate:  newTestOperationGate().MutateContext,
 		Catalog: fixture.catalog, Owner: "index-worker", BuildLease: 30 * time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
 		ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
@@ -56,7 +55,7 @@ func TestVectorIndexRebuildWaitsForMaintenanceAdmission(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, spaces, 1)
 	gate := newTestOperationGate()
-	worker, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
+	worker, err := NewIndexWorker(IndexWorkerConfig{
 		Catalog: fixture.catalog, Mutate: gate.MutateContext, Owner: "index-worker", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
 		ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
 			return fixture.catalog.ReadVectorIndexVectorSet(ctx, fixture.blobs, member)
@@ -91,7 +90,7 @@ func checkVectorIndexWorkerRetiresTrashedSource(t *testing.T, makeFixture public
 	spaces, err := fixture.catalog.ListVectorIndexSpaces(t.Context())
 	require.NoError(t, err)
 	require.Len(t, spaces, 1)
-	worker, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
+	worker, err := NewIndexWorker(IndexWorkerConfig{
 		Catalog: fixture.catalog, Mutate: newTestOperationGate().MutateContext, Owner: "index-worker", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
 		ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
 			return fixture.catalog.ReadVectorIndexVectorSet(ctx, fixture.blobs, member)
@@ -124,7 +123,7 @@ func checkVectorIndexMaintenanceCanRunDuringPayloadRead(t *testing.T, makeFixtur
 	require.NoError(t, err)
 	require.Len(t, spaces, 1)
 	gate := newTestOperationGate()
-	worker, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
+	worker, err := NewIndexWorker(IndexWorkerConfig{
 		Catalog: fixture.catalog, Mutate: gate.MutateContext, Owner: "index-worker", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
 		ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
 			maintenanceCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -148,7 +147,7 @@ func TestVectorIndexMissingPayloadWaitsForMaintenanceBeforeAbandoning(t *testing
 	synctest.Test(t, func(t *testing.T) {
 		gate := newTestOperationGate()
 		held, done := make(chan struct{}), make(chan error, 1)
-		worker, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
+		worker, err := NewIndexWorker(IndexWorkerConfig{
 			Catalog: fixture.catalog, Mutate: gate.MutateContext, Owner: "index-worker", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
 			ReadVectorSet: func(ctx context.Context, _ store.VectorIndexMember) ([]byte, error) {
 				go func() {
@@ -195,7 +194,7 @@ func checkVectorIndexRestoresRetainedVectors(t *testing.T, makeFixture publicati
 			payload, err := fixture.catalog.ReadVectorIndexVectorSet(t.Context(), fixture.blobs, member)
 			require.NoError(t, err)
 			require.NoError(t, fixture.blobs.Remove(member.PayloadBlobHash))
-			indexer, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
+			indexer, err := NewIndexWorker(IndexWorkerConfig{
 				Catalog: fixture.catalog, Mutate: newTestOperationGate().MutateContext, Owner: "restore-index",
 				BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond,
 				ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {

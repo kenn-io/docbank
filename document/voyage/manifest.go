@@ -10,7 +10,7 @@ import (
 	"slices"
 	"time"
 
-	"go.kenn.io/docbank/document/internal/manifestjson"
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 const (
@@ -113,10 +113,10 @@ func validateCapabilityResult(capability Capability, result CapabilityResult) er
 	if !slices.Contains([]ProbeStatus{ProbeStatusPassed, ProbeStatusRejected, ProbeStatusFailed}, result.Status) {
 		return fmt.Errorf("voyage capability manifest result %q has invalid status", capability.ID)
 	}
-	if len(result.FixtureDigest) != fixtureDigestLen || !manifestjson.LowerHex(result.FixtureDigest) {
+	if len(result.FixtureDigest) != fixtureDigestLen || !canonical.LowerHex(result.FixtureDigest) {
 		return fmt.Errorf("voyage capability manifest result %q has invalid fixture digest", capability.ID)
 	}
-	if len(result.RequestFingerprint) != sha256.Size*2 || !manifestjson.LowerHex(result.RequestFingerprint) {
+	if len(result.RequestFingerprint) != sha256.Size*2 || !canonical.LowerHex(result.RequestFingerprint) {
 		return fmt.Errorf("voyage capability manifest result %q has invalid request fingerprint", capability.ID)
 	}
 	if result.Status != ProbeStatusPassed {
@@ -161,7 +161,7 @@ func DecodeCapabilityManifest(reader io.Reader) (CapabilityManifest, error) {
 	if int64(len(data)) > maxManifestBytes {
 		return CapabilityManifest{}, errors.New("voyage capability manifest is too large")
 	}
-	if err := manifestjson.RejectDuplicateKeys(data, "voyage capability manifest"); err != nil {
+	if err := canonical.RejectDuplicateKeys(data, "voyage capability manifest"); err != nil {
 		return CapabilityManifest{}, fmt.Errorf("decode Voyage capability manifest: %w", err)
 	}
 	var manifest CapabilityManifest

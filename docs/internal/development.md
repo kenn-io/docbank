@@ -124,7 +124,7 @@ OCR safely](../document-understanding.md#run-mistral-ocr-safely) for the
 supported formats, byte limits, response checks, render policy, and manifest
 upgrade.
 
-`document/internal/epubutil` owns bounded EPUB package reads, ordered manifest
+`document/internal/formatdetect` owns bounded EPUB package reads, ordered manifest
 and spine records, XML-base interpretation, and archive paths. Media inspection
 uses these records to inspect every rootfile and conflicting declaration.
 OOXML and ODF inspection also use its bounded ZIP reader.

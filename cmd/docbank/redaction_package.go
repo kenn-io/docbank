@@ -12,7 +12,6 @@ import (
 	"go.kenn.io/docbank/internal/filepublish"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/processing"
-	"go.kenn.io/docbank/internal/redactionfiles"
 )
 
 type recipientPackageResult struct {
@@ -112,7 +111,7 @@ func publishRecipientPackage(ctx context.Context, cmd *cobra.Command, destinatio
 }
 
 func recipientCLIError(err error) error {
-	if errors.Is(err, redactionfiles.ErrInvalidInput) {
+	if errors.Is(err, daemonconn.ErrInvalidRedactionInput) {
 		return usageError(err)
 	}
 	if errors.Is(err, processing.ErrRecipientPackageInvalid) || errors.Is(err, processing.ErrRecipientPackageLimit) {

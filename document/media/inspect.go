@@ -29,7 +29,6 @@ import (
 	csslexer "github.com/tdewolff/parse/v2/css"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/internal/epubutil"
 	"go.kenn.io/docbank/document/internal/formatdetect"
 )
 
@@ -945,7 +944,7 @@ type xmlScope struct {
 // base names a directory from the container root; only a base carrying a scheme
 // names nothing inside the archive, and clears the directory.
 func resolveArchiveDir(home, base string) string {
-	return epubutil.ResolveArchiveDir(home, base)
+	return formatdetect.ResolveArchiveDir(home, base)
 }
 
 // nonLocatorXMLAttribute reports attributes whose values name a vocabulary
@@ -1165,7 +1164,7 @@ func hasDriveLetter(value string) bool {
 // decoding in one of them and not the other is what let an encoded spelling
 // land somewhere the check never looked.
 func normalizeReferencePath(value string) string {
-	return epubutil.NormalizeReferencePath(value)
+	return formatdetect.NormalizeReferencePath(value)
 }
 
 // stripReferenceWhitespace removes the whitespace a consumer discards before it
@@ -1175,7 +1174,7 @@ func normalizeReferencePath(value string) string {
 // untrimmed text read a leading space as a directory that absorbed a level of
 // climb.
 func stripReferenceWhitespace(value string) string {
-	return epubutil.StripReferenceWhitespace(value)
+	return formatdetect.StripReferenceWhitespace(value)
 }
 
 // escapesArchive reports whether a reference names a place outside the document
@@ -1207,7 +1206,7 @@ func escapesArchive(value, home string) bool {
 // path.Clean spells the root's own parent as ".." with no trailing separator,
 // so a prefix test alone reads that one landing place as contained.
 func leavesArchiveRoot(resolved string) bool {
-	return epubutil.LeavesArchiveRoot(resolved)
+	return formatdetect.LeavesArchiveRoot(resolved)
 }
 
 func externalURL(parsed *url.URL) bool {
@@ -1941,7 +1940,7 @@ func isCSSNewline(value byte) bool {
 }
 
 func readZIPEntry(file *zip.File, limit int64) ([]byte, error) {
-	return epubutil.ReadZIPEntry(file, limit)
+	return formatdetect.ReadZIPEntry(file, limit)
 }
 
 func hasZIPSignature(data []byte) bool {
@@ -1954,7 +1953,7 @@ func hasZIPSignature(data []byte) bool {
 // by its declared type, so inspection must follow that declaration rather than
 // the entry's filename.
 func epubPackageManifest(files []*zip.File, limit int64) (map[string]bool, contentDeclarations, error) {
-	records, err := epubutil.ReadPackages(files, limit)
+	records, err := formatdetect.ReadPackages(files, limit)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1970,8 +1969,8 @@ func epubPackageManifest(files []*zip.File, limit int64) (map[string]bool, conte
 			if href == "" {
 				continue
 			}
-			for _, directory := range epubutil.ManifestBases(path.Dir(record.Path), record.Base, record.Manifest.Base, item.Base) {
-				resource, err := epubutil.ArchivePath(href, directory)
+			for _, directory := range formatdetect.ManifestBases(path.Dir(record.Path), record.Base, record.Manifest.Base, item.Base) {
+				resource, err := formatdetect.ArchivePath(href, directory)
 				if err == nil {
 					declared.add(resource, normalizeDeclaredType(item.MediaType))
 				}

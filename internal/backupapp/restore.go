@@ -19,7 +19,6 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/vectorworker"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -343,8 +342,8 @@ func rebuildRestoredProjections(ctx context.Context, metadata *store.Store, phys
 	return nil
 }
 
-func rebuildRestoredVectorIndexes(ctx context.Context, metadata *store.Store, reader store.RenditionBlobReader) (vectorworker.IndexRestoreReport, error) {
-	worker, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{
+func rebuildRestoredVectorIndexes(ctx context.Context, metadata *store.Store, reader store.RenditionBlobReader) (processing.IndexRestoreReport, error) {
+	worker, err := processing.NewIndexWorker(processing.IndexWorkerConfig{
 		// The unpublished restore target is exclusively owned by this operation.
 		Mutate:  func(_ context.Context, fn func() error) error { return fn() },
 		Catalog: metadata, Owner: "restore-vector-index-worker",
@@ -354,7 +353,7 @@ func rebuildRestoredVectorIndexes(ctx context.Context, metadata *store.Store, re
 		BuildLease: 30 * time.Minute, ReaderLease: 5 * time.Minute, IdleDelay: time.Second,
 	})
 	if err != nil {
-		return vectorworker.IndexRestoreReport{}, fmt.Errorf("backupapp: configuring restored vector indexes: %w", err)
+		return processing.IndexRestoreReport{}, fmt.Errorf("backupapp: configuring restored vector indexes: %w", err)
 	}
 	report, err := worker.Restore(ctx)
 	if err != nil {

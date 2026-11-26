@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
-	"go.kenn.io/docbank/internal/formatqualification"
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 func TestSourceMetadataQualificationsExecuteRegisteredFixtures(t *testing.T) {
@@ -101,25 +101,25 @@ func TestSourceMetadataQualificationsExecuteRegisteredFixtures(t *testing.T) {
 			assert: assertQualifiedMetadataTitle("Synthetic office")},
 	}
 
-	exercised := make([]formatqualification.Qualification, 0, len(fixtures))
+	exercised := make([]canonical.FormatQualification, 0, len(fixtures))
 	for _, fixture := range fixtures {
 		t.Run(fixture.catalogID, func(t *testing.T) {
 			metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), fixture.payload(t))
 			require.NoError(t, err)
 			fixture.assert(t, metadata)
-			query := formatqualification.Query{
-				CatalogID: fixture.catalogID, Capability: formatqualification.CapabilityMetadata,
+			query := canonical.FormatQualificationQuery{
+				CatalogID: fixture.catalogID, Capability: canonical.FormatCapabilityMetadata,
 				Evidence: fixture.evidence, ImplementationID: SourceMetadataImplementationID,
-				InputKind: formatqualification.InputOriginalFile,
+				InputKind: canonical.FormatInputOriginalFile,
 			}
-			qualification, found := formatqualification.Lookup(query)
+			qualification, found := canonical.LookupFormatQualification(query)
 			require.True(t, found, "live extractor fixture has no exact qualification: %+v", query)
 			exercised = append(exercised, qualification)
 		})
 	}
 
-	registered := slices.DeleteFunc(formatqualification.All(), func(qualification formatqualification.Qualification) bool {
-		return qualification.Capability != formatqualification.CapabilityMetadata
+	registered := slices.DeleteFunc(canonical.AllFormatQualifications(), func(qualification canonical.FormatQualification) bool {
+		return qualification.Capability != canonical.FormatCapabilityMetadata
 	})
 	assert.Equal(t, registered, exercised, "every registered metadata tuple must execute at the processing owner boundary")
 }

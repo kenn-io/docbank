@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/document/internal/compattest"
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 type requestFingerprintCompatibilityCase struct {
@@ -20,7 +20,7 @@ func TestRequestFingerprintMatchesBaseline(t *testing.T) {
 	const baselineEndpoint = "https://api.mistral.ai/v1/ocr"
 	const baselineModel = "mistral-ocr-4-0"
 
-	bundle, _, err := compattest.Load()
+	bundle, _, err := canonical.LoadCompatBundle()
 	require.NoError(t, err)
 	section, ok := bundle.Sections["mistral_request_fingerprint_v2"]
 	require.True(t, ok)

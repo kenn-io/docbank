@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"go.kenn.io/docbank/document/internal/manifestjson"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/providerhttp"
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 const (
@@ -520,7 +520,7 @@ func (c *Client) doOnce(ctx context.Context, body []byte, want int) ([][]float32
 	if err != nil {
 		return nil, Usage{}, &ProviderError{Kind: ErrMalformedResponse, StatusCode: response.StatusCode, cause: err}
 	}
-	if err := manifestjson.RejectDuplicateKeys(payload, "voyage response"); err != nil {
+	if err := canonical.RejectDuplicateKeys(payload, "voyage response"); err != nil {
 		return nil, Usage{}, &ProviderError{Kind: ErrMalformedResponse, StatusCode: response.StatusCode}
 	}
 	var decoded wireResponse

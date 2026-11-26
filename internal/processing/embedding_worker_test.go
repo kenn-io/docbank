@@ -27,7 +27,6 @@ import (
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/vectorworker"
 )
 
 func TestEmbeddingWorkerPublishesBindingsAndInputKindsIndependently(t *testing.T) {
@@ -2210,7 +2209,7 @@ type photoSearchFixture struct {
 	binding    document.EmbeddingBindingV1
 	provider   *embeddingWorkerProvider
 	service    *Service
-	indexer    *vectorworker.IndexWorker
+	indexer    *IndexWorker
 }
 
 func newPhotoSearchFixture(t *testing.T, wrapProvider ...func(*embeddingWorkerProvider) document.EmbeddingProvider) photoSearchFixture {
@@ -2234,7 +2233,7 @@ func newPhotoSearchFixture(t *testing.T, wrapProvider ...func(*embeddingWorkerPr
 	require.Equal(t, 1, processed)
 	spaces, err := f.catalog.ListVectorIndexSpaces(t.Context())
 	require.NoError(t, err)
-	indexer, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{Catalog: f.catalog, Owner: "synthetic-image-index", Mutate: newTestOperationGate().MutateContext, BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond, ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
+	indexer, err := NewIndexWorker(IndexWorkerConfig{Catalog: f.catalog, Owner: "synthetic-image-index", Mutate: newTestOperationGate().MutateContext, BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond, ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
 		return readExactEmbeddingBlob(ctx, f.blobs, member.PayloadBlobHash, member.PayloadSize)
 	}})
 	require.NoError(t, err)

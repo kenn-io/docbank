@@ -9,10 +9,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"go.kenn.io/docbank/document/internal/epubutil"
+	"go.kenn.io/docbank/document/internal/formatdetect"
 )
 
-func admitSpine(files []*zip.File, records []epubutil.Package) ([]*zip.File, error) {
+func admitSpine(files []*zip.File, records []formatdetect.Package) ([]*zip.File, error) {
 	if len(records) != 1 {
 		return nil, unsupported()
 	}
@@ -32,7 +32,7 @@ func admitSpine(files []*zip.File, records []epubutil.Package) ([]*zip.File, err
 			return nil, unsupported()
 		}
 	}
-	manifest := make(map[string]epubutil.Item, len(record.Manifest.Items))
+	manifest := make(map[string]formatdetect.Item, len(record.Manifest.Items))
 	for _, item := range record.Manifest.Items {
 		if item.ID == "" {
 			return nil, unsupported()
@@ -63,7 +63,7 @@ func admitSpine(files []*zip.File, records []epubutil.Package) ([]*zip.File, err
 				continue
 			}
 			var err error
-			directory, err = epubutil.ResolveArchiveBase(directory, base)
+			directory, err = formatdetect.ResolveArchiveBase(directory, base)
 			if err != nil {
 				return nil, unsupported()
 			}
@@ -72,7 +72,7 @@ func admitSpine(files []*zip.File, records []epubutil.Package) ([]*zip.File, err
 		if err != nil {
 			return nil, unsupported()
 		}
-		archivePath, err := epubutil.ArchivePath(href, directory)
+		archivePath, err := formatdetect.ArchivePath(href, directory)
 		if err != nil || entries[archivePath] == nil {
 			return nil, unsupported()
 		}
@@ -83,7 +83,7 @@ func admitSpine(files []*zip.File, records []epubutil.Package) ([]*zip.File, err
 }
 
 func localSpineReference(reference string) (string, error) {
-	parsed, err := url.Parse(epubutil.StripReferenceWhitespace(reference))
+	parsed, err := url.Parse(formatdetect.StripReferenceWhitespace(reference))
 	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.Opaque != "" {
 		return "", errors.New("EPUB spine reference is invalid")
 	}
