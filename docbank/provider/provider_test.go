@@ -152,3 +152,162 @@ func TestRequestsNameAnHTTPSOriginAndMountPrefix(t *testing.T) {
 		require.ErrorIs(t, err, provider.ErrInvalidRequest, "%+v", connection)
 	}
 }
+
+var testConnection = provider.Connection{
+	InstallationID: uuid.MustParse("11111111-1111-4111-8111-111111111111"),
+	Origin:         "https://vaults.example.test", MountPrefix: "/documents",
+}
+
+func openRequest(t *testing.T, actions ...provider.Action) provider.Request {
+	t.Helper()
+	request, err := provider.NewOpenRequest(testConnection, provider.VaultAccess{
+		VaultID: firstVault.ID, VaultUUID: firstVault.VaultUUID, Actions: actions,
+	})
+	require.NoError(t, err)
+	return request
+}
+
+const (
+	readyAccess = `"access":{"actions":["read"],"mount":"https://vaults.example.test/documents/22222222-2222-4222-8222-222222222222",` +
+		`"credential":"secret-1","generation":1,"expires_at":"2030-01-01T00:15:00Z","approval_expires_at":"2030-03-01T00:00:00Z"}`
+)
+
+func envelope(request provider.Request) string {
+	return fmt.Sprintf(`"version":1,"operation":%q,"request_id":%q`, request.Operation, request.RequestID)
+}
+
+func TestOpenRenewAndReleaseResults(t *testing.T) {
+	t.Parallel()
+	open := openRequest(t, provider.ActionRead, provider.ActionUpload)
+
+	ready, err := provider.DecodeResponse(strings.NewReader(`{`+envelope(open)+`,"status":"ready",`+readyAccess+`}`), open)
+	require.NoError(t, err)
+	require.Equal(t, "secret-1", ready.Access.Credential)
+	require.Equal(t, []provider.Action{provider.ActionRead}, ready.Access.Actions)
+	require.Equal(t, int64(1), ready.Access.Generation)
+
+	pending, err := provider.DecodeResponse(strings.NewReader(
+		`{`+envelope(open)+`,"status":"approval_required","approval_url":"https://vaults.example.test/approve/1?from=app"}`), open)
+	require.NoError(t, err)
+	require.Equal(t, "https://vaults.example.test/approve/1?from=app", pending.ApprovalURL)
+
+	renew, err := provider.NewRenewRequest(open, 1)
+	require.NoError(t, err)
+	require.Equal(t, open.RequestID, renew.OpenRequestID)
+	renewed := strings.NewReplacer(`"generation":1`, `"generation":2`, "secret-1", "secret-2").Replace(readyAccess)
+	next, err := provider.DecodeResponse(strings.NewReader(`{`+envelope(renew)+`,"status":"ready",`+renewed+`}`), renew)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), next.Access.Generation)
+
+	issued := strings.Replace(renewed, `"credential":"secret-2",`, "", 1)
+	conflict, err := provider.DecodeResponse(strings.NewReader(
+		`{`+envelope(renew)+`,"status":"conflict","reason":"already_issued",`+issued+`}`), renew)
+	require.NoError(t, err)
+	require.Empty(t, conflict.Access.Credential)
+
+	release, err := provider.NewReleaseRequest(open)
+	require.NoError(t, err)
+	released, err := provider.DecodeResponse(strings.NewReader(`{`+envelope(release)+`,"status":"released"}`), release)
+	require.NoError(t, err)
+	require.Equal(t, provider.StatusReleased, released.Status)
+}
+
+func TestOpenAndRenewRejectResultsOutsideTheContract(t *testing.T) {
+	t.Parallel()
+	open := openRequest(t, provider.ActionRead)
+	renew, err := provider.NewRenewRequest(open, 1)
+	require.NoError(t, err)
+	release, err := provider.NewReleaseRequest(open)
+	require.NoError(t, err)
+	discover := discoverRequest(t)
+	ready := func(request provider.Request, access string) string {
+		return `{` + envelope(request) + `,"status":"ready",` + access + `}`
+	}
+	change := func(old, replacement string) string { return strings.Replace(readyAccess, old, replacement, 1) }
+
+	for name, c := range map[string]struct {
+		request  provider.Request
+		document string
+	}{
+		"ready without a credential":      {open, ready(open, change(`"credential":"secret-1",`, ""))},
+		"credential with a space":         {open, ready(open, change("secret-1", "secret 1"))},
+		"conflict with a credential":      {open, `{` + envelope(open) + `,"status":"conflict",` + readyAccess + `}`},
+		"mount on another origin":         {open, ready(open, change("vaults.example.test/documents", "other.example.test/documents"))},
+		"mount outside the prefix":        {open, ready(open, change("/documents/2222", "/other/2222"))},
+		"mount is the prefix":             {open, ready(open, change("/documents/22222222-2222-4222-8222-222222222222", "/documents"))},
+		"mount climbs out of the prefix":  {open, ready(open, change("/documents/2222", "/documents/../2222"))},
+		"mount with a query":              {open, ready(open, change(`8222-222222222222",`, `8222-222222222222?to=x",`))},
+		"action the request did not name": {open, ready(open, change(`["read"]`, `["upload"]`))},
+		"unknown action":                  {open, ready(open, change(`["read"]`, `["delete"]`))},
+		"no actions":                      {open, ready(open, change(`["read"]`, `[]`))},
+		"generation zero":                 {open, ready(open, change(`"generation":1`, `"generation":0`))},
+		"renewal that does not advance":   {renew, ready(renew, readyAccess)},
+		"credential outlives approval":    {open, ready(open, change("2030-03-01", "2029-03-01"))},
+		"expiry with an offset":           {open, ready(open, change("00:15:00Z", "00:15:00+02:00"))},
+		"missing approval end":            {open, ready(open, change(`,"approval_expires_at":"2030-03-01T00:00:00Z"`, ""))},
+		"approval for a renewal":          {renew, `{` + envelope(renew) + `,"status":"approval_required","approval_url":"https://vaults.example.test/approve"}`},
+		"approval page without HTTPS":     {open, `{` + envelope(open) + `,"status":"approval_required","approval_url":"http://vaults.example.test/approve"}`},
+		"approval page with a login":      {open, `{` + envelope(open) + `,"status":"approval_required","approval_url":"https://pat@vaults.example.test/approve"}`},
+		"approval without a page":         {open, `{` + envelope(open) + `,"status":"approval_required"}`},
+		"released open":                   {open, `{` + envelope(open) + `,"status":"released"}`},
+		"release that grants access":      {release, ready(release, readyAccess)},
+		"discovery that grants access":    {discover, ready(discover, readyAccess)},
+		"open answered with vaults":       {open, `{` + envelope(open) + `,"status":"ready","discovery":{"enabled":true,"can_create":true,"vaults":[]}}`},
+		"refusal with access":             {open, `{` + envelope(open) + `,"status":"denied",` + readyAccess + `}`},
+	} {
+		_, err := provider.DecodeResponse(strings.NewReader(c.document), c.request)
+		require.ErrorIs(t, err, provider.ErrInvalidResponse, name)
+	}
+}
+
+func TestVaultRequestsNameOneVaultAndItsActions(t *testing.T) {
+	t.Parallel()
+	open := openRequest(t, provider.ActionRead, provider.ActionUpload)
+	document, err := json.Marshal(open)
+	require.NoError(t, err)
+	decoded, err := provider.DecodeRequest(bytes.NewReader(document))
+	require.NoError(t, err)
+	require.Equal(t, open, decoded)
+
+	for name, change := range map[string][2]string{
+		"no actions":            {`"actions":["read","upload"]`, `"actions":[]`},
+		"unknown action":        {`"upload"`, `"delete"`},
+		"repeated action":       {`"upload"`, `"read"`},
+		"unsorted actions":      {`["read","upload"]`, `["upload","read"]`},
+		"no vault identity":     {`"vault_uuid":"33333333-3333-4333-8333-333333333333",`, ""},
+		"open of another open":  {`"actions"`, `"open_request_id":"66666666-6666-4666-8666-666666666666","actions"`},
+		"open with generation":  {`"actions"`, `"generation":1,"actions"`},
+		"discovery of a vault":  {`"operation":"open"`, `"operation":"discover"`},
+		"renewal of no open":    {`"operation":"open"`, `"operation":"renew"`},
+		"release of no open":    {`"operation":"open"`, `"operation":"release"`},
+		"operation not offered": {`"operation":"open"`, `"operation":"delete"`},
+	} {
+		changed := strings.Replace(string(document), change[0], change[1], 1)
+		require.NotEqual(t, string(document), changed, name)
+		_, err := provider.DecodeRequest(strings.NewReader(changed))
+		require.ErrorIs(t, err, provider.ErrInvalidRequest, name)
+	}
+
+	_, err = provider.NewRenewRequest(open, 0)
+	require.ErrorIs(t, err, provider.ErrInvalidRequest)
+	_, err = provider.NewReleaseRequest(discoverRequest(t))
+	require.ErrorIs(t, err, provider.ErrInvalidRequest)
+}
+
+func TestApprovalPagesStayOnTheBrowserOrigin(t *testing.T) {
+	t.Parallel()
+	const origin = "https://vaults.example.test"
+	require.NoError(t, provider.ValidateApprovalURL(origin+"/approve/1?from=app", origin))
+	for _, page := range []string{
+		"https://other.example.test/approve/1",
+		"https://vaults.example.test.other.example/approve/1",
+		"https://vaults.example.test:8443/approve/1",
+		"http://vaults.example.test/approve/1",
+		"https://pat@vaults.example.test/approve/1",
+		"https://vaults.example.test/approve/1#decide",
+		"/approve/1",
+	} {
+		require.Error(t, provider.ValidateApprovalURL(page, origin), page)
+	}
+	require.Error(t, provider.ValidateApprovalURL(origin+"/approve/1", origin+"/app"))
+}

@@ -3,6 +3,10 @@
 // for the person signed in to the hosting service. Docbank sends one JSON
 // request on the helper's stdin and reads one JSON result from its stdout.
 //
+// A discovery lists the vaults the person can open. Opening one vault returns
+// a short-lived credential for it, which a renewal replaces before it expires
+// and a release ends.
+//
 // Helper authors read the request with DecodeRequest and answer with
 // WriteResponse. Docbank runs the helper with Exchange. See
 // docs/usage/providers.md for the configuration and the wire contract.
@@ -20,6 +24,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -44,15 +49,46 @@ const AttemptTimeout = 60 * time.Second
 // Operation names the requested exchange.
 type Operation string
 
-// OperationDiscover lists the vaults the signed-in person can open.
-const OperationDiscover Operation = "discover"
+// Operations a request can name.
+const (
+	// OperationDiscover lists the vaults the signed-in person can open.
+	OperationDiscover Operation = "discover"
+	// OperationOpen asks for a credential for one vault.
+	OperationOpen Operation = "open"
+	// OperationRenew replaces an open vault's credential before it expires.
+	OperationRenew Operation = "renew"
+	// OperationRelease ends an open, so its credentials stop working.
+	OperationRelease Operation = "release"
+)
+
+// Action is one kind of access to a vault.
+type Action string
+
+// Actions an open can ask for.
+const (
+	ActionRead   Action = "read"
+	ActionUpload Action = "upload"
+)
+
+// MaxCredentialBytes bounds one credential.
+const MaxCredentialBytes = 4096
 
 // Status is the hosting service's decision, separate from the helper's exit code.
 type Status string
 
-// Statuses a discovery can return.
+// Statuses a result can carry. Every operation can return the last three.
 const (
-	StatusReady          Status = "ready"
+	// StatusReady answers a discovery with its vaults, and an open or renewal
+	// with a credential.
+	StatusReady Status = "ready"
+	// StatusApprovalRequired answers an open the person has not approved yet.
+	// The result names the page where they decide.
+	StatusApprovalRequired Status = "approval_required"
+	// StatusConflict answers an open or renewal the service already answered
+	// with a credential. It describes that access without the credential.
+	StatusConflict Status = "conflict"
+	// StatusReleased answers a release.
+	StatusReleased       Status = "released"
 	StatusSignInRequired Status = "sign_in_required"
 	StatusDenied         Status = "denied"
 	StatusUnavailable    Status = "unavailable"
@@ -75,13 +111,22 @@ type Connection struct {
 	MountPrefix    string    `json:"mount_prefix"`
 }
 
-// Request is one helper exchange.
+// Request is one helper exchange. An open, renewal, or release names one vault
+// by both identities and the actions it is for. A renewal or release also names
+// the open by that open's request ID; a renewal carries the generation of the
+// credential it replaces.
 type Request struct {
 	Connection
 
 	Version   int       `json:"version"`
 	Operation Operation `json:"operation"`
 	RequestID uuid.UUID `json:"request_id"`
+
+	VaultID       uuid.UUID `json:"vault_id,omitzero"`
+	VaultUUID     uuid.UUID `json:"vault_uuid,omitzero"`
+	Actions       []Action  `json:"actions,omitempty"`
+	OpenRequestID uuid.UUID `json:"open_request_id,omitzero"`
+	Generation    int64     `json:"generation,omitzero"`
 }
 
 // Vault is one hosted vault the person can open. ID is the hosting service's
@@ -100,20 +145,82 @@ type Discovery struct {
 	Vaults    []Vault `json:"vaults"`
 }
 
-// Response is the helper's result. A ready discovery carries Discovery; any
-// other status carries only the envelope and an optional fixed Reason code.
+// Access is what an open or renewal grants. Mount is the HTTPS address of the
+// vault, under the connection's mount prefix. Generation counts the open's
+// credentials from 1; a newer generation replaces every older one. The
+// credential stops working at ExpiresAt, and the person's approval ends at
+// ApprovalExpiresAt. A conflict carries the same facts without Credential.
+type Access struct {
+	Actions           []Action  `json:"actions"`
+	Mount             string    `json:"mount"`
+	Credential        string    `json:"credential,omitempty"`
+	Generation        int64     `json:"generation"`
+	ExpiresAt         time.Time `json:"expires_at"`
+	ApprovalExpiresAt time.Time `json:"approval_expires_at"`
+}
+
+// Response is the helper's result. A ready discovery carries Discovery. A ready
+// or conflicting open or renewal carries Access. An open that needs approval
+// carries ApprovalURL. Any other status carries only the envelope and an
+// optional fixed Reason code.
 type Response struct {
-	Version   int        `json:"version"`
-	Operation Operation  `json:"operation"`
-	RequestID uuid.UUID  `json:"request_id"`
-	Status    Status     `json:"status"`
-	Reason    string     `json:"reason,omitempty"`
-	Discovery *Discovery `json:"discovery,omitempty"`
+	Version     int        `json:"version"`
+	Operation   Operation  `json:"operation"`
+	RequestID   uuid.UUID  `json:"request_id"`
+	Status      Status     `json:"status"`
+	Reason      string     `json:"reason,omitempty"`
+	Discovery   *Discovery `json:"discovery,omitempty"`
+	Access      *Access    `json:"access,omitempty"`
+	ApprovalURL string     `json:"approval_url,omitempty"`
+}
+
+// VaultAccess names one vault and the actions an open is for.
+type VaultAccess struct {
+	VaultID   uuid.UUID
+	VaultUUID uuid.UUID
+	Actions   []Action
 }
 
 // NewDiscoverRequest returns a discovery request with a fresh request ID.
 func NewDiscoverRequest(connection Connection) (Request, error) {
 	request := Request{Connection: connection, Version: Version, Operation: OperationDiscover, RequestID: uuid.New()}
+	if err := validateRequest(request); err != nil {
+		return Request{}, err
+	}
+	return request, nil
+}
+
+// NewOpenRequest returns a request to open one vault, with a fresh request ID
+// that later renewals and the release name.
+func NewOpenRequest(connection Connection, access VaultAccess) (Request, error) {
+	return newVaultRequest(connection, OperationOpen, access, uuid.Nil(), 0)
+}
+
+// NewRenewRequest returns a request to replace the credential of generation
+// that the open returned or a renewal after it.
+func NewRenewRequest(open Request, generation int64) (Request, error) {
+	if open.Operation != OperationOpen || validateRequest(open) != nil {
+		return Request{}, ErrInvalidRequest
+	}
+	access := VaultAccess{VaultID: open.VaultID, VaultUUID: open.VaultUUID, Actions: open.Actions}
+	return newVaultRequest(open.Connection, OperationRenew, access, open.RequestID, generation)
+}
+
+// NewReleaseRequest returns a request to end open.
+func NewReleaseRequest(open Request) (Request, error) {
+	if open.Operation != OperationOpen || validateRequest(open) != nil {
+		return Request{}, ErrInvalidRequest
+	}
+	access := VaultAccess{VaultID: open.VaultID, VaultUUID: open.VaultUUID, Actions: open.Actions}
+	return newVaultRequest(open.Connection, OperationRelease, access, open.RequestID, 0)
+}
+
+func newVaultRequest(connection Connection, operation Operation, access VaultAccess, open uuid.UUID, generation int64) (Request, error) {
+	request := Request{
+		Connection: connection, Version: Version, Operation: operation, RequestID: uuid.New(),
+		VaultID: access.VaultID, VaultUUID: access.VaultUUID, Actions: slices.Clone(access.Actions),
+		OpenRequestID: open, Generation: generation,
+	}
 	if err := validateRequest(request); err != nil {
 		return Request{}, err
 	}
@@ -243,13 +350,62 @@ func ValidateOrigin(origin string) error {
 	return nil
 }
 
+// ValidateApprovalURL checks the page a service names for approving an open:
+// an HTTPS address at browserOrigin, the origin the person's browser uses for
+// the service, with no user information or fragment.
+func ValidateApprovalURL(approvalURL, browserOrigin string) error {
+	if err := ValidateOrigin(browserOrigin); err != nil {
+		return err
+	}
+	parsed, err := url.Parse(approvalURL)
+	if err != nil || validApprovalURL(approvalURL) != nil || parsed.Scheme+"://"+parsed.Host != browserOrigin {
+		return fmt.Errorf("approval address must be an HTTPS page at %s", browserOrigin)
+	}
+	return nil
+}
+
+func validApprovalURL(approvalURL string) error {
+	parsed, err := url.Parse(approvalURL)
+	if err != nil || len(approvalURL) > 2048 || parsed.Scheme != "https" || parsed.Hostname() == "" ||
+		parsed.User != nil || parsed.Fragment != "" || parsed.Opaque != "" || strings.HasSuffix(approvalURL, "#") {
+		return ErrInvalidResponse
+	}
+	return nil
+}
+
 func validateRequest(request Request) error {
-	if request.Version != Version || request.Operation != OperationDiscover ||
-		request.RequestID == uuid.Nil() || request.InstallationID == uuid.Nil() ||
+	if request.Version != Version || request.RequestID == uuid.Nil() || request.InstallationID == uuid.Nil() ||
 		ValidateConnection(request.Origin, request.MountPrefix) != nil {
 		return ErrInvalidRequest
 	}
+	names := request.VaultID != uuid.Nil() && request.VaultUUID != uuid.Nil() && validActions(request.Actions)
+	var valid bool
+	switch request.Operation {
+	case OperationDiscover:
+		valid = request.VaultID == uuid.Nil() && request.VaultUUID == uuid.Nil() && len(request.Actions) == 0 &&
+			request.OpenRequestID == uuid.Nil() && request.Generation == 0
+	case OperationOpen:
+		valid = names && request.OpenRequestID == uuid.Nil() && request.Generation == 0
+	case OperationRenew:
+		valid = names && request.OpenRequestID != uuid.Nil() && request.Generation >= 1
+	case OperationRelease:
+		valid = names && request.OpenRequestID != uuid.Nil() && request.Generation == 0
+	}
+	if !valid {
+		return ErrInvalidRequest
+	}
 	return nil
+}
+
+// Actions are a nonempty sorted list of known actions without repeats, so a
+// request has one spelling.
+func validActions(actions []Action) bool {
+	for i, action := range actions {
+		if (action != ActionRead && action != ActionUpload) || (i > 0 && actions[i-1] >= action) {
+			return false
+		}
+	}
+	return len(actions) > 0
 }
 
 func decodeResponse(data []byte, request Request) (Response, error) {
@@ -267,20 +423,97 @@ func validateResponse(response Response, request Request) error {
 	if response.Version != Version || response.Operation != request.Operation || response.RequestID != request.RequestID {
 		return ErrInvalidResponse
 	}
+	grants := request.Operation == OperationOpen || request.Operation == OperationRenew
+	bare := response.Discovery == nil && response.Access == nil && response.ApprovalURL == ""
 	switch response.Status {
 	case StatusReady:
-		if response.Reason != "" || response.Discovery == nil || response.Discovery.Vaults == nil {
+		if response.Reason != "" || response.ApprovalURL != "" {
+			return ErrInvalidResponse
+		}
+		if grants {
+			if response.Discovery != nil || response.Access == nil || !validCredential(response.Access.Credential) {
+				return ErrInvalidResponse
+			}
+			return validateAccess(*response.Access, request)
+		}
+		if request.Operation != OperationDiscover || response.Access != nil ||
+			response.Discovery == nil || response.Discovery.Vaults == nil {
 			return ErrInvalidResponse
 		}
 		return validateVaults(response.Discovery.Vaults)
+	case StatusConflict:
+		if !grants || response.Discovery != nil || response.ApprovalURL != "" || !validReason(response.Reason) ||
+			response.Access == nil || response.Access.Credential != "" {
+			return ErrInvalidResponse
+		}
+		return validateAccess(*response.Access, request)
+	case StatusApprovalRequired:
+		if request.Operation != OperationOpen || response.Discovery != nil || response.Access != nil ||
+			response.Reason != "" {
+			return ErrInvalidResponse
+		}
+		return validApprovalURL(response.ApprovalURL)
+	case StatusReleased:
+		if request.Operation != OperationRelease || !bare || response.Reason != "" {
+			return ErrInvalidResponse
+		}
+		return nil
 	case StatusSignInRequired, StatusDenied, StatusUnavailable:
-		if response.Discovery != nil || !validReason(response.Reason) {
+		if !bare || !validReason(response.Reason) {
 			return ErrInvalidResponse
 		}
 		return nil
 	default:
 		return ErrInvalidResponse
 	}
+}
+
+// validateAccess checks the facts a ready or conflicting open or renewal
+// carries, apart from the credential.
+func validateAccess(access Access, request Request) error {
+	if !validActions(access.Actions) || access.Generation < 1 ||
+		(request.Operation == OperationRenew && access.Generation <= request.Generation) ||
+		!utcInstant(access.ExpiresAt) || !utcInstant(access.ApprovalExpiresAt) ||
+		access.ExpiresAt.After(access.ApprovalExpiresAt) {
+		return ErrInvalidResponse
+	}
+	for _, action := range access.Actions {
+		if !slices.Contains(request.Actions, action) {
+			return ErrInvalidResponse
+		}
+	}
+	return validateMount(access.Mount, request.Connection)
+}
+
+// A mount is an address strictly under the connection's mount prefix, so a
+// result cannot send the credential anywhere else.
+func validateMount(mount string, connection Connection) error {
+	parsed, err := url.Parse(mount)
+	if err != nil || parsed.Scheme+"://"+parsed.Host != connection.Origin || parsed.User != nil ||
+		parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" || mount != parsed.String() ||
+		strings.ContainsAny(parsed.Path, "%\\") || path.Clean(parsed.Path) != parsed.Path ||
+		!strings.HasPrefix(parsed.Path, connection.MountPrefix+"/") || mount != connection.Origin+parsed.Path {
+		return ErrInvalidResponse
+	}
+	return nil
+}
+
+func utcInstant(instant time.Time) bool {
+	_, offset := instant.Zone()
+	return !instant.IsZero() && offset == 0
+}
+
+// A credential is visible ASCII without spaces, so it fits an HTTP header.
+func validCredential(credential string) bool {
+	if credential == "" || len(credential) > MaxCredentialBytes {
+		return false
+	}
+	for _, r := range credential {
+		if r <= ' ' || r > '~' {
+			return false
+		}
+	}
+	return true
 }
 
 func validateVaults(vaults []Vault) error {
