@@ -17,10 +17,11 @@ import (
 func (s PhotoCheckoutService) PrepareOperation(ctx context.Context, id, kind, destination string) (store.PhotoCheckout, store.StorageOperation, error) {
 	var c store.PhotoCheckout
 	var op store.StorageOperation
-	if err := creationMu.Acquire(ctx, 1); err != nil {
+	lock := s.creationLockOrDefault()
+	if err := lock.Acquire(ctx, 1); err != nil {
 		return c, op, fmt.Errorf("waiting for checkout creation: %w", err)
 	}
-	defer creationMu.Release(1)
+	defer lock.Release(1)
 	request := store.PhotoCheckoutInspection{CheckoutID: id}
 	current, err := s.Store.PhotoCheckout(ctx, id)
 	if err != nil {

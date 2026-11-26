@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/sqlite"
 	"go.kenn.io/kit/packstore"
+	"golang.org/x/sync/semaphore"
 )
 
 func checkoutService(t *testing.T) PhotoCheckoutService {
@@ -40,7 +41,7 @@ func checkoutServiceWithStore(t *testing.T, vault string, catalog *store.Store) 
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(vault, "blobs"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
-	return PhotoCheckoutService{Store: catalog, Blobs: blobs, VaultRoot: vault, Config: config.Default()}
+	return PhotoCheckoutService{Store: catalog, Blobs: blobs, VaultRoot: vault, Config: config.Default(), creationLock: semaphore.NewWeighted(1)}
 }
 
 func checkoutPhoto(t *testing.T, s PhotoCheckoutService, name, content string) store.PhotoAsset {
@@ -76,13 +77,14 @@ func advanceUntil(t *testing.T, done func() bool) {
 func TestPrepareCancelledWhileWaitingForCreation(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		require.NoError(t, creationMu.Acquire(t.Context(), 1))
-		defer creationMu.Release(1)
+		lock := semaphore.NewWeighted(1)
+		require.NoError(t, lock.Acquire(t.Context(), 1))
+		defer lock.Release(1)
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		returned := make(chan error, 1)
 		go func() {
-			_, _, _, _, err := (PhotoCheckoutService{}).Prepare(ctx, store.PhotoCheckoutSelection{}, "", 0)
+			_, _, _, _, err := (PhotoCheckoutService{creationLock: lock}).Prepare(ctx, store.PhotoCheckoutSelection{}, "", 0)
 			returned <- err
 		}()
 		// A Prepare that ignored cancellation would park on the semaphore and

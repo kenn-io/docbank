@@ -33,9 +33,17 @@ type PhotoCheckoutService struct {
 	Mutate        func(context.Context, func() error) error
 	ActivityBegin func()
 	ActivityEnd   func()
+	creationLock  *semaphore.Weighted
 	syncParent    func(*filepublish.RootStage) error
 	admit         func(context.Context, *store.Store, string) (bool, error)
 	settleTime    time.Duration
+}
+
+func (s PhotoCheckoutService) creationLockOrDefault() *semaphore.Weighted {
+	if s.creationLock != nil {
+		return s.creationLock
+	}
+	return creationMu
 }
 
 func (s PhotoCheckoutService) admitOperation(ctx context.Context, id string) (bool, error) {
@@ -66,10 +74,11 @@ func (s PhotoCheckoutService) Prepare(ctx context.Context, selection store.Photo
 	var checkout store.PhotoCheckout
 	var operation store.StorageOperation
 	var estimate store.PhotoCheckoutEstimate
-	if err := creationMu.Acquire(ctx, 1); err != nil {
+	lock := s.creationLockOrDefault()
+	if err := lock.Acquire(ctx, 1); err != nil {
 		return checkout, operation, estimate, nil, fmt.Errorf("waiting for checkout creation: %w", err)
 	}
-	defer creationMu.Release(1)
+	defer lock.Release(1)
 	if !filepath.IsAbs(destination) {
 		return checkout, operation, estimate, nil, fmt.Errorf("%w: destination must be an absolute daemon-host path", store.ErrInvalidPhotoCheckout)
 	}

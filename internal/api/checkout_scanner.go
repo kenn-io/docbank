@@ -326,10 +326,11 @@ func (s PhotoCheckoutService) rebind(ctx context.Context, id, destination, opera
 		if !present {
 			return fmt.Errorf("%w: folder contains no tracked regular files", store.ErrInvalidPhotoCheckout)
 		}
-		if err := creationMu.Acquire(ctx, 1); err != nil {
+		lock := s.creationLockOrDefault()
+		if err := lock.Acquire(ctx, 1); err != nil {
 			return fmt.Errorf("waiting for checkout creation: %w", err)
 		}
-		defer creationMu.Release(1)
+		defer lock.Release(1)
 		if err := s.validateRootOverlap(ctx, destination, id); err != nil {
 			return err
 		}
