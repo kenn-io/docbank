@@ -2775,3 +2775,19 @@ func TestInspectPDFTextOnlyAdmission(t *testing.T) {
 		})
 	}
 }
+
+func TestInspectPDFImageStreamsAdmission(t *testing.T) {
+	data := mediatest.PDFTextPages([]string{"synthetic"}, true)
+	policy := inspectionPolicy(data, "image.pdf", "application/pdf")
+	before, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+	require.NoError(t, err)
+	require.False(t, before.Eligible)
+	encoded, err := json.Marshal(policy, json.Deterministic(true))
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "pdf_image_streams")
+	policy.PDFImageStreams = true
+	after, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+	require.NoError(t, err)
+	require.True(t, after.Eligible, "%+v", after)
+	require.NotEqual(t, before.PolicyFingerprint, after.PolicyFingerprint)
+}

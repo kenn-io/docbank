@@ -70,6 +70,7 @@ const (
 // one exact source. Every supported family must have an enforceable bound.
 type InspectionPolicy struct {
 	PDFTextOnly       bool     `json:"pdf_text_only,omitzero"`
+	PDFImageStreams   bool     `json:"pdf_image_streams,omitzero"`
 	PDFPasswords      []string `json:"-"`
 	pdfPassword       *string
 	UnlockPDF         bool   `json:"-"`
@@ -1309,6 +1310,7 @@ func inspectPDF(ctx context.Context, data []byte, policy *InspectionPolicy) Capa
 	record := CapabilityRecord{MediaFamily: "pdf", MediaType: "application/pdf", Format: "pdf"}
 	measurements, err := formatdetect.InspectPDF(ctx, data, formatdetect.PDFLimits{
 		TextOnly:         policy.PDFTextOnly,
+		ImageStreams:     policy.PDFImageStreams,
 		MaxExpandedBytes: policy.MaxExpandedBytes,
 		MaxEntryBytes:    policy.MaxEntryBytes,
 		MaxEntries:       policy.MaxEntries,
@@ -1327,6 +1329,7 @@ func inspectPDF(ctx context.Context, data []byte, policy *InspectionPolicy) Capa
 		if err == nil {
 			policy.pdfPassword = new(password)
 			measurements, err = formatdetect.InspectPDF(ctx, unlocked, formatdetect.PDFLimits{
+				TextOnly: policy.PDFTextOnly, ImageStreams: policy.PDFImageStreams,
 				MaxExpandedBytes: policy.MaxExpandedBytes, MaxEntryBytes: policy.MaxEntryBytes, MaxEntries: policy.MaxEntries,
 			})
 			clear(unlocked)

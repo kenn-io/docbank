@@ -13,6 +13,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/document/openaicompat"
 	"go.kenn.io/docbank/document/upload"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
@@ -127,7 +128,8 @@ func (runtime *ProviderEmbeddingRuntime) Prepare(ctx context.Context, work Embed
 		if mediaType, _, err := mime.ParseMediaType(work.SourceMediaType); err != nil || mediaType == "" {
 			return EmbeddingExecution{}, fmt.Errorf("embedding original-file media type is invalid: %w", ErrEmbeddingInputRejected)
 		}
-		if work.SourceBytes < 1 || work.Binding.MaxInputBytes < 1 || work.SourceBytes > work.Binding.MaxInputBytes {
+		limit := embeddingSourceLimit(work)
+		if work.SourceBytes < 1 || limit < 1 || work.SourceBytes > limit {
 			return EmbeddingExecution{}, fmt.Errorf("embedding original-file byte authority is invalid: %w", ErrEmbeddingInputRejected)
 		}
 		reader, err := runtime.blobs.OpenContext(ctx, work.SourceBlobHash)
@@ -227,9 +229,16 @@ func (runtime *ProviderEmbeddingRuntime) prepareJPEG(ctx context.Context, data [
 	return EmbeddingExecution{Provider: runtime.provider, Inputs: inputs, Classify: runtime.classify}, nil
 }
 
+func embeddingSourceLimit(work EmbeddingWork) int64 {
+	if work.Descriptor.ID == openaicompat.ProviderID {
+		return min(work.Binding.MaxInputBytes, media.MaxBytes)
+	}
+	return work.Binding.MaxInputBytes
+}
+
 func directEmbeddingInspectionPolicy(work EmbeddingWork) media.InspectionPolicy {
-	maximum := work.Binding.MaxInputBytes
-	return media.InspectionPolicy{
+	maximum := embeddingSourceLimit(work)
+	policy := media.InspectionPolicy{
 		Filename: work.SourceFilename, DeclaredMediaType: work.SourceMediaType,
 		ExpectedBytes: work.SourceBytes, ExpectedSHA256: work.SourceBlobHash,
 		DescriptorFingerprint: work.Descriptor.Fingerprint,
@@ -242,6 +251,12 @@ func directEmbeddingInspectionPolicy(work EmbeddingWork) media.InspectionPolicy 
 		MaxSpineItems: 1_000_000, MaxResources: 1_000_000, MaxPixels: 1_000_000_000,
 		MaxFrames: 1_000_000, MaxDurationMS: 24 * 60 * 60 * 1000,
 	}
+	if work.Descriptor.ID == openaicompat.ProviderID && work.Binding.InputKind == document.EmbeddingInputOriginalFile {
+		policy.MaxPages = openaicompat.MaxMediaPages
+		policy.MaxDurationMS = openaicompat.MaxMediaDurationMS
+		policy.PDFImageStreams = true
+	}
+	return policy
 }
 
 func (runtime *ProviderEmbeddingRuntime) ImageGeneration(ctx context.Context, profile store.ProcessingProfileRecord, binding document.EmbeddingBindingV1, versionID string) (store.EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error) {

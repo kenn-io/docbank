@@ -32,6 +32,7 @@ import (
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/embedclient"
+	"go.kenn.io/kit/embedconfig"
 )
 
 func TestDaemonRecoversSemanticSpaceEmbeddingJob(t *testing.T) {
@@ -211,6 +212,36 @@ func syntheticLoopbackOpenAIConfig(t *testing.T, endpoint, environmentName strin
 	cfg.EmbeddingProfiles["semantic"] = profile
 	require.NoError(t, cfg.Validate())
 	return cfg, final
+}
+
+func TestConfigureKitMediaRuntime(t *testing.T) {
+	cfg, _ := syntheticLoopbackOpenAIConfig(t, "http://127.0.0.1:12345", "DOCBANK_TEST_MEDIA_KEY")
+	p := cfg.EmbeddingProfiles["semantic"]
+	p.InputKind = string(document.EmbeddingInputOriginalFile)
+	p.Runtime.MaxRequestBytes = 2 << 20
+	p.Chunk = config.EmbeddingChunkConfig{}
+	p.MaxInputTokens = 0
+	var e embedconfig.Embedder
+	_, err := toml.Decode(`api = "kit"
+base_url = "http://127.0.0.1:12345/v1"
+model = "synthetic-model"
+dims = 2
+fingerprint_salt = "deployment-v1"
+batch_size = 8
+timeout_seconds = 1
+trust_private_network = true`, &e)
+	require.NoError(t, err)
+	p.Embedder = &e
+	contract, err := document.NewModelInputContract(document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic})
+	require.NoError(t, err)
+	descriptor := config.EmbeddingDescriptor(p, contract)
+	final, _, err := finalizeOpenAIEmbeddingDescriptor(openaicompat.Profile{API: embedconfig.APIKit, Origin: p.Runtime.Endpoint, Descriptor: descriptor, ModelInput: contract, SecretBinding: p.CredentialBinding, DeploymentEpoch: p.Runtime.DeploymentEpoch, RequestTimeout: p.Runtime.RequestTimeout.Std(), MaxBatchItems: p.MaxBatchItems, MaxInputBytes: p.MaxInputBytes, MaxRequestBytes: p.Runtime.MaxRequestBytes, MaxResponseBytes: p.MaxResponseBytes, EgressPolicy: providerEgressPolicy(p.Runtime.ProviderEgressConfig)})
+	require.NoError(t, err)
+	p.DescriptorFingerprint = final.Fingerprint
+	cfg.EmbeddingProfiles["semantic"] = p
+	require.NoError(t, cfg.Validate())
+	_, err = configureEmbeddingRuntimeBundle(cfg)
+	require.NoError(t, err)
 }
 
 func TestConfigureEmbeddingRuntimesConfiguresCapabilityAttestedVoyageOriginal(t *testing.T) {

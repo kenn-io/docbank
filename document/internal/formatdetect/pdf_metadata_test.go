@@ -2,6 +2,8 @@ package formatdetect_test
 
 import (
 	"bytes"
+	"compress/zlib"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -148,4 +150,48 @@ func TestPDFMetadataUnsupportedEncryption(t *testing.T) {
 	require.Equal(t, new(true), metadata.Facts.Encrypted)
 	require.Nil(t, metadata.Facts.SignatureFieldCount)
 	require.Contains(t, metadata.Issues, formatdetect.PDFMetadataIssue{SourceField: "Encryption"})
+}
+
+func TestInspectPDFImageStreams(t *testing.T) {
+	var compressed bytes.Buffer
+	writer := zlib.NewWriter(&compressed)
+	_, err := writer.Write(bytes.Repeat([]byte(" "), 1024))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	content := mediatest.PDFObjects("synthetic", []string{
+		"<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R >>",
+		fmt.Sprintf("<< /Filter /FlateDecode /Length %d >>\nstream\n%s\nendstream", compressed.Len(), compressed.Bytes()),
+	})
+	image := func(filter string, external bool) []byte {
+		catalog := "<< /Type /Catalog /Pages 2 0 R >>"
+		if external {
+			catalog = "<< /Type /Catalog /Pages 2 0 R /OpenAction << /S /URI /URI (https://example.org) >> >>"
+		}
+		return mediatest.PDFObjects("synthetic", []string{
+			catalog, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+			"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << /XObject << /Im 4 0 R >> >> >>",
+			"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /" + filter + " /Length 4 >>\nstream\nnope\nendstream",
+		})
+	}
+	for _, tc := range []struct {
+		name     string
+		data     []byte
+		maxEntry int64
+		want     error
+	}{
+		{"invalid Flate image", image("FlateDecode", false), 1 << 20, nil},
+		{"Flate content exceeds bound", content, 64, formatdetect.ErrPDFEntryBytes},
+		{"external reference", image("DCTDecode", true), 1 << 20, formatdetect.ErrPDFExternalReference},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			limits := formatdetect.PDFLimits{ImageStreams: true, MaxExpandedBytes: 1 << 20, MaxEntryBytes: tc.maxEntry, MaxEntries: 100}
+			_, err := formatdetect.InspectPDF(t.Context(), tc.data, limits)
+			if tc.want != nil {
+				require.ErrorIs(t, err, tc.want)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
 }

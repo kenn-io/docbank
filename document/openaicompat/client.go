@@ -27,6 +27,8 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/internal/providerutil"
+	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/providerhttp"
 	"go.kenn.io/kit/embedclient"
 	"go.kenn.io/kit/embedconfig"
@@ -43,6 +45,10 @@ const (
 	QueryFormatterV1 = "openai-compatible/query/v1"
 	// ScalarEncodingFloat32 is the only scalar representation returned by the adapter.
 	ScalarEncodingFloat32 = "float32"
+	// MaxMediaPages is the largest PDF accepted by the Kit adapter.
+	MaxMediaPages = 6
+	// MaxMediaDurationMS is the longest MP4 accepted by the Kit adapter.
+	MaxMediaDurationMS = 120_000
 
 	embeddingsPath  = "/v1/embeddings"
 	adapterContract = "docbank-openai-compatible-embeddings/v1"
@@ -76,6 +82,7 @@ type SecretResolver interface {
 // Exactly one of DeploymentEpoch and ProviderRevisionHeader is required.
 type Profile struct {
 	Origin string
+	API    embedconfig.API
 	// ManagedService binds consent to a stable local service and selection mode.
 	// ResolveOrigin returns its current loopback origin only when a request runs.
 	ManagedService         string
@@ -124,6 +131,7 @@ func RetryAfter(err error) (time.Duration, bool) {
 
 type policyIdentity struct {
 	AdapterContract        string                       `json:"adapter_contract"`
+	API                    embedconfig.API              `json:"api,omitempty"`
 	Origin                 string                       `json:"origin"`
 	ManagedService         string                       `json:"managed_service,omitempty"`
 	SelectionMode          string                       `json:"selection_mode,omitempty"`
@@ -193,7 +201,7 @@ func (client *Client) VectorIdentity() (string, error) {
 	model, err := (embedmodel.Descriptor{Model: embedconfig.Model{
 		Name: client.descriptor.Model, Revision: client.descriptor.ModelRevision,
 		Dimensions: client.descriptor.Dimension, Metric: embedconfig.MetricCosine, Normalization: normalization,
-	}, Roles: embedconfig.Roles{DocumentFormatter: client.descriptor.DocumentFormatter, QueryFormatter: client.descriptor.QueryFormatter}}).VectorIdentity()
+	}, Deployment: embedconfig.Deployment{API: client.profile.API}, Roles: embedconfig.Roles{DocumentFormatter: client.descriptor.DocumentFormatter, QueryFormatter: client.descriptor.QueryFormatter}}).VectorIdentity()
 	if err != nil {
 		return "", fmt.Errorf("openaicompat: model vector identity: %w", err)
 	}
@@ -228,6 +236,10 @@ func PolicyFingerprint(profile Profile) (string, error) {
 		MaxInputBytes: normalized.MaxInputBytes, MaxRequestBytes: normalized.MaxRequestBytes,
 		MaxResponseBytes: normalized.MaxResponseBytes,
 		Egress:           openAIEgressPolicyIdentity(normalized.EgressPolicy),
+	}
+	if normalized.API == embedconfig.APIKit {
+		identity.API = normalized.API
+		identity.Route = "/v1/embed"
 	}
 	if normalized.ManagedService != "" {
 		identity.Origin = ""
@@ -288,7 +300,7 @@ func New(profile Profile, secrets SecretResolver, httpClient *http.Client) (*Cli
 	client.text, err = embedclient.New(embedclient.Options{
 		Model: embedconfig.Model{Name: client.descriptor.Model, Dimensions: client.descriptor.Dimension,
 			Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone, EncodingFormat: "float"},
-		Deployment: embedconfig.Deployment{BaseURL: client.profile.Origin + "/v1", TrustPrivateNetwork: true},
+		Deployment: embedconfig.Deployment{API: client.profile.API, BaseURL: client.profile.Origin + "/v1", TrustPrivateNetwork: true},
 		Batch:      embedconfig.Batch{Items: client.profile.MaxBatchItems},
 		Transport:  embedconfig.Transport{MaxResponseBytes: int(client.profile.MaxResponseBytes)},
 		HTTP:       &http.Client{Transport: responsePolicy{client: client}, CheckRedirect: providerhttp.RefuseRedirects, Timeout: client.profile.RequestTimeout},
@@ -336,28 +348,63 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 		}
 	}
 
-	rendered := make([]string, len(inputs))
-	var renderedBytes int64
+	prepared := make([]embedclient.Input, len(inputs))
 	for index, input := range inputs {
 		switch {
 		case input.Role == document.EmbeddingRoleDocument && input.Kind == document.EmbeddingInputRenditionChunk:
-			rendered[index] = client.profile.ModelInput.EncodeDocument(input.Text)
+			prepared[index] = embedclient.Input{Role: embedconfig.RoleDocument, Text: client.profile.ModelInput.EncodeDocument(input.Text)}
 		case input.Role == document.EmbeddingRoleQuery && input.Kind == document.EmbeddingInputQueryText:
-			rendered[index] = client.profile.ModelInput.EncodeQuery(input.Text)
+			prepared[index] = embedclient.Input{Role: embedconfig.RoleQuery, Text: client.profile.ModelInput.EncodeQuery(input.Text)}
+		case client.profile.API == embedconfig.APIKit && input.Role == document.EmbeddingRoleDocument && input.Kind == document.EmbeddingInputOriginalFile:
+			metadata := input.Source.Metadata()
+			carrier, ok := input.Source.(interface {
+				CapabilityProof() document.UploadCapability
+			})
+			if !ok {
+				return document.EmbeddingResult{}, fmt.Errorf("openaicompat: missing media inspection: %w", ErrPermanentResponse)
+			}
+			facts, local := carrier.CapabilityProof().Facts()
+			if !local || metadata.MediaFamily != facts.MediaFamily || metadata.MediaType != facts.MediaType ||
+				metadata.ByteLength > media.MaxBytes || metadata.ByteLength != facts.SourceBytes || metadata.SHA256 != facts.SourceSHA256 ||
+				metadata.CapabilityRecordChecksum != facts.Checksum || metadata.InputKind != document.RenditionInputOriginalFile ||
+				facts.DescriptorFingerprint != client.descriptor.Fingerprint || !supportedMedia(facts) {
+				return document.EmbeddingResult{}, fmt.Errorf("openaicompat: unsupported media inspection: %w", ErrPermanentResponse)
+			}
+			op := providerutil.NewResumedOperation(ctx, providerutil.Provider("openaicompat"), client.profile.RequestTimeout)
+			data, err := op.ReadUpload(input.Source)
+			op.Cancel()
+			if err != nil {
+				return document.EmbeddingResult{}, err
+			}
+			prepared[index] = embedclient.Input{Role: embedconfig.RoleDocument, MediaType: metadata.MediaType, Data: data}
 		default:
-			return document.EmbeddingResult{}, errors.New("openaicompat: unsupported non-text embedding input or role")
+			return document.EmbeddingResult{}, errors.New("openaicompat: unsupported embedding input or role")
 		}
-		if int64(len(rendered[index])) > client.profile.MaxInputBytes-renderedBytes {
-			return document.EmbeddingResult{}, errors.New("openaicompat: embedding input exceeds profile byte capacity")
+		if prepared[index].MediaType == "" && embedmodel.BlankText(prepared[index].Text) {
+			return document.EmbeddingResult{}, fmt.Errorf("openaicompat: empty prepared input: %w", ErrPermanentResponse)
 		}
-		renderedBytes += int64(len(rendered[index]))
+		// OpenAI requests have no roles; a single role preserves mixed-batch ordering.
+		if client.profile.API != embedconfig.APIKit {
+			prepared[index].Role = embedconfig.RoleDocument
+		}
 	}
-	// Formatting already applied the individual document/query role. This
-	// wire contract has no input_type. Kit splits batches on request timeout.
-	vectors, err := client.text.EncodeFunc(embedconfig.RoleDocument)(ctx, rendered)
+	vectors, err := client.text.Encode(ctx, 0, prepared)
 	if err != nil {
 		if errors.Is(err, vector.ErrEmptyEmbeddingInput) {
 			return document.EmbeddingResult{}, fmt.Errorf("openaicompat: empty prepared input: %w", ErrPermanentResponse)
+		}
+		if apiError, ok := errors.AsType[*embedclient.APIError](err); ok {
+			if err := ctx.Err(); err != nil {
+				return document.EmbeddingResult{}, err
+			}
+			if apiError.CredentialsRejected() {
+				return document.EmbeddingResult{}, &ProviderError{Kind: ErrUnauthorized, StatusCode: apiError.StatusCode}
+			}
+			if apiError.Retryable() {
+				return document.EmbeddingResult{}, &ProviderError{Kind: ErrTransientResponse, StatusCode: apiError.StatusCode,
+					RetryDelay: min(apiError.RetryAfter, time.Hour), RetrySet: apiError.RetryAfter > 0}
+			}
+			return document.EmbeddingResult{}, &ProviderError{Kind: ErrPermanentResponse, StatusCode: apiError.StatusCode}
 		}
 		if transport, ok := errors.AsType[*embedclient.TransportError](err); ok {
 			if transport.Timeout() {
@@ -434,6 +481,9 @@ func (policy responsePolicy) RoundTrip(request *http.Request) (*http.Response, e
 		}
 		return nil, &ProviderError{Kind: ErrTransientResponse}
 	}
+	if client.profile.API == embedconfig.APIKit && response.StatusCode == http.StatusBadGateway {
+		return response, nil
+	}
 	originalBody := response.Body
 	defer func() { _ = originalBody.Close() }()
 	if response.StatusCode >= 300 && response.StatusCode < 400 {
@@ -464,19 +514,28 @@ func (policy responsePolicy) RoundTrip(request *http.Request) (*http.Response, e
 	if err != nil {
 		return nil, err
 	}
-	var decoded wireResponse
-	if err := json.Unmarshal(body, &decoded, json.RejectUnknownMembers(true)); err != nil {
-		return nil, fmt.Errorf("openaicompat: provider response does not match the bounded embedding schema: %w", ErrMalformedResponse)
-	}
-	if decoded.Object != "list" || decoded.Model != client.descriptor.Model {
-		return nil, fmt.Errorf("openaicompat: provider model or response contract drifted: %w", ErrMalformedResponse)
-	}
-	if decoded.Usage != nil && (decoded.Usage.PromptTokens < 0 || decoded.Usage.TotalTokens < decoded.Usage.PromptTokens) {
-		return nil, fmt.Errorf("openaicompat: provider usage is invalid: %w", ErrMalformedResponse)
-	}
-	for _, item := range decoded.Data {
-		if item.Object != "embedding" || item.Index == nil || item.Embedding.Kind() != '[' {
-			return nil, fmt.Errorf("openaicompat: provider response item contract drifted: %w", ErrMalformedResponse)
+	if client.profile.API == embedconfig.APIKit {
+		var decoded struct {
+			Model string `json:"model"`
+		}
+		if err := json.Unmarshal(body, &decoded); err != nil || decoded.Model != client.descriptor.Model {
+			return nil, fmt.Errorf("openaicompat: provider model or response contract drifted: %w", ErrMalformedResponse)
+		}
+	} else {
+		var decoded wireResponse
+		if err := json.Unmarshal(body, &decoded, json.RejectUnknownMembers(true)); err != nil {
+			return nil, fmt.Errorf("openaicompat: provider response does not match the bounded embedding schema: %w", ErrMalformedResponse)
+		}
+		if decoded.Object != "list" || decoded.Model != client.descriptor.Model {
+			return nil, fmt.Errorf("openaicompat: provider model or response contract drifted: %w", ErrMalformedResponse)
+		}
+		if decoded.Usage != nil && (decoded.Usage.PromptTokens < 0 || decoded.Usage.TotalTokens < decoded.Usage.PromptTokens) {
+			return nil, fmt.Errorf("openaicompat: provider usage is invalid: %w", ErrMalformedResponse)
+		}
+		for _, item := range decoded.Data {
+			if item.Object != "embedding" || item.Index == nil || item.Embedding.Kind() != '[' {
+				return nil, fmt.Errorf("openaicompat: provider response item contract drifted: %w", ErrMalformedResponse)
+			}
 		}
 	}
 	// Close the network body before handing the bounded bytes to Kit.
@@ -495,7 +554,26 @@ func (client *Client) validateRevisionEcho(header http.Header) error {
 	return nil
 }
 
+func supportedMedia(f document.UploadCapabilityFacts) bool {
+	switch f.MediaFamily {
+	case "image":
+		return (f.MediaType == "image/png" || f.MediaType == "image/jpeg" || f.MediaType == "image/webp") && f.Pixels > 0 && f.Frames > 0
+	case "pdf":
+		return f.MediaType == "application/pdf" && f.Pages > 0 && f.Pages <= MaxMediaPages
+	case "video":
+		return f.MediaType == "video/mp4" && f.DurationMS > 0 && f.DurationMS <= MaxMediaDurationMS
+	default:
+		return false
+	}
+}
+
 func normalizeProfile(profile Profile) (Profile, document.EmbeddingDescriptor, error) {
+	if profile.API == embedconfig.APIOpenAI {
+		profile.API = ""
+	}
+	if profile.API != "" && profile.API != embedconfig.APIKit {
+		return Profile{}, document.EmbeddingDescriptor{}, errors.New("openaicompat: unsupported API")
+	}
 	if profile.ManagedService != "" {
 		if profile.ManagedService != "kit-embed" || (profile.SelectionMode != "auto" && profile.SelectionMode != "local") || profile.ResolveOrigin == nil {
 			return Profile{}, document.EmbeddingDescriptor{}, errors.New("managed embeddings require kit-embed, auto or local mode, and an origin resolver")
@@ -586,7 +664,7 @@ func normalizeProfile(profile Profile) (Profile, document.EmbeddingDescriptor, e
 	}
 	descriptorIdentity.PolicyFingerprint = ""
 	descriptorIdentity.Fingerprint = ""
-	if err := validateDescriptorContract(descriptorIdentity, profile.ModelInput); err != nil {
+	if err := validateDescriptorContract(descriptorIdentity, profile.ModelInput, profile.API); err != nil {
 		return Profile{}, document.EmbeddingDescriptor{}, err
 	}
 	if err := validateDeploymentContract(profile.DeploymentContract, descriptorIdentity, profile.ModelInput); err != nil {
@@ -637,11 +715,11 @@ func openAIRetryAfter(value string, now time.Time) (time.Duration, bool) {
 	return min(max(when.Sub(now), 0), time.Hour), true
 }
 
-func validateDescriptorContract(descriptor document.EmbeddingDescriptor, modelInput document.ModelInputContract) error {
+func validateDescriptorContract(descriptor document.EmbeddingDescriptor, modelInput document.ModelInputContract, api embedconfig.API) error {
 	if descriptor.ID != ProviderID || descriptor.TrustBoundary != document.EmbeddingTrustOperatorNetwork ||
 		descriptor.ScalarEncoding != ScalarEncodingFloat32 || descriptor.DocumentFormatter != DocumentFormatterV1 ||
 		descriptor.QueryFormatter != QueryFormatterV1 || !descriptor.SupportsTextQuery ||
-		!slices.Equal(descriptor.InputKinds, []document.EmbeddingInputKind{document.EmbeddingInputRenditionChunk}) ||
+		(!slices.Equal(descriptor.InputKinds, []document.EmbeddingInputKind{document.EmbeddingInputRenditionChunk}) && (api != embedconfig.APIKit || !slices.Equal(descriptor.InputKinds, []document.EmbeddingInputKind{document.EmbeddingInputOriginalFile}))) ||
 		!slices.Equal(descriptor.SupportedRequestModes, []document.ModelInputMode{document.ModelInputModeText}) {
 		return errors.New("openaicompat: descriptor does not match the text-only adapter contract")
 	}
