@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-24
+last_edited: 2026-11-26
 title: Hosted vault providers
 description: Connect Docbank to a service that hosts vaults for you, and see which vaults you can open.
 ---
@@ -76,11 +76,33 @@ tell your computers apart. Reconfiguring keeps the ID.
 ## Write a helper
 
 A helper reads one JSON request on stdin and writes one JSON result on stdout.
-Helpers written in Go can use the `go.kenn.io/docbank/docbank/provider`
-package: `DecodeRequest` reads and checks the request, and `WriteResponse`
-checks and writes the result.
+Docbank's CLI calls `discover` today, and the helper contract defines four
+operations:
 
-A discovery request names this installation and the connection:
+| `operation` | Purpose | Extra request fields |
+| --- | --- | --- |
+| `discover` | List the vaults the signed-in person can open. | None. |
+| `open` | Return a short-lived credential for one vault. | `vault_id`, `vault_uuid`, `actions`. |
+| `renew` | Replace an open vault's credential before it expires. | `vault_id`, `vault_uuid`, `actions`, `open_request_id`, `generation`. |
+| `release` | End an open so its credentials stop working. | `vault_id`, `vault_uuid`, `actions`, `open_request_id`. |
+
+Helpers written in Go can use `go.kenn.io/docbank/docbank/provider`:
+
+- `DecodeRequest` reads and checks the request on stdin.
+- `WriteResponse` checks the result against the request and writes it to stdout.
+- `ValidateApprovalURL` checks an approval page address against the
+  connection's `browser_origin`.
+- `NewDiscoverRequest`, `NewOpenRequest`, `NewRenewRequest`,
+  `NewReleaseRequest`, `DecodeResponse`, and `Exchange` build requests and run
+  or check exchanges in helper tests.
+
+### Requests
+
+Every request carries `version` set to `1`, `operation`, a fresh `request_id`
+UUID, this computer's `installation_id` UUID, and the connection's `origin` and
+`mount_prefix`.
+
+A discovery request carries only those envelope fields:
 
 ```json
 {
@@ -93,7 +115,42 @@ A discovery request names this installation and the connection:
 }
 ```
 
-A successful result echoes the version, operation, and request ID:
+An `open` request adds the vault identities and requested actions:
+
+```json
+{
+  "version": 1,
+  "operation": "open",
+  "request_id": "44444444-4444-4444-8444-444444444444",
+  "installation_id": "11111111-1111-4111-8111-111111111111",
+  "origin": "https://vaults.example.org",
+  "mount_prefix": "/documents",
+  "vault_id": "22222222-2222-4222-8222-222222222222",
+  "vault_uuid": "33333333-3333-4333-8333-333333333333",
+  "actions": ["read", "upload"]
+}
+```
+
+Rules for the vault and open fields:
+
+- `open`, `renew`, and `release` carry `vault_id`, the service's UUID for the
+  vault, and `vault_uuid`, the Docbank vault UUID.
+- `actions` is a nonempty, sorted list without repeats. Valid values are
+  `"read"` and `"upload"`.
+- `renew` and `release` carry `open_request_id`, set to the `request_id` from
+  the `open` request that started the open.
+- `renew` carries `generation`, an integer of at least `1` naming the
+  credential generation to replace.
+- Omit fields an operation does not use. `discover` omits all five fields,
+  `open` omits `open_request_id` and `generation`, and `release` omits
+  `generation`.
+
+### Results
+
+Every result echoes `version`, `operation`, and `request_id`, and sets
+`status`.
+
+A ready `discover` result returns `discovery`:
 
 ```json
 {
@@ -115,22 +172,70 @@ A successful result echoes the version, operation, and request ID:
 }
 ```
 
-Other results carry `status` with an optional `reason` code made of lowercase
-letters and underscores, and no `discovery`:
+A ready `open` or `renew` result returns `access`:
 
-| `status` | Meaning |
-| --- | --- |
-| `sign_in_required` | The person must sign in to the service first. |
-| `denied` | The service refuses this request. |
-| `unavailable` | The helper or service cannot answer now, for example `server_unavailable`. |
+```json
+{
+  "version": 1,
+  "operation": "open",
+  "request_id": "44444444-4444-4444-8444-444444444444",
+  "status": "ready",
+  "access": {
+    "actions": ["read", "upload"],
+    "mount": "https://vaults.example.org/documents/22222222-2222-4222-8222-222222222222",
+    "credential": "example-credential",
+    "generation": 1,
+    "expires_at": "2030-01-01T00:15:00Z",
+    "approval_expires_at": "2030-03-01T00:00:00Z"
+  }
+}
+```
 
-Rules for the exchange:
+Allowed `status` values depend on the operation. Statuses that allow `reason`
+take an optional fixed code of at most 64 lowercase ASCII letters and
+underscores, never free text.
 
-- Exit 0 for any result, including a refusal. Exit 2 when the request is
-  invalid, before contacting the service. Exit 1 for any other failure.
-  Docbank discards stdout when the helper exits nonzero.
+| `status` | Operations | Payload | Meaning |
+| --- | --- | --- | --- |
+| `ready` | `discover`, `open`, `renew` | `discovery` for `discover`; `access` with `credential` for `open` and `renew`. No `reason`. | The request succeeded. |
+| `approval_required` | `open` | `approval_url`. No `reason`. | The person has not approved this open yet. They approve in their browser on the service's page, then Docbank's client asks again. |
+| `conflict` | `open`, `renew` | `access` without `credential`, optional `reason`. | The service already answered this request with a credential. The result repeats the access facts without `credential`. |
+| `released` | `release` | Envelope only. No `reason`. | The open has ended and its credentials stop working. |
+| `sign_in_required` | All | Optional `reason`. | The person must sign in to the service first. |
+| `denied` | All | Optional `reason`. | The service refuses this request. |
+| `unavailable` | All | Optional `reason`, for example `server_unavailable`. | The helper or service cannot answer now. |
+
+### Checks and limits
+
+Docbank enforces these rules on the process and its result:
+
+- Exit 0 for any valid result, including a refusal or conflict. Exit 2 when the
+  request is invalid, before contacting the service. Exit 1 for any other
+  failure. Docbank discards stdout when the helper exits nonzero.
 - Requests are at most 16 KiB and results at most 256 KiB. Docbank stops a
   helper after 60 seconds and discards its stderr.
-- Docbank rejects a result with unknown or repeated fields, a different
-  request ID, a vault without both identities, a repeated vault ID, or a vault
-  name with control characters.
+- Results must be a single JSON object with no unknown fields, no repeated
+  keys, matching `version`, `operation`, and `request_id`, and only the fields
+  allowed for that status.
+- In `discovery`, `vaults` must be a JSON array, each vault must carry both
+  `id` and `vault_uuid`, vault `id` values must not repeat, and each `name`
+  must be nonempty UTF-8 of at most 1024 bytes without leading or trailing
+  whitespace, control characters, or bidi control characters.
+- In `access`, `mount` must be an HTTPS address strictly under the connection's
+  `origin` and `mount_prefix`, with a clean path and no user information,
+  backslashes, query, or fragment. Percent-encode only the characters a URL
+  path requires, such as a space as `%20`, with uppercase hex digits.
+- In `access`, `actions` must be nonempty, sorted, duplicate-free, and limited
+  to actions the request asked for.
+- In `access`, `generation` counts credentials for an open starting at `1`, and
+  a newer generation replaces every older one. A `renew` result must return a
+  `generation` greater than the request's `generation`.
+- In `access`, `expires_at` and `approval_expires_at` must be UTC timestamps
+  with a zero offset, and `expires_at` must not be after `approval_expires_at`.
+- In `access`, `credential` is required on `ready` and must be omitted on
+  `conflict`. It is at most 4096 bytes of visible ASCII without spaces, from
+  `!` through `~`.
+- On `approval_required`, `approval_url` must be an HTTPS address of at most
+  2048 bytes with no user information or fragment. It may include a query
+  string. `ValidateApprovalURL` also requires it to be on the connection's
+  `browser_origin`.
