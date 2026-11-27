@@ -353,7 +353,7 @@ func TestVaultRequestsNameOneVaultAndItsActions(t *testing.T) {
 		"open of another open":  {`"actions"`, `"open_request_id":"66666666-6666-4666-8666-666666666666","actions"`},
 		"open with generation":  {`"actions"`, `"generation":1,"actions"`},
 		"discovery of a vault":  {`"operation":"open"`, `"operation":"discover"`},
-		"renewal of no open":    {`"operation":"open"`, `"operation":"renew"`},
+		"renewal of no open":    {`"operation":"open"`, `"operation":"renew","generation":1`},
 		"release of no open":    {`"operation":"open"`, `"operation":"release"`},
 		"operation not offered": {`"operation":"open"`, `"operation":"delete"`},
 	} {
