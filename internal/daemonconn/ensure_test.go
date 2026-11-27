@@ -652,9 +652,6 @@ func TestProvenClientRejectsIncompleteProofHandoff(t *testing.T) {
 			case "deadline":
 				timeout = 100 * time.Millisecond
 			case "proof timeout":
-				previous := probeTimeout
-				probeTimeout = time.Second
-				t.Cleanup(func() { probeTimeout = previous })
 				timeout = 2 * probeOptions().Timeout
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), timeout)
@@ -928,7 +925,7 @@ func TestFindOwnershipChallengeFailureModes(t *testing.T) {
 			switch r.URL.Path {
 			case kitdaemon.DefaultPingPath:
 				writePing(w)
-			case daemonauth.ChallengePath:
+			case config.DaemonChallengePath:
 				sawClose.Store(r.Close)
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write(challengeResponse(t, r, token))
@@ -950,7 +947,7 @@ func TestFindOwnershipChallengeFailureModes(t *testing.T) {
 			switch r.URL.Path {
 			case kitdaemon.DefaultPingPath:
 				writePing(w)
-			case daemonauth.ChallengePath:
+			case config.DaemonChallengePath:
 				hijacker, ok := w.(http.Hijacker)
 				if !assert.True(t, ok) {
 					return
@@ -979,7 +976,7 @@ func TestFindOwnershipChallengeFailureModes(t *testing.T) {
 			switch r.URL.Path {
 			case kitdaemon.DefaultPingPath:
 				writePing(w)
-			case daemonauth.ChallengePath:
+			case config.DaemonChallengePath:
 				cancel()
 				<-r.Context().Done()
 			default:
@@ -999,7 +996,7 @@ func TestFindOwnershipChallengeFailureModes(t *testing.T) {
 			switch r.URL.Path {
 			case kitdaemon.DefaultPingPath:
 				writePing(w)
-			case daemonauth.ChallengePath:
+			case config.DaemonChallengePath:
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.MarshalWrite(w, map[string]string{"proof": "forged"})
 			default:
@@ -1032,7 +1029,7 @@ func TestFindOwnershipChallengeFailureModes(t *testing.T) {
 	})
 }
 
-func TestProveEndpointOwnershipTimeoutBudget(t *testing.T) {
+func TestProveEndpointOwnershipTimeouts(t *testing.T) {
 	const token = "synthetic-proof-token"
 
 	dialPipe := func(conn net.Conn) *http.Client {
@@ -1047,33 +1044,6 @@ func TestProveEndpointOwnershipTimeoutBudget(t *testing.T) {
 		}
 	}
 	rec := NewRecord("127.0.0.1:1", "synthetic-api-key", token, "")
-
-	t.Run("accepts five-second stall within probe budget", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			clientConn, serverConn := net.Pipe()
-			done := make(chan struct{})
-			go func() {
-				defer close(done)
-				defer func() { _ = serverConn.Close() }()
-				req, readErr := http.ReadRequest(bufio.NewReader(serverConn))
-				if readErr != nil {
-					t.Errorf("reading challenge request: %v", readErr)
-					return
-				}
-				body := challengeResponse(t, req, token)
-				time.Sleep(5 * time.Second)
-				if _, writeErr := fmt.Fprintf(serverConn, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"+
-					"Content-Length: %d\r\nConnection: close\r\n\r\n%s", len(body), body); writeErr != nil {
-					t.Errorf("writing challenge response: %v", writeErr)
-				}
-			}()
-			owned, err := proveEndpointOwnershipWithClient(t.Context(), rec, dialPipe(clientConn))
-			_ = clientConn.Close()
-			<-done
-			require.NoError(t, err)
-			assert.True(t, owned)
-		})
-	})
 
 	t.Run("header stall past probe budget reports unreachable timeout", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {

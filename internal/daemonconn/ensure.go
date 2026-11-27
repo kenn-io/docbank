@@ -84,14 +84,8 @@ func WriteDaemonStartProblem(w io.Writer, err error) error {
 	return nil
 }
 
-// probeTimeout bounds each local ping and ownership-challenge HTTP probe.
-// Busy local daemons and loaded Windows CI runners can stall loopback I/O for
-// several seconds; ten seconds absorbs those pauses while keeping wedged-socket
-// probes well inside ensureTimeout.
-var probeTimeout = 10 * time.Second
-
 func probeOptions() kitdaemon.ProbeOptions {
-	return kitdaemon.ProbeOptions{ExpectedService: Service, Timeout: probeTimeout}
+	return kitdaemon.ProbeOptions{ExpectedService: Service, Timeout: 2 * time.Second}
 }
 
 func discoverOptions(requireVersion bool) kitdaemon.DiscoverOptions {

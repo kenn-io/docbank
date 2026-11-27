@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -392,12 +393,141 @@ func trackMiddleware(next http.Handler, t *ActivityTracker) http.Handler {
 	})
 }
 
-func logMiddleware(next http.Handler, logger *slog.Logger) http.Handler {
+const maxPendingRequestLogs = 256
+
+type requestLogEntry struct {
+	when     time.Time
+	method   string
+	path     string
+	remote   string
+	duration time.Duration
+}
+
+// requestLogger decouples HTTP access logging from ServeHTTP so a backpressured
+// log sink (such as a full stderr pipe or slow log rotation) cannot delay
+// net/http's finishRequest flush of buffered responses.
+type requestLogger struct {
+	logger  *slog.Logger
+	mu      sync.Mutex
+	buf     []requestLogEntry
+	head    int
+	count   int
+	dropped int64
+	active  bool
+	closed  bool
+	done    chan struct{}
+}
+
+func newRequestLogger(logger *slog.Logger) *requestLogger {
+	return &requestLogger{logger: logger}
+}
+
+func (l *requestLogger) enabled(ctx context.Context) bool {
+	return l != nil && l.logger.Enabled(ctx, slog.LevelInfo)
+}
+
+func (l *requestLogger) enqueue(entry requestLogEntry) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	if l.closed {
+		l.mu.Unlock()
+		return
+	}
+	if l.buf == nil {
+		l.buf = make([]requestLogEntry, maxPendingRequestLogs)
+	}
+	if l.count >= len(l.buf) {
+		l.dropped++
+		l.mu.Unlock()
+		return
+	}
+	l.buf[(l.head+l.count)%len(l.buf)] = entry
+	l.count++
+	if !l.active {
+		l.active = true
+		l.done = make(chan struct{})
+		go l.drain()
+	}
+	l.mu.Unlock()
+}
+
+func (l *requestLogger) drain() {
+	// Owner lifetime outlives individual HTTP requests.
+	ctx := context.Background()
+	for {
+		l.mu.Lock()
+		if l.count == 0 && l.dropped == 0 {
+			l.active = false
+			close(l.done)
+			l.mu.Unlock()
+			return
+		}
+		var (
+			hasEntry bool
+			entry    requestLogEntry
+			dropped  int64
+		)
+		if l.count > 0 {
+			entry = l.buf[l.head]
+			l.buf[l.head] = requestLogEntry{}
+			l.head = (l.head + 1) % len(l.buf)
+			l.count--
+			hasEntry = true
+		} else {
+			dropped = l.dropped
+			l.dropped = 0
+		}
+		l.mu.Unlock()
+		if hasEntry {
+			rec := slog.NewRecord(entry.when, slog.LevelInfo, "request", 0)
+			rec.AddAttrs(
+				slog.String("method", entry.method),
+				slog.String("path", entry.path),
+				slog.String("remote", entry.remote),
+				slog.Duration("duration", entry.duration),
+			)
+			_ = l.logger.Handler().Handle(ctx, rec)
+		} else if dropped > 0 {
+			l.logger.WarnContext(ctx, "request log queue full; dropped request logs", "dropped", dropped)
+		}
+	}
+}
+
+func (l *requestLogger) shutdown(ctx context.Context) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.closed = true
+	if !l.active {
+		l.mu.Unlock()
+		return
+	}
+	done := l.done
+	l.mu.Unlock()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+}
+
+func logMiddleware(next http.Handler, logger *requestLogger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
-		logger.Info("request", "method", r.Method, "path", r.URL.Path,
-			"remote", r.RemoteAddr, "duration", time.Since(start))
+		if !logger.enabled(r.Context()) {
+			return
+		}
+		now := time.Now()
+		logger.enqueue(requestLogEntry{
+			when:     now,
+			method:   r.Method,
+			path:     r.URL.Path,
+			remote:   r.RemoteAddr,
+			duration: now.Sub(start),
+		})
 	})
 }
 

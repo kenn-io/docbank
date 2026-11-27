@@ -106,6 +106,7 @@ type Server struct {
 	snapshots     *store.QuerySnapshotService
 	termReports   *store.ReportCache
 	reportBudget  report.Budget
+	requestLog    *requestLogger
 	masterOwner   string
 
 	stopPhotoEvents context.CancelFunc
@@ -304,8 +305,9 @@ func NewServer(d Deps) *Server {
 	h = timeoutMiddleware(h)
 	h = webBasePathMiddleware(h, d.Cfg.Web.BasePath)
 	h = hostMiddleware(h, d.Cfg.Server, d.WebURL, s.webSessions.login.signInHosts())
+	s.requestLog = newRequestLogger(d.Logger)
 	h = recoverMiddleware(h, d.Logger)
-	h = logMiddleware(h, d.Logger)
+	h = logMiddleware(h, s.requestLog)
 	h = trackMiddleware(h, d.Tracker)
 	s.handler = h
 	return s
@@ -376,6 +378,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	if s.snapshots != nil {
 		sessionErr = errors.Join(sessionErr, s.snapshots.Shutdown(ctx))
+	}
+	if s.requestLog != nil {
+		s.requestLog.shutdown(ctx)
 	}
 	return sessionErr
 }

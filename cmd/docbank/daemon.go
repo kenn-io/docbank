@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -196,11 +197,16 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	}
 
 	background := os.Getenv(daemonconn.EnvBackgroundDaemon) == "1"
-	logger, loggingResult, err := buildServeLogger(layout, background)
+	logger, closeLogger, err := buildServeLogger(layout, background)
 	if err != nil {
 		return err
 	}
-	defer func() { retErr = errors.Join(retErr, loggingResult.Close()) }()
+	defer func() {
+		// Drain buffered stderr logs briefly without hanging shutdown on a wedged pipe.
+		drainCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+		defer cancel()
+		retErr = errors.Join(retErr, closeLogger(drainCtx))
+	}()
 	sigCtx, sigCancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer sigCancel()
 
@@ -1461,11 +1467,100 @@ func idleWatch(ctx context.Context, t *api.ActivityTracker, timeout time.Duratio
 	}
 }
 
+const serveStderrBufferBytes = 256 << 10
+
+// serveStderr overrides os.Stderr for buildServeLogger in tests.
+var serveStderr io.Writer
+
+// nonBlockingWriter buffers writes up to maxBytes and drains them to dst on an
+// on-demand goroutine so a stalled stderr pipe (such as a full anonymous pipe
+// under a paused log reader) cannot stall daemon HTTP handlers, workers, or
+// shutdown. Whole writes past the budget are dropped so line-delimited JSON
+// output stays well-formed.
+type nonBlockingWriter struct {
+	dst      io.Writer
+	maxBytes int
+
+	mu     sync.Mutex
+	queue  [][]byte
+	queued int
+	active bool
+	closed bool
+	done   chan struct{}
+}
+
+func newNonBlockingWriter(dst io.Writer, maxBytes int) *nonBlockingWriter {
+	return &nonBlockingWriter{dst: dst, maxBytes: maxBytes}
+}
+
+func (w *nonBlockingWriter) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	w.mu.Lock()
+	if w.closed || w.queued+len(p) > w.maxBytes {
+		w.mu.Unlock()
+		return len(p), nil
+	}
+	chunk := bytes.Clone(p)
+	w.queue = append(w.queue, chunk)
+	w.queued += len(chunk)
+	if !w.active {
+		w.active = true
+		w.done = make(chan struct{})
+		go w.drain()
+	}
+	w.mu.Unlock()
+	return len(p), nil
+}
+
+func (w *nonBlockingWriter) drain() {
+	for {
+		w.mu.Lock()
+		if len(w.queue) == 0 {
+			w.active = false
+			close(w.done)
+			w.mu.Unlock()
+			return
+		}
+		chunk := w.queue[0]
+		w.queue[0] = nil
+		w.queue = w.queue[1:]
+		if len(w.queue) == 0 {
+			w.queue = nil
+		}
+		w.queued -= len(chunk)
+		w.mu.Unlock()
+		_, _ = w.dst.Write(chunk)
+	}
+}
+
+func (w *nonBlockingWriter) Close(ctx context.Context) {
+	w.mu.Lock()
+	w.closed = true
+	if !w.active {
+		w.mu.Unlock()
+		return
+	}
+	done := w.done
+	w.mu.Unlock()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+}
+
 func buildServeLogger(
 	layout home.Layout, background bool,
-) (*slog.Logger, *kitlogging.Result, error) {
+) (*slog.Logger, func(context.Context) error, error) {
+	rawStderr := serveStderr
+	if rawStderr == nil {
+		rawStderr = os.Stderr
+	}
+	stderrWriter := newNonBlockingWriter(rawStderr, serveStderrBufferBytes)
 	logger, result, err := kitlogging.NewLogger(kitlogging.Options{
-		Stderr:      os.Stderr,
+		Stderr:      stderrWriter,
+		IsTerminal:  func(io.Writer) bool { return kitlogging.IsTerminalWriter(rawStderr) },
 		EnvLevelVar: "DOCBANK_LOG_LEVEL",
 		File: kitlogging.FileOptions{
 			Enabled:         background,
@@ -1476,7 +1571,11 @@ func buildServeLogger(
 	if err != nil {
 		return nil, nil, fmt.Errorf("building daemon logger: %w", err)
 	}
-	return logger, result, nil
+	closeLogger := func(ctx context.Context) error {
+		stderrWriter.Close(ctx)
+		return result.Close()
+	}
+	return logger, closeLogger, nil
 }
 
 // randomHex32 returns a fresh 32-byte value hex-encoded, used for both the
