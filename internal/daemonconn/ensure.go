@@ -679,15 +679,37 @@ func discoverWithOptions(
 // without transmitting its API key or shutdown token. A listener that captured
 // the port during teardown can copy ping fields but cannot forge this response.
 func proveEndpointOwnership(ctx context.Context, rec kitdaemon.RuntimeRecord) (bool, error) {
-	probeCtx, cancel := context.WithTimeout(ctx, probeOptions().Timeout)
-	defer cancel()
-	challengeClient := &http.Client{
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return errors.New("daemon ownership challenge must not redirect")
-		},
+	challengeClient := rec.Endpoint().HTTPClient(kitdaemon.HTTPClientOptions{DisableKeepAlives: true})
+	challengeClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return errors.New("daemon ownership challenge must not redirect")
 	}
+	return proveEndpointOwnershipWithClient(ctx, rec, challengeClient)
+}
+
+func proveEndpointOwnershipWithClient(
+	ctx context.Context, rec kitdaemon.RuntimeRecord, challengeClient *http.Client,
+) (bool, error) {
+	probeCtx, cancel := context.WithTimeoutCause(ctx, probeOptions().Timeout, errOwnershipProofTimeout)
+	defer cancel()
 	owned, err := proveOwnershipWithClient(probeCtx, rec, challengeClient)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return false, ctxErr
+	}
+	if probeCtx.Err() != nil {
+		return false, &kitdaemon.UnreachableError{
+			Record:   rec,
+			Endpoint: rec.Endpoint(),
+			Err:      context.Cause(probeCtx),
+		}
+	}
 	if errors.Is(err, errOwnershipChallenge) {
+		if IsTransportError(err) {
+			return false, &kitdaemon.UnreachableError{
+				Record:   rec,
+				Endpoint: rec.Endpoint(),
+				Err:      err,
+			}
+		}
 		return false, nil
 	}
 	return owned, err
@@ -717,11 +739,17 @@ func proveOwnershipWithClient(
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, proofBodyLimit))
 		return false, nil
 	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, proofBodyLimit+1))
+	if err != nil {
+		return false, fmt.Errorf("%w: %w", errOwnershipChallenge, &transportError{err: err})
+	}
+	if len(body) > proofBodyLimit {
+		return false, nil
+	}
 	var result struct {
 		Proof string `json:"proof"`
 	}
-	limited := io.LimitReader(resp.Body, proofBodyLimit)
-	if err := json.UnmarshalRead(limited, &result); err != nil {
+	if err := json.Unmarshal(body, &result); err != nil {
 		return false, nil
 	}
 	return config.VerifyDaemonAuthProof(token, nonce, result.Proof), nil
