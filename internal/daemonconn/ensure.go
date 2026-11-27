@@ -739,11 +739,17 @@ func proveOwnershipWithClient(
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, proofBodyLimit))
 		return false, nil
 	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, proofBodyLimit+1))
+	if err != nil {
+		return false, fmt.Errorf("%w: %w", errOwnershipChallenge, &transportError{err: err})
+	}
+	if len(body) > proofBodyLimit {
+		return false, nil
+	}
 	var result struct {
 		Proof string `json:"proof"`
 	}
-	limited := io.LimitReader(resp.Body, proofBodyLimit)
-	if err := json.UnmarshalRead(limited, &result); err != nil {
+	if err := json.Unmarshal(body, &result); err != nil {
 		return false, nil
 	}
 	return config.VerifyDaemonAuthProof(token, nonce, result.Proof), nil

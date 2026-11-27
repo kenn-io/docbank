@@ -1011,6 +1011,55 @@ func TestFindOwnershipChallengeFailureModes(t *testing.T) {
 		assert.False(t, ok)
 	})
 
+	t.Run("truncated body after 200 headers reports unreachable", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case kitdaemon.DefaultPingPath:
+				writePing(w)
+			case config.DaemonChallengePath:
+				hijacker, ok := w.(http.Hijacker)
+				if !assert.True(t, ok) {
+					return
+				}
+				conn, _, err := hijacker.Hijack()
+				if !assert.NoError(t, err) {
+					return
+				}
+				_, _ = io.WriteString(conn, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"+
+					"Content-Length: 76\r\nConnection: close\r\n\r\n{\"proof\":\"abc")
+				_ = conn.Close()
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		t.Cleanup(server.Close)
+		root := writeLiveRecord(t, server.URL)
+
+		_, _, ok, err := Find(t.Context(), root)
+		assert.False(t, ok)
+		require.ErrorIs(t, err, kitdaemon.ErrDaemonUnreachable)
+	})
+
+	t.Run("malformed JSON body stays rejected without unreachable error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case kitdaemon.DefaultPingPath:
+				writePing(w)
+			case config.DaemonChallengePath:
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, "not-json")
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		t.Cleanup(server.Close)
+		root := writeLiveRecord(t, server.URL)
+
+		_, _, ok, err := Find(t.Context(), root)
+		require.NoError(t, err)
+		assert.False(t, ok)
+	})
+
 	t.Run("non-200 status stays rejected without unreachable error", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
