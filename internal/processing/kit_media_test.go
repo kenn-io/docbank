@@ -24,7 +24,6 @@ import (
 	"go.kenn.io/docbank/document/openaicompat"
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/vectorworker"
 	"go.kenn.io/kit/embedclient"
 	"go.kenn.io/kit/embedconfig"
 	"go.kenn.io/kit/embedserver"
@@ -135,7 +134,7 @@ func TestKitMediaIndexAndSearch(t *testing.T) {
 	fixture.profile.CanonicalProfile, fixture.profile.Fingerprint = canonical, fingerprints.Profile
 	fixture.profile.RenditionRequestFingerprint = fingerprints.RenditionRequest
 	fixture.profile.RetentionDisclosureFingerprint = fingerprints.RetentionDisclosure
-	staged := fixture.stage(t, publicationIDs{"aa", "bb", "cc"}, "synthetic evidence", "Example")
+	staged := fixture.stage(t, publicationIDs{build: "aa", attachment: "bb"}, "synthetic evidence", "Example")
 	publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
 	require.NoError(t, err)
 	_, err = publisher.PublishRendition(t.Context(), staged)
@@ -199,7 +198,7 @@ func TestKitMediaIndexAndSearch(t *testing.T) {
 	spaces, err := fixture.catalog.ListVectorIndexSpaces(t.Context())
 	require.NoError(t, err)
 	require.Len(t, spaces, 1)
-	index, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{Catalog: fixture.catalog, Mutate: newTestOperationGate().MutateContext, Owner: "kit-test", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond, ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
+	index, err := NewIndexWorker(IndexWorkerConfig{Catalog: fixture.catalog, Mutate: newTestOperationGate().MutateContext, Owner: "kit-test", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Millisecond, ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
 		return fixture.catalog.ReadVectorIndexVectorSet(ctx, fixture.blobs, member)
 	}})
 	require.NoError(t, err)
