@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-05
+last_edited: 2026-11-28
 ---
 
 # Review document processing
@@ -17,7 +17,8 @@ exact node/version pair from `list_documents`, `search_documents`, or
    `--allow-processing`. It accepts only `content_version_id` and the reviewed
    `plan_fingerprint`. Consent must already be active for that exact plan.
 3. Follow the returned job with `get_processing_status {"job_id":"<returned-job-id>"}`.
-   Read `get_processing_coverage` for the selected source fence when needed.
+   When needed, call `get_processing_coverage` with `profile`, `vault_id`, and
+   1–4,096 `content_version_ids`.
 4. Refresh `get_document` for the current node/version, select an active
    rendition and read it through `read_rendition_text` with the exact
    vault/node/version/attachment identities. Follow `next_offset` to `eof`.
@@ -26,7 +27,8 @@ There is no MCP consent argument or consent-granting tool. Enqueue sends
 `Consent: false`; `--allow-processing` enables the tool but grants no consent.
 The operator can use CLI `processing build --consent` for an exact reviewed
 plan, but that both records consent and starts work. It is not consent-only.
-A plan from another MCP process, an evicted plan, a changed profile, or a changed
+The process remembers at most 4,096 reviewed plans. A plan from another MCP
+process, an evicted plan, changed disclosure, a changed profile, or a stale
 source requires a fresh plan and appropriate review. Never substitute a new
 fingerprint silently.
 
@@ -34,7 +36,7 @@ fingerprint silently.
 
 | CLI command | MCP tool | Difference |
 | --- | --- | --- |
-| `docbank processing profiles` | Operator CLI action | Profile discovery/configuration is not an MCP tool. |
+| `docbank processing profiles` | Operator CLI action | No profile-listing tool; an unknown `search_documents` profile returns the available names. |
 | `docbank processing plan` | `get_processing_plan` | Exact node/version/profile; the MCP process remembers the disclosed plan. |
 | `docbank processing build` | `start_processing` | Startup opt-in and existing consent required; no MCP `--consent`. |
 | `docbank processing status` | `get_processing_status` | Uses the returned job identity. |

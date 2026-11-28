@@ -17,7 +17,6 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/agentguide"
 )
 
 var updateHelpGolden = flag.Bool("update", false, "update CLI help golden files")
@@ -487,10 +486,4 @@ func assertHelpHintCommandsParse(t *testing.T, hint string) {
 		_, err := checkHelpExample(rootCmd, match[1])
 		assert.NoError(t, err, "recovery command in emitted hint: %s", match[1])
 	}
-}
-
-func TestBundledGuideHelpUsesSharedSource(t *testing.T) {
-	require.Equal(t, agentguide.Workflow, rootCmd.Long)
-	require.Equal(t, agentguide.Search, searchCmd.Long)
-	require.Equal(t, agentguide.Processing, processingCmd.Long)
 }

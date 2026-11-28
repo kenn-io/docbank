@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-05
+last_edited: 2026-11-28
 ---
 
 # Docbank agent workflow
@@ -18,7 +18,7 @@ Data tools use the selected daemon and keep their ordinary authorization.
 1. Call `get_vault_info {}` to confirm the vault identity.
 2. Call `list_documents {"path_prefix":"/"}` to browse. Follow `next_cursor`
    until absent. Each item supplies `node_id` and `content_version_id`.
-3. Use `search_documents` with a query, an operator-supplied profile and exactly
+3. Use `search_documents` with a query and exactly
    one scope. Read the search guide first; CLI plain search has different defaults.
 4. Call `get_document` with the exact `node_id` and `content_version_id` from a
    listing or search hit. Starting from a node ID alone, call
@@ -41,7 +41,7 @@ Data tools use the selected daemon and keep their ordinary authorization.
 | --- | --- | --- |
 | `docbank vault info` | `get_vault_info` | Confirms identity without exposing the host path. |
 | `docbank document tree` | `list_documents` | Bounded current-document pages, not a recursive tree rendering. |
-| `docbank search` | `search_documents` | Requires a profile and an explicit scope; see the search guide. |
+| `docbank search` | `search_documents` | Optional profile; requires an explicit scope. See the search guide. |
 | `docbank document stat` | `get_document` | Needs an exact node/version pair obtained first. |
 | `docbank document cat` | `read_document_content` | Verified base64 windows, not a stdout byte stream. |
 | `docbank document get` | Operator CLI action | Save and verify a local copy with CLI access. |

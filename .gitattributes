@@ -48,3 +48,7 @@ frontend/src/generated/** linguist-generated=true
 frontend/package-lock.json linguist-generated=true
 # The MCP server embeds and declares these exact image bytes.
 internal/mcp/assets/*.png binary
+
+# Embedded guidance keeps canonical bytes across platforms.
+internal/agentguide/*.md text eol=lf
+internal/agentguide/*.txt text eol=lf

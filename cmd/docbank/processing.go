@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"go.kenn.io/docbank/internal/agentguide"
 	"strings"
 	"text/tabwriter"
 
@@ -30,14 +31,7 @@ var (
 var processingCmd = &cobra.Command{
 	Example: `  docbank processing profiles
   docbank processing plan id:12 --profile <profile>`,
-	Long: `Builds derived text (renditions) and embeddings for one document version
-using a named profile. Profiles come from $DOCBANK_HOME/config.toml; the
-daemon indexes PDF text locally with its built-in docbank-pdf-text profile.
-Office text and OCR need a configured profile. Providers may be
-hosted: plan shows what leaves the machine, and build needs --consent.
-Typical flow: processing profiles -> processing plan <path-or-id> --profile P
--> processing build <path-or-id> --profile P --plan-fingerprint F --consent
--> rendition window <path-or-id>.`,
+	Long:        agentguide.Processing,
 	GroupID:     groupSearch,
 	Use:         "processing",
 	Short:       "Preview and run document processing",
