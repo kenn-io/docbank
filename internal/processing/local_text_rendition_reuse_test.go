@@ -50,16 +50,16 @@ func TestLocalTextMoveReusesHostedRendition(t *testing.T) {
 	portable.Embeddings = append(portable.Embeddings[:0:0], portable.Embeddings...)
 	portable.Embeddings[0].AuthorizationFingerprint = workerHash("moved-text-transport")
 	var moved *Service
-	setup := &LocalTextSetup{Service: source, Selected: "pdf", Candidate: func(string, string) (*Service, error) {
+	setup := &LocalTextSetup{Service: source, Selected: "pdf", Candidate: func(LocalTextTarget, string) (*Service, []string, error) {
 		moved, err = NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"pdf": {Profile: portable, RenditionProvider: renderer, RenditionDisclosure: old.renderDisclosure, EmbeddingProviders: old.embedders, Tokenizers: old.tokenizers}}})
 		if err == nil {
 			t.Cleanup(moved.Stop)
 		}
-		return moved, err
-	}, Startup: func(context.Context, bool, string) error { return nil }, Save: func(string, string) error { return nil }}
-	move, err := setup.Plan(t.Context(), "local")
+		return moved, nil, err
+	}, Startup: func(context.Context, bool, LocalTextTarget) error { return nil }, Save: func(string, LocalTextTarget) error { return nil }}
+	move, err := setup.Plan(t.Context(), LocalTextTarget{Server: "local"})
 	require.NoError(t, err)
-	_, err = setup.Apply(t.Context(), "local", move.Fingerprint)
+	_, err = setup.Apply(t.Context(), LocalTextTarget{Server: "local"}, move.Fingerprint)
 	require.NoError(t, err)
 	current := moved.profiles["pdf"]
 	require.NotEqual(t, old.record.Fingerprint, current.record.Fingerprint)

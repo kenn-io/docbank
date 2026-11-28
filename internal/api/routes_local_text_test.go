@@ -19,6 +19,13 @@ import (
 func TestLocalTextSetupRouteReviewsConsentAndMapsErrors(t *testing.T) {
 	t.Parallel()
 	var startupFailure, saveFailure atomic.Bool
+	var targetCandidates, targetStartups, targetSaves atomic.Int64
+	checkTarget := func(target processing.LocalTextTarget) {
+		assert.Equal(t, "https://embedding.example.invalid/v1", target.EmbeddingServer)
+		assert.Equal(t, "model", target.EmbeddingModel)
+		assert.Equal(t, 2, target.EmbeddingDimensions)
+		assert.Equal(t, "TEST_EMBED_KEY", target.EmbeddingAPIKeyEnv)
+	}
 	startupFailure.Store(true)
 	ts, _ := newTestServer(t, func(deps *api.Deps) {
 		renderer, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
@@ -26,26 +33,38 @@ func TestLocalTextSetupRouteReviewsConsentAndMapsErrors(t *testing.T) {
 		configure := configureProcessingTestServiceWithProviders(t, renderer, newProcessingTestEmbeddingProvider(t), true, document.EmbeddingOptional, "local-text")
 		configure(deps)
 		setup := &processing.LocalTextSetup{Service: deps.Processing,
-			Startup: func(context.Context, bool, string) error {
+			Startup: func(_ context.Context, _ bool, target processing.LocalTextTarget) error {
+				if target.EmbeddingServer != "" {
+					checkTarget(target)
+					targetStartups.Add(1)
+				}
 				if startupFailure.Load() {
 					return errors.New("synthetic startup failure")
 				}
 				return nil
 			},
-			Save: func(name, mode string) error {
+			Save: func(name string, target processing.LocalTextTarget) error {
 				assert.Equal(t, "local-text", name)
-				assert.Equal(t, "local", mode)
+				assert.Equal(t, "local", target.Server)
+				if target.EmbeddingServer != "" {
+					checkTarget(target)
+					targetSaves.Add(1)
+				}
 				if saveFailure.Load() {
 					return errors.New("synthetic selection path failure")
 				}
 				return nil
 			},
 		}
-		setup.Candidate = func(mode, _ string) (*processing.Service, error) {
-			assert.Equal(t, "local", mode)
+		setup.Candidate = func(target processing.LocalTextTarget, _ string) (*processing.Service, []string, error) {
+			assert.Equal(t, "local", target.Server)
+			if target.EmbeddingServer != "" {
+				checkTarget(target)
+				targetCandidates.Add(1)
+			}
 			candidate := *deps
 			configure(&candidate)
-			return candidate.Processing, nil
+			return candidate.Processing, nil, nil
 		}
 		deps.LocalText = setup
 		deps.LocalTextStatus = func(context.Context) (api.LocalTextStatus, error) {
@@ -82,4 +101,25 @@ func TestLocalTextSetupRouteReviewsConsentAndMapsErrors(t *testing.T) {
 	request.PlanFingerprint = testHash("stale")
 	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/setup", nil, request)
 	require.Equal(t, http.StatusConflict, response.StatusCode, body)
+	saveFailure.Store(false)
+	target := &processing.LocalTextTarget{EmbeddingServer: "https://embedding.example.invalid/v1", EmbeddingModel: "model", EmbeddingDimensions: 2, EmbeddingAPIKeyEnv: "TEST_EMBED_KEY"}
+	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/plans", nil, api.LocalTextPlanRequest{Server: "local", Target: target})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &plan))
+	require.NotNil(t, plan.Target)
+	require.Equal(t, target.EmbeddingServer, plan.Target.EmbeddingServer)
+	require.Equal(t, target.EmbeddingAPIKeyEnv, plan.Target.EmbeddingAPIKeyEnv)
+	request = api.LocalTextApplyRequest{Server: "local", Target: target, PlanFingerprint: plan.Fingerprint, Consent: true}
+	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/setup", nil, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.Positive(t, targetCandidates.Load())
+	require.EqualValues(t, 1, targetStartups.Load())
+	require.EqualValues(t, 1, targetSaves.Load())
+	beforeInvalid := targetCandidates.Load()
+	target.EmbeddingServer = "http://192.0.2.1/v1"
+	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/plans", nil, api.LocalTextPlanRequest{Server: "local", Target: target})
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/setup", nil, request)
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	require.Equal(t, beforeInvalid, targetCandidates.Load())
 }

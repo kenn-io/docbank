@@ -183,7 +183,7 @@ func TestLocalTextSaveRestartRequired(t *testing.T) {
 				}
 				return tc.failure
 			}, slog.New(slog.NewTextHandler(&logs, nil)))
-			err := save(config.LocalTextProfile, "local")
+			err := save(config.LocalTextProfile, processing.LocalTextTarget{Server: "local"})
 			if tc.failure == nil {
 				require.NoError(t, err)
 			} else {
@@ -219,16 +219,18 @@ func TestLocalTextSelectionFormat(t *testing.T) {
 		})
 	}
 	root := t.TempDir()
-	require.NoError(t, saveLocalText(root, config.LocalTextConfig{Profile: "archive", Server: "local"}))
+	expected := config.LocalTextConfig{Version: 1, Profile: "archive", Server: "auto", EmbeddingServer: "https://example.test/v1", EmbeddingModel: "model", EmbeddingDimensions: 3, EmbeddingAPIKeyEnv: "TEST_EMBED_KEY"}
+	require.NoError(t, saveLocalText(root, expected))
 	choice, err := readLocalText(root)
 	require.NoError(t, err)
-	require.Equal(t, "archive", choice.Profile)
+	require.Equal(t, expected, choice)
 }
 
 func TestLocalTextStaleSelectionLeavesDaemonAvailable(t *testing.T) {
 	for _, tc := range []struct{ name, data string }{
 		{"malformed", `{"version":1`},
 		{"missing_profile", `{"version":1,"profile":"missing-profile","server":"auto"}`},
+		{"missing_server_profile", `{"version":1,"profile":"missing-profile","server":"auto","embedding_server":"http://127.0.0.1:12345/v1","embedding_model":"model","embedding_dimensions":2}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -331,7 +333,7 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 				blobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())
 				require.NoError(t, err)
 				defer func() { require.NoError(t, blobs.Close()) }()
-				cfg, err := localTextCandidate(config.Default(), "local", "")
+				cfg, _, err := localTextCandidate(config.Default(), processing.LocalTextTarget{Server: "local"}, "")
 				require.NoError(t, err)
 				bundle, err := configureEmbeddingRuntimeBundle(cfg)
 				require.NoError(t, err)
@@ -481,7 +483,7 @@ func TestLocalTextAutoSendsOnlyToOwnerEndpoint(t *testing.T) {
 	}
 	http.DefaultTransport = transport
 	defer func() { http.DefaultTransport = original; transport.CloseIdleConnections() }()
-	cfg, err := localTextCandidate(config.Default(), "auto", "")
+	cfg, _, err := localTextCandidate(config.Default(), processing.LocalTextTarget{Server: "auto"}, "")
 	require.NoError(t, err)
 	bundle, err := configureEmbeddingRuntimeBundle(cfg)
 	require.NoError(t, err)
@@ -545,10 +547,10 @@ func TestFacesEnableNoninteractively(t *testing.T) {
 func TestLocalTextCandidateRejections(t *testing.T) {
 	cfg := localTextSourceConfig(t, "http://127.0.0.1:12345", "source-revision", "prefix-free", "DOCBANK_TEST_RESERVED_KEY")
 	cfg.ProcessingProfiles = map[string]config.ProcessingProfileConfig{config.LocalTextProfile: cfg.ProcessingProfiles["archive"]}
-	_, err := localTextCandidate(cfg, "local", config.LocalTextProfile)
+	_, _, err := localTextCandidate(cfg, processing.LocalTextTarget{Server: "local"}, config.LocalTextProfile)
 	require.ErrorContains(t, err, "reserved for local text")
 	cfg = localTextSourceConfig(t, "http://127.0.0.1:12345", "source-revision", "revision-header", "DOCBANK_TEST_REVISION_KEY")
-	_, err = localTextCandidate(cfg, "local", "archive")
+	_, _, err = localTextCandidate(cfg, processing.LocalTextTarget{Server: "local"}, "archive")
 	require.ErrorIs(t, err, processing.ErrProfileNotConfigured)
 }
 
@@ -596,7 +598,7 @@ func TestLocalTextStatusProvider(t *testing.T) {
 			profiles, err := executableProcessingProfiles(cfg, bundle)
 			require.NoError(t, err)
 			if tc.moveFirst {
-				candidate, err := localTextCandidate(cfg, "local", "archive")
+				candidate, _, err := localTextCandidate(cfg, processing.LocalTextTarget{Server: "local"}, "archive")
 				require.NoError(t, err)
 				selectedBundle, err := configureEmbeddingRuntimeBundle(candidate)
 				require.NoError(t, err)
@@ -610,13 +612,13 @@ func TestLocalTextStatusProvider(t *testing.T) {
 			defer service.Stop()
 			inheritedReady := false
 			if tc.inherited {
-				setup := &processing.LocalTextSetup{Service: service, Selected: config.LocalTextProfile, Startup: func(context.Context, bool, string) error { return nil }}
+				setup := &processing.LocalTextSetup{Service: service, Selected: config.LocalTextProfile, Startup: func(context.Context, bool, processing.LocalTextTarget) error { return nil }}
 				active, err := setup.InitializeInherited(t.Context())
 				require.NoError(t, err)
 				require.True(t, active)
 				inheritedReady = active
 				if tc.startupFailed {
-					setup.Startup = func(context.Context, bool, string) error { return errors.New("startup failed") }
+					setup.Startup = func(context.Context, bool, processing.LocalTextTarget) error { return errors.New("startup failed") }
 					active, err = setup.InitializeInherited(t.Context())
 					require.Error(t, err)
 					require.False(t, active)

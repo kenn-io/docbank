@@ -340,6 +340,9 @@ type EmbeddingRuntimeConfig struct {
 	Managed    bool   `toml:"-"`
 	ServerMode string `toml:"-"`
 
+	MediaFallbackBinding string `toml:"-"`
+	Anonymous            bool   `toml:"-"`
+
 	AdapterContract        string   `toml:"adapter_contract"`
 	ModelRevision          string   `toml:"model_revision"`
 	MinQuerySimilarity     *float64 `toml:"min_query_similarity"`
@@ -1022,7 +1025,7 @@ func validateProcessingProfiles(c Config) error {
 		if err := validateEmbeddingProfileConfig(profile, prefix); err != nil {
 			return err
 		}
-		if profile.Runtime != nil && (profile.Embedder == nil || profile.Embedder.APIKey.IsZero()) {
+		if profile.Runtime != nil && !profile.Runtime.Anonymous && (profile.Embedder == nil || profile.Embedder.APIKey.IsZero()) {
 			credentialName := strings.TrimPrefix(profile.CredentialBinding, "credential:")
 			if _, ok := c.CredentialBindings[credentialName]; !ok {
 				return fmt.Errorf("%s runtime credential binding %q is not defined", prefix, profile.CredentialBinding)
@@ -1495,7 +1498,7 @@ func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix strin
 				}
 			}
 			if (profile.InputKind != string(document.EmbeddingInputRenditionChunk) && (profile.InputKind != string(document.EmbeddingInputOriginalFile) || profile.Embedder == nil || profile.Embedder.API != embedconfig.APIKit)) || runtime.CapabilityManifest != "" ||
-				(parsed.Path != "" && parsed.Path != "/") || (runtime.DeploymentEpoch == "") == (runtime.ProviderRevisionHeader == "") {
+				((parsed.Path != "" && parsed.Path != "/") && (profile.Embedder == nil || profile.Embedder.API != embedconfig.APIKit)) || (runtime.DeploymentEpoch == "") == (runtime.ProviderRevisionHeader == "") {
 				return fmt.Errorf("%s OpenAI-compatible runtime authority is invalid", prefix)
 			}
 			if runtime.DeploymentEpoch != "" && runtime.DeploymentEpoch != runtime.ModelRevision {

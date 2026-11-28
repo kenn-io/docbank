@@ -31730,6 +31730,8 @@ type LocalTextPlanRequest = api.LocalTextPlanRequest
 
 type LocalTextStatus = api.LocalTextStatus
 
+type LocalTextTarget = processing.LocalTextTarget
+
 type Locator = report.Locator
 
 type LookupPhotoFlagsRequest = api.LookupPhotoFlagsRequest

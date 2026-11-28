@@ -343,21 +343,22 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		inherited = choice.Profile != ""
 	}
 	baseConfig := cfg
-	candidateProfiles := func(mode, name string) (map[string]processing.ProfileConfig, config.Config, error) {
-		candidate, err := localTextCandidate(baseConfig, mode, name)
+	candidateProfiles := func(target processing.LocalTextTarget, name string) (map[string]processing.ProfileConfig, config.Config, []string, error) {
+		candidate, retained, err := localTextCandidate(baseConfig, target, name)
 		if err != nil {
-			return nil, candidate, err
+			return nil, candidate, retained, err
 		}
 		bundle, err := configureEmbeddingRuntimeBundle(candidate)
 		if err != nil {
-			return nil, candidate, err
+			return nil, candidate, retained, err
 		}
 		profiles, err := executableProcessingProfiles(candidate, bundle)
-		return profiles, candidate, err
+		return profiles, candidate, retained, err
 	}
 	if choice.Profile != "" {
-		selected, candidate, err := candidateProfiles(choice.Server, choice.Profile)
-		if err == nil && selected[choice.Profile].RenditionProvider == nil {
+		target := processing.LocalTextTarget{Server: choice.Server, EmbeddingServer: choice.EmbeddingServer, EmbeddingModel: choice.EmbeddingModel, EmbeddingDimensions: choice.EmbeddingDimensions, EmbeddingAPIKeyEnv: choice.EmbeddingAPIKeyEnv}
+		selected, candidate, _, err := candidateProfiles(target, choice.Profile)
+		if err == nil && choice.EmbeddingServer == "" && selected[choice.Profile].RenditionProvider == nil {
 			err = processing.ErrProfileNotConfigured
 		}
 		if err == nil {
@@ -439,15 +440,14 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		Startup: localTextStartup,
 		Save:    localTextSave(layout.Root, &restartPending, saveLocalText, logger),
 	}
-	localText.Candidate = func(mode, name string) (*processing.Service, error) {
-		profiles, _, err := candidateProfiles(mode, name)
+	localText.Candidate = func(target processing.LocalTextTarget, name string) (*processing.Service, []string, error) {
+		profiles, _, retained, err := candidateProfiles(target, name)
 		if err != nil {
-			return nil, err
+			return nil, retained, err
 		}
 		service, err := processing.NewService(sigCtx, processing.ServiceConfig{Catalog: s, Blobs: blobs, Gate: operationGate, Profiles: profiles,
-			MediaMaxBytes: cfg.Media.MaxSourceBytes,
-			Principal:     "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(), Lifecycle: sigCtx})
-		return service, err
+			MediaMaxBytes: cfg.Media.MaxSourceBytes, Principal: "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(), Lifecycle: sigCtx})
+		return service, retained, err
 	}
 	pdfText := &processing.PDFTextRunner{Service: processingService}
 	if err := pdfText.Initialize(sigCtx); err != nil {

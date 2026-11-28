@@ -17,12 +17,28 @@ type LocalTextStatus struct {
 
 type LocalTextPlanRequest struct {
 	Server string `json:"server" enum:"auto,local"`
+
+	Target *processing.LocalTextTarget `json:"target,omitempty"`
 }
 
 type LocalTextApplyRequest struct {
 	Server          string `json:"server" enum:"auto,local"`
 	PlanFingerprint string `json:"plan_fingerprint" pattern:"^[0-9a-f]{64}$"`
 	Consent         bool   `json:"consent"`
+
+	Target *processing.LocalTextTarget `json:"target,omitempty"`
+}
+
+func localTextTarget(server string, target *processing.LocalTextTarget) (processing.LocalTextTarget, error) {
+	if target == nil {
+		return processing.LocalTextTarget{Server: server}, nil
+	}
+	choice := *target
+	choice.Server = server
+	if err := choice.ValidateEmbeddingServer(); err != nil {
+		return choice, NewError(http.StatusUnprocessableEntity, "processing_profile_unavailable", err.Error())
+	}
+	return choice, nil
 }
 
 type LocalTextPlan struct {
@@ -37,12 +53,15 @@ type LocalTextPlan struct {
 	Flow               []ProcessingFlowHop `json:"flow"`
 	RetainedClasses    []string            `json:"retained_classes"`
 	Scope              string              `json:"scope"`
+
+	Retained []string                    `json:"retained,omitempty"`
+	Target   *processing.LocalTextTarget `json:"target,omitempty"`
 }
 
 func fromLocalTextPlan(p processing.LocalTextPlan) LocalTextPlan {
 	return LocalTextPlan{Fingerprint: p.Fingerprint, VaultUID: p.VaultUID, Profile: p.Profile, Server: p.Server,
 		ProfileFingerprint: p.ProfileFingerprint, Models: p.Models, VectorEffect: p.VectorEffect,
-		RetainedClasses: p.RetainedClasses, Scope: p.Scope, Managed: p.Managed, Flow: fromProcessingPlan(processing.Plan{Flow: p.Flow}).Flow}
+		Retained: p.Retained, Target: p.Target, RetainedClasses: p.RetainedClasses, Scope: p.Scope, Managed: p.Managed, Flow: fromProcessingPlan(processing.Plan{Flow: p.Flow}).Flow}
 }
 
 func registerLocalTextRoutes(api huma.API, d Deps) {
@@ -67,7 +86,11 @@ func registerLocalTextRoutes(api huma.API, d Deps) {
 			if d.LocalText == nil {
 				return nil, processingUnavailable()
 			}
-			plan, err := d.LocalText.Plan(ctx, input.Body.Server)
+			target, err := localTextTarget(input.Body.Server, input.Body.Target)
+			if err != nil {
+				return nil, err
+			}
+			plan, err := d.LocalText.Plan(ctx, target)
 			if err != nil {
 				return nil, fromProcessingError(err)
 			}
@@ -83,7 +106,11 @@ func registerLocalTextRoutes(api huma.API, d Deps) {
 			if !input.Body.Consent {
 				return nil, fromProcessingError(processing.ErrConsentRequired)
 			}
-			plan, err := d.LocalText.Apply(ctx, input.Body.Server, input.Body.PlanFingerprint)
+			target, err := localTextTarget(input.Body.Server, input.Body.Target)
+			if err != nil {
+				return nil, err
+			}
+			plan, err := d.LocalText.Apply(ctx, target, input.Body.PlanFingerprint)
 			if err != nil {
 				return nil, fromProcessingError(err)
 			}

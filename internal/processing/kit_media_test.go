@@ -92,6 +92,38 @@ func kitFlateScan(t *testing.T, pages, width, height int) []byte {
 	return mediatest.PDFObjects("synthetic", objects)
 }
 
+func TestKitMediaFallbackEligibility(t *testing.T) {
+	t.Parallel()
+	fixture := newPublicationFixture(t)
+	descriptor := embeddingWorkerDescriptor(t)
+	descriptor.ID = openaicompat.ProviderID
+	binding := document.EmbeddingBindingV1{Name: "kit", InputKind: document.EmbeddingInputOriginalFile, MaxInputBytes: media.MaxBytes, DisclosureFingerprint: workerHash("disclosure")}
+	profile := configuredProfile{record: fixture.profile, embedders: map[string]document.EmbeddingProvider{"kit": localTextEmbeddingProvider{descriptor: descriptor}}}
+	service := Service{blobs: fixture.blobs}
+	for _, tc := range []struct {
+		name, mediaType string
+		data            []byte
+		eligible        bool
+	}{
+		{"image", "image/png", mediatest.PNG(2, 2, color.White), true},
+		{"six pages", "application/pdf", kitFlateScan(t, 6, 8, 8), true},
+		{"seven pages", "application/pdf", kitFlateScan(t, 7, 8, 8), false},
+		{"video", "video/mp4", mediatest.H265MP4(), true},
+		{"long video", "video/mp4", mediatest.H264LongMP4(), false},
+		{"unsupported", "text/plain", []byte("synthetic text"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			receipt, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(tc.data))
+			require.NoError(t, err)
+			_, err = fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), tc.name, receipt.Hash, receipt.Size, tc.mediaType, processingBlobPhysical(t, receipt))
+			require.NoError(t, err)
+			eligible, err := service.kitMediaEligible(t.Context(), store.ContentVersion{BlobHash: receipt.Hash, Size: receipt.Size, MimeType: tc.mediaType}, profile, binding)
+			require.NoError(t, err)
+			require.Equal(t, tc.eligible, eligible)
+		})
+	}
+}
+
 func TestKitMediaIndexAndSearch(t *testing.T) {
 	t.Parallel()
 	items := []struct {

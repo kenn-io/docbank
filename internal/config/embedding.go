@@ -98,13 +98,16 @@ func resolveEmbedder(profile *EmbeddingProfileConfig) error {
 	if err != nil {
 		return fmt.Errorf("parse base_url: %w", err)
 	}
-	if e.API == embedconfig.APIKit && endpoint.EscapedPath() != "/v1" {
-		return errors.New("kit base_url must end in /v1")
+	if e.API == embedconfig.APIKit && strings.HasSuffix(endpoint.Path, "/embeddings") {
+		return errors.New("kit base_url must not end in /embeddings")
 	}
-	if endpoint.EscapedPath() != "/v1" && endpoint.EscapedPath() != "/v1/embeddings" {
+	if e.API != embedconfig.APIKit && endpoint.EscapedPath() != "/v1" && endpoint.EscapedPath() != "/v1/embeddings" {
 		return errors.New("base_url must end in /v1 or /v1/embeddings for this adapter")
 	}
 	origin := endpoint.Scheme + "://" + endpoint.Host
+	if e.API == embedconfig.APIKit && endpoint.EscapedPath() != "" && endpoint.EscapedPath() != "/v1" {
+		origin += endpoint.EscapedPath()
+	}
 	if strings.TrimSuffix(runtime.Endpoint, "/") == origin {
 		origin = runtime.Endpoint
 	}

@@ -124,6 +124,26 @@ func TestProcessingCLIProfilesPlanBuildAndStatus(t *testing.T) {
 	assert.Equal(t, "partial", status.State)
 }
 
+func TestProcessingFlowAlignsMultipleCapabilities(t *testing.T) {
+	cmd, output := processingTestCommand()
+	hops := []api.ProcessingFlowHop{
+		{Capability: "rendition", ProviderID: "renderer", TrustBoundary: "local", InputClasses: []string{"document"}, Filename: "one.pdf", RuntimeDisclosure: api.ProcessingRuntimeDisclosure{ImmediateProcessor: "adapter", UltimateProcessor: "renderer", Endpoint: "local", Deployment: "one"}},
+		{Capability: "embedding", ProviderID: "embedding-provider", TrustBoundary: "hosted", InputClasses: []string{"text"}, Filename: "two.pdf", RuntimeDisclosure: api.ProcessingRuntimeDisclosure{ImmediateProcessor: "adapter", UltimateProcessor: "embedder", Endpoint: "https://example.com", Deployment: "two"}},
+	}
+	require.NoError(t, writeProcessingFlow(cmd, hops))
+	blocks := strings.Split(strings.TrimSpace(output.String()), "\n\n")
+	require.Len(t, blocks, 2)
+	for i, block := range blocks {
+		lines := strings.Split(block, "\n")
+		require.GreaterOrEqual(t, len(lines), 3)
+		for _, column := range []struct{ header, value string }{{"CAPABILITY", hops[i].Capability}, {"PROVIDER", hops[i].ProviderID}, {"BOUNDARY", hops[i].TrustBoundary}, {"INPUTS", hops[i].InputClasses[0]}, {"FILENAME", hops[i].Filename}} {
+			require.Equal(t, strings.Index(lines[0], column.header), strings.Index(lines[1], column.value), column.header)
+		}
+		require.Equal(t, strings.Index(lines[2], "adapter"), strings.Index(lines[3], hops[i].RuntimeDisclosure.Endpoint))
+		require.Equal(t, strings.Index(lines[2], "adapter"), strings.Index(lines[4], hops[i].RuntimeDisclosure.Deployment))
+	}
+}
+
 func TestProcessingCLINDJSONFlushesDurableJobBeforeTerminalStatus(t *testing.T) {
 	jobID := strings.Repeat("a", 64)
 	profileFingerprint := strings.Repeat("b", 64)

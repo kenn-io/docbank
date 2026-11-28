@@ -3026,6 +3026,7 @@ export interface EmailResourceV1 {
   candidates: string[];
   /** @nullable */
   cid: string | null;
+  referenced?: boolean;
   state: string;
 }
 
@@ -3913,6 +3914,14 @@ export const LocalTextApplyRequestServer = {
   local: 'local',
 } as const;
 
+export interface LocalTextTarget {
+  embedding_api_key_env?: string;
+  embedding_dimensions: number;
+  embedding_model: string;
+  embedding_server: string;
+  server: string;
+}
+
 export interface LocalTextApplyRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -3920,6 +3929,7 @@ export interface LocalTextApplyRequest {
   /** @pattern ^[0-9a-f]{64}$ */
   plan_fingerprint: string;
   server: LocalTextApplyRequestServer;
+  target?: LocalTextTarget;
 }
 
 export interface ProcessingRuntimeDisclosure {
@@ -3974,9 +3984,11 @@ export interface LocalTextPlan {
   models: string[];
   profile: string;
   profile_fingerprint: string;
+  retained?: string[];
   retained_classes: string[];
   scope: string;
   server: string;
+  target?: LocalTextTarget;
   vault_uid: string;
   vector_effect: string;
 }
@@ -3993,6 +4005,7 @@ export interface LocalTextPlanRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   server: LocalTextPlanRequestServer;
+  target?: LocalTextTarget;
 }
 
 export type LocalTextStatusProvider = typeof LocalTextStatusProvider[keyof typeof LocalTextStatusProvider];

@@ -13,16 +13,27 @@ import (
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/kit/embedlocal"
 )
 
 func newProcessingLocalCommand() *cobra.Command {
-	var server string
+	var server, embeddingServer, embeddingModel, embeddingAPIKeyEnv string
+	var embeddingDimensions int
 	cmd := &cobra.Command{Use: "local", Short: "Set up vault-wide text indexing", Args: cobra.NoArgs,
 		Example: "  docbank processing local --server local",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if server != "auto" && server != "local" {
 				return usageError(errors.New("--server must be auto or local"))
+			}
+			target := processing.LocalTextTarget{EmbeddingServer: embeddingServer, EmbeddingModel: embeddingModel, EmbeddingDimensions: embeddingDimensions, EmbeddingAPIKeyEnv: embeddingAPIKeyEnv}
+			if cmd.Flags().Changed("embedding-server") || cmd.Flags().Changed("embedding-model") || cmd.Flags().Changed("embedding-dimensions") || cmd.Flags().Changed("embedding-api-key-env") {
+				if err := target.ValidateEmbeddingServer(); err != nil {
+					return usageError(err)
+				}
+				if cmd.Flags().Changed("server") {
+					return usageError(errors.New("--server cannot be combined with --embedding-server"))
+				}
 			}
 			c, err := daemonconn.Ensure(cmd.Context())
 			if err != nil {
@@ -30,7 +41,11 @@ func newProcessingLocalCommand() *cobra.Command {
 			}
 			closeClient := sync.OnceValue(c.Close)
 			defer func() { _ = closeClient() }()
-			plan, err := c.API().PlanLocalText(cmd.Context(), &apiclient.PlanLocalTextRequestOptions{Body: &api.LocalTextPlanRequest{Server: server}})
+			request := &api.LocalTextPlanRequest{Server: server}
+			if embeddingServer != "" {
+				request.Target = &target
+			}
+			plan, err := c.API().PlanLocalText(cmd.Context(), &apiclient.PlanLocalTextRequestOptions{Body: request})
 			if err != nil {
 				return err
 			}
@@ -61,6 +76,10 @@ func newProcessingLocalCommand() *cobra.Command {
 			return nil
 		}}
 	cmd.Flags().StringVar(&server, "server", "auto", "embedding server: auto or local")
+	cmd.Flags().StringVar(&embeddingServer, "embedding-server", "", "embedding server URL")
+	cmd.Flags().StringVar(&embeddingModel, "embedding-model", "", "embedding model")
+	cmd.Flags().StringVar(&embeddingAPIKeyEnv, "embedding-api-key-env", "", "environment variable containing the embedding server API key")
+	cmd.Flags().IntVar(&embeddingDimensions, "embedding-dimensions", 0, "embedding dimensions")
 	return cmd
 }
 
@@ -71,14 +90,20 @@ func applyLocalText(ctx context.Context, plan api.LocalTextPlan) (retErr error) 
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, c.Close()) }()
-	_, err = c.API().ApplyLocalText(ctx, &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: plan.Server, PlanFingerprint: plan.Fingerprint, Consent: true}})
+	_, err = c.API().ApplyLocalText(ctx, &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: plan.Server, Target: plan.Target, PlanFingerprint: plan.Fingerprint, Consent: true}})
 	return err
 }
 
 func writeLocalTextPlan(cmd *cobra.Command, p api.LocalTextPlan) error {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintf(w, "profile:\t%s\nserver:\t%s\nindex:\t%s\nscope:\t%s\n", p.Profile, p.Server, p.VectorEffect, p.Scope)
-	_, _ = fmt.Fprintf(w, "retained:\t%s\n", strings.Join(p.RetainedClasses, ", "))
+	if p.Target != nil {
+		_, _ = fmt.Fprintf(w, "profile:\t%s\n", p.Profile)
+		_, _ = fmt.Fprintf(w, "server:\t%s\nmodel:\t%s\ndimensions:\t%d\n", p.Target.EmbeddingServer, p.Target.EmbeddingModel, p.Target.EmbeddingDimensions)
+	} else {
+		_, _ = fmt.Fprintf(w, "profile:\t%s\nserver:\t%s\n", p.Profile, p.Server)
+	}
+	_, _ = fmt.Fprintf(w, "index:\t%s\nscope:\t%s\n", p.VectorEffect, p.Scope)
+	_, _ = fmt.Fprintf(w, "retained:\t%s\n", strings.Join(append(p.RetainedClasses, p.Retained...), ", "))
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("write local text plan: %w", err)
 	}

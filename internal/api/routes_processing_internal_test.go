@@ -99,3 +99,11 @@ func TestFromProcessingCoveragePreservesPartialAndUnavailable(t *testing.T) {
 	assert.True(t, report.PageCoverageUnavailable)
 	assert.Equal(t, []PageTextGap{{ContentVersionID: "version", Pages: []int{2, 4}}}, report.PagesWithoutText)
 }
+
+func TestLocalTextRetainedErrorDetails(t *testing.T) {
+	t.Parallel()
+	problem, ok := errors.AsType[*Error](fromProcessingError(&processing.LocalTextRetainedError{Reasons: []string{"contextual text stays with its provider"}}))
+	require.True(t, ok)
+	require.Equal(t, http.StatusUnprocessableEntity, problem.Status)
+	require.Contains(t, problem.Detail, "contextual text stays with its provider")
+}

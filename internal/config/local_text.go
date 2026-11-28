@@ -23,6 +23,11 @@ type LocalTextConfig struct {
 	Version int    `json:"version"`
 	Profile string `json:"profile"`
 	Server  string `json:"server"`
+
+	EmbeddingServer     string `json:"embedding_server,omitempty"`
+	EmbeddingModel      string `json:"embedding_model,omitempty"`
+	EmbeddingDimensions int    `json:"embedding_dimensions,omitempty"`
+	EmbeddingAPIKeyEnv  string `json:"embedding_api_key_env,omitempty"`
 }
 
 func localTextFingerprint(value string) string {
