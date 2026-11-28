@@ -113,6 +113,8 @@
   const originalChoiceKey = $derived(`${session}:${displayedSource.key}`);
   const showSearchText = $derived(showSearchContext && originalPreviewKey !== originalChoiceKey);
   const visitedTabs = $derived(visited.key === contentKey ? visited.tabs : []);
+  // Search text serves both Preview and Text, so the selected version is read once.
+  const panelTab = $derived(showSearchText && displayedTab === "text" ? "preview" : displayedTab);
 
   $effect(() => {
     const key = `${session}:${source.key}`;
@@ -289,13 +291,13 @@
     >
       {#key contentKey}
         {#each tabList as tab (tab.value)}
-          {#if tab.value === displayedTab || visitedTabs.includes(tab.value)}
-            <div hidden={tab.value !== displayedTab}>
+          {#if tab.value === panelTab || visitedTabs.includes(tab.value)}
+            <div hidden={tab.value !== panelTab}>
               {#if tab.value === "preview"}
                 {#if showSearchText}
                   <VerifiedText
                     {session}
-                    active={displayedTab === "preview"}
+                    active={panelTab === "preview"}
                     {processingRevision}
                     source={displayedSource}
                     authorizationRevision={displayedRevision}
@@ -305,7 +307,8 @@
                     {queryTerms}
                     {queryHighlightError}
                     {queryHighlightsPending}
-                    searchContext
+                    highlightSets={displayedTab === "text" ? highlightSets : []}
+                    searchContext={displayedTab !== "text"}
                     onprocess={onprocess ? () => onprocess?.(displayedSource) : undefined}
                     {onauthfailure}
                   >
@@ -343,7 +346,7 @@
                       {onauthfailure}
                     />
                   {/key}
-                {:else if tab.value === "text"}
+                {:else if tab.value === "text" && !showSearchText}
                   <VerifiedText
                     {session}
                     active={displayedTab === "text"}
@@ -361,6 +364,8 @@
                     onprocess={onprocess ? () => onprocess?.(displayedSource) : undefined}
                     {onauthfailure}
                   />
+                {:else if tab.value === "text"}
+                  <!-- Preview's reader shows this tab. -->
                 {:else if tab.value === "attachments"}
                   <AttachmentsTab
                     {session}

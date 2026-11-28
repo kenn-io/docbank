@@ -163,6 +163,52 @@ it("keeps the reader's scroll position when returning to Preview", async () => {
   await waitFor(() => expect(scrollTo).toHaveBeenCalled());
 });
 
+it("reads the verified text once when the reader then opens the Text tab", async () => {
+  render(VerifiedPreview, props);
+  await screen.findByText("Search match 1 of 2");
+  await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(rendition.resolveRenditionText).toHaveBeenCalledOnce();
+  expect(rendition.readVerifiedRenditionText).toHaveBeenCalledOnce();
+  const [text] = screen.getAllByLabelText("Verified text of synthetic.pdf");
+  expect(screen.getAllByLabelText("Verified text of synthetic.pdf")).toHaveLength(1);
+  expect(text!.textContent).toBe(context);
+  expect(text!.closest(".verified-text")?.classList.contains("search-context")).toBe(false);
+  expect(screen.queryByRole("button", { name: "Next search match" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Show original preview" })).toBeNull();
+});
+
+it("restores Preview's scroll position after reading the same text in Text", async () => {
+  render(VerifiedPreview, props);
+  await screen.findByText("Search match 1 of 2");
+  const text = screen.getByLabelText("Verified text of synthetic.pdf");
+  let scrollTop = 345;
+  Object.defineProperty(text, "scrollTop", {
+    configurable: true,
+    get: () => scrollTop,
+    set: (value: number) => (scrollTop = value),
+  });
+  await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
+  // The Text layout lets the page scroll instead, which resets the box.
+  scrollTop = 0;
+  await fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
+  await waitFor(() => expect(scrollTop).toBe(345));
+});
+
+it("keeps the active match when the same query terms arrive again", async () => {
+  const view = render(VerifiedPreview, { ...props, queryKey: "same" });
+  await screen.findByText("Search match 1 of 2");
+  await fireEvent.click(screen.getByRole("button", { name: "Next search match" }));
+  expect(screen.getByText("Search match 2 of 2")).toBeTruthy();
+  const scrollTo = vi.mocked(HTMLElement.prototype.scrollTo);
+  await waitFor(() => expect(scrollTo).toHaveBeenCalled());
+  scrollTo.mockClear();
+  await view.rerender({ ...props, queryKey: "same", queryTerms: ["needle"] });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(screen.getByText("Search match 2 of 2")).toBeTruthy();
+  expect(scrollTo).not.toHaveBeenCalled();
+});
+
 it("requests the original image for a name-only match without extracted text", async () => {
   vi.mocked(rendition.resolveRenditionText).mockResolvedValue({ ...ready, state: "unprocessed" });
   render(VerifiedPreview, { ...props, source: { ...source, mimeType: "image/jpeg" } });

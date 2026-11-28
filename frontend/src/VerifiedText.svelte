@@ -82,6 +82,8 @@
     highlightSets.find((item) => item.id === highlightSetID)?.terms ?? [],
   );
   const marked = $derived(markText(text, find ? { find } : { highlightTerms, queryTerms }));
+  // Identifies the marks by content, so reloading the same query terms keeps the reader's place.
+  const markKey = $derived(JSON.stringify([text.length, find, highlightSetID, queryTerms]));
 
   const findMatches = $derived(find ? marked.matches : []);
   const refreshKey = $derived(`${loadKey}:${active}:${processingRevision}`);
@@ -188,29 +190,34 @@
   });
   // A new query or Find input starts at the first match, even if text loads later.
   $effect(() => {
-    void marked;
+    void markKey;
     activeMatch = 0;
+  });
+  // Preview's reader also serves the Text tab; keep Preview's position across that switch.
+  let searchScroll = 0;
+  $effect.pre(() => {
+    if (!searchContext) untrack(() => (searchScroll = textBox?.scrollTop ?? 0));
+  });
+  $effect(() => {
+    if (searchContext && textBox) untrack(() => (textBox!.scrollTop = searchScroll));
   });
   // Search context opens at the active match. Other views scroll only when the
   // reader moves between Find matches. Returning to a hidden Preview keeps the
   // reader's position when the match has not changed.
-  let centeredMarks: typeof marked | undefined;
-  let centeredMatch = -1;
+  let centered = "";
   $effect(() => {
     if (!searchContext) return;
     const index = activeMatch;
     const matches = find ? findMatches : searchMatches;
     const enabled = active;
     const box = textBox;
-    void marked;
+    const key = `${markKey}:${index}`;
     let current = true;
     void tick().then(() => {
       if (!current || !enabled || !matches.length || !box) return;
-      if (centeredMarks === marked && centeredMatch === index) return;
       const match = box.querySelector<HTMLElement>(`mark[data-match-index="${index}"]`);
-      if (!match) return;
-      centeredMarks = marked;
-      centeredMatch = index;
+      if (!match || centered === key) return;
+      centered = key;
       // Keep scrolling inside the text; do not move the results or the inspector.
       const top =
         box.scrollTop +
@@ -290,7 +297,7 @@
           ><ShieldCheckIcon size={14} aria-label="Verified" /></AppTooltip
         ></span
       >
-      {#if text && alternative}{@render alternative()}{/if}
+      {#if text && alternative && searchContext}{@render alternative()}{/if}
     </div>
   {/if}
   {#if queryHighlightError}<p class="notice" role="status">
@@ -369,7 +376,7 @@
   {:else if resolution && resolution.state !== "ready"}
     <p class="notice" role="status">{stateMessage(resolution.state)}</p>
   {/if}
-  {#if !loading && !text && fallback && (resolution || error)}{@render fallback()}{/if}
+  {#if !loading && !text && fallback && searchContext && (resolution || error)}{@render fallback()}{/if}
 </div>
 
 <style>
