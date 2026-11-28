@@ -202,22 +202,22 @@ func writeProcessingFlow(cmd *cobra.Command, hops []api.ProcessingFlowHop) error
 		return nil
 	}
 	flow := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(flow, "CAPABILITY\tPROVIDER\tBOUNDARY\tINPUTS\tFILENAME")
 	for _, hop := range hops {
+		_, _ = fmt.Fprintln(flow, "CAPABILITY\tPROVIDER\tBOUNDARY\tINPUTS\tFILENAME")
 		_, _ = fmt.Fprintf(flow, "%s\t%s\t%s\t%s\t%s\n", hop.Capability, hop.ProviderID,
 			hop.TrustBoundary, displayList(hop.InputClasses), hop.Filename)
 		runtime := hop.RuntimeDisclosure
-		_, _ = fmt.Fprintf(flow, "  processors\t%s -> %s\n", runtime.ImmediateProcessor, runtime.UltimateProcessor)
-		_, _ = fmt.Fprintf(flow, "  endpoint\t%s\n", runtime.Endpoint)
-		_, _ = fmt.Fprintf(flow, "  deployment\t%s\n", runtime.Deployment)
+		_, _ = fmt.Fprintf(flow, "  %-18s  %s -> %s\n", "processors", runtime.ImmediateProcessor, runtime.UltimateProcessor)
+		_, _ = fmt.Fprintf(flow, "  %-18s  %s\n", "endpoint", runtime.Endpoint)
+		_, _ = fmt.Fprintf(flow, "  %-18s  %s\n", "deployment", runtime.Deployment)
 		if runtime.Model != "" || runtime.ModelRevision != "" {
-			_, _ = fmt.Fprintf(flow, "  model\t%s\n", processingModelIdentity(runtime.Model, runtime.ModelRevision))
+			_, _ = fmt.Fprintf(flow, "  %-18s  %s\n", "model", processingModelIdentity(runtime.Model, runtime.ModelRevision))
 		}
 		if runtime.VectorSpace != "" {
-			_, _ = fmt.Fprintf(flow, "  vector space\t%s\n", runtime.VectorSpace)
+			_, _ = fmt.Fprintf(flow, "  %-18s  %s\n", "vector space", runtime.VectorSpace)
 		}
-		_, _ = fmt.Fprintf(flow, "  provider metadata\t%s\n", displayList(runtime.MetadataClasses))
-		_, _ = fmt.Fprintf(flow, "  retained artifacts\t%s\n", displayList(runtime.RetainedArtifactRoles))
+		_, _ = fmt.Fprintf(flow, "  %-18s  %s\n", "provider metadata", displayList(runtime.MetadataClasses))
+		_, _ = fmt.Fprintf(flow, "  %-18s  %s\n\n", "retained artifacts", displayList(runtime.RetainedArtifactRoles))
 	}
 	if err := flow.Flush(); err != nil {
 		return fmt.Errorf("writing processing flow: %w", err)

@@ -45,11 +45,12 @@ func TestLocalTextServerPairsMedia(t *testing.T) {
 	require.Equal(t, "media", candidate.EmbeddingProfiles["media-kit"].Runtime.MediaFallbackBinding)
 	require.Equal(t, original, candidate.EmbeddingProfiles["semantic"])
 	require.NotEmpty(t, retained)
-	require.Contains(t, retained[0], "export-only and excluded from semantic text search")
+	require.Contains(t, retained[0], "Voyage direct-file embeddings don't support text queries")
 	target.EmbeddingModel = "text-model"
-	candidate, _, err = localTextCandidate(cfg, target, "photos")
+	candidate, retained, err = localTextCandidate(cfg, target, "photos")
 	require.ErrorIs(t, err, processing.ErrProfileNotConfigured)
 	require.NotContains(t, candidate.ProcessingProfiles["photos"].Embeddings, "media-kit")
+	require.Contains(t, retained[0], "Voyage direct-file embeddings don't support text queries")
 }
 
 type serverTestBackend struct{}

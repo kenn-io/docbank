@@ -63,8 +63,8 @@ Voyage contextual text stays with Voyage. For models whose name starts with
 `gemini-embedding-2`, supported Voyage media moves to the server: PNG, JPEG,
 and WebP images, PDFs up to six pages, and MP4 videos up to two minutes, each
 up to 20 MiB. Other media stays with Voyage. A text-only model leaves media
-with its existing provider. Retained Voyage media is export-only and excluded
-from semantic text search. The preview explains these retained providers.
+with its existing provider. Voyage direct-file embeddings don't support text
+queries. The preview explains these retained providers.
 If the rebuild fails, the saved selection stays unchanged.
 
 To return to your configured providers, delete `local-text.json` beside the

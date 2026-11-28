@@ -149,7 +149,7 @@ func localTextCandidate(cfg config.Config, target processing.LocalTextTarget, na
 		}
 		direct := p.InputKind == string(document.EmbeddingInputOriginalFile) && p.Runtime != nil && p.Runtime.AdapterContract == voyageEmbeddingAdapter
 		if direct && !strings.HasPrefix(target.EmbeddingModel, "gemini-embedding-2") {
-			retained = append(retained, name+": Voyage media stays with its provider for this text-only model; retained media is export-only and excluded from semantic text search")
+			retained = append(retained, name+": Voyage media stays with its provider for this text-only model; Voyage direct-file embeddings don't support text queries")
 			continue
 		}
 		if !direct && p.InputKind != string(document.EmbeddingInputRenditionChunk) {
@@ -159,7 +159,7 @@ func localTextCandidate(cfg config.Config, target processing.LocalTextTarget, na
 		if direct {
 			outputName += "-kit"
 			recipe.Embeddings = append(recipe.Embeddings, outputName)
-			retained = append(retained, name+": Voyage media outside 20 MiB, six PDF pages, or two minutes stays with its provider; retained media is export-only and excluded from semantic text search")
+			retained = append(retained, name+": Voyage media outside 20 MiB, six PDF pages, or two minutes stays with its provider; Voyage direct-file embeddings don't support text queries")
 		}
 		p, err = serverEmbedding(p, target, direct, binding)
 		if err != nil {
