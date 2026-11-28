@@ -47,48 +47,48 @@ func TestLocalTextFailedConsentAndSavePreserveSelection(t *testing.T) {
 	setup := &LocalTextSetup{Service: service, Selected: "local-text"}
 	gateFailure := errors.New("synthetic grant failure")
 	saveFailure := errors.New("synthetic save failure")
-	setup.Candidate = func(string, string) (*Service, error) {
+	setup.Candidate = func(LocalTextTarget, string) (*Service, []string, error) {
 		next := config
 		next.Gate = &localTextGrantGate{workerTestGate: newWorkerTestGate(), err: gateFailure}
 		s, err := NewService(t.Context(), next)
-		return s, err
+		return s, nil, err
 	}
-	setup.Startup = func(context.Context, bool, string) error { return nil }
+	setup.Startup = func(context.Context, bool, LocalTextTarget) error { return nil }
 	saved := "previous-profile"
-	setup.Save = func(name, _ string) error { saved = name; return nil }
+	setup.Save = func(names []string, _ LocalTextTarget) error { saved = names[0]; return nil }
 	// Preview and apply review the operation without reopening originals.
-	plan, err := setup.Plan(t.Context(), "local")
+	plan, err := setup.Plan(t.Context(), LocalTextTarget{Server: "local"})
 	require.NoError(t, err)
 	require.Len(t, plan.Flow, 2)
 	require.Equal(t, "reranking", plan.Flow[1].Capability)
-	_, err = setup.Apply(t.Context(), "local", plan.Fingerprint)
+	_, err = setup.Apply(t.Context(), LocalTextTarget{Server: "local"}, plan.Fingerprint)
 	require.ErrorIs(t, err, gateFailure)
 	require.Equal(t, "previous-profile", saved)
 	nextConfig := config
-	setup.Candidate = func(string, string) (*Service, error) {
+	setup.Candidate = func(LocalTextTarget, string) (*Service, []string, error) {
 		s, err := NewService(t.Context(), nextConfig)
-		return s, err
+		return s, nil, err
 	}
 	changed := config.Profiles["local-text"]
 	changed.Profile.Rendition = new(*changed.Profile.Rendition)
 	changed.Profile.Rendition.AuthorizationFingerprint = workerHash("changed-before-approval")
 	nextConfig.Profiles = map[string]ProfileConfig{"local-text": changed}
-	_, err = setup.Apply(t.Context(), "local", plan.Fingerprint)
+	_, err = setup.Apply(t.Context(), LocalTextTarget{Server: "local"}, plan.Fingerprint)
 	require.ErrorIs(t, err, ErrPlanChanged)
 	require.Equal(t, "previous-profile", saved)
 	nextConfig = config
 	startupFailure := errors.New("synthetic startup failure")
-	setup.Startup = func(context.Context, bool, string) error { return startupFailure }
-	_, err = setup.Apply(t.Context(), "local", plan.Fingerprint)
+	setup.Startup = func(context.Context, bool, LocalTextTarget) error { return startupFailure }
+	_, err = setup.Apply(t.Context(), LocalTextTarget{Server: "local"}, plan.Fingerprint)
 	require.ErrorIs(t, err, startupFailure)
 	require.Equal(t, "previous-profile", saved)
 	for _, request := range service.profileConsentRequests(service.profiles["local-text"]) {
 		_, err := fixture.catalog.AuthorizeProviderOperation(t.Context(), request)
 		require.Error(t, err, "startup failure must leave consent unsaved")
 	}
-	setup.Startup = func(context.Context, bool, string) error { return nil }
-	setup.Save = func(string, string) error { return saveFailure }
-	_, err = setup.Apply(t.Context(), "local", plan.Fingerprint)
+	setup.Startup = func(context.Context, bool, LocalTextTarget) error { return nil }
+	setup.Save = func([]string, LocalTextTarget) error { return saveFailure }
+	_, err = setup.Apply(t.Context(), LocalTextTarget{Server: "local"}, plan.Fingerprint)
 	require.ErrorIs(t, err, ErrConsentSaved)
 	require.ErrorIs(t, err, saveFailure)
 	require.Equal(t, "previous-profile", saved)
@@ -96,8 +96,8 @@ func TestLocalTextFailedConsentAndSavePreserveSelection(t *testing.T) {
 		_, err := fixture.catalog.AuthorizeProviderOperation(t.Context(), request)
 		require.NoError(t, err, "consent remains saved when the selection write fails")
 	}
-	setup.Save = func(name, _ string) error { saved = name; return nil }
-	_, err = setup.Apply(t.Context(), "local", plan.Fingerprint)
+	setup.Save = func(names []string, _ LocalTextTarget) error { saved = names[0]; return nil }
+	_, err = setup.Apply(t.Context(), LocalTextTarget{Server: "local"}, plan.Fingerprint)
 	require.NoError(t, err)
 	require.Equal(t, "local-text", saved)
 }
@@ -124,18 +124,18 @@ func TestLocalTextSelection(t *testing.T) {
 	service := serviceFor(map[string]ProfileConfig{"archive": profileFor("archive"),
 		"aaa-unused": profileFor("unused"), "bbb-incompatible": profileFor("other")})
 	setup := &LocalTextSetup{Service: service,
-		Candidate: func(_ string, name string) (*Service, error) {
+		Candidate: func(_ LocalTextTarget, name string) (*Service, []string, error) {
 			if name == "" {
 				name = "local-text"
 			}
 			if name == "bbb-incompatible" {
-				return nil, ErrProfileNotConfigured
+				return nil, nil, ErrProfileNotConfigured
 			}
 			identity := name
 			if name != "local-text" {
 				identity += "-managed"
 			}
-			return serviceFor(map[string]ProfileConfig{name: profileFor(identity)}), nil
+			return serviceFor(map[string]ProfileConfig{name: profileFor(identity)}), nil, nil
 		}}
 	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDF()))
 	require.NoError(t, err)
@@ -148,36 +148,36 @@ func TestLocalTextSelection(t *testing.T) {
 		_, err = service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
 		require.NoError(t, err)
 	}
-	empty, err := setup.Plan(t.Context(), "local")
+	empty, err := setup.Plan(t.Context(), LocalTextTarget{Server: "local"})
 	require.NoError(t, err)
 	require.Equal(t, "local-text (separate; adds missing content)", empty.VectorEffect)
 	process(service, "bbb-incompatible")
-	rebuild, err := setup.Plan(t.Context(), "local")
+	rebuild, err := setup.Plan(t.Context(), LocalTextTarget{Server: "local"})
 	require.NoError(t, err)
 	require.Contains(t, rebuild.VectorEffect, "Adds separate index")
 	setup.Selected = "local-text"
-	continued, err := setup.Plan(t.Context(), "local")
+	continued, err := setup.Plan(t.Context(), LocalTextTarget{Server: "local"})
 	require.NoError(t, err)
 	require.Equal(t, "local-text (separate; adds missing content)", continued.VectorEffect)
 	setup.Selected = ""
 	process(service, "archive")
-	plan, err := setup.Plan(t.Context(), "local")
+	plan, err := setup.Plan(t.Context(), LocalTextTarget{Server: "local"})
 	require.NoError(t, err)
 	require.Equal(t, "archive", plan.Profile, "skip an unindexed recipe")
 	require.Equal(t, "Keep existing index; processes 2 documents before setup returns; embeds only new content", plan.VectorEffect)
-	setup.Service, err = setup.Candidate("local", "archive")
+	setup.Service, _, err = setup.Candidate(LocalTextTarget{Server: "local"}, "archive")
 	require.NoError(t, err)
 	setup.Selected = "archive"
-	beforeBackfill, err := setup.Plan(t.Context(), "local")
+	beforeBackfill, err := setup.Plan(t.Context(), LocalTextTarget{Server: "local"})
 	require.NoError(t, err)
 	require.Equal(t, "archive", beforeBackfill.Profile)
 	setup.Service = service
 	process(service, "aaa-unused")
-	rerun, err := setup.Plan(t.Context(), "local")
+	rerun, err := setup.Plan(t.Context(), LocalTextTarget{Server: "local"})
 	require.NoError(t, err)
 	require.Equal(t, "archive", rerun.Profile, "keep the approved recipe when an earlier name gains an index")
 	setup.Service, setup.Selected = service, "local-text"
-	fallback, err := setup.Plan(t.Context(), "local")
+	fallback, err := setup.Plan(t.Context(), LocalTextTarget{Server: "local"})
 	require.NoError(t, err)
 	require.Equal(t, "aaa-unused", fallback.Profile, "a saved fallback never outranks an indexed configured recipe")
 	require.Equal(t, "Keep existing index; replaces local-text for new imports; processes 2 documents before setup returns; embeds only new content", fallback.VectorEffect)
@@ -197,13 +197,13 @@ func newLocalTextMoveSetup(t *testing.T, source *Service, saved *string) *LocalT
 	portable := current.portable
 	portable.Embeddings = append(portable.Embeddings[:0:0], portable.Embeddings...)
 	portable.Embeddings[0].AuthorizationFingerprint = workerHash("moved-text-transport")
-	return &LocalTextSetup{Service: source, Selected: "pdf", Candidate: func(string, string) (*Service, error) {
+	return &LocalTextSetup{Service: source, Selected: "pdf", Candidate: func(LocalTextTarget, string) (*Service, []string, error) {
 		service, err := NewService(t.Context(), ServiceConfig{Catalog: source.catalog, Blobs: source.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"pdf": {Profile: portable, RenditionProvider: current.provider, EmbeddingProviders: current.embedders, Tokenizers: current.tokenizers}}})
 		if err == nil {
 			t.Cleanup(service.Stop)
 		}
-		return service, err
-	}, Startup: func(context.Context, bool, string) error { return nil }, Save: func(name, _ string) error { *saved = name; return nil }}
+		return service, nil, err
+	}, Startup: func(context.Context, bool, LocalTextTarget) error { return nil }, Save: func(names []string, _ LocalTextTarget) error { *saved = names[0]; return nil }}
 }
 
 func newLocalTextBackfillFixture(tb testing.TB, renderer document.RenditionProvider, providers ...document.EmbeddingProvider) (publicationFixture, *LocalTextSetup) {
@@ -673,9 +673,9 @@ func TestLocalTextInheritedConsent(t *testing.T) {
 			require.NoError(t, err)
 			defer service.Stop()
 			calls := 0
-			setup = &LocalTextSetup{Service: service, Selected: "inherited", Startup: func(_ context.Context, managed bool, mode string) error {
+			setup = &LocalTextSetup{Service: service, Selected: "inherited", Startup: func(_ context.Context, managed bool, target LocalTextTarget) error {
 				require.True(t, managed)
-				require.Equal(t, "local", mode)
+				require.Equal(t, "local", target.Server)
 				calls++
 				if tc.name == "failure" {
 					return errors.New("install failed")
@@ -731,7 +731,7 @@ func TestLocalTextInheritedStartupHoldsActivity(t *testing.T) {
 	setup.ActivityBegin = func() { activity.Add(1) }
 	setup.ActivityEnd = func() { activity.Add(-1) }
 	entered, release := make(chan struct{}), make(chan struct{})
-	setup.Startup = func(ctx context.Context, _ bool, _ string) error {
+	setup.Startup = func(ctx context.Context, _ bool, _ LocalTextTarget) error {
 		close(entered)
 		select {
 		case <-release:
@@ -778,4 +778,114 @@ func TestLocalTextInheritedGrantDoesNotUndoConcurrentRevocation(t *testing.T) {
 	active, err := service.ProfileConsentActive(t.Context(), "inherited")
 	require.NoError(t, err)
 	require.False(t, active, "a concurrent revocation must remain effective")
+}
+
+func TestLocalTextTargetReviewsChoiceAndRetainedReasons(t *testing.T) {
+	_, original := newLocalTextBackfillFixture(t, newWorkerProvider(t))
+	saved := "previous"
+	setup := newLocalTextMoveSetup(t, original.Service, &saved)
+	setup.Startup = func(context.Context, bool, LocalTextTarget) error { return nil }
+	reason := "contextual text keeps its provider"
+	originalCandidate := setup.Candidate
+	setup.Candidate = func(target LocalTextTarget, name string) (*Service, []string, error) {
+		service, _, err := originalCandidate(target, name)
+		return service, []string{reason}, err
+	}
+	var savedTarget LocalTextTarget
+	setup.Save = func(names []string, target LocalTextTarget) error {
+		name := names[0]
+		saved, savedTarget = name, target
+		return nil
+	}
+	target := LocalTextTarget{Server: "auto", EmbeddingServer: "https://embedding.example.invalid/api/v1/servers/synthetic", EmbeddingModel: "synthetic-model", EmbeddingDimensions: 3}
+	plan, err := setup.Plan(t.Context(), target)
+	require.NoError(t, err)
+	require.Equal(t, []string{reason}, plan.Retained)
+	require.Equal(t, "pdf", plan.Profiles[0])
+	require.Contains(t, plan.VectorEffect, "documents before setup returns")
+	changed := target
+	changed.EmbeddingDimensions++
+	_, err = setup.Apply(t.Context(), changed, plan.Fingerprint)
+	require.ErrorIs(t, err, ErrPlanChanged)
+	require.Equal(t, "previous", saved)
+	reason = "a different retained reason"
+	_, err = setup.Apply(t.Context(), target, plan.Fingerprint)
+	require.ErrorIs(t, err, ErrPlanChanged)
+	require.Equal(t, "previous", saved)
+	reason = plan.Retained[0]
+	setup.Startup = func(context.Context, bool, LocalTextTarget) error { return errors.New("server unavailable") }
+	_, err = setup.Apply(t.Context(), target, plan.Fingerprint)
+	require.ErrorContains(t, err, "server unavailable")
+	require.Equal(t, "previous", saved)
+	setup.Startup = func(context.Context, bool, LocalTextTarget) error { return nil }
+	_, err = setup.Apply(t.Context(), target, plan.Fingerprint)
+	require.NoError(t, err)
+	require.Equal(t, "pdf", saved)
+	require.Equal(t, target, savedTarget)
+}
+
+func TestLocalTextTargetReviewsEveryProfile(t *testing.T) {
+	provider := &localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(t)}
+	fixture, original := newLocalTextBackfillFixture(t, newWorkerProvider(t), provider)
+	source := original.Service.profiles["pdf"]
+	profile := func(name string) ProfileConfig {
+		portable := source.portable
+		portable.Rendition = new(*portable.Rendition)
+		portable.Rendition.AuthorizationFingerprint = workerHash(name)
+		return ProfileConfig{Profile: portable, RenditionProvider: source.provider,
+			EmbeddingProviders: source.embedders, Tokenizers: source.tokenizers}
+	}
+	service := func(profiles map[string]ProfileConfig) *Service {
+		s, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+			Gate: newWorkerTestGate(), Profiles: profiles, SpoolDirectory: t.TempDir()})
+		require.NoError(t, err)
+		t.Cleanup(s.Stop)
+		return s
+	}
+	setup := &LocalTextSetup{Service: service(map[string]ProfileConfig{"alpha": profile("alpha"), "beta": profile("beta")})}
+	setup.Startup = func(context.Context, bool, LocalTextTarget) error { return nil }
+	setup.Candidate = func(_ LocalTextTarget, name string) (*Service, []string, error) {
+		return service(map[string]ProfileConfig{name: profile(name + "-server")}), nil, nil
+	}
+	target := LocalTextTarget{EmbeddingServer: "https://embedding.example.invalid/api/server", EmbeddingModel: "synthetic-model", EmbeddingDimensions: 3}
+	plan, err := setup.Plan(t.Context(), target)
+	require.NoError(t, err)
+	require.Equal(t, []string{"alpha", "beta"}, plan.Profiles)
+	var saved []string
+	setup.Save = func(names []string, _ LocalTextTarget) error { saved = names; return nil }
+	_, err = setup.Apply(t.Context(), target, plan.Fingerprint)
+	require.NoError(t, err)
+	require.Equal(t, []string{"alpha", "beta"}, saved)
+}
+
+func TestLocalTextPairedBindingsFinishBackfill(t *testing.T) {
+	_, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t))
+	items, err := setup.pendingTargets(t.Context(), "", 100, false)
+	require.NoError(t, err)
+	require.NotEmpty(t, items)
+	for _, item := range items {
+		require.NoError(t, setup.process(t.Context(), item))
+	}
+	profile := setup.Service.profiles["pdf"]
+	kit := profile.portable.Embeddings[0]
+	kit.Name = "chunk-kit"
+	profile.portable.Embeddings = append(profile.portable.Embeddings, kit)
+	profile.mediaFallbackBindings = map[string]string{"chunk-kit": "chunk"}
+	setup.Service.profiles["pdf"] = profile
+	items, err = setup.pendingTargets(t.Context(), "", 100, false)
+	require.NoError(t, err)
+	require.Empty(t, items)
+}
+
+func TestLocalTextTargetReportsRetainedOnly(t *testing.T) {
+	_, original := newLocalTextBackfillFixture(t, newWorkerProvider(t))
+	setup := &LocalTextSetup{Service: original.Service}
+	setup.Candidate = func(_ LocalTextTarget, name string) (*Service, []string, error) {
+		if name == "local-text" {
+			t.Fatal("retained profile must not be replaced by a fallback")
+		}
+		return nil, []string{"contextual text stays with its provider"}, ErrProfileNotConfigured
+	}
+	_, err := setup.Plan(t.Context(), LocalTextTarget{EmbeddingServer: "https://embedding.example.invalid/v1", EmbeddingModel: "model", EmbeddingDimensions: 2})
+	require.ErrorContains(t, err, "contextual text stays with its provider")
 }

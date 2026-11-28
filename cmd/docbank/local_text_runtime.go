@@ -2,12 +2,12 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -17,12 +17,16 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/openaicompat"
+	"go.kenn.io/docbank/document/providerhttp"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/atomicfile"
+	"go.kenn.io/kit/embedclient"
 	"go.kenn.io/kit/embedconfig"
 	"go.kenn.io/kit/embedlocal"
+	"go.kenn.io/kit/secretref"
 )
 
 func readLocalText(root string) (config.LocalTextConfig, error) {
@@ -69,7 +73,7 @@ func localTextSave(root string, restartPending *atomic.Bool, save func(string, c
 
 func localTextSaveTarget(root string, restartPending *atomic.Bool, save func(string, config.LocalTextConfig) error, logger *slog.Logger) func([]string, processing.LocalTextTarget) error {
 	return func(names []string, target processing.LocalTextTarget) error {
-		err := save(root, config.LocalTextConfig{Profile: names[0], Profiles: names, Server: target.Server, EmbeddingServer: target.EmbeddingServer, EmbeddingModel: target.EmbeddingModel, EmbeddingDimensions: target.EmbeddingDimensions})
+		err := save(root, config.LocalTextConfig{Profile: names[0], Profiles: names, Server: target.Server, EmbeddingServer: target.EmbeddingServer, EmbeddingModel: target.EmbeddingModel, EmbeddingDimensions: target.EmbeddingDimensions, EmbeddingAPIKeyEnv: target.EmbeddingAPIKeyEnv})
 		if err == nil || errors.Is(err, atomicfile.ErrPublished) {
 			restartPending.Store(true)
 		}
@@ -156,19 +160,7 @@ func localTextServerCandidate(cfg config.Config, target processing.LocalTextTarg
 	candidate.EmbeddingProfiles = maps.Clone(cfg.EmbeddingProfiles)
 	candidate.ProcessingProfiles = maps.Clone(cfg.ProcessingProfiles)
 	recipe, ok := cfg.ProcessingProfiles[name]
-	if !ok && name == config.LocalTextProfile {
-		cfg.EmbeddingProfiles = maps.Clone(cfg.EmbeddingProfiles)
-		cfg.RenditionProfiles = maps.Clone(cfg.RenditionProfiles)
-		cfg.RetrievalProfiles = maps.Clone(cfg.RetrievalProfiles)
-		cfg.ProcessingProfiles = maps.Clone(cfg.ProcessingProfiles)
-		var err error
-		cfg, err = cfg.WithLocalText()
-		if err != nil {
-			return cfg, nil, err
-		}
-		return localTextServerCandidate(cfg, target, name)
-	}
-	if !ok {
+	if !ok || name == config.LocalTextProfile {
 		return cfg, nil, processing.ErrProfileNotConfigured
 	}
 	recipe.Embeddings = append([]string(nil), recipe.Embeddings...)
@@ -212,7 +204,7 @@ func localTextServerCandidate(cfg config.Config, target processing.LocalTextTarg
 }
 
 func serverEmbedding(p config.EmbeddingProfileConfig, target processing.LocalTextTarget, direct bool, fallback string) (config.EmbeddingProfileConfig, error) {
-	identity := fmt.Sprintf("%x", sha256.Sum256([]byte(target.EmbeddingServer+"\x00"+target.EmbeddingModel+"\x00"+fmt.Sprint(target.EmbeddingDimensions))))
+	identity := store.LengthPrefixedSHA256(target.EmbeddingServer, target.EmbeddingModel, fmt.Sprint(target.EmbeddingDimensions), target.EmbeddingAPIKeyEnv)
 	compatibility := target.EmbeddingModel + "/search/v1"
 	input := config.EmbeddingModelInputConfig{Profile: string(document.ModelInputProfileCustom), CompatibilityID: compatibility,
 		Document: config.EmbeddingModelInputEncoderConfig{Mode: "text", Template: "{{content}}"}, Query: config.EmbeddingModelInputEncoderConfig{Mode: "text", Template: "{{content}}"}}
@@ -230,8 +222,8 @@ func serverEmbedding(p config.EmbeddingProfileConfig, target processing.LocalTex
 	p.AuthorizationFingerprint, p.DisclosureFingerprint = identity, identity
 	p.CredentialBinding, p.TrustBoundary = "credential:embedding-server", string(document.EmbeddingTrustOperatorNetwork)
 	p.MaxBatchItems = 0
-	p.Embedder = &embedconfig.Embedder{API: embedconfig.APIKit, BaseURL: target.EmbeddingServer, Model: target.EmbeddingModel, Dims: target.EmbeddingDimensions, FingerprintSalt: identity, TimeoutSeconds: 120, TrustPrivateNetwork: true}
-	p.Runtime = &config.EmbeddingRuntimeConfig{AdapterContract: openAIEmbeddingAdapter, Anonymous: true, MaxRequestBytes: 28 << 20,
+	p.Embedder = &embedconfig.Embedder{API: embedconfig.APIKit, BaseURL: target.EmbeddingServer, Model: target.EmbeddingModel, Dims: target.EmbeddingDimensions, APIKey: secretref.Ref{Env: target.EmbeddingAPIKeyEnv}, FingerprintSalt: identity, TimeoutSeconds: 120, TrustPrivateNetwork: true}
+	p.Runtime = &config.EmbeddingRuntimeConfig{AdapterContract: openAIEmbeddingAdapter, Anonymous: target.EmbeddingAPIKeyEnv == "", MaxRequestBytes: 28 << 20,
 		ProviderEgressConfig: config.ProviderEgressConfig{AllowedCIDRs: []string{"0.0.0.0/0", "::/0"}, ProxyMode: "disabled", ConnectTimeout: config.Duration(10 * time.Second), KeepAlive: config.Duration(30 * time.Second), TLSHandshakeTimeout: config.Duration(10 * time.Second)}}
 	if direct {
 		p.InputKind = string(document.EmbeddingInputOriginalFile)
@@ -251,6 +243,9 @@ func serverEmbedding(p config.EmbeddingProfileConfig, target processing.LocalTex
 		return p, err
 	}
 	profile := openaicompat.Profile{API: embedconfig.APIKit, Origin: resolved.Runtime.Endpoint, Descriptor: config.EmbeddingDescriptor(resolved, modelInput), ModelInput: modelInput, DeploymentEpoch: resolved.Runtime.DeploymentEpoch, RequestTimeout: resolved.Runtime.RequestTimeout.Std(), MaxBatchItems: resolved.MaxBatchItems, MaxInputBytes: resolved.MaxInputBytes, MaxRequestBytes: resolved.Runtime.MaxRequestBytes, MaxResponseBytes: resolved.MaxResponseBytes, EgressPolicy: providerEgressPolicy(resolved.Runtime.ProviderEgressConfig)}
+	if target.EmbeddingAPIKeyEnv != "" {
+		profile.SecretBinding = resolved.CredentialBinding
+	}
 	descriptor, _, err := finalizeOpenAIEmbeddingDescriptor(profile)
 	if err != nil {
 		return p, err
@@ -265,6 +260,38 @@ func localTextStartup(ctx context.Context, managed bool, _ string) error {
 		return nil
 	}
 	_, err := localEmbeddingOrigin(ctx, embedlocal.TextModel, func(context.Context, int64) (bool, error) { return true, nil })
+	return err
+}
+
+func localTextServerStartup(ctx context.Context, target processing.LocalTextTarget) error {
+	e := embedconfig.Embedder{API: embedconfig.APIKit, BaseURL: target.EmbeddingServer, Model: target.EmbeddingModel,
+		Dims: target.EmbeddingDimensions, APIKey: secretref.Ref{Env: target.EmbeddingAPIKeyEnv}, TrustPrivateNetwork: true, TimeoutSeconds: 120}
+	if strings.HasPrefix(target.EmbeddingModel, "gemini-embedding-2") {
+		e.DocumentPrefix = "title: none | text: "
+		e.QueryPrefix = "task: search result | query: "
+	}
+	if err := e.Validate(); err != nil {
+		return err
+	}
+	parts, err := e.Parts()
+	if err != nil {
+		return err
+	}
+	secret, err := e.ResolveAPIKey()
+	if err != nil {
+		return err
+	}
+	policy := config.ProviderEgressConfig{Endpoint: target.EmbeddingServer, AllowedCIDRs: []string{"0.0.0.0/0", "::/0"}, ProxyMode: "disabled", ConnectTimeout: config.Duration(10 * time.Second), KeepAlive: config.Duration(30 * time.Second), TLSHandshakeTimeout: config.Duration(10 * time.Second)}
+	transport, err := providerhttp.NewTransport(providerEgressPolicy(policy), nil)
+	if err != nil {
+		return err
+	}
+	defer transport.CloseIdleConnections()
+	client, err := embedclient.New(embedclient.Options{Model: parts.Model, Roles: parts.Roles, Deployment: parts.Deployment, Batch: parts.Batch, Transport: parts.Transport, APIKey: secret.Value, HTTP: &http.Client{Transport: transport, CheckRedirect: providerhttp.RefuseRedirects}})
+	if err != nil {
+		return err
+	}
+	_, err = client.EmbedTexts(ctx, embedconfig.RoleDocument, []string{"Docbank setup"})
 	return err
 }
 

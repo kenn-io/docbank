@@ -610,13 +610,13 @@ func TestLocalTextStatusProvider(t *testing.T) {
 			defer service.Stop()
 			inheritedReady := false
 			if tc.inherited {
-				setup := &processing.LocalTextSetup{Service: service, Selected: config.LocalTextProfile, Startup: func(context.Context, bool, string) error { return nil }}
+				setup := &processing.LocalTextSetup{Service: service, Selected: config.LocalTextProfile, Startup: func(context.Context, bool, processing.LocalTextTarget) error { return nil }}
 				active, err := setup.InitializeInherited(t.Context())
 				require.NoError(t, err)
 				require.True(t, active)
 				inheritedReady = active
 				if tc.startupFailed {
-					setup.Startup = func(context.Context, bool, string) error { return errors.New("startup failed") }
+					setup.Startup = func(context.Context, bool, processing.LocalTextTarget) error { return errors.New("startup failed") }
 					active, err = setup.InitializeInherited(t.Context())
 					require.Error(t, err)
 					require.False(t, active)

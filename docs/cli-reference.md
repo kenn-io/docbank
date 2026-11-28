@@ -1396,7 +1396,7 @@ the version 1 request format, date choices, counts, and retention limits.
 ```
 docbank processing vision-fingerprints [--task <descriptor-id>] --model <model> --trust-boundary <boundary> --endpoint <origin> --deployment-fingerprint <sha256>
 docbank processing local [--server auto|local]
-docbank processing local --embedding-server <url> --embedding-model <model> --embedding-dimensions <width>
+docbank processing local --embedding-server <url> --embedding-model <model> --embedding-dimensions <width> [--embedding-api-key-env <name>]
 docbank processing faces
 docbank processing profiles [--json]
 docbank processing probe --profile <name> --seeds <dir> [--overwrite]
@@ -1433,7 +1433,7 @@ server. See [Local text search](usage/document-processing.md#set-up-local-text-s
 
 To use a Kit embedding server, pass all three `--embedding-*` flags without
 `--server`. The preview lists affected profiles and retained providers. Setup
-rebuilds their indexes, saves the selection, and restarts the daemon. See
+checks the server, rebuilds their indexes, saves the selection, and restarts the daemon. The optional key variable must be available to the daemon. See
 [Document processing](usage/document-processing.md#set-up-local-text-search)
 for media limits and retained Voyage bindings.
 

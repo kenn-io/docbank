@@ -31728,8 +31728,6 @@ type LocalTextPlan = api.LocalTextPlan
 
 type LocalTextPlanRequest = api.LocalTextPlanRequest
 
-type LocalTextProfilePlan = processing.LocalTextProfilePlan
-
 type LocalTextStatus = api.LocalTextStatus
 
 type LocalTextTarget = processing.LocalTextTarget

@@ -18,9 +18,7 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/store"
-	kitdaemon "go.kenn.io/kit/daemon"
 	"go.kenn.io/kit/embedclient"
-	"go.kenn.io/kit/embedlocal"
 	"go.kenn.io/kit/embedserver"
 
 	"github.com/stretchr/testify/require"
@@ -41,6 +39,31 @@ func TestLocalTextServerCandidate(t *testing.T) {
 	require.NoError(t, candidate.Validate())
 	_, err = configureEmbeddingRuntimeBundle(candidate)
 	require.NoError(t, err)
+}
+
+func TestLocalTextServerStartupChecksCredentialsAndDimensions(t *testing.T) {
+	t.Setenv("DOCBANK_TEST_EMBED_KEY", "synthetic-key")
+	handler := embedserver.Handler(serverTestBackend{}, []string{"model"})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer synthetic-key" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	target := processing.LocalTextTarget{EmbeddingServer: server.URL + "/v1", EmbeddingModel: "model", EmbeddingDimensions: 2, EmbeddingAPIKeyEnv: "DOCBANK_TEST_EMBED_KEY"}
+	require.NoError(t, localTextServerStartup(t.Context(), target))
+	target.EmbeddingAPIKeyEnv = "DOCBANK_TEST_MISSING_KEY"
+	require.Error(t, localTextServerStartup(t.Context(), target))
+	target.EmbeddingAPIKeyEnv = ""
+	require.Error(t, localTextServerStartup(t.Context(), target))
+}
+
+func TestLocalTextServerStartupPrefix(t *testing.T) {
+	server := httptest.NewServer(http.StripPrefix("/api/v1/servers/example", embedserver.Handler(serverTestBackend{}, []string{"gemini-embedding-2"})))
+	defer server.Close()
+	require.NoError(t, localTextServerStartup(t.Context(), processing.LocalTextTarget{EmbeddingServer: server.URL + "/api/v1/servers/example", EmbeddingModel: "gemini-embedding-2", EmbeddingDimensions: 2}))
 }
 
 func TestLocalTextServerPairsMedia(t *testing.T) {
@@ -130,8 +153,15 @@ func TestLocalTextServerDaemonRestart(t *testing.T) {
 	t.Setenv("USERPROFILE", os.Getenv("HOME"))
 	t.Setenv("DO_NOT_TRACK", "1")
 	t.Setenv("DOCBANK_TEST_SOURCE_KEY", "synthetic")
+	t.Setenv("DOCBANK_TEST_EMBED_KEY", "synthetic-server-secret")
 	handler := embedserver.Handler(serverTestBackend{}, []string{"gemini-embedding-2"})
-	server := httptest.NewServer(http.StripPrefix("/api/v1/servers/example", handler))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer synthetic-server-secret" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		http.StripPrefix("/api/v1/servers/example", handler).ServeHTTP(w, r)
+	}))
 	defer server.Close()
 	root := t.TempDir()
 	t.Setenv("DOCBANK_HOME", root)
@@ -149,15 +179,19 @@ func TestLocalTextServerDaemonRestart(t *testing.T) {
 	waitForDaemon(t, root)
 	connection, err := daemonconn.Ensure(t.Context())
 	require.NoError(t, err)
-	body := &api.LocalTextPlanRequest{Server: "auto", EmbeddingServer: server.URL + "/api/v1/servers/example", EmbeddingModel: "gemini-embedding-2", EmbeddingDimensions: 2}
+	body := &api.LocalTextPlanRequest{Server: "auto", Target: &processing.LocalTextTarget{EmbeddingServer: server.URL + "/api/v1/servers/example", EmbeddingModel: "gemini-embedding-2", EmbeddingDimensions: 2, EmbeddingAPIKeyEnv: "DOCBANK_TEST_EMBED_KEY"}}
 	plan, err := connection.API().PlanLocalText(t.Context(), &apiclient.PlanLocalTextRequestOptions{Body: body})
 	require.NoError(t, err)
-	_, err = connection.API().ApplyLocalText(t.Context(), &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: body.Server, EmbeddingServer: body.EmbeddingServer, EmbeddingModel: body.EmbeddingModel, EmbeddingDimensions: body.EmbeddingDimensions, PlanFingerprint: plan.Fingerprint, Consent: true}})
+	_, err = connection.API().ApplyLocalText(t.Context(), &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: body.Server, Target: body.Target, PlanFingerprint: plan.Fingerprint, Consent: true}})
 	require.NoError(t, err)
 	require.NoError(t, connection.Close())
 	choice, err := readLocalText(root)
 	require.NoError(t, err)
 	require.Equal(t, []string{"archive", "photos"}, choice.Profiles)
+	require.Equal(t, "DOCBANK_TEST_EMBED_KEY", choice.EmbeddingAPIKeyEnv)
+	saved, err := os.ReadFile(filepath.Join(root, "local-text.json"))
+	require.NoError(t, err)
+	require.NotContains(t, string(saved), "synthetic-server-secret")
 	stop()
 	cfg.ProcessingProfiles["new-recipe"] = cfg.ProcessingProfiles["archive"]
 	original, err := cfg.ProcessingProfile("new-recipe")
@@ -223,57 +257,11 @@ func TestLocalTextServerFlags(t *testing.T) {
 	}
 }
 
-func TestLocalTextServerRestoresBuiltInProfile(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("USERPROFILE", os.Getenv("HOME"))
-	t.Setenv("DO_NOT_TRACK", "1")
-	root := t.TempDir()
-	t.Setenv("DOCBANK_HOME", root)
-	server := httptest.NewServer(embedserver.Handler(serverTestBackend{}, []string{"gemini-embedding-2"}))
-	defer server.Close()
-	stop := startServe(t)
-	defer func() { stop() }()
-	waitForDaemon(t, root)
-	conn, err := daemonconn.Ensure(t.Context())
-	require.NoError(t, err)
-	body := &api.LocalTextPlanRequest{Server: "auto", EmbeddingServer: server.URL + "/v1", EmbeddingModel: "gemini-embedding-2", EmbeddingDimensions: 2}
-	plan, err := conn.API().PlanLocalText(t.Context(), &apiclient.PlanLocalTextRequestOptions{Body: body})
-	require.NoError(t, err)
-	require.Len(t, plan.Profiles, 1)
-	require.Equal(t, "local-text", plan.Profiles[0].Name)
-	_, err = conn.API().ApplyLocalText(t.Context(), &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: body.Server, EmbeddingServer: body.EmbeddingServer, EmbeddingModel: body.EmbeddingModel, EmbeddingDimensions: body.EmbeddingDimensions, PlanFingerprint: plan.Fingerprint, Consent: true}})
-	require.NoError(t, err)
-	require.NoError(t, conn.Close())
-	choice, err := readLocalText(root)
-	require.NoError(t, err)
-	require.Equal(t, []string{"local-text"}, choice.Profiles)
-	stop()
-	stop = startServe(t)
-	waitForDaemon(t, root)
-	conn, err = daemonconn.Ensure(t.Context())
-	require.NoError(t, err)
-	defer conn.Close()
-	profiles, err := conn.API().ListDocumentProcessingProfiles(t.Context(), &apiclient.ListDocumentProcessingProfilesRequestOptions{})
-	require.NoError(t, err)
-	require.Contains(t, fmt.Sprint(profiles), "local-text")
-	local := httptest.NewServer(localTextDiscoveryHandler(embedlocal.TextModel))
-	defer local.Close()
-	dir, err := embedlocal.DefaultDir()
-	require.NoError(t, err)
-	endpoint, err := kitdaemon.ParseEndpoint(local.URL, kitdaemon.ParseEndpointOptions{TCPPolicy: kitdaemon.RequireLoopback})
-	require.NoError(t, err)
-	_, err = (kitdaemon.RuntimeStore{Dir: dir, Prefix: embedlocal.Service}).Write(kitdaemon.NewRuntimeRecord(embedlocal.Service, embedlocal.Version, endpoint))
-	require.NoError(t, err)
-	localPlan, err := conn.API().PlanLocalText(t.Context(), &apiclient.PlanLocalTextRequestOptions{Body: &api.LocalTextPlanRequest{Server: "local"}})
-	require.NoError(t, err)
-	_, err = conn.API().ApplyLocalText(t.Context(), &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: "local", PlanFingerprint: localPlan.Fingerprint, Consent: true}})
-	require.NoError(t, err)
-	choice, err = readLocalText(root)
-	require.NoError(t, err)
-	require.Equal(t, "local", choice.Server)
-	require.Empty(t, choice.EmbeddingServer)
-	require.Empty(t, choice.Profiles)
-
+func TestLocalTextServerDoesNotSelectBuiltInProfile(t *testing.T) {
+	cfg := localTextSourceConfig(t, "http://127.0.0.1:12345", "source-revision", "prefix-free", "DOCBANK_TEST_SOURCE_KEY")
+	target := processing.LocalTextTarget{Server: "auto", EmbeddingServer: "http://127.0.0.1:12345/v1", EmbeddingModel: "model", EmbeddingDimensions: 2}
+	_, _, err := localTextServerCandidate(cfg, target, config.LocalTextProfile)
+	require.ErrorIs(t, err, processing.ErrProfileNotConfigured)
 }
 
 func TestLocalTextServerIdentitySeparatesModelAndDimensions(t *testing.T) {

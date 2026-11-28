@@ -16,36 +16,41 @@ type LocalTextStatus struct {
 }
 
 type LocalTextPlanRequest struct {
-	Server              string `json:"server" enum:"auto,local"`
-	EmbeddingServer     string `json:"embedding_server,omitempty"`
-	EmbeddingModel      string `json:"embedding_model,omitempty"`
-	EmbeddingDimensions int    `json:"embedding_dimensions,omitempty"`
+	Server string                      `json:"server" enum:"auto,local"`
+	Target *processing.LocalTextTarget `json:"target,omitempty"`
 }
 
 type LocalTextApplyRequest struct {
-	Server              string `json:"server" enum:"auto,local"`
-	EmbeddingServer     string `json:"embedding_server,omitempty"`
-	EmbeddingModel      string `json:"embedding_model,omitempty"`
-	EmbeddingDimensions int    `json:"embedding_dimensions,omitempty"`
-	PlanFingerprint     string `json:"plan_fingerprint" pattern:"^[0-9a-f]{64}$"`
-	Consent             bool   `json:"consent"`
+	Server          string                      `json:"server" enum:"auto,local"`
+	Target          *processing.LocalTextTarget `json:"target,omitempty"`
+	PlanFingerprint string                      `json:"plan_fingerprint" pattern:"^[0-9a-f]{64}$"`
+	Consent         bool                        `json:"consent"`
+}
+
+func localTextTarget(server string, target *processing.LocalTextTarget) processing.LocalTextTarget {
+	if target == nil {
+		return processing.LocalTextTarget{Server: server}
+	}
+	choice := *target
+	choice.Server = server
+	return choice
 }
 
 type LocalTextPlan struct {
-	Fingerprint        string                            `json:"fingerprint"`
-	VaultUID           string                            `json:"vault_uid"`
-	Profile            string                            `json:"profile"`
-	Server             string                            `json:"server"`
-	ProfileFingerprint string                            `json:"profile_fingerprint"`
-	Models             []string                          `json:"models"`
-	VectorEffect       string                            `json:"vector_effect"`
-	Managed            bool                              `json:"managed"`
-	Flow               []ProcessingFlowHop               `json:"flow"`
-	RetainedClasses    []string                          `json:"retained_classes"`
-	Scope              string                            `json:"scope"`
-	Retained           []string                          `json:"retained,omitempty"`
-	Profiles           []processing.LocalTextProfilePlan `json:"profiles,omitempty"`
-	Target             *processing.LocalTextTarget       `json:"target,omitempty"`
+	Fingerprint        string                      `json:"fingerprint"`
+	VaultUID           string                      `json:"vault_uid"`
+	Profile            string                      `json:"profile"`
+	Server             string                      `json:"server"`
+	ProfileFingerprint string                      `json:"profile_fingerprint"`
+	Models             []string                    `json:"models"`
+	VectorEffect       string                      `json:"vector_effect"`
+	Managed            bool                        `json:"managed"`
+	Flow               []ProcessingFlowHop         `json:"flow"`
+	RetainedClasses    []string                    `json:"retained_classes"`
+	Scope              string                      `json:"scope"`
+	Retained           []string                    `json:"retained,omitempty"`
+	Profiles           []string                    `json:"profiles,omitempty"`
+	Target             *processing.LocalTextTarget `json:"target,omitempty"`
 }
 
 func fromLocalTextPlan(p processing.LocalTextPlan) LocalTextPlan {
@@ -76,7 +81,12 @@ func registerLocalTextRoutes(api huma.API, d Deps) {
 			if d.LocalText == nil {
 				return nil, processingUnavailable()
 			}
-			plan, err := d.LocalText.PlanTarget(ctx, processing.LocalTextTarget{Server: input.Body.Server, EmbeddingServer: input.Body.EmbeddingServer, EmbeddingModel: input.Body.EmbeddingModel, EmbeddingDimensions: input.Body.EmbeddingDimensions})
+			if input.Body.Target != nil {
+				if err := input.Body.Target.ValidateEmbeddingServer(); err != nil {
+					return nil, NewError(http.StatusUnprocessableEntity, "processing_profile_unavailable", err.Error())
+				}
+			}
+			plan, err := d.LocalText.Plan(ctx, localTextTarget(input.Body.Server, input.Body.Target))
 			if err != nil {
 				return nil, fromProcessingError(err)
 			}
@@ -92,7 +102,12 @@ func registerLocalTextRoutes(api huma.API, d Deps) {
 			if !input.Body.Consent {
 				return nil, fromProcessingError(processing.ErrConsentRequired)
 			}
-			plan, err := d.LocalText.ApplyTarget(ctx, processing.LocalTextTarget{Server: input.Body.Server, EmbeddingServer: input.Body.EmbeddingServer, EmbeddingModel: input.Body.EmbeddingModel, EmbeddingDimensions: input.Body.EmbeddingDimensions}, input.Body.PlanFingerprint)
+			if input.Body.Target != nil {
+				if err := input.Body.Target.ValidateEmbeddingServer(); err != nil {
+					return nil, NewError(http.StatusUnprocessableEntity, "processing_profile_unavailable", err.Error())
+				}
+			}
+			plan, err := d.LocalText.Apply(ctx, localTextTarget(input.Body.Server, input.Body.Target), input.Body.PlanFingerprint)
 			if err != nil {
 				return nil, fromProcessingError(err)
 			}

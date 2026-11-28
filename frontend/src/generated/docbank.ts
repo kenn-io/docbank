@@ -3914,16 +3914,22 @@ export const LocalTextApplyRequestServer = {
   local: 'local',
 } as const;
 
+export interface LocalTextTarget {
+  embedding_api_key_env?: string;
+  embedding_dimensions: number;
+  embedding_model: string;
+  embedding_server: string;
+  server: string;
+}
+
 export interface LocalTextApplyRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   consent: boolean;
-  embedding_dimensions?: number;
-  embedding_model?: string;
-  embedding_server?: string;
   /** @pattern ^[0-9a-f]{64}$ */
   plan_fingerprint: string;
   server: LocalTextApplyRequestServer;
+  target?: LocalTextTarget;
 }
 
 export interface ProcessingRuntimeDisclosure {
@@ -3969,18 +3975,6 @@ export interface ProcessingFlowHop {
   trust_boundary: string;
 }
 
-export interface LocalTextProfilePlan {
-  fingerprint: string;
-  name: string;
-}
-
-export interface LocalTextTarget {
-  embedding_dimensions: number;
-  embedding_model: string;
-  embedding_server: string;
-  server: string;
-}
-
 export interface LocalTextPlan {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -3990,7 +3984,7 @@ export interface LocalTextPlan {
   models: string[];
   profile: string;
   profile_fingerprint: string;
-  profiles?: LocalTextProfilePlan[];
+  profiles?: string[];
   retained?: string[];
   retained_classes: string[];
   scope: string;
@@ -4011,10 +4005,8 @@ export const LocalTextPlanRequestServer = {
 export interface LocalTextPlanRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  embedding_dimensions?: number;
-  embedding_model?: string;
-  embedding_server?: string;
   server: LocalTextPlanRequestServer;
+  target?: LocalTextTarget;
 }
 
 export type LocalTextStatusProvider = typeof LocalTextStatusProvider[keyof typeof LocalTextStatusProvider];

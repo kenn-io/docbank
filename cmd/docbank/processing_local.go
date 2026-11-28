@@ -13,12 +13,12 @@ import (
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
-	"go.kenn.io/kit/embedconfig"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/kit/embedlocal"
 )
 
 func newProcessingLocalCommand() *cobra.Command {
-	var server, embeddingServer, embeddingModel string
+	var server, embeddingServer, embeddingModel, embeddingAPIKeyEnv string
 	var embeddingDimensions int
 	cmd := &cobra.Command{Use: "local", Short: "Set up vault-wide text indexing", Args: cobra.NoArgs,
 		Example: "  docbank processing local --server local",
@@ -26,12 +26,15 @@ func newProcessingLocalCommand() *cobra.Command {
 			if server != "auto" && server != "local" {
 				return usageError(errors.New("--server must be auto or local"))
 			}
-			if cmd.Flags().Changed("embedding-server") || cmd.Flags().Changed("embedding-model") || cmd.Flags().Changed("embedding-dimensions") {
+			if cmd.Flags().Changed("embedding-server") || cmd.Flags().Changed("embedding-model") || cmd.Flags().Changed("embedding-dimensions") || cmd.Flags().Changed("embedding-api-key-env") {
 				if embeddingServer == "" || embeddingModel == "" || embeddingDimensions <= 0 {
 					return usageError(errors.New("--embedding-server, --embedding-model, and --embedding-dimensions must be provided together"))
 				}
-				target := embedconfig.Embedder{API: embedconfig.APIKit, BaseURL: embeddingServer, Model: embeddingModel, Dims: embeddingDimensions, TrustPrivateNetwork: true}
-				if err := target.Validate(); err != nil || strings.TrimSpace(embeddingModel) != embeddingModel || embeddingDimensions > 1000000 {
+				if cmd.Flags().Changed("embedding-api-key-env") && embeddingAPIKeyEnv == "" {
+					return usageError(errors.New("--embedding-api-key-env must name an environment variable"))
+				}
+				target := processing.LocalTextTarget{EmbeddingServer: embeddingServer, EmbeddingModel: embeddingModel, EmbeddingDimensions: embeddingDimensions, EmbeddingAPIKeyEnv: embeddingAPIKeyEnv}
+				if err := target.ValidateEmbeddingServer(); err != nil {
 					return usageError(errors.New("invalid embedding server URL, model, or dimensions"))
 				}
 				if cmd.Flags().Changed("server") {
@@ -44,7 +47,11 @@ func newProcessingLocalCommand() *cobra.Command {
 			}
 			closeClient := sync.OnceValue(c.Close)
 			defer func() { _ = closeClient() }()
-			plan, err := c.API().PlanLocalText(cmd.Context(), &apiclient.PlanLocalTextRequestOptions{Body: &api.LocalTextPlanRequest{Server: server, EmbeddingServer: embeddingServer, EmbeddingModel: embeddingModel, EmbeddingDimensions: embeddingDimensions}})
+			request := &api.LocalTextPlanRequest{Server: server}
+			if embeddingServer != "" {
+				request.Target = &processing.LocalTextTarget{EmbeddingServer: embeddingServer, EmbeddingModel: embeddingModel, EmbeddingDimensions: embeddingDimensions, EmbeddingAPIKeyEnv: embeddingAPIKeyEnv}
+			}
+			plan, err := c.API().PlanLocalText(cmd.Context(), &apiclient.PlanLocalTextRequestOptions{Body: request})
 			if err != nil {
 				return err
 			}
@@ -77,6 +84,7 @@ func newProcessingLocalCommand() *cobra.Command {
 	cmd.Flags().StringVar(&server, "server", "auto", "embedding server: auto or local")
 	cmd.Flags().StringVar(&embeddingServer, "embedding-server", "", "embedding server URL")
 	cmd.Flags().StringVar(&embeddingModel, "embedding-model", "", "embedding model")
+	cmd.Flags().StringVar(&embeddingAPIKeyEnv, "embedding-api-key-env", "", "environment variable containing the embedding server API key")
 	cmd.Flags().IntVar(&embeddingDimensions, "embedding-dimensions", 0, "embedding dimensions")
 	return cmd
 }
@@ -89,9 +97,7 @@ func applyLocalText(ctx context.Context, plan api.LocalTextPlan) (retErr error) 
 	}
 	defer func() { retErr = errors.Join(retErr, c.Close()) }()
 	body := &api.LocalTextApplyRequest{Server: plan.Server, PlanFingerprint: plan.Fingerprint, Consent: true}
-	if plan.Target != nil {
-		body.EmbeddingServer, body.EmbeddingModel, body.EmbeddingDimensions = plan.Target.EmbeddingServer, plan.Target.EmbeddingModel, plan.Target.EmbeddingDimensions
-	}
+	body.Target = plan.Target
 	_, err = c.API().ApplyLocalText(ctx, &apiclient.ApplyLocalTextRequestOptions{Body: body})
 	return err
 }
@@ -100,7 +106,7 @@ func writeLocalTextPlan(cmd *cobra.Command, p api.LocalTextPlan) error {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
 	if p.Target != nil {
 		for _, profile := range p.Profiles {
-			_, _ = fmt.Fprintf(w, "profile:\t%s\n", profile.Name)
+			_, _ = fmt.Fprintf(w, "profile:\t%s\n", profile)
 		}
 		_, _ = fmt.Fprintf(w, "server:\t%s\nmodel:\t%s\ndimensions:\t%d\n", p.Target.EmbeddingServer, p.Target.EmbeddingModel, p.Target.EmbeddingDimensions)
 	} else {

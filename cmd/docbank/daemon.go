@@ -363,7 +363,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	}
 	var selectedProfiles []string
 	if choice.Profile != "" && choice.EmbeddingServer != "" {
-		target := processing.LocalTextTarget{Server: choice.Server, EmbeddingServer: choice.EmbeddingServer, EmbeddingModel: choice.EmbeddingModel, EmbeddingDimensions: choice.EmbeddingDimensions}
+		target := processing.LocalTextTarget{Server: choice.Server, EmbeddingServer: choice.EmbeddingServer, EmbeddingModel: choice.EmbeddingModel, EmbeddingDimensions: choice.EmbeddingDimensions, EmbeddingAPIKeyEnv: choice.EmbeddingAPIKeyEnv}
 		names := choice.Profiles
 		for _, name := range names {
 			selected, candidate, _, err := serverCandidateProfiles(target, name)
@@ -455,30 +455,43 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 
 	tracker := api.NewActivityTracker()
 	var restartPending, inheritedReady atomic.Bool
-	localText := &processing.LocalTextSetup{Service: processingService, Selected: choice.Profile, SelectedProfiles: selectedProfiles,
+	localText := &processing.LocalTextSetup{Service: processingService, Selected: choice.Profile,
 		ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
-		Startup: localTextStartup,
-		Save:    localTextSave(layout.Root, &restartPending, saveLocalText, logger),
+		Startup: func(ctx context.Context, managed bool, target processing.LocalTextTarget) error {
+			if target.EmbeddingServer != "" {
+				return localTextServerStartup(ctx, target)
+			}
+			return localTextStartup(ctx, managed, target.Server)
+		},
+		Save: func(names []string, target processing.LocalTextTarget) error {
+			if target.EmbeddingServer != "" {
+				return localTextSaveTarget(layout.Root, &restartPending, saveLocalText, logger)(names, target)
+			}
+			return localTextSave(layout.Root, &restartPending, saveLocalText, logger)(names[0], target.Server)
+		},
 	}
-	localText.Candidate = func(mode, name string) (*processing.Service, error) {
-		profiles, _, err := candidateProfiles(mode, name)
-		if err != nil {
-			return nil, err
+	localText.Candidate = func(target processing.LocalTextTarget, name string) (*processing.Service, []string, error) {
+		var profiles map[string]processing.ProfileConfig
+		var retained []string
+		var err error
+		if target.EmbeddingServer != "" {
+			profiles, _, retained, err = serverCandidateProfiles(target, name)
+		} else {
+			profiles, _, err = candidateProfiles(target.Server, name)
 		}
-		service, err := processing.NewService(sigCtx, processing.ServiceConfig{Catalog: s, Blobs: blobs, Gate: operationGate, Profiles: profiles,
-			MediaMaxBytes: cfg.Media.MaxSourceBytes,
-			Principal:     "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(), Lifecycle: sigCtx})
-		return service, err
-	}
-	localText.SaveTarget = localTextSaveTarget(layout.Root, &restartPending, saveLocalText, logger)
-	localText.CandidateTarget = func(target processing.LocalTextTarget, name string) (*processing.Service, []string, error) {
-		profiles, _, retained, err := serverCandidateProfiles(target, name)
 		if err != nil {
 			return nil, retained, err
 		}
 		service, err := processing.NewService(sigCtx, processing.ServiceConfig{Catalog: s, Blobs: blobs, Gate: operationGate, Profiles: profiles,
 			MediaMaxBytes: cfg.Media.MaxSourceBytes, Principal: "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(), Lifecycle: sigCtx})
 		return service, retained, err
+	}
+	localTextLanes := []*processing.LocalTextSetup{localText}
+	if len(selectedProfiles) > 0 {
+		localTextLanes = nil
+		for _, name := range selectedProfiles {
+			localTextLanes = append(localTextLanes, &processing.LocalTextSetup{Service: processingService, Selected: name, ActivityBegin: tracker.Begin, ActivityEnd: tracker.End})
+		}
 	}
 	pdfText := &processing.PDFTextRunner{Service: processingService}
 	if err := pdfText.Initialize(sigCtx); err != nil {
@@ -843,9 +856,11 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	if idleTimeout > 0 {
 		if err := jobSupervisor.Start("daemon.idle-timeout", func(ctx context.Context) error {
 			idleWatch(ctx, tracker, idleTimeout, logger, func(ctx context.Context) (bool, error) {
-				pending, err := localText.Pending(ctx)
-				if pending || err != nil {
-					return pending, err
+				for _, lane := range localTextLanes {
+					pending, err := lane.Pending(ctx)
+					if pending || err != nil {
+						return pending, err
+					}
 				}
 				return pdfText.Pending(ctx)
 			}, stop)
@@ -864,10 +879,12 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		logger.Info("docbank MCP HTTP listening", "url", mcpURL)
 	}
 	if choice.Profile != "" {
-		if err := jobSupervisor.StartWorker("embed:local-text", func(ctx context.Context) error {
-			return runLocalText(ctx, localText, inherited, &inheritedReady, logger)
-		}); err != nil {
-			return err
+		for _, lane := range localTextLanes {
+			if err := jobSupervisor.StartWorker("embed:local-text:"+lane.Selected, func(ctx context.Context) error {
+				return runLocalText(ctx, lane, inherited, &inheritedReady, logger)
+			}); err != nil {
+				return err
+			}
 		}
 	}
 	if ready != nil {

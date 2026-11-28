@@ -26,26 +26,26 @@ func TestLocalTextSetupRouteReviewsConsentAndMapsErrors(t *testing.T) {
 		configure := configureProcessingTestServiceWithProviders(t, renderer, newProcessingTestEmbeddingProvider(t), true, document.EmbeddingOptional, "local-text")
 		configure(deps)
 		setup := &processing.LocalTextSetup{Service: deps.Processing,
-			Startup: func(context.Context, bool, string) error {
+			Startup: func(context.Context, bool, processing.LocalTextTarget) error {
 				if startupFailure.Load() {
 					return errors.New("synthetic startup failure")
 				}
 				return nil
 			},
-			Save: func(name, mode string) error {
-				assert.Equal(t, "local-text", name)
-				assert.Equal(t, "local", mode)
+			Save: func(names []string, target processing.LocalTextTarget) error {
+				assert.Equal(t, "local-text", names[0])
+				assert.Equal(t, "local", target.Server)
 				if saveFailure.Load() {
 					return errors.New("synthetic selection path failure")
 				}
 				return nil
 			},
 		}
-		setup.Candidate = func(mode, _ string) (*processing.Service, error) {
-			assert.Equal(t, "local", mode)
+		setup.Candidate = func(target processing.LocalTextTarget, _ string) (*processing.Service, []string, error) {
+			assert.Equal(t, "local", target.Server)
 			candidate := *deps
 			configure(&candidate)
-			return candidate.Processing, nil
+			return candidate.Processing, nil, nil
 		}
 		deps.LocalText = setup
 		deps.LocalTextStatus = func(context.Context) (api.LocalTextStatus, error) {
