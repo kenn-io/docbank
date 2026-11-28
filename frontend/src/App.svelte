@@ -2455,7 +2455,7 @@
             note,
           );
           accepted = !!outcome;
-            if (accepted && request === generation && requestedSort) applyResultSort(requestedSort);
+          if (accepted && request === generation && requestedSort) applyResultSort(requestedSort);
           return outcome;
         } catch (fallbackCause) {
           if (request === generation && session === webSession && !controller.signal.aborted) {
