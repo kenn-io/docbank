@@ -37,19 +37,24 @@ func TestSkillsCatalogAndGuidesWithoutDaemon(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, entries, 3)
 	for index, name := range []string{"workflow", "search", "processing"} {
-		entry := entries[index].(map[string]any)
+		entry, ok := entries[index].(map[string]any)
+		require.True(t, ok)
 		require.Equal(t, name, entry["name"])
 		require.NotEmpty(t, entry["title"])
 		require.NotEmpty(t, entry["summary"])
 		guide := skillsCall(t, server, map[string]any{"name": name})
 		require.Equal(t, []any{entry}, objectField(t, guide, "structuredContent")["skills"])
-		content := guide["content"].([]any)
+		content, ok := guide["content"].([]any)
+		require.True(t, ok)
 		require.Len(t, content, 1)
-		text := content[0].(map[string]any)
+		text, ok := content[0].(map[string]any)
+		require.True(t, ok)
 		require.Equal(t, "text", text["type"])
 		require.Contains(t, text["text"], []string{agentguide.Workflow, agentguide.Search, agentguide.Processing}[index])
 		require.Contains(t, text["text"], "## CLI guidance")
-		require.Less(t, len(text["text"].(string)), maxToolResponseBytes)
+		body, ok := text["text"].(string)
+		require.True(t, ok)
+		require.Less(t, len(body), maxToolResponseBytes)
 	}
 	withoutArguments := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "docbank.skills"})))
 	require.Equal(t, catalog["structuredContent"], withoutArguments["structuredContent"])
@@ -59,9 +64,10 @@ func TestSkillsDefinitionIsIndependent(t *testing.T) {
 	tool, err := ReadTool("docbank.skills")
 	require.NoError(t, err)
 	schemaMap(t, tool.InputSchema) // Also exercises the public JSON representation.
-	tool.InputSchema.(map[string]any)["properties"].(map[string]any)["name"] = "changed"
-	tool.OutputSchema.(map[string]any)["required"] = []string{"changed"}
-	tool.Meta["io.docbank/bounds"].(map[string]any)["maxResponseBytes"] = 1
+	input := schemaMap(t, tool.InputSchema)
+	objectField(t, input, "properties")["name"] = "changed"
+	schemaMap(t, tool.OutputSchema)["required"] = []string{"changed"}
+	objectField(t, tool.Meta, "io.docbank/bounds")["maxResponseBytes"] = 1
 	tool.Annotations.ReadOnlyHint = false
 	clean, err := ReadTool("docbank.skills")
 	require.NoError(t, err)
@@ -72,7 +78,7 @@ func TestSkillsDefinitionIsIndependent(t *testing.T) {
 	require.True(t, clean.Annotations.ReadOnlyHint)
 	require.Equal(t, new(false), clean.Annotations.DestructiveHint)
 	require.Equal(t, new(false), clean.Annotations.OpenWorldHint)
-	require.EqualValues(t, maxToolResponseBytes, clean.Meta["io.docbank/bounds"].(map[string]any)["maxResponseBytes"])
+	require.EqualValues(t, maxToolResponseBytes, objectField(t, clean.Meta, "io.docbank/bounds")["maxResponseBytes"])
 	assertSchemaAccepts(t, clean.InputSchema, map[string]any{"name": "workflow"})
 	assertSchemaRejects(t, clean.InputSchema, map[string]any{"name": ""})
 	skillsCall(t, skillsTestServer(t, ServerOptions{}), map[string]any{"name": "workflow"})
@@ -107,7 +113,12 @@ func TestSkillsUnknownName(t *testing.T) {
 	server := skillsTestServer(t, ServerOptions{})
 	result := skillsCall(t, server, map[string]any{"name": "unknown"})
 	require.Equal(t, true, result["isError"])
-	require.Contains(t, result["content"].([]any)[0].(map[string]any)["text"], "unknown guide")
+	content, ok := result["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, content, 1)
+	item, ok := content[0].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, item["text"], "unknown guide")
 }
 
 func TestSkillsRejectMalformedArguments(t *testing.T) {
