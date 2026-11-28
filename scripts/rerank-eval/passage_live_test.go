@@ -35,7 +35,7 @@ func TestLivePassageGate(t *testing.T) {
 	require.True(t, filepath.IsAbs(absolute), "output must be absolute")
 	repo, err = filepath.EvalSymlinks(repo)
 	require.NoError(t, err)
-	parent, err := filepath.EvalSymlinks(filepath.Dir(absolute))
+	parent, err := canonicalPassageParent(filepath.Dir(absolute))
 	require.NoError(t, err)
 	absolute = filepath.Join(parent, filepath.Base(absolute))
 	if strings.EqualFold(filepath.VolumeName(repo), filepath.VolumeName(absolute)) {
@@ -176,4 +176,28 @@ func (p *passageBudgetedEmbeddings) Embed(ctx context.Context, inputs []document
 	p.budget.EmbeddingLocalTokens += tokens
 	p.budget.EmbeddingReservedMicros += float64(tokens) * .12
 	return p.EmbeddingProvider.Embed(ctx, inputs, authorization)
+}
+
+// canonicalPassageParent resolves existing ancestors even when intermediate
+// directories do not exist, so containment is checked before creation.
+func canonicalPassageParent(path string) (string, error) {
+	var missing []string
+	for {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return resolved, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return "", err
+		}
+		missing = append(missing, filepath.Base(path))
+		path = parent
+	}
 }

@@ -362,9 +362,15 @@ func TestPassageLiveOutputCollisionPreservesEvidence(t *testing.T) {
 	require.NoError(t, err)
 	repo, err := filepath.Abs("../..")
 	require.NoError(t, err)
+	link := filepath.Join(dir, "repo-link")
+	if err := os.Symlink(repo, link); err != nil {
+		t.Logf("symlink unavailable: %v", err)
+		link = repo
+	}
 	for _, test := range []struct{ output, failure string }{
 		{dir, "output directory must not exist"},
 		{repo, "output must be outside the repository"},
+		{filepath.Join(link, "missing", "output"), "output must be outside the repository"},
 		{filepath.Join(repo, ".superpowers", "rejected-output"), "output must be outside the repository"},
 		{"relative-output", "output must be absolute"},
 	} {

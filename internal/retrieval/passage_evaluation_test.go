@@ -14,7 +14,7 @@ import (
 )
 
 func TestPassageEvaluationCapturesServingExcerptAndAcceptsTopK(t *testing.T) {
-	catalog, err := store.Open(filepath.Join(t.TempDir(), "catalog.db"))
+	catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "catalog.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	for i := range 4 {

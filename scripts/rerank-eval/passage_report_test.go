@@ -24,6 +24,7 @@ type passageObservation struct {
 	Failure    string                          `json:"Failure"`
 }
 type passageGateSummary struct {
+	availableControls        map[string]bool
 	Decision                 string                       `json:"Decision"`
 	Reasons                  []string                     `json:"Reasons"`
 	Queries                  int                          `json:"Queries"`
@@ -37,6 +38,41 @@ type passageGateSummary struct {
 	Preparation              time.Duration                `json:"Preparation"`
 	Budget                   passageBudget                `json:"Budget"`
 }
+
+// MarshalJSON represents public gate measurements as unavailable when the gate
+// is incomplete. Controls remain available as diagnostics.
+func (s passageGateSummary) MarshalJSON() ([]byte, error) {
+	type plain passageGateSummary
+	data, err := json.Marshal(plain(s))
+	if err != nil || s.Decision != "inconclusive" {
+		return data, err
+	}
+	var value map[string]any
+	if err := json.Unmarshal(data, &value); err != nil {
+		return nil, err
+	}
+	quality := value["Quality"].(map[string]any)
+	quality["public"], quality["proxy"] = nil, nil
+	for _, corpus := range []string{"short", "synthetic"} {
+		if !s.availableControls[corpus] {
+			quality[corpus] = nil
+		}
+	}
+	for _, arm := range value["Arms"].([]any) {
+		fields := arm.(map[string]any)
+		if !s.availableControls["short"] {
+			fields["ShortDelta"] = nil
+		}
+		if !s.availableControls["synthetic"] {
+			fields["SyntheticDelta"] = nil
+		}
+		for _, key := range []string{"Full", "Proxy", "MeanBytesRatio", "MeanTokensRatio", "P95BytesRatio", "WorstBytesRatio", "P95TokensRatio", "WorstTokensRatio", "MeanJSONBytes", "P95Latency", "P3MinusP1", "HitAt1", "Selection"} {
+			fields[key] = nil
+		}
+	}
+	return json.Marshal(value)
+}
+
 type passageQuality struct {
 	Name     string  `json:"Name"`
 	NDCGAt10 float64 `json:"NDCGAt10"`
@@ -111,6 +147,12 @@ func (r *passageGateReport) finish() {
 	grouped := map[string][]passageObservation{}
 	controls := map[string]int{}
 	for _, o := range r.Observations {
+		if o.Query == "" {
+			if o.Failure != "" {
+				s.Failures++
+			}
+			continue
+		}
 		key := o.Corpus + "\x00" + o.Query
 		if len(grouped[key]) == 0 {
 			if o.Corpus == "public" {
@@ -130,6 +172,7 @@ func (r *passageGateReport) finish() {
 			s.Failures++
 		}
 	}
+	s.availableControls = map[string]bool{"short": controls["short"] > 0, "synthetic": controls["synthetic"] > 0}
 	complete := s.Failures == 0 && s.Queries == 100 && s.ProxyQueries >= 30 && controls["short"] == 2 && controls["synthetic"] == 4 && s.Budget.EstimatedMicros <= 25_000_000
 	keys := slices.Sorted(maps.Keys(grouped))
 	s.Quality = map[string][4]passageQuality{}
@@ -221,6 +264,7 @@ func (r *passageGateReport) finish() {
 	}
 	if !complete {
 		s.Decision = "inconclusive"
+		s.Reasons = nil
 		s.Reasons = append(s.Reasons, "missing observations, provider/selection failures, controls or proxy coverage")
 	}
 }

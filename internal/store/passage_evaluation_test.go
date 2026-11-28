@@ -54,10 +54,10 @@ func TestEvaluationPassageFocusUsesNativeTokensAndRollsBack(t *testing.T) {
 
 func TestEvaluationSemanticPassagesRetainEligibleNeighbors(t *testing.T) {
 	t.Parallel()
-	eligible := map[semanticEligibilityKey]SemanticSearchCandidate{
-		{"set", "best", "sum"}:  {NodeID: 2, InputKind: document.EmbeddingInputRenditionChunk},
-		{"set", "next", "sum"}:  {NodeID: 2, InputKind: document.EmbeddingInputRenditionChunk},
-		{"set", "other", "sum"}: {NodeID: 3, InputKind: document.EmbeddingInputRenditionChunk},
+	eligible := map[semanticEligibilityKey][]SemanticSearchCandidate{
+		{"set", "best", "sum"}:  {{NodeID: 2, InputKind: document.EmbeddingInputRenditionChunk}},
+		{"set", "next", "sum"}:  {{NodeID: 2, InputKind: document.EmbeddingInputRenditionChunk}},
+		{"set", "other", "sum"}: {{NodeID: 3, InputKind: document.EmbeddingInputRenditionChunk}},
 	}
 	neighbors := []vectorindex.Neighbor{{SetID: "set", InputKey: "stale", InputChecksum: "sum", Score: 1}, {SetID: "set", InputKey: "best", InputChecksum: "sum", Score: .9}, {SetID: "set", InputKey: "other", InputChecksum: "sum", Score: .8}, {SetID: "set", InputKey: "next", InputChecksum: "sum", Score: .7}}
 	got := evaluationSemanticReducer(map[int64]struct{}{2: {}}, 3)

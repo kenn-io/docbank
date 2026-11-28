@@ -41,7 +41,7 @@ func preparePassageCorpus(ctx context.Context, root string, corpus embeddingeval
 			err = errors.Join(err, f.close())
 		}
 	}()
-	f.catalog, err = store.Open(filepath.Join(root, "catalog.db"))
+	f.catalog, err = store.Open(ctx, filepath.Join(root, "catalog.db"))
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +86,7 @@ func preparePassageCorpus(ctx context.Context, root string, corpus embeddingeval
 	if err = os.MkdirAll(filepath.Join(root, "spool"), 0700); err != nil {
 		return nil, err
 	}
-	f.service, err = processing.NewService(processing.ServiceConfig{
+	f.service, err = processing.NewService(ctx, processing.ServiceConfig{
 		Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(),
 		SpoolDirectory: filepath.Join(root, "spool"), Lifecycle: ctx, Principal: "offline-evaluation", Scope: "passage-evaluation",
 		Profiles: map[string]processing.ProfileConfig{"passage": {
