@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -55,20 +56,22 @@ type LocalTextPlan struct {
 // LocalTextSetup builds a private service for the reviewed profile. Activation
 // happens on daemon restart, so all consumers keep one effective identity.
 type LocalTextSetup struct {
-	Service         *Service
-	Candidate       func(mode, name string) (*Service, error)
-	CandidateTarget func(LocalTextTarget, string) (*Service, []string, error)
-	Selected        string
-	Startup         func(context.Context, bool, string) error
-	Save            func(string, string) error
-	SaveTarget      func(string, LocalTextTarget) error
-	ActivityBegin   func()
-	ActivityEnd     func()
-	mu              sync.Mutex
+	Service          *Service
+	Candidate        func(mode, name string) (*Service, error)
+	CandidateTarget  func(LocalTextTarget, string) (*Service, []string, error)
+	Selected         string
+	SelectedProfiles []string
+	Startup          func(context.Context, bool, string) error
+	Save             func(string, string) error
+	SaveTarget       func(string, LocalTextTarget) error
+	ActivityBegin    func()
+	ActivityEnd      func()
+	mu               sync.Mutex
 	// mu also guards the skip cache during the daemon's final idle check.
-	skips      map[localTextSkipKey]*localTextSkip
-	skipWarned bool
-	logger     *slog.Logger
+	skips        map[localTextSkipKey]*localTextSkip
+	skipWarned   bool
+	logger       *slog.Logger
+	profileLanes map[string]*LocalTextSetup
 }
 
 func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalTextPlan, *Service, error) {
@@ -569,6 +572,15 @@ func (setup *LocalTextSetup) skip(item store.DocumentSummary, code string) {
 // Pending checks current work before idle shutdown, including imports admitted
 // between lane polls. It leaves the lane's sweep/pruning bookkeeping intact.
 func (setup *LocalTextSetup) Pending(ctx context.Context) (bool, error) {
+	if len(setup.SelectedProfiles) > 0 {
+		for _, lane := range setup.selectedLanes() {
+			pending, err := lane.Pending(ctx)
+			if err != nil || pending {
+				return pending, err
+			}
+		}
+		return false, nil
+	}
 	setup.mu.Lock()
 	defer setup.mu.Unlock()
 	items, err := setup.listTargets(ctx, "", 1, false)
@@ -598,6 +610,9 @@ func (setup *LocalTextSetup) publicationPending(ctx context.Context) (bool, erro
 }
 
 func (setup *LocalTextSetup) Backfill(ctx context.Context, logger *slog.Logger) error {
+	if len(setup.SelectedProfiles) > 0 {
+		return setup.backfillProfiles(ctx, logger)
+	}
 	setup.logger = logger
 	holding := false
 	release := func() {
@@ -628,5 +643,102 @@ func (setup *LocalTextSetup) Backfill(ctx context.Context, logger *slog.Logger) 
 			}
 			return items, err
 		}, Key: func(item store.DocumentSummary) string { return item.ContentVersionID }, Process: setup.process}
+	return lane.Run(ctx)
+}
+
+// selectedLanes gives every profile its own skip cache and sweep cursor.
+func (setup *LocalTextSetup) selectedLanes() []*LocalTextSetup {
+	setup.mu.Lock()
+	defer setup.mu.Unlock()
+	if setup.profileLanes == nil {
+		setup.profileLanes = make(map[string]*LocalTextSetup, len(setup.SelectedProfiles))
+		for _, name := range setup.SelectedProfiles {
+			if name == "" {
+				continue
+			}
+			setup.profileLanes[name] = &LocalTextSetup{Service: setup.Service, Selected: name}
+		}
+	}
+	lanes := make([]*LocalTextSetup, 0, len(setup.profileLanes))
+	for _, name := range slices.Sorted(maps.Keys(setup.profileLanes)) {
+		lanes = append(lanes, setup.profileLanes[name])
+	}
+	return lanes
+}
+
+type localTextProfileItem struct {
+	profile string
+	item    store.DocumentSummary
+}
+
+func (setup *LocalTextSetup) backfillProfiles(ctx context.Context, logger *slog.Logger) error {
+	lanes := setup.selectedLanes()
+	byName := make(map[string]*LocalTextSetup, len(lanes))
+	for _, lane := range lanes {
+		lane.logger = logger
+		byName[lane.Selected] = lane
+	}
+	holding := false
+	release := func() {
+		if holding {
+			holding = false
+			if setup.ActivityEnd != nil {
+				setup.ActivityEnd()
+			}
+		}
+	}
+	defer release()
+	lane := Backfill[localTextProfileItem]{Name: "local-text", Page: 50, IdleDelay: time.Second, Logger: logger,
+		WriteRevision: setup.Service.catalog.WriteRevision, Busy: func() bool { return holding },
+		List: func(ctx context.Context, after string, limit int) ([]localTextProfileItem, error) {
+			profile, cursor, _ := strings.Cut(after, "\x00")
+			var result []localTextProfileItem
+			for _, current := range lanes {
+				if after != "" && current.Selected < profile {
+					continue
+				}
+				start := ""
+				if current.Selected == profile {
+					start = cursor
+				}
+				items, err := current.targets(ctx, start, limit-len(result))
+				if err != nil {
+					return nil, err
+				}
+				for _, item := range items {
+					result = append(result, localTextProfileItem{profile: current.Selected, item: item})
+				}
+				if len(result) == limit {
+					break
+				}
+			}
+			pending := len(result) > 0
+			if after == "" && !pending {
+				for _, current := range lanes {
+					var err error
+					pending, err = current.publicationPending(ctx)
+					if err != nil {
+						return nil, err
+					}
+					if pending {
+						break
+					}
+				}
+			}
+			if pending && !holding {
+				holding = true
+				if setup.ActivityBegin != nil {
+					setup.ActivityBegin()
+				}
+			} else if after == "" && !pending {
+				release()
+			}
+			return result, nil
+		},
+		Key: func(item localTextProfileItem) string { return item.profile + "\x00" + item.item.ContentVersionID },
+		Process: func(ctx context.Context, item localTextProfileItem) error {
+			return byName[item.profile].process(ctx, item.item)
+		},
+	}
 	return lane.Run(ctx)
 }
