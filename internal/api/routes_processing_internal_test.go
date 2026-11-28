@@ -101,6 +101,7 @@ func TestFromProcessingCoveragePreservesPartialAndUnavailable(t *testing.T) {
 }
 
 func TestLocalTextRetainedErrorDetails(t *testing.T) {
+	t.Parallel()
 	problem, ok := errors.AsType[*Error](fromProcessingError(&processing.LocalTextRetainedError{Reasons: []string{"contextual text stays with its provider"}}))
 	require.True(t, ok)
 	require.Equal(t, http.StatusUnprocessableEntity, problem.Status)

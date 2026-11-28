@@ -204,7 +204,7 @@ func TestLocalTextServerDaemonRestart(t *testing.T) {
 		waitForDaemon(t, root)
 		connection, err = daemonconn.Ensure(t.Context())
 		require.NoError(t, err)
-		defer connection.Close()
+		defer func() { require.NoError(t, connection.Close()) }()
 		restoredProfiles, err := connection.API().ListDocumentProcessingProfiles(t.Context(), &apiclient.ListDocumentProcessingProfilesRequestOptions{})
 		require.NoError(t, err)
 		foundUnused := false
@@ -238,7 +238,6 @@ func TestLocalTextServerDaemonRestart(t *testing.T) {
 		require.NoError(t, err)
 		require.False(t, unusedIndexed)
 		require.NoError(t, catalog.Close())
-
 	})
 	t.Run("built-in profile", func(t *testing.T) {
 		root := t.TempDir()
@@ -278,7 +277,7 @@ func TestLocalTextServerDaemonRestart(t *testing.T) {
 		require.NoError(t, err)
 		connection, err = daemonconn.Ensure(t.Context())
 		require.NoError(t, err)
-		defer connection.Close()
+		defer func() { require.NoError(t, connection.Close()) }()
 		localPlan, err := connection.API().PlanLocalText(t.Context(), &apiclient.PlanLocalTextRequestOptions{Body: &api.LocalTextPlanRequest{Server: "local"}})
 		require.NoError(t, err)
 		_, err = connection.API().ApplyLocalText(t.Context(), &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: "local", PlanFingerprint: localPlan.Fingerprint, Consent: true}})
@@ -286,7 +285,6 @@ func TestLocalTextServerDaemonRestart(t *testing.T) {
 		choice, err = readLocalText(root)
 		require.NoError(t, err)
 		require.Empty(t, choice.EmbeddingServer)
-
 	})
 }
 

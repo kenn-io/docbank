@@ -781,6 +781,7 @@ func TestLocalTextInheritedGrantDoesNotUndoConcurrentRevocation(t *testing.T) {
 }
 
 func TestLocalTextTargetReviewsChoiceAndRetainedReasons(t *testing.T) {
+	t.Parallel()
 	_, original := newLocalTextBackfillFixture(t, newWorkerProvider(t))
 	saved := "previous"
 	setup := newLocalTextMoveSetup(t, original.Service, &saved)
@@ -826,11 +827,11 @@ func TestLocalTextTargetReviewsChoiceAndRetainedReasons(t *testing.T) {
 		}
 		_, err := setup.Plan(t.Context(), LocalTextTarget{EmbeddingServer: "https://embedding.example.invalid/v1", EmbeddingModel: "model", EmbeddingDimensions: 2})
 		require.ErrorContains(t, err, "contextual text stays with its provider")
-
 	})
 }
 
 func TestLocalTextTargetKeepsUnusedProfile(t *testing.T) {
+	t.Parallel()
 	provider := &localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(t)}
 	fixture, original := newLocalTextBackfillFixture(t, newWorkerProvider(t), provider)
 	source := original.Service.profiles["pdf"]
@@ -888,6 +889,7 @@ func TestLocalTextTargetKeepsUnusedProfile(t *testing.T) {
 }
 
 func TestLocalTextPairedBindingsFinishBackfill(t *testing.T) {
+	t.Parallel()
 	provider := &localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(t)}
 	fixture, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t), provider)
 	profile := setup.Service.profiles["pdf"]

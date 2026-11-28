@@ -44,7 +44,10 @@ func (target LocalTextTarget) ValidateEmbeddingServer() error {
 	if target.EmbeddingAPIKeyEnv != "" && !embeddingKeyEnvName.MatchString(target.EmbeddingAPIKeyEnv) {
 		return errors.New("embedding API key must name an environment variable")
 	}
-	return (embedconfig.Embedder{API: embedconfig.APIKit, BaseURL: target.EmbeddingServer, Model: target.EmbeddingModel, Dims: target.EmbeddingDimensions, TrustPrivateNetwork: true}).Validate()
+	if err := (embedconfig.Embedder{API: embedconfig.APIKit, BaseURL: target.EmbeddingServer, Model: target.EmbeddingModel, Dims: target.EmbeddingDimensions, TrustPrivateNetwork: true}).Validate(); err != nil {
+		return fmt.Errorf("validate embedding server: %w", err)
+	}
+	return nil
 }
 
 type LocalTextPlan struct {

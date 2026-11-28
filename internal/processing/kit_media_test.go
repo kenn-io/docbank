@@ -93,6 +93,7 @@ func kitFlateScan(t *testing.T, pages, width, height int) []byte {
 }
 
 func TestKitMediaFallbackEligibility(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	descriptor := embeddingWorkerDescriptor(t)
 	descriptor.ID = openaicompat.ProviderID
