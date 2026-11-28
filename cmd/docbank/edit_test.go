@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/docbank/docbank/provider/exampleservice"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -306,6 +307,9 @@ func TestMain(m *testing.M) {
 	}
 	if os.Getenv("DOCBANK_EDIT_TEST_HELPER") == "1" {
 		os.Exit(runEditHelper())
+	}
+	if len(os.Args) > 1 && os.Args[1] == providerExampleHelperArg {
+		os.Exit(exampleservice.Run(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
 	if len(os.Args) > 3 && os.Args[1] == providerTestHelperArg {
 		os.Exit(runProviderTestHelper(os.Args[2], os.Args[3]))

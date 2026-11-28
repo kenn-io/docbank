@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-26
+last_edited: 2026-11-28
 title: Hosted vault providers
 description: Connect Docbank to a service that hosts vaults for you, and see which vaults you can open.
 ---
@@ -35,6 +35,29 @@ ID and name. Add `--json` to either command for scripts. The JSON from
 
 If the helper reports that you are signed out, sign in to the service's own
 application and run the command again.
+
+## Check that you can open a vault
+
+Not in the latest release yet:
+
+```sh
+docbank provider access work "Studio documents"
+docbank provider access work "Studio documents" --actions read,upload --json
+```
+
+`provider access` asks the provider's helper to open one vault, renews the
+credential once, and ends the open. Name the vault by its ID or its exact
+name from `provider vaults`. Use it to confirm that the provider lets this
+computer use the vault. It opens no documents.
+
+- `--actions` is what to ask for: `read` (the default), `upload`, or
+  `read,upload`.
+- When the provider needs your approval, the command prints the page where
+  you decide and waits. `--wait` sets how long, 5 minutes by default.
+  `--wait 0` does not wait: approve on the page, then run the command again.
+- On success it prints the vault's address and when your approval ends. The
+  JSON has `vault`, `actions`, `mount`, and `approval_expires_at`. The command
+  never prints the credential.
 
 ## Add or replace a connection
 
@@ -76,8 +99,8 @@ tell your computers apart. Reconfiguring keeps the ID.
 ## Write a helper
 
 A helper reads one JSON request on stdin and writes one JSON result on stdout.
-Docbank's CLI calls `discover` today, and the helper contract defines four
-operations:
+The helper contract defines four operations. `provider vaults` and
+`provider configure` call `discover`; `provider access` calls all four.
 
 | `operation` | Purpose | Extra request fields |
 | --- | --- | --- |
@@ -95,6 +118,43 @@ Helpers written in Go can use `go.kenn.io/docbank/docbank/provider`:
 - `NewDiscoverRequest`, `NewOpenRequest`, `NewRenewRequest`,
   `NewReleaseRequest`, `DecodeResponse`, and `Exchange` build requests and run
   or check exchanges in helper tests.
+
+### Try the example helper
+
+The Docbank repository includes an example helper for a pretend hosting
+service. It keeps the service's state in one local JSON file and serves no
+documents. Use it to try the provider commands or to compare your helper's
+answers. Run these from a checkout of the repository:
+
+```sh
+go build -o example-helper ./docbank/provider/exampleservice/helper
+./example-helper --state "$PWD/service.json" --vault "Studio documents" init
+```
+
+Connect Docbank to it. Both paths in `helper` must be absolute:
+
+```sh
+docbank provider configure <<EOF
+{"version": 1, "name": "example",
+ "origin": "https://vaults.example.org", "mount_prefix": "/documents",
+ "browser_origin": "https://vaults.example.org",
+ "helper": ["$PWD/example-helper", "--state", "$PWD/service.json"]}
+EOF
+docbank provider access example "Studio documents" --wait 0
+```
+
+The last command reports that the provider is waiting for your approval. The
+example service has no web page, so decide from the command line, then check
+again:
+
+```sh
+./example-helper --state "$PWD/service.json" approve
+docbank provider access example "Studio documents"
+```
+
+`decline` refuses every waiting open instead. The example approves an
+installation for one vault and the actions it asked for, for 90 days, and its
+credentials last 15 minutes.
 
 ### Requests
 
@@ -198,7 +258,7 @@ underscores, never free text.
 | `status` | Operations | Payload | Meaning |
 | --- | --- | --- | --- |
 | `ready` | `discover`, `open`, `renew` | `discovery` for `discover`; `access` with `credential` for `open` and `renew`. No `reason`. | The request succeeded. |
-| `approval_required` | `open` | `approval_url`. No `reason`. | The person has not approved this open yet. They approve in their browser on the service's page, then Docbank's client asks again. |
+| `approval_required` | `open` | `approval_url`. No `reason`. | The person has not approved this open yet. They approve in their browser on the service's page. Docbank sends the same `open` request again, with the same `request_id`, until the result changes. |
 | `conflict` | `open`, `renew` | `access` without `credential`, optional `reason`. | The service already answered this request with a credential. The result repeats the access facts without `credential`. |
 | `released` | `release` | Envelope only. No `reason`. | The open has ended and its credentials stop working. |
 | `sign_in_required` | All | Optional `reason`. | The person must sign in to the service first. |
