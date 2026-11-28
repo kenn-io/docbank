@@ -249,6 +249,10 @@ func (evaluation *PassageEvaluation) Select(ctx context.Context, limit int) ([]e
 		selected[i].Passages = nil
 		for _, passage := range kept {
 			selected[i].Passages = append(selected[i].Passages, passage.text)
+			// Current search revalidates each evidence item's own document identity.
+			passage.evidence.VaultID = report.Results[resultIndex].Document.VaultID
+			passage.evidence.NodeID = report.Results[resultIndex].Document.NodeID
+			passage.evidence.ContentVersionID = version
 			report.Results[resultIndex].Evidence = append(slices.Clone(report.Results[resultIndex].Evidence), passage.evidence)
 		}
 		if len(kept) == 0 {
