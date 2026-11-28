@@ -29,6 +29,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/document/openaicompat"
 	"go.kenn.io/docbank/document/pdftext"
 	"go.kenn.io/docbank/document/upload"
 	"go.kenn.io/docbank/internal/blob"
@@ -78,6 +79,7 @@ type ProfileConfig struct {
 	EmbeddingSimilarityFloors map[string]float64
 	EmbeddingDisclosures      map[string]RuntimeDisclosure
 	EmbeddingClassifiers      map[string]func(error) (EmbeddingProviderFailure, time.Duration)
+	MediaFallbackBindings     map[string]string
 	Tokenizers                map[string]document.Tokenizer
 }
 
@@ -117,6 +119,7 @@ type configuredProfile struct {
 	tokenizers                map[string]document.Tokenizer
 	renderDisclosure          RuntimeDisclosure
 	embedDisclosures          map[string]RuntimeDisclosure
+	mediaFallbackBindings     map[string]string
 }
 
 func (profile configuredProfile) hasFaces() bool {
@@ -495,6 +498,7 @@ func NewService(ctx context.Context, config ServiceConfig) (*Service, error) {
 			return nil, fmt.Errorf("processing profile %q canonical decode: %w", name, err)
 		}
 		configured := configuredProfile{vectorSpaces: make(map[string]string), portable: profile, provider: supplied.RenditionProvider,
+			mediaFallbackBindings:     maps.Clone(supplied.MediaFallbackBindings),
 			embeddingSimilarityFloors: maps.Clone(supplied.EmbeddingSimilarityFloors),
 			mediaMaxBytes:             service.mediaMaxBytes,
 			rerankingProvider:         supplied.RerankingProvider, rerankingProfile: supplied.RerankingProfile,
@@ -1815,7 +1819,26 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 	bindings := make([]document.EmbeddingBindingV1, 0, len(profile.portable.Embeddings))
 	vectorSpaces := make([]string, 0, len(profile.portable.Embeddings))
 	var ineligibleErr error
+	skipped := make(map[string]bool, len(profile.mediaFallbackBindings))
+	for kitName, fallbackName := range profile.mediaFallbackBindings {
+		index := slices.IndexFunc(profile.portable.Embeddings, func(binding document.EmbeddingBindingV1) bool { return binding.Name == kitName })
+		if index < 0 || profile.embedders[kitName] == nil {
+			return nil, fmt.Errorf("media binding %q is not configured", kitName)
+		}
+		eligible, inspectErr := service.kitMediaEligible(ctx, version, profile, profile.portable.Embeddings[index])
+		if inspectErr != nil {
+			return nil, inspectErr
+		}
+		if eligible {
+			skipped[fallbackName] = true
+		} else {
+			skipped[kitName] = true
+		}
+	}
 	for _, binding := range profile.portable.Embeddings {
+		if skipped[binding.Name] {
+			continue
+		}
 		var generation store.EmbeddingInputGenerationRecord
 		switch binding.InputKind {
 		case document.EmbeddingInputImage:
@@ -1944,6 +1967,26 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		return jobIDs, nil
 	}
 	return jobIDs, service.rebuildVectorSpaces(ctx, vectorSpaces)
+}
+
+func (service *Service) kitMediaEligible(ctx context.Context, version store.ContentVersion, profile configuredProfile, binding document.EmbeddingBindingV1) (bool, error) {
+	work := EmbeddingWork{ProcessingProfile: profile.record, Binding: binding, Descriptor: profile.embedders[binding.Name].Descriptor(),
+		SourceBlobHash: version.BlobHash, SourceBytes: version.Size, SourceMediaType: version.MimeType,
+		SourceFilename: syntheticFilename("", version.MimeType, false)}
+	if version.Size < 1 || version.Size > embeddingSourceLimit(work) {
+		return false, nil
+	}
+	reader, err := service.blobs.OpenContext(ctx, version.BlobHash)
+	if err != nil {
+		return false, err
+	}
+	capability, inspectErr := media.InspectCapability(ctx, reader, directEmbeddingInspectionPolicy(work))
+	closeErr := reader.Close()
+	if inspectErr != nil || closeErr != nil {
+		return false, errors.Join(inspectErr, closeErr)
+	}
+	facts, local := capability.UploadCapability().Facts()
+	return capability.Eligible && local && openaicompat.SupportedMedia(facts), nil
 }
 
 func (service *Service) rebuildVectorSpaces(ctx context.Context, vectorSpaces []string) error {

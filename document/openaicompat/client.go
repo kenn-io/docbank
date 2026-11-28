@@ -373,7 +373,7 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 			if !local || metadata.MediaFamily != facts.MediaFamily || metadata.MediaType != facts.MediaType ||
 				metadata.ByteLength > media.MaxBytes || metadata.ByteLength != facts.SourceBytes || metadata.SHA256 != facts.SourceSHA256 ||
 				metadata.CapabilityRecordChecksum != facts.Checksum || metadata.InputKind != document.RenditionInputOriginalFile ||
-				facts.DescriptorFingerprint != client.descriptor.Fingerprint || !supportedMedia(facts) {
+				facts.DescriptorFingerprint != client.descriptor.Fingerprint || !SupportedMedia(facts) {
 				return document.EmbeddingResult{}, fmt.Errorf("openaicompat: unsupported media inspection: %w", ErrPermanentResponse)
 			}
 			op := providerutil.NewResumedOperation(ctx, providerutil.Provider("openaicompat"), client.profile.RequestTimeout)
@@ -560,7 +560,8 @@ func (client *Client) validateRevisionEcho(header http.Header) error {
 	return nil
 }
 
-func supportedMedia(f document.UploadCapabilityFacts) bool {
+// SupportedMedia reports whether inspected media meets the Kit adapter's format limits.
+func SupportedMedia(f document.UploadCapabilityFacts) bool {
 	switch f.MediaFamily {
 	case "image":
 		return (f.MediaType == "image/png" || f.MediaType == "image/jpeg" || f.MediaType == "image/webp") && f.Pixels > 0 && f.Frames > 0
