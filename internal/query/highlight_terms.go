@@ -40,14 +40,9 @@ func collectPositiveTextTerms(
 			collectPositiveTextTerms(expression.Saved.Expression, "", false, terms, seen)
 			return
 		}
-		if field != "" || syntax.Value == "" || utf8.RuneCountInString(syntax.Value) > maxHighlightTermRunes {
-			return
+		if field == "" {
+			appendHighlightTerm(terms, seen, syntax.Value)
 		}
-		if _, duplicate := seen[syntax.Value]; duplicate {
-			return
-		}
-		seen[syntax.Value] = struct{}{}
-		*terms = append(*terms, syntax.Value)
 	default:
 		for _, child := range expression.Children {
 			collectPositiveTextTerms(child, field, negated, terms, seen)
@@ -61,14 +56,20 @@ func BoundedHighlightTerms(candidates []string) []string {
 	terms := make([]string, 0, min(len(candidates), maxHighlightTerms))
 	seen := make(map[string]struct{}, maxHighlightTerms)
 	for _, term := range candidates {
-		if len(terms) == maxHighlightTerms {
-			break
-		}
-		if _, duplicate := seen[term]; duplicate || term == "" || utf8.RuneCountInString(term) > maxHighlightTermRunes {
-			continue
-		}
-		seen[term] = struct{}{}
-		terms = append(terms, term)
+		appendHighlightTerm(&terms, seen, term)
 	}
 	return terms
+}
+
+// appendHighlightTerm adds a term that is non-empty, within its length bound,
+// not yet seen, and fits the receipt's count bound.
+func appendHighlightTerm(terms *[]string, seen map[string]struct{}, term string) {
+	if len(*terms) >= maxHighlightTerms || term == "" || utf8.RuneCountInString(term) > maxHighlightTermRunes {
+		return
+	}
+	if _, duplicate := seen[term]; duplicate {
+		return
+	}
+	seen[term] = struct{}{}
+	*terms = append(*terms, term)
 }
