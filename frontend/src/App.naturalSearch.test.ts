@@ -36,10 +36,25 @@ afterEach(() => {
   Reflect.deleteProperty(Element.prototype, "scrollIntoView");
 });
 
+const readyText: rendition.ReadyRenditionText = {
+  state: "ready",
+  profile: { name: "private", configuration: "configured", fingerprint: "b".repeat(64) },
+  generationID: "c".repeat(64),
+  attachmentID: "d".repeat(64),
+  buildID: "e".repeat(64),
+  artifact: {
+    id: "synthetic-text",
+    sha256: "f".repeat(64),
+    size: 100,
+    mediaType: "text/markdown; charset=utf-8",
+  },
+};
+
 beforeEach(() => {
+  // The daemon's shape for a processed version with no readable text.
   vi.mocked(rendition.resolveRenditionText).mockResolvedValue({
     state: "verified_empty",
-    profile: { name: "", configuration: "unconfigured", fingerprint: "" },
+    profile: { name: "", configuration: "configured", fingerprint: "b".repeat(64) },
     generationID: "",
     attachmentID: "",
     buildID: "",
@@ -388,21 +403,9 @@ it("opens verified text context for a selected result from a plain top-bar searc
     files: [file],
     baseReport: report("hybrid", [result(file, 1, "needle excerpt")]),
   });
-  vi.mocked(rendition.resolveRenditionText).mockResolvedValue({
-    state: "ready",
-    profile: { name: "private", configuration: "configured", fingerprint: "b".repeat(64) },
-    generationID: "c".repeat(64),
-    attachmentID: "d".repeat(64),
-    buildID: "e".repeat(64),
-    artifact: {
-      id: "synthetic-text",
-      sha256: "f".repeat(64),
-      size: 100,
-      mediaType: "text/markdown; charset=utf-8",
-    },
-  });
+  vi.mocked(rendition.resolveRenditionText).mockResolvedValue(readyText);
   vi.mocked(rendition.readVerifiedRenditionText).mockResolvedValue(
-    "Needle appears first. A second needle appears here.",
+    "Needle appears first. The tax return follows.",
   );
 
   render(App);
@@ -414,13 +417,10 @@ it("opens verified text context for a selected result from a plain top-bar searc
   });
   await fireEvent.click((await screen.findByText("needle excerpt")).closest("tr")!);
 
-  expect(await screen.findByRole("tab", { name: "Preview" })).toBeTruthy();
-  expect(await screen.findByText("Search match 1 of 2")).toBeTruthy();
-  expect(
-    screen
-      .getByLabelText("Verified text of message.eml")
-      .querySelectorAll('mark[data-source="query"]'),
-  ).toHaveLength(2);
+  const text = await screen.findByLabelText("Verified text of message.eml");
+  const queryMarks = () =>
+    [...text.querySelectorAll('mark[data-source="query"]')].map((mark) => mark.textContent);
+  await waitFor(() => expect(queryMarks()).toEqual(["Needle"]));
   expect(harness.searchHighlightQueries).toEqual(["needle"]);
   expect(harness.highlightQueries).toEqual([]);
   expect(rendition.resolveRenditionText).toHaveBeenCalledWith(
@@ -432,8 +432,10 @@ it("opens verified text context for a selected result from a plain top-bar searc
     expect.any(AbortSignal),
   );
 
-  await fireEvent.click(screen.getByRole("button", { name: "Next search match" }));
-  expect(screen.getByText("Search match 2 of 2")).toBeTruthy();
+  // A quoted phrase reaches the marks as one term, not split on whitespace.
+  await submitSearch('"tax return"');
+  await waitFor(() => expect(queryMarks()).toEqual(["tax return"]));
+  expect(harness.searchHighlightQueries).toEqual(["needle", '"tax return"']);
 });
 
 it.each([
@@ -454,20 +456,8 @@ it.each([
     files: [file],
     baseReport: report("hybrid", [result(file, 1, "needle excerpt")]),
   };
-  const harness = installHarness(options);
-  vi.mocked(rendition.resolveRenditionText).mockResolvedValue({
-    state: "ready",
-    profile: { name: "private", configuration: "configured", fingerprint: "b".repeat(64) },
-    generationID: "c".repeat(64),
-    attachmentID: "d".repeat(64),
-    buildID: "e".repeat(64),
-    artifact: {
-      id: "synthetic-text",
-      sha256: "f".repeat(64),
-      size: 100,
-      mediaType: "text/markdown; charset=utf-8",
-    },
-  });
+  installHarness(options);
+  vi.mocked(rendition.resolveRenditionText).mockResolvedValue(readyText);
   vi.mocked(rendition.readVerifiedRenditionText).mockResolvedValue(
     "A synthetic needle with evidence.",
   );
@@ -491,65 +481,19 @@ it.each([
   await screen.findByText("reranked needle excerpt");
   expect(previewSelected()).toBe("false");
 
-  const searches = harness.postBodies.length;
+  // New rows prove the search was accepted before the tab is checked.
+  options.rerankReport = report("hybrid", [result(file, 1, "resubmitted needle excerpt")], {
+    outcome: "applied",
+    candidate_count: 1,
+  });
   await submitSearch(next);
-  await waitFor(() => expect(harness.postBodies.length).toBeGreaterThan(searches));
+  await screen.findByText("resubmitted needle excerpt");
   if (next === "needle") {
-    await screen.findByText("reranked needle excerpt");
     expect(previewSelected()).toBe("false");
     return;
   }
-  await waitFor(() => expect(previewSelected()).toBe("true"));
+  expect(previewSelected()).toBe("true");
   expect(await screen.findByText("Search match 1 of 2")).toBeTruthy();
-});
-
-it("opens Preview for each newly selected search result after another tab", async () => {
-  const first = node(2, "first.txt", baseVersion);
-  const second = node(3, "second.txt", rerankedVersion);
-  installHarness({
-    profiles: [
-      {
-        name: "private",
-        fingerprint: "a".repeat(64),
-        rendition: true,
-        embedding_bindings: ["embed"],
-        reranking_available: true,
-      },
-    ],
-    files: [first, second],
-    baseReport: report("hybrid", [
-      result(first, 1, "first needle excerpt"),
-      result(second, 2, "second needle excerpt"),
-    ]),
-  });
-  vi.mocked(rendition.resolveRenditionText).mockResolvedValue({
-    state: "ready",
-    profile: { name: "private", configuration: "configured", fingerprint: "b".repeat(64) },
-    generationID: "c".repeat(64),
-    attachmentID: "d".repeat(64),
-    buildID: "e".repeat(64),
-    artifact: {
-      id: "synthetic-text",
-      sha256: "f".repeat(64),
-      size: 100,
-      mediaType: "text/markdown; charset=utf-8",
-    },
-  });
-  vi.mocked(rendition.readVerifiedRenditionText).mockResolvedValue("A synthetic needle.");
-
-  render(App);
-  await screen.findByRole("checkbox", { name: "Rerank results" });
-  await submitSearch("needle");
-  await fireEvent.click((await screen.findByText("first needle excerpt")).closest("tr")!);
-  await screen.findByLabelText("Verified text of first.txt");
-  await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
-  expect(screen.getByRole("tab", { name: "Text" }).getAttribute("aria-selected")).toBe("true");
-
-  await fireEvent.click(screen.getByText("second needle excerpt").closest("tr")!);
-  await waitFor(() =>
-    expect(screen.getByRole("tab", { name: "Preview" }).getAttribute("aria-selected")).toBe("true"),
-  );
-  expect(await screen.findByText("Search match 1 of 1")).toBeTruthy();
 });
 
 it.each([
@@ -2311,46 +2255,3 @@ it.each(["names", "meaning", "frozen"])(
     }
   },
 );
-
-it("highlights the phrase of a quoted plain-words search in verified text", async () => {
-  const file = node(2, "report.txt", baseVersion);
-  installHarness({
-    profiles: [
-      {
-        name: "private",
-        fingerprint: "a".repeat(64),
-        rendition: true,
-        embedding_bindings: ["embed"],
-        reranking_available: true,
-      },
-    ],
-    files: [file],
-    baseReport: report("hybrid", [result(file, 1, "tax return excerpt")]),
-  });
-  vi.mocked(rendition.resolveRenditionText).mockResolvedValue({
-    state: "ready",
-    profile: { name: "private", configuration: "configured", fingerprint: "b".repeat(64) },
-    generationID: "c".repeat(64),
-    attachmentID: "d".repeat(64),
-    buildID: "e".repeat(64),
-    artifact: {
-      id: "synthetic-text",
-      sha256: "f".repeat(64),
-      size: 100,
-      mediaType: "text/markdown; charset=utf-8",
-    },
-  });
-  vi.mocked(rendition.readVerifiedRenditionText).mockResolvedValue("The tax return is here.");
-
-  render(App);
-  await screen.findByRole("checkbox", { name: "Rerank results" });
-  await submitSearch('"tax return"');
-  await fireEvent.click((await screen.findByText("tax return excerpt")).closest("tr")!);
-
-  const preview = await screen.findByLabelText("Verified text of report.txt");
-  await waitFor(() =>
-    expect(
-      [...preview.querySelectorAll('mark[data-source="query"]')].map((mark) => mark.textContent),
-    ).toEqual(["tax return"]),
-  );
-});

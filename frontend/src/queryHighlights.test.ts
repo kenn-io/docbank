@@ -97,8 +97,9 @@ it("reads live highlights from the search terms without a query receipt", async 
 
 it.each([
   ["unknown fields", { terms: ["alpha"], query_fingerprint: fingerprint }],
+  // Guards that live terms go through the shared term validation at all; its
+  // individual rules are covered by the readQueryHighlights table.
   ["a duplicated term", { terms: ["alpha", "alpha"] }],
-  ["an empty term", { terms: [""] }],
 ])("rejects live highlights with %s", async (_name, body) => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
     new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } }),

@@ -420,7 +420,8 @@ it.each([
     queryTerms: ["fallback"],
     onauthfailure: vi.fn(),
   });
-  expect(await screen.findByText(/Synthetic/)).toBeTruthy();
+  const text = await screen.findByLabelText("Verified text of report.txt");
+  await waitFor(() => expect(text.textContent).toBe("Synthetic fallback evidence"));
   expect(
     screen
       .getByRole("tab", { name: tab === "preview" ? "Preview" : "Text" })
