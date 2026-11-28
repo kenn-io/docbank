@@ -374,52 +374,60 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
   expect(fetchMock).toHaveBeenCalledTimes(3);
 });
 
-it.each(["unprocessed", "unconfigured"])(
-  "keeps the Text view with Find for %s text",
-  async (state) => {
-    const bytes = new TextEncoder().encode("Synthetic fallback evidence");
-    const selected = source(bytes, "66666666-6666-4666-8666-666666666666");
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const path = String(input);
-      if (path === "/api/v1/renditions/text")
-        return new Response(
-          JSON.stringify({
-            state,
-            source: {
-              node_id: selected.nodeID,
-              revision: 8,
-              version_id: selected.versionID,
-              blob_hash: selected.blobHash,
-              size: selected.size,
-              media_type: selected.mimeType,
-            },
-            profile: {
-              name: "",
-              configuration: state === "unconfigured" ? "unconfigured" : "configured",
-              fingerprint: state === "unconfigured" ? "" : "b".repeat(64),
-            },
-            generation_id: "",
-            attachment_id: "",
-            build_id: "",
-          }),
-          { headers: { "Content-Type": "application/json" } },
-        );
-      if (init?.method === "POST") return ready(selected, "fallback");
-      if (path.endsWith("ticket=fallback")) return body(selected, bytes);
-      throw new Error(`unexpected request ${path}`);
-    });
-    render(VerifiedPreview, {
-      session: "session",
-      source: selected,
-      authorizationRevision: 8,
-      activeTab: "text",
-      onauthfailure: vi.fn(),
-    });
-    expect(await screen.findByText("Synthetic fallback evidence")).toBeTruthy();
-    expect(screen.getByRole("tab", { name: "Text" }).getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByRole("textbox", { name: "Find in verified text" })).toBeTruthy();
-  },
-);
+it.each([
+  ["unprocessed", "text"],
+  ["unconfigured", "text"],
+  ["unprocessed", "preview"],
+  ["unconfigured", "preview"],
+] as const)("keeps verified original text with Find for %s on %s", async (state, tab) => {
+  const bytes = new TextEncoder().encode("Synthetic fallback evidence");
+  const selected = source(bytes, "66666666-6666-4666-8666-666666666666");
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/v1/renditions/text")
+      return new Response(
+        JSON.stringify({
+          state,
+          source: {
+            node_id: selected.nodeID,
+            revision: 8,
+            version_id: selected.versionID,
+            blob_hash: selected.blobHash,
+            size: selected.size,
+            media_type: selected.mimeType,
+          },
+          profile: {
+            name: "",
+            configuration: state === "unconfigured" ? "unconfigured" : "configured",
+            fingerprint: state === "unconfigured" ? "" : "b".repeat(64),
+          },
+          generation_id: "",
+          attachment_id: "",
+          build_id: "",
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    if (init?.method === "POST") return ready(selected, "fallback");
+    if (path.endsWith("ticket=fallback")) return body(selected, bytes);
+    throw new Error(`unexpected request ${path}`);
+  });
+  render(VerifiedPreview, {
+    session: "session",
+    source: selected,
+    authorizationRevision: 8,
+    activeTab: tab,
+    searchContext: tab === "preview",
+    queryTerms: ["fallback"],
+    onauthfailure: vi.fn(),
+  });
+  expect(await screen.findByText(/Synthetic/)).toBeTruthy();
+  expect(
+    screen
+      .getByRole("tab", { name: tab === "preview" ? "Preview" : "Text" })
+      .getAttribute("aria-selected"),
+  ).toBe("true");
+  expect(screen.getByRole("textbox", { name: "Find in verified text" })).toBeTruthy();
+});
 
 it.each([0, 64 * 1024 * 1024 + 1])(
   "offers download without requesting preview bytes for a %i-byte PDF",

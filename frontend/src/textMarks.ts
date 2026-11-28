@@ -96,3 +96,8 @@ export function markText(text: string, options: MarkOptions): TextMarkResult {
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
+/** Move within the bounded, ordered list of visible text matches. */
+export function nextTextMatch(index: number, direction: -1 | 1, count: number): number {
+  return count > 0 ? (index + direction + count) % count : 0;
+}

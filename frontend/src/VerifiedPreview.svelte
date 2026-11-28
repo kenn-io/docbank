@@ -1,7 +1,7 @@
 <script lang="ts">
   import { reportAction, reportFailure } from "./action-events.js";
   import "./inspector.css";
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import { Button, overlayScrollbars } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import AttachmentsTab from "./AttachmentsTab.svelte";
@@ -31,6 +31,8 @@
     profileName = "",
     observed,
     activeTab = $bindable("preview"),
+    searchContext = false,
+    queryKey = "",
     queryTerms = [],
     queryHighlightError = "",
     highlightSets = [],
@@ -52,6 +54,8 @@
     profileName?: string;
     activeTab?: "preview" | "text" | "duplicates" | "attachments" | "email";
     observed?: RenditionObservation;
+    searchContext?: boolean;
+    queryKey?: string;
     queryTerms?: string[];
     queryHighlightError?: string;
     highlightSets?: HighlightChoice[];
@@ -75,12 +79,14 @@
   let navigationEpoch = 0;
   let navigationController: AbortController | undefined;
   let frozenKey = "";
+  let originalQueryKey = "";
+  let originalPreviewKey = $state("");
   const relatedSource = $derived(relatedSources.at(-1));
   const displayedSource = $derived(relatedSource ?? duplicateSource ?? source);
   const displayedObservation = $derived(duplicateSource || relatedSource ? undefined : observed);
   const isEmail = $derived(parseMediaType(displayedSource.mimeType) === "message/rfc822");
-  // An email has its own tab; its Preview would only say it cannot render.
-  const showPreview = $derived(!isEmail);
+  // Search selections can read extracted email text in Preview.
+  const showPreview = $derived(!isEmail || (searchContext && !duplicateSource && !relatedSource));
   const fallbackTab = $derived(showPreview ? "preview" : "email");
   const displayedTab = $derived(
     activeTab === "email" && !isEmail
@@ -100,6 +106,8 @@
     relatedSource?.mutationRevision ?? duplicateSource?.mutationRevision ?? authorizationRevision,
   );
   const contentKey = $derived(`${session}:${displayedSource.key}:${displayedRevision}`);
+  const showSearchContext = $derived(searchContext && !duplicateSource && !relatedSource);
+  const showSearchText = $derived(showSearchContext && originalPreviewKey !== contentKey);
   const visitedTabs = $derived(visited.key === contentKey ? visited.tabs : []);
 
   $effect(() => {
@@ -109,8 +117,18 @@
       duplicateSource = undefined;
       relatedSources = [];
       navigationError = "";
+      originalPreviewKey = "";
+      // A newly selected search result opens at its match, not the last tab used.
+      if (untrack(() => searchContext)) activeTab = "preview";
     }
     return cancelNavigation;
+  });
+
+  $effect(() => {
+    // A newly accepted query shows its search context again.
+    if (queryKey === originalQueryKey) return;
+    originalQueryKey = queryKey;
+    originalPreviewKey = "";
   });
 
   $effect(() => {
@@ -269,20 +287,47 @@
           {#if tab.value === displayedTab || visitedTabs.includes(tab.value)}
             <div hidden={tab.value !== displayedTab}>
               {#if tab.value === "preview"}
-                {#if parseMediaType(displayedSource.mimeType) === "application/pdf" || displayedSource.mimeType === "image/png"}
-                  <PageViewer
+                {#if showSearchText}
+                  <VerifiedText
                     {session}
+                    active={displayedTab === "preview"}
+                    {processingRevision}
                     source={displayedSource}
                     authorizationRevision={displayedRevision}
+                    {profileName}
+                    observed={displayedObservation}
+                    {queryKey}
+                    {queryTerms}
+                    {queryHighlightError}
+                    searchContext
+                    onprocess={onprocess ? () => onprocess?.(displayedSource) : undefined}
                     {onauthfailure}
-                  />
+                  >
+                    {#snippet alternative()}{@render showOriginal()}{/snippet}
+                    {#snippet fallback()}
+                      <p class="expired">
+                        Search context is unavailable for this version. Showing the original.
+                      </p>
+                      {#if isEmail}
+                        <EmailViewer
+                          {session}
+                          source={displayedSource}
+                          authorizationRevision={displayedRevision}
+                          onattachments={() => chooseTab("attachments")}
+                          {onauthfailure}
+                        />
+                      {:else}
+                        {@render originalPreview()}
+                      {/if}
+                    {/snippet}
+                  </VerifiedText>
                 {:else}
-                  <OriginalPreview
-                    {session}
-                    source={displayedSource}
-                    authorizationRevision={displayedRevision}
-                    {onauthfailure}
-                  />
+                  {#if showSearchContext}<Button
+                      size="sm"
+                      surface="soft"
+                      onclick={() => (originalPreviewKey = "")}>Show search context</Button
+                    >{/if}
+                  {@render originalPreview()}
                 {/if}
               {:else}
                 {#if tab.value === "email"}
@@ -304,8 +349,11 @@
                     authorizationRevision={displayedRevision}
                     {profileName}
                     observed={displayedObservation}
-                    {queryTerms}
-                    {queryHighlightError}
+                    {queryKey}
+                    queryTerms={!duplicateSource && !relatedSource ? queryTerms : []}
+                    queryHighlightError={!duplicateSource && !relatedSource
+                      ? queryHighlightError
+                      : ""}
                     {highlightSets}
                     onprocess={onprocess ? () => onprocess?.(displayedSource) : undefined}
                     {onauthfailure}
@@ -333,6 +381,35 @@
     </div>
   </div>
 </section>
+
+{#snippet showOriginal()}
+  <Button
+    size="sm"
+    surface="soft"
+    onclick={() => {
+      if (isEmail) chooseTab("email");
+      else originalPreviewKey = contentKey;
+    }}>{isEmail ? "Show email" : "Show original preview"}</Button
+  >
+{/snippet}
+
+{#snippet originalPreview()}
+  {#if parseMediaType(displayedSource.mimeType) === "application/pdf" || displayedSource.mimeType === "image/png"}
+    <PageViewer
+      {session}
+      source={displayedSource}
+      authorizationRevision={displayedRevision}
+      {onauthfailure}
+    />
+  {:else}
+    <OriginalPreview
+      {session}
+      source={displayedSource}
+      authorizationRevision={displayedRevision}
+      {onauthfailure}
+    />
+  {/if}
+{/snippet}
 
 <style>
   .verified-preview {
