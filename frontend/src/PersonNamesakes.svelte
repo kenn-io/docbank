@@ -38,7 +38,7 @@
 </script>
 
 <script lang="ts">
-  import { Button, Modal, RadioGroup } from "@kenn-io/kit-ui";
+  import { Button, Modal, RadioGroup, overlayScrollbars } from "@kenn-io/kit-ui";
   import { listPersonFacePreviews } from "./generated/docbank.js";
   import { faceCrop, type PhotoPreviewCache } from "./photoPreviewCache.js";
   import { personDetail as detail } from "./personLabel.js";
@@ -192,7 +192,7 @@
       selection = value ?? "";
     }}
   />
-  <div class="duplicate-list">
+  <div class="duplicate-list" {@attach overlayScrollbars({ axis: "y" })}>
     {#each people as person (person.person_id)}
       {@const preview = previews[person.person_id]}
       <div class="duplicate-person" data-person={person.person_id}>

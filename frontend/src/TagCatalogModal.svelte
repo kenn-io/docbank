@@ -16,7 +16,14 @@
   import PlusIcon from "@lucide/svelte/icons/plus";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
   import XIcon from "@lucide/svelte/icons/x";
-  import { Button, IconButton, Modal, Spinner, TextInput } from "@kenn-io/kit-ui";
+  import {
+    Button,
+    IconButton,
+    Modal,
+    Spinner,
+    TextInput,
+    overlayScrollbars,
+  } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import { createTag, deleteTag, renameTag } from "./receipts.js";
   import { type Tag } from "./generated/docbank.js";
@@ -50,6 +57,7 @@
   let pending = $state(false);
   let failure = $state("");
   let notice = $state("");
+  let definitionListFrame = $state<HTMLDivElement>();
   const currentGroups = $derived(groupTags(current));
   const confirming = $derived(deleting !== null && deleting.assignment_count > 0);
   let destroyed = false;
@@ -221,77 +229,84 @@
       {#if current.length === 0}
         <p class="empty">No tags yet.</p>
       {:else}
-        <div class="definition-list" role="group" aria-label="Tags">
-          {#each currentGroups as group}
-            {#if group.name}
-              <div class="definition-group-heading">{group.name}</div>
-            {/if}
-            {#each group.tags as item (item.tag.id)}
-              {@const tag = item.tag}
-              <div class="definition-row">
-                {#if editingID === tag.id}
-                  <div class="rename-row">
-                    <TextInput
-                      bind:value={editName}
-                      block
-                      autofocus
-                      ariaLabel={`Rename ${tag.name}`}
-                      disabled={disabled || pending}
-                      onkeydown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          void saveRename();
-                        } else if (event.key === "Escape") {
-                          cancelRename();
-                        }
-                      }}
-                    />
-                    <IconButton
-                      size="sm"
-                      ariaLabel={`Save renamed tag ${tag.name}`}
-                      disabled={disabled || pending || editName === ""}
-                      onclick={() => void saveRename()}
-                    >
-                      {#if pending}<Spinner size={13} />{:else}<CheckIcon size="14" />{/if}
-                    </IconButton>
-                    <IconButton
-                      size="sm"
-                      ariaLabel={`Cancel renaming ${tag.name}`}
-                      disabled={pending}
-                      onclick={cancelRename}
-                    >
-                      <XIcon size="14" />
-                    </IconButton>
-                  </div>
-                {:else}
-                  <div class="definition-authority">
-                    <TagLabel {tag} size="sm" />
-                    <span>{filesLabel(tag.assignment_count)}</span>
-                  </div>
-                  <div class="definition-actions">
-                    <IconButton
-                      size="sm"
-                      ariaLabel={`Rename tag ${tag.name}`}
-                      title={`Rename ${tag.name}`}
-                      disabled={disabled || pending}
-                      onclick={() => beginRename(tag)}
-                    >
-                      <PencilIcon size="14" />
-                    </IconButton>
-                    <IconButton
-                      size="sm"
-                      ariaLabel={`Delete tag ${tag.name}`}
-                      title={`Delete ${tag.name}`}
-                      disabled={disabled || pending}
-                      onclick={() => requestDelete(tag)}
-                    >
-                      <Trash2Icon size="14" />
-                    </IconButton>
-                  </div>
-                {/if}
-              </div>
+        <div class="definition-list-frame" bind:this={definitionListFrame}>
+          <div
+            class="definition-list"
+            role="group"
+            aria-label="Tags"
+            {@attach overlayScrollbars({ axis: "y", host: definitionListFrame })}
+          >
+            {#each currentGroups as group}
+              {#if group.name}
+                <div class="definition-group-heading">{group.name}</div>
+              {/if}
+              {#each group.tags as item (item.tag.id)}
+                {@const tag = item.tag}
+                <div class="definition-row">
+                  {#if editingID === tag.id}
+                    <div class="rename-row">
+                      <TextInput
+                        bind:value={editName}
+                        block
+                        autofocus
+                        ariaLabel={`Rename ${tag.name}`}
+                        disabled={disabled || pending}
+                        onkeydown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            void saveRename();
+                          } else if (event.key === "Escape") {
+                            cancelRename();
+                          }
+                        }}
+                      />
+                      <IconButton
+                        size="sm"
+                        ariaLabel={`Save renamed tag ${tag.name}`}
+                        disabled={disabled || pending || editName === ""}
+                        onclick={() => void saveRename()}
+                      >
+                        {#if pending}<Spinner size={13} />{:else}<CheckIcon size="14" />{/if}
+                      </IconButton>
+                      <IconButton
+                        size="sm"
+                        ariaLabel={`Cancel renaming ${tag.name}`}
+                        disabled={pending}
+                        onclick={cancelRename}
+                      >
+                        <XIcon size="14" />
+                      </IconButton>
+                    </div>
+                  {:else}
+                    <div class="definition-authority">
+                      <TagLabel {tag} size="sm" />
+                      <span>{filesLabel(tag.assignment_count)}</span>
+                    </div>
+                    <div class="definition-actions">
+                      <IconButton
+                        size="sm"
+                        ariaLabel={`Rename tag ${tag.name}`}
+                        title={`Rename ${tag.name}`}
+                        disabled={disabled || pending}
+                        onclick={() => beginRename(tag)}
+                      >
+                        <PencilIcon size="14" />
+                      </IconButton>
+                      <IconButton
+                        size="sm"
+                        ariaLabel={`Delete tag ${tag.name}`}
+                        title={`Delete ${tag.name}`}
+                        disabled={disabled || pending}
+                        onclick={() => requestDelete(tag)}
+                      >
+                        <Trash2Icon size="14" />
+                      </IconButton>
+                    </div>
+                  {/if}
+                </div>
+              {/each}
             {/each}
-          {/each}
+          </div>
         </div>
       {/if}
       {#if currentTotal > current.length}
@@ -334,13 +349,19 @@
     gap: var(--space-2);
   }
 
+  .definition-list-frame {
+    position: relative;
+    min-width: 0;
+    overflow: clip;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-inset);
+  }
+
   .definition-list {
     display: grid;
     max-height: min(330px, 42vh);
     overflow-y: auto;
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-md);
-    background: var(--bg-inset);
   }
 
   .definition-row {

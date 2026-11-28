@@ -23,6 +23,7 @@ function setup() {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -436,6 +437,7 @@ it("requests zoom quality once per zoom gesture", async () => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -455,6 +457,7 @@ it("ignores the second tap of the double tap that opened the photo", async () =>
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -482,6 +485,7 @@ it("resets a touch swipe before requesting navigation when the current photo rem
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );

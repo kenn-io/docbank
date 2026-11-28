@@ -2176,6 +2176,44 @@ it("navigates the displayed page, keeps checkbox selection independent, and acti
   await waitFor(() => expect(backend.getReportsReads()).toBe(1));
 });
 
+it("scrolls the table viewport past the selection dock when navigating rows by keyboard", async () => {
+  prepareKeyboardApp();
+  installKeyboardBackend();
+  render(App);
+
+  await screen.findByRole("cell", { name: "alpha.txt" });
+  await screen.findByLabelText("Document details for zeta.txt");
+
+  // Select alpha.txt so the selection dock mounts.
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select alpha.txt" }));
+  const dock = await waitFor(() => {
+    const el = document.querySelector<HTMLElement>(".selection-dock");
+    expect(el).toBeTruthy();
+    return el!;
+  });
+
+  // Move up to alpha.txt first, then mock overlap on zeta.txt before stepping down.
+  await fireEvent.keyDown(window, { key: "k" });
+  expect(screen.getByLabelText("Document details for alpha.txt")).toBeTruthy();
+
+  const zetaRow = screen.getByRole("cell", { name: "zeta.txt" }).closest<HTMLElement>("tr")!;
+  const viewport = zetaRow.closest<HTMLElement>(".kit-table-viewport")!;
+  const wrapper = zetaRow.closest<HTMLElement>(".kit-table-wrapper")!;
+  expect(viewport).toBeTruthy();
+  expect(wrapper).toBeTruthy();
+
+  const viewportScrollBy = vi.fn();
+  const wrapperScrollBy = vi.fn();
+  viewport.scrollBy = viewportScrollBy;
+  wrapper.scrollBy = wrapperScrollBy;
+  vi.spyOn(zetaRow, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 480, 400, 40));
+  vi.spyOn(dock, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 500, 400, 60));
+
+  await fireEvent.keyDown(window, { key: "j" });
+  await waitFor(() => expect(viewportScrollBy).toHaveBeenCalledWith({ top: 28, behavior: "auto" }));
+  expect(wrapperScrollBy).not.toHaveBeenCalled();
+});
+
 it("persists a vault-scoped tag binding and applies it only to the inspected file", async () => {
   const storage = prepareKeyboardApp();
   const backend = installKeyboardBackend();

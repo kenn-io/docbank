@@ -53,6 +53,7 @@
     ROOT_SCOPE,
     createShortcutManager,
     formatShortcutKeys,
+    overlayScrollbars,
     type MenuAlign,
     type SortDirection,
   } from "@kenn-io/kit-ui";
@@ -1768,7 +1769,7 @@
     row.focus({ preventScroll: true });
     row.scrollIntoView({ block: "nearest" });
     const dock = document.querySelector<HTMLElement>(".selection-dock");
-    const scroller = row.closest<HTMLElement>(".kit-table-wrapper");
+    const scroller = row.closest<HTMLElement>(".kit-table-viewport");
     if (!dock || !scroller) return;
     const rowBounds = row.getBoundingClientRect();
     const dockBounds = dock.getBoundingClientRect();
@@ -4017,7 +4018,12 @@
 {:else}
   <div class="app-shell">
     <Toasts />
-    <nav class="app-nav" class:open={navOpen} aria-label="Docbank navigation">
+    <nav
+      class="app-nav"
+      class:open={navOpen}
+      aria-label="Docbank navigation"
+      {@attach overlayScrollbars({ axis: "y" })}
+    >
       <div class="brand">
         <span class="brand-mark"><LibraryIcon size="15" aria-hidden="true" /></span>
         Docbank
@@ -5162,7 +5168,11 @@
             min={320}
             max={720}
           />
-          <aside class="detail" aria-label="Document inspector">
+          <aside
+            class="detail"
+            aria-label="Document inspector"
+            {@attach overlayScrollbars({ axis: "y" })}
+          >
             {#if selectedSnapshot}
               <DocumentInspector
                 onpublished={() => productionsDiscoveryRevision++}

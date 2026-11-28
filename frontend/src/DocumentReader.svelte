@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
-  import { Button, Modal } from "@kenn-io/kit-ui";
+  import { Button, Modal, overlayScrollbars } from "@kenn-io/kit-ui";
   import AppTooltip from "./AppTooltip.svelte";
   import DownloadButton from "./DownloadButton.svelte";
   import OriginalPreview from "./OriginalPreview.svelte";
@@ -53,7 +53,7 @@
       else onclose();
     }}
   >
-    <div class="reader-content" class:pdf>
+    <div class="reader-content" class:pdf {@attach overlayScrollbars({ axis: "both" })}>
       {#if pdf}
         <RedactionReview
           bind:this={review}

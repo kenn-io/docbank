@@ -117,6 +117,7 @@ function setup(
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -192,6 +193,7 @@ it("restores and reports the map view", () => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -410,6 +412,7 @@ it.each(["append", "hide", "trash"])(
       "ResizeObserver",
       class {
         observe() {}
+        unobserve() {}
         disconnect() {}
       },
     );

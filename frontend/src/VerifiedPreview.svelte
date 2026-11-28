@@ -2,7 +2,7 @@
   import { reportAction, reportFailure } from "./action-events.js";
   import "./inspector.css";
   import { tick } from "svelte";
-  import { Button } from "@kenn-io/kit-ui";
+  import { Button, overlayScrollbars } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import AttachmentsTab from "./AttachmentsTab.svelte";
   import EmailViewer from "./EmailViewer.svelte";
@@ -71,6 +71,7 @@
   let relatedSources = $state<RelatedSelectedSource[]>([]);
   let navigationPending = $state(false);
   let navigationError = $state("");
+  let tabContentFrame = $state<HTMLDivElement>();
   let navigationEpoch = 0;
   let navigationController: AbortController | undefined;
   let frozenKey = "";
@@ -258,73 +259,78 @@
   />
   {#if navigationPending}<p role="status">Loading document…</p>{/if}
   {#if navigationError}<p role="status">Related document unavailable: {navigationError}</p>{/if}
-  <div class="tab-content inspector-content">
-    {#key contentKey}
-      {#each tabList as tab (tab.value)}
-        {#if tab.value === displayedTab || visitedTabs.includes(tab.value)}
-          <div hidden={tab.value !== displayedTab}>
-            {#if tab.value === "preview"}
-              {#if parseMediaType(displayedSource.mimeType) === "application/pdf" || displayedSource.mimeType === "image/png"}
-                <PageViewer
-                  {session}
-                  source={displayedSource}
-                  authorizationRevision={displayedRevision}
-                  {onauthfailure}
-                />
-              {:else}
-                <OriginalPreview
-                  {session}
-                  source={displayedSource}
-                  authorizationRevision={displayedRevision}
-                  {onauthfailure}
-                />
-              {/if}
-            {:else}
-              {#if tab.value === "email"}
-                {#key `${session}:${displayedSource.key}:${displayedRevision}`}
-                  <EmailViewer
+  <div class="tab-content-frame" bind:this={tabContentFrame}>
+    <div
+      class="tab-content inspector-content"
+      {@attach overlayScrollbars({ axis: "both", host: tabContentFrame })}
+    >
+      {#key contentKey}
+        {#each tabList as tab (tab.value)}
+          {#if tab.value === displayedTab || visitedTabs.includes(tab.value)}
+            <div hidden={tab.value !== displayedTab}>
+              {#if tab.value === "preview"}
+                {#if parseMediaType(displayedSource.mimeType) === "application/pdf" || displayedSource.mimeType === "image/png"}
+                  <PageViewer
                     {session}
                     source={displayedSource}
                     authorizationRevision={displayedRevision}
-                    onattachments={() => chooseTab("attachments")}
                     {onauthfailure}
                   />
-                {/key}
-              {:else if tab.value === "text"}
-                <VerifiedText
-                  {session}
-                  active={displayedTab === "text"}
-                  {processingRevision}
-                  source={displayedSource}
-                  authorizationRevision={displayedRevision}
-                  {profileName}
-                  observed={displayedObservation}
-                  {queryTerms}
-                  {queryHighlightError}
-                  {highlightSets}
-                  onprocess={onprocess ? () => onprocess?.(displayedSource) : undefined}
-                  {onauthfailure}
-                />
-              {:else if tab.value === "attachments"}
-                <AttachmentsTab
-                  {session}
-                  source={displayedSource}
-                  onopen={(target) => void openRelated(target)}
-                  {onauthfailure}
-                />
+                {:else}
+                  <OriginalPreview
+                    {session}
+                    source={displayedSource}
+                    authorizationRevision={displayedRevision}
+                    {onauthfailure}
+                  />
+                {/if}
               {:else}
-                <DuplicatesTab
-                  {session}
-                  source={displayedSource}
-                  onopen={openDuplicate}
-                  {onauthfailure}
-                />
+                {#if tab.value === "email"}
+                  {#key `${session}:${displayedSource.key}:${displayedRevision}`}
+                    <EmailViewer
+                      {session}
+                      source={displayedSource}
+                      authorizationRevision={displayedRevision}
+                      onattachments={() => chooseTab("attachments")}
+                      {onauthfailure}
+                    />
+                  {/key}
+                {:else if tab.value === "text"}
+                  <VerifiedText
+                    {session}
+                    active={displayedTab === "text"}
+                    {processingRevision}
+                    source={displayedSource}
+                    authorizationRevision={displayedRevision}
+                    {profileName}
+                    observed={displayedObservation}
+                    {queryTerms}
+                    {queryHighlightError}
+                    {highlightSets}
+                    onprocess={onprocess ? () => onprocess?.(displayedSource) : undefined}
+                    {onauthfailure}
+                  />
+                {:else if tab.value === "attachments"}
+                  <AttachmentsTab
+                    {session}
+                    source={displayedSource}
+                    onopen={(target) => void openRelated(target)}
+                    {onauthfailure}
+                  />
+                {:else}
+                  <DuplicatesTab
+                    {session}
+                    source={displayedSource}
+                    onopen={openDuplicate}
+                    {onauthfailure}
+                  />
+                {/if}
               {/if}
-            {/if}
-          </div>
-        {/if}
-      {/each}
-    {/key}
+            </div>
+          {/if}
+        {/each}
+      {/key}
+    </div>
   </div>
 </section>
 
@@ -339,6 +345,10 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-2);
+  }
+  .tab-content-frame {
+    position: relative;
+    min-width: 0;
   }
   .tab-content {
     height: min(40vh, 480px);

@@ -122,6 +122,7 @@ it("hides top-bar Photos search when a denied access check conceals Library", as
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -162,6 +163,7 @@ it("shows Find people instead of retained Library search in the People directory
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -195,6 +197,7 @@ it("retains the navigated comparison and closeup across a browser tab switch", a
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -269,6 +272,7 @@ it.each(["workspace switch", "Clear filters"])(
       "ResizeObserver",
       class {
         observe() {}
+        unobserve() {}
         disconnect() {}
       },
     );
@@ -347,6 +351,7 @@ it.each(["viewer", "compare", "cull"] as const)("makes search inert during %s", 
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -502,6 +507,7 @@ it.each(["setup", "unlock", "change", "disable"])(
       "ResizeObserver",
       class {
         observe() {}
+        unobserve() {}
         disconnect() {}
       },
     );
@@ -583,6 +589,7 @@ it.each(["unhide", "trash", "rejects"])(
       "ResizeObserver",
       class {
         observe() {}
+        unobserve() {}
         disconnect() {}
       },
     );
@@ -684,6 +691,7 @@ it("renders no hidden photo buttons after a failed leave lock and return", async
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -735,6 +743,7 @@ it("conceals People after a failed Hidden lock until retry succeeds", async () =
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -835,6 +844,7 @@ it.each(["hide", "close", "Documents after Photos", "Documents only", "failed lo
       "ResizeObserver",
       class {
         observe() {}
+        unobserve() {}
         disconnect() {}
       },
     );
@@ -905,6 +915,7 @@ it.each(["server", "stale first page"])(
       "ResizeObserver",
       class {
         observe() {}
+        unobserve() {}
         disconnect() {}
       },
     );
@@ -976,6 +987,7 @@ it("keeps the album choices selectable while a live pass rereads the albums", as
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -1021,6 +1033,7 @@ it("reloads Library album counts after adding photos to an album", async () => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -1088,6 +1101,7 @@ it("opens an album from the index, preserves its sort scope, and unstars without
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -1301,6 +1315,7 @@ it.each([false, true])(
       "ResizeObserver",
       class {
         observe() {}
+        unobserve() {}
         disconnect() {}
       },
     );
@@ -1438,6 +1453,7 @@ it.each([false, true])(
       "ResizeObserver",
       class {
         observe() {}
+        unobserve() {}
         disconnect() {}
       },
     );
@@ -1965,6 +1981,7 @@ it.each([false, true])(
       "ResizeObserver",
       class {
         observe() {}
+        unobserve() {}
         disconnect() {}
       },
     );
@@ -2117,6 +2134,7 @@ it.each([
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -2236,6 +2254,7 @@ it.each(["retry", "poll", "changed authority"])(
       "ResizeObserver",
       class {
         observe() {}
+        unobserve() {}
         disconnect() {}
       },
     );
@@ -2313,6 +2332,7 @@ it("re-pages Library on return with an unchanged hidden change ID", async () => 
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -2411,6 +2431,7 @@ it.each(["album", "direct album", "Hidden", "existing gps_bounds"])(
       "ResizeObserver",
       class {
         observe() {}
+        unobserve() {}
         disconnect() {}
       },
     );
@@ -2546,6 +2567,7 @@ it.each(["Library", "album"])(
       "ResizeObserver",
       class {
         observe() {}
+        unobserve() {}
         disconnect() {}
       },
     );
@@ -2684,6 +2706,7 @@ it("restores photo scroll while resumed counts are pending and keeps subsequent 
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -2754,6 +2777,7 @@ it("refreshes Documents, Library, and album counts after adding photos", async (
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -2848,6 +2872,7 @@ it.each(["search", "tag", "snapshot"] as const)(
       "ResizeObserver",
       class {
         observe() {}
+        unobserve() {}
         disconnect() {}
       },
     );
@@ -3029,6 +3054,7 @@ it("rereads sibling photo views, album covers, and a frozen Documents selection 
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -3155,6 +3181,7 @@ it.each([false, true])("opens a smart set through Albums when search fails=%s", 
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -3202,6 +3229,7 @@ it("passes a registered Photos shortcut into the help dialog", async () => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -3255,6 +3283,7 @@ it("refuses draft navigation until Clear edits releases it", async () => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -3306,6 +3335,7 @@ it("guards reload for a failed cull decision after vault identity arrives", asyn
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -3374,6 +3404,7 @@ it("closes the viewer to the grid after refusing a typed photo hash", async () =
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -3415,6 +3446,7 @@ async function applyAlbumKeyword() {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -3608,6 +3640,7 @@ it("refreshes a retained Documents person search after clearing a face in Photos
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -3699,6 +3732,7 @@ it("refreshes a person-filtered Library behind an album after a face write", asy
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -3804,6 +3838,7 @@ it("discards shared photo Undo when signing into a replacement web session", asy
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -3856,6 +3891,7 @@ async function openKeywordsPastFirstPage() {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -3945,6 +3981,7 @@ it("guards a Hidden draft while a status failure conceals its workspace", async 
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -3991,6 +4028,7 @@ it("keeps a Hidden viewer's return point while a status failure refuses to close
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -4036,6 +4074,7 @@ it.each(["while open", "after a status failure"])(
       "ResizeObserver",
       class {
         observe() {}
+        unobserve() {}
         disconnect() {}
       },
     );
@@ -4094,6 +4133,7 @@ it("resume requests Map authored revalidation", async () => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -4327,6 +4367,7 @@ it.each([
       "ResizeObserver",
       class {
         observe() {}
+        unobserve() {}
         disconnect() {}
       },
     );
@@ -4435,6 +4476,7 @@ it("explains a refused person link while Hide is pending in the selected photo i
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -4504,6 +4546,7 @@ async function startHideSetup({
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -4800,6 +4843,7 @@ it.each(personLibraryViews)("refreshes the %s photo filter after People edits", 
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -4936,6 +4980,7 @@ it.each(["rename", "merge"])(
       "ResizeObserver",
       class {
         observe() {}
+        unobserve() {}
         disconnect() {}
       },
     );
@@ -5041,6 +5086,7 @@ it("opens 1 Hidden photo in filtered Hidden photos", async () => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -5085,6 +5131,7 @@ it("stays in People when Library refuses the person filter", async () => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -5297,6 +5344,7 @@ const livePhotoStubs = () => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -5512,6 +5560,7 @@ it.each(["Hidden lock", "Hidden navigate", "Library lock"])(
       "ResizeObserver",
       class {
         observe() {}
+        unobserve() {}
         disconnect() {}
       },
     );

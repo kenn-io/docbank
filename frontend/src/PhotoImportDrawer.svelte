@@ -3,7 +3,7 @@
   import type { UploadConnectionState } from "./uploadReconnect.js";
   import { reportAction, reportFailure } from "./action-events.js";
   import { onDestroy } from "svelte";
-  import { Button, TextInput } from "@kenn-io/kit-ui";
+  import { Button, TextInput, overlayScrollbars } from "@kenn-io/kit-ui";
   import DrawerShell from "./DrawerShell.svelte";
   import "./toolForm.css";
   import { APIError } from "./api-transport.js";
@@ -73,6 +73,7 @@
   let confirmation = $state<PhotoCullConfirmation>();
   let checkpoint = $state<PhotoImportCheckpoint>();
   let recovery = $state<Recovery>();
+  let selectionListFrame = $state<HTMLDivElement>();
   let pickerKind: "files" | "folder" = "files";
   // Only "Choose the same …" resumes the offered import; the regular picker starts a new one.
   let recoveryRequested = false;
@@ -625,23 +626,28 @@
         <span>Skipped: {unsupported.length}</span>
       {/if}
     </div>{/if}
-  <ul class:photo-import-recovery-list={recovering}>
-    {#each items.filter((item) => !(recovering && item.state === "skipped")) as item}
-      <li>
-        <strong>{item.files.map(localFilePath).join(", ")}</strong>
-        {#if item.state !== "ready"}<span>{labels[item.state]}</span>{/if}
-        {#if item.state === "hashing" || item.state === "uploading"}<progress
-            max={item.progress.total || 1}
-            value={item.progress.processed}
-            aria-label={labels[item.state]}
-          ></progress>{/if}
-        {#if item.error}<p role="alert">{item.error}</p>{/if}
-      </li>
-    {/each}
-    {#each unsupported as { file, reason }}<li>
-        <strong>{localFilePath(file)}</strong><span>{reason}</span>
-      </li>{/each}
-  </ul>
+  <div class="selection-list-frame" bind:this={selectionListFrame}>
+    <ul
+      class:photo-import-recovery-list={recovering}
+      {@attach overlayScrollbars({ axis: "y", host: selectionListFrame })}
+    >
+      {#each items.filter((item) => !(recovering && item.state === "skipped")) as item}
+        <li>
+          <strong>{item.files.map(localFilePath).join(", ")}</strong>
+          {#if item.state !== "ready"}<span>{labels[item.state]}</span>{/if}
+          {#if item.state === "hashing" || item.state === "uploading"}<progress
+              max={item.progress.total || 1}
+              value={item.progress.processed}
+              aria-label={labels[item.state]}
+            ></progress>{/if}
+          {#if item.error}<p role="alert">{item.error}</p>{/if}
+        </li>
+      {/each}
+      {#each unsupported as { file, reason }}<li>
+          <strong>{localFilePath(file)}</strong><span>{reason}</span>
+        </li>{/each}
+    </ul>
+  </div>
 {/snippet}
 
 <DrawerShell
@@ -802,6 +808,10 @@
   li {
     display: grid;
     gap: var(--space-2);
+  }
+  .selection-list-frame {
+    position: relative;
+    min-width: 0;
   }
   ul {
     display: grid;

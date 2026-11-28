@@ -344,6 +344,7 @@ it("keeps native PNG geometry and zoom across renames and releases its image", a
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -487,6 +488,7 @@ it("navigates mixed-size retained pages and revokes URLs on page changes and unm
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );

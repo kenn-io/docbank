@@ -22,6 +22,7 @@ beforeEach(() => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -78,6 +79,7 @@ function setup(scoped = false, onnavigate = vi.fn(), mapMode = false) {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );

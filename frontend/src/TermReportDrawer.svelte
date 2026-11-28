@@ -18,6 +18,7 @@
     SelectDropdown,
     Spinner,
     TextInput,
+    overlayScrollbars,
     resolveRange,
   } from "@kenn-io/kit-ui";
   import "./toolForm.css";
@@ -83,6 +84,8 @@
   let reviewCursor = $state("");
   let reviewLoaded = $state(false);
   let choices = $state<Record<string, DateChoice>>({});
+  let selectionListFrame = $state<HTMLDivElement>();
+  let countTableFrame = $state<HTMLDivElement>();
   let busy = $state(false);
   let error = $state("");
   let notice = $state<{ title?: string; message: string } | null>(null);
@@ -618,7 +621,7 @@
               />
             </div>
             {#if !draft.all_documents}
-              <div class="collection-list">
+              <div class="collection-list" {@attach overlayScrollbars({ axis: "both" })}>
                 {#each collectionItems as collection (collection.id)}
                   <Checkbox
                     checked={(draft.collection_ids ?? []).includes(collection.id)}
@@ -710,32 +713,37 @@
         />
         {#if error}<p class="tool-error" role="alert">{error}</p>{/if}
         {#if selectionResult}
-          <ul class="tool-list selection-list">
-            {#each selectionResult.filter((item) => item.status !== "current") as item (item.selected.node_id)}
-              <li>
-                <div class="tool-row-main">
-                  <strong title={item.path || item.name}
-                    >{item.path?.replace(/^\//, "") ||
-                      item.name ||
-                      `Document ${item.selected.node_id}`}</strong
-                  ><span
-                    >{item.status === "changed"
-                      ? `Selected: ${item.selected_recorded ? formatDate(item.selected_recorded) : "date unavailable"} · Current: ${item.selected_recorded && formatDate(item.selected_recorded) === formatDate(item.modified ?? "") ? "different version" : formatDate(item.modified ?? "")}`
-                      : item.status === "trashed"
-                        ? "In trash"
-                        : "No longer available"}</span
-                  >
-                </div>
-                <div class="tool-row-actions">
-                  {#if item.status === "changed"}<Checkbox
-                      label="Include current version"
-                      checked={!!selectionAccepted[item.selected.node_id]}
-                      onchange={(checked) => (selectionAccepted[item.selected.node_id] = checked)}
-                    />{:else}<span class="tool-muted">Will be left out</span>{/if}
-                </div>
-              </li>
-            {/each}
-          </ul>
+          <div class="selection-list-frame" bind:this={selectionListFrame}>
+            <ul
+              class="tool-list selection-list"
+              {@attach overlayScrollbars({ axis: "both", host: selectionListFrame })}
+            >
+              {#each selectionResult.filter((item) => item.status !== "current") as item (item.selected.node_id)}
+                <li>
+                  <div class="tool-row-main">
+                    <strong title={item.path || item.name}
+                      >{item.path?.replace(/^\//, "") ||
+                        item.name ||
+                        `Document ${item.selected.node_id}`}</strong
+                    ><span
+                      >{item.status === "changed"
+                        ? `Selected: ${item.selected_recorded ? formatDate(item.selected_recorded) : "date unavailable"} · Current: ${item.selected_recorded && formatDate(item.selected_recorded) === formatDate(item.modified ?? "") ? "different version" : formatDate(item.modified ?? "")}`
+                        : item.status === "trashed"
+                          ? "In trash"
+                          : "No longer available"}</span
+                    >
+                  </div>
+                  <div class="tool-row-actions">
+                    {#if item.status === "changed"}<Checkbox
+                        label="Include current version"
+                        checked={!!selectionAccepted[item.selected.node_id]}
+                        onchange={(checked) => (selectionAccepted[item.selected.node_id] = checked)}
+                      />{:else}<span class="tool-muted">Will be left out</span>{/if}
+                  </div>
+                </li>
+              {/each}
+            </ul>
+          </div>
           <p class="tool-muted">
             {selectedCount
               ? `The report will cover ${selectedCount} of ${selectionResult.length} selected documents.`
@@ -786,27 +794,34 @@
               {#each active.coverage.warnings as warning}<li>{warning}</li>{/each}
             </ul>{/if}
           {#if active.state === "complete" && active.counts}
-            <div class="count-table" role="table" aria-label="Search report counts">
-              <div class="count-row header" role="row">
-                <span role="columnheader">#</span><span role="columnheader">Terms</span><span
-                  role="columnheader">Date range</span
-                ><span role="columnheader">Hits</span><span role="columnheader"
-                  >Hits plus family</span
-                ><span role="columnheader">Unique hits</span><span role="columnheader"
-                  >Documents in unique families</span
-                ><span role="columnheader">Unique hits plus family</span>
+            <div class="count-table-frame" bind:this={countTableFrame}>
+              <div
+                class="count-table"
+                role="table"
+                aria-label="Search report counts"
+                {@attach overlayScrollbars({ axis: "both", host: countTableFrame })}
+              >
+                <div class="count-row header" role="row">
+                  <span role="columnheader">#</span><span role="columnheader">Terms</span><span
+                    role="columnheader">Date range</span
+                  ><span role="columnheader">Hits</span><span role="columnheader"
+                    >Hits plus family</span
+                  ><span role="columnheader">Unique hits</span><span role="columnheader"
+                    >Documents in unique families</span
+                  ><span role="columnheader">Unique hits plus family</span>
+                </div>
+                {#each active.counts as count, index}<div class="count-row" role="row">
+                    <span role="cell">{active.terms[index]?.number}</span><span role="cell"
+                      >{active.terms[index]?.expression}</span
+                    ><span role="cell"
+                      >{active.terms[index]?.dates.start} to {active.terms[index]?.dates.end}</span
+                    ><span role="cell">{count.hits}</span><span role="cell"
+                      >{count.hits_plus_family}</span
+                    ><span role="cell">{count.unique_hits}</span><span role="cell"
+                      >{count.unique_families}</span
+                    ><span role="cell">{count.unique_hits_plus_family}</span>
+                  </div>{/each}
               </div>
-              {#each active.counts as count, index}<div class="count-row" role="row">
-                  <span role="cell">{active.terms[index]?.number}</span><span role="cell"
-                    >{active.terms[index]?.expression}</span
-                  ><span role="cell"
-                    >{active.terms[index]?.dates.start} to {active.terms[index]?.dates.end}</span
-                  ><span role="cell">{count.hits}</span><span role="cell"
-                    >{count.hits_plus_family}</span
-                  ><span role="cell">{count.unique_hits}</span><span role="cell"
-                    >{count.unique_families}</span
-                  ><span role="cell">{count.unique_hits_plus_family}</span>
-                </div>{/each}
             </div>
           {/if}
           <div class="tool-actions">
@@ -1025,6 +1040,10 @@
     padding-bottom: var(--space-6);
     border-bottom: 1px solid var(--border-muted);
   }
+  .selection-list-frame {
+    position: relative;
+    min-width: 0;
+  }
   .selection-list {
     max-height: 220px;
     overflow: auto;
@@ -1060,10 +1079,15 @@
     align-items: baseline;
     gap: var(--space-4);
   }
-  .count-table {
-    overflow: auto;
+  .count-table-frame {
+    position: relative;
+    min-width: 0;
+    overflow: clip;
     border: 1px solid var(--border-muted);
     border-radius: var(--radius-md);
+  }
+  .count-table {
+    overflow: auto;
   }
   .count-row {
     display: grid;

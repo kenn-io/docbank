@@ -1,7 +1,13 @@
 <script lang="ts">
   import CheckIcon from "@lucide/svelte/icons/check";
   import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
-  import { TextInput, autoReposition, dismissable, floatingPopoverStyle } from "@kenn-io/kit-ui";
+  import {
+    TextInput,
+    autoReposition,
+    dismissable,
+    floatingPopoverStyle,
+    overlayScrollbars,
+  } from "@kenn-io/kit-ui";
   import { onDestroy, tick } from "svelte";
   import type { Tag } from "./generated/docbank.js";
   import { APIError } from "./api-transport.js";
@@ -398,7 +404,12 @@
   {#if failure}<p class="tag-picker__failure" role="alert">{failure}</p>{/if}
 
   {#if open && options.length > 0}
-    <div class="tag-picker__list kit-popover-card" style={listStyle} bind:this={listEl}>
+    <div
+      class="tag-picker__list kit-popover-card"
+      style={listStyle}
+      bind:this={listEl}
+      {@attach overlayScrollbars({ axis: "y" })}
+    >
       <div
         // kit-ui-check-ignore: paired with the scoped color-aware combobox above.
         role="listbox"

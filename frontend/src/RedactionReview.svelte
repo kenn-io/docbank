@@ -1,6 +1,14 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import { Disclosure, Button, Modal, SelectDropdown, Spinner, Toggle } from "@kenn-io/kit-ui";
+  import {
+    Disclosure,
+    Button,
+    Modal,
+    SelectDropdown,
+    Spinner,
+    Toggle,
+    overlayScrollbars,
+  } from "@kenn-io/kit-ui";
   import RedactionNumbering from "./RedactionNumbering.svelte";
   import { RecipientPackageController } from "./recipientPackageController.svelte.js";
   import type { NumberingInputs } from "./redactionNumbering.js";
@@ -495,7 +503,7 @@
   });
 </script>
 
-<div class="review-workspace" class:active>
+<div class="review-workspace" class:active {@attach overlayScrollbars({ axis: "y" })}>
   <div class="original-reader" hidden={active && tab !== "original"}>
     <OriginalPreview
       {session}
@@ -530,7 +538,7 @@
     />
   </div>
   {#if active}
-    <div class="redaction-editor">
+    <div class="redaction-editor" {@attach overlayScrollbars({ axis: "both" })}>
       <span class="kit-sr-only" role="status" aria-live="polite">{selectionAnnouncement}</span>
       {#if textSelection.error}<p class="notice" role="status">{textSelection.error}</p>{/if}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
@@ -709,7 +717,10 @@
           </p>{/if}
       {/if}
     </div>
-    {#if tab !== "original" && preparation && currentPage}<div class="review-output">
+    {#if tab !== "original" && preparation && currentPage}<div
+        class="review-output"
+        {@attach overlayScrollbars({ axis: "both" })}
+      >
         {#if outputLoading}<p role="status"><Spinner size={16} /> Verifying preview…</p>
         {:else if tab === "text"}<pre
             aria-label={`Sanitized text for page ${page}`}>{outputText}</pre>
@@ -940,10 +951,7 @@
     .redaction-editor {
       grid-column: 1;
       grid-row: 2;
-      overflow-y: scroll;
-      scrollbar-gutter: stable;
-      scrollbar-width: thin;
-      scrollbar-color: var(--text-muted) transparent;
+      padding: var(--space-3);
     }
     .review-footer {
       grid-row: 3;
@@ -954,9 +962,6 @@
     }
     .mask-details {
       grid-template-columns: minmax(0, 1fr);
-    }
-    .redaction-editor {
-      padding: var(--space-3);
     }
     .footer {
       padding: var(--space-3);

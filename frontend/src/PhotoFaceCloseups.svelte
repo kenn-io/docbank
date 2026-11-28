@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button } from "@kenn-io/kit-ui";
+  import { Button, overlayScrollbars } from "@kenn-io/kit-ui";
   import type { PhotoFaces } from "./photoFaces.svelte.js";
   import type { PhotoBrowseRow, FaceBox, PhotoFaceReportGrade } from "./generated/docbank.js";
   import { photoFaceCropStyle } from "./photoRotation.js";
@@ -55,7 +55,11 @@
   }
 </script>
 
-{#if tiles.length || faces.error}<section aria-label="Face closeups" class="closeups">
+{#if tiles.length || faces.error}<section
+    aria-label="Face closeups"
+    class="closeups"
+    {@attach overlayScrollbars({ axis: "x" })}
+  >
     {#each tiles as tile (tile.id)}
       {@const r = report(tile.id)}
       <figure>

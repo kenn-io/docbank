@@ -13,7 +13,7 @@
   import { onDestroy, untrack } from "svelte";
   import CheckIcon from "@lucide/svelte/icons/check";
   import DownloadIcon from "@lucide/svelte/icons/download";
-  import { Disclosure, Button, Modal, Spinner, Table } from "@kenn-io/kit-ui";
+  import { Disclosure, Button, Modal, Spinner, Table, overlayScrollbars } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import type { Tag } from "./generated/docbank.js";
   import { encodeRecovery } from "./actionRecovery.js";
@@ -262,7 +262,7 @@
           </select>
         </label>
       {/if}
-      <div class="target-list">
+      <div class="target-list" {@attach overlayScrollbars({ axis: "both" })}>
         <Table
           unsorted
           ariaLabel="Documents in this run"
@@ -415,7 +415,7 @@
     gap: var(--space-2);
   }
   .target-list {
-    overflow-x: auto;
+    overflow: auto;
     max-height: 240px;
   }
   .target-list :global(.target-table .kit-table) {

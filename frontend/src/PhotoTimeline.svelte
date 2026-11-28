@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Card, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
+  import { Button, Card, SelectDropdown, Spinner, overlayScrollbars } from "@kenn-io/kit-ui";
   import { monthLabel } from "./photoGrid.js";
   import { timelineYears, type CaptureDayFacet } from "./photoTimeline.js";
 
@@ -79,7 +79,7 @@
 {:else}
   <nav aria-label="Timeline">
     <Card level="default" padding="none">
-      <div class="rail">
+      <div class="rail" {@attach overlayScrollbars({ axis: "y" })}>
         {#if hint}<p class="timeline-hint">{hint}</p>{/if}
         {#if error}{@render problem()}{/if}
         {#if loading && !years.length && !missing}

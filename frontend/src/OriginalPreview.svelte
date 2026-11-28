@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { ReaderReview, ReaderReviewStatus, PDFReviewBridge } from "./pdfReview.js";
   import { onDestroy, untrack } from "svelte";
-  import { Button, Spinner } from "@kenn-io/kit-ui";
+  import { Button, Spinner, overlayScrollbars } from "@kenn-io/kit-ui";
   import { reloadWithSession } from "./browser-session.js";
   import AppTooltip from "./AppTooltip.svelte";
   import ShieldCheckIcon from "@lucide/svelte/icons/shield-check";
@@ -39,6 +39,7 @@
   let progress = $state<DownloadProgress | null>(null);
   let loading = $state(false);
   let error = $state("");
+  let previewEl = $state<HTMLDivElement>();
   let publishedURL = "";
   let verifiedKey = "";
 
@@ -97,7 +98,12 @@
   });
 </script>
 
-<div class="original-preview" class:expanded class:pdf={preview?.kind === "pdf"}>
+<div
+  class="original-preview"
+  class:expanded
+  class:pdf={preview?.kind === "pdf"}
+  bind:this={previewEl}
+>
   {#if loading}
     <div class="preview-loading" role="status">
       <Spinner size={14} />
@@ -116,7 +122,8 @@
       {:catch}
         {@render readerUnavailable()}
       {/await}
-    {:else}<pre>{preview.text}</pre>{/if}
+    {:else}<pre
+        {@attach overlayScrollbars({ axis: "both", host: previewEl })}>{preview.text}</pre>{/if}
   {:else if preview?.kind === "pdf"}
     {#await import("./PDFReader.svelte")}
       {@render loadingReader()}
@@ -126,7 +133,7 @@
       {@render readerUnavailable()}
     {/await}
   {:else if preview?.kind === "image"}
-    <div class="image-frame">
+    <div class="image-frame" {@attach overlayScrollbars({ axis: "both", host: previewEl })}>
       <img src={preview.url} alt={`Verified preview of ${source.name}`} />
     </div>
   {:else if error}

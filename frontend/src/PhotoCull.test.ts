@@ -285,6 +285,7 @@ async function reviewPhoto(
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );

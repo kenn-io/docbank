@@ -8,6 +8,7 @@
     Spinner,
     TextInput,
     Typeahead,
+    overlayScrollbars,
   } from "@kenn-io/kit-ui";
   import XIcon from "@lucide/svelte/icons/x";
   import UserIcon from "@lucide/svelte/icons/user";
@@ -53,6 +54,8 @@
   // namesakes is the open chooser for a name several people share.
   let namesakes = $state.raw<ReturnType<typeof namesakeGroup>>();
   let namesake = $state("");
+  let suggestionsEl = $state<HTMLElement>();
+  let reviewContentEl = $state<HTMLDivElement>();
   const unlocked = $derived(!!people.access?.deadline);
   const merge = $derived(people.merge);
   const roles = $derived(merge && mergeRoles(merge));
@@ -273,7 +276,7 @@
   >
 {/snippet}
 
-<main class="people-workspace" aria-label="People">
+<main class="people-workspace" aria-label="People" {@attach overlayScrollbars({ axis: "both" })}>
   <div class="people-header">
     <PageHeader title="People" size="medium">
       {#snippet actions()}
@@ -292,6 +295,7 @@
   {#if suggestions.loading || suggestions.error || suggestions.items.length}<section
       class="suggestions"
       aria-labelledby="suggestions-title"
+      bind:this={suggestionsEl}
     >
       <h2 id="suggestions-title">
         Suggestions{#if suggestions.total}<span class="count">{suggestions.total}</span>{/if}
@@ -301,7 +305,10 @@
             >Retry</Button
           >
         </p>{/if}
-      {#if suggestions.items.length}<ul class="suggestion-row">
+      {#if suggestions.items.length}<ul
+          class="suggestion-row"
+          {@attach overlayScrollbars({ axis: "x", host: suggestionsEl })}
+        >
           {#each suggestions.items as candidate (candidate.candidate_id)}
             {@const cardFaces =
               review?.candidate?.candidate_id === candidate.candidate_id ? faces : candidate.faces}
@@ -496,10 +503,10 @@
   {@const named = review.candidate?.suggested_person_id}
   {@const person = review.candidate?.display_name ?? ""}
   <Modal title={review.title} onclose={closeReview} width="406px">
-    <div class="review-content">
+    <div class="review-content" bind:this={reviewContentEl}>
       {#if review.candidate}
         <p class="count">{suggestionCounts(faces)}</p>
-        <ul class="review-grid">
+        <ul class="review-grid" {@attach overlayScrollbars({ axis: "y", host: reviewContentEl })}>
           {#each faces as face, index (face.face_id)}
             <li class="review-face">
               {@render crop(faceKey(face, 120), "Suggested face", 44)}

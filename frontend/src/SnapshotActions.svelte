@@ -10,7 +10,15 @@
 <script lang="ts">
   import { onDestroy, untrack } from "svelte";
   import CheckIcon from "@lucide/svelte/icons/check";
-  import { Button, Disclosure, Modal, SegmentedControl, Spinner, Table } from "@kenn-io/kit-ui";
+  import {
+    Button,
+    Disclosure,
+    Modal,
+    SegmentedControl,
+    Spinner,
+    Table,
+    overlayScrollbars,
+  } from "@kenn-io/kit-ui";
   import TagPicker from "./TagPicker.svelte";
   import type { Tag } from "./generated/docbank.js";
   import { randomUUID } from "./crypto.js";
@@ -274,7 +282,7 @@
     {#if failure || errorMessage}<p class="alert" role="alert">{failure || errorMessage}</p>{/if}
     {#if results && tag}
       <Disclosure variant="plain" title="Review documents">
-        <div class="target-list">
+        <div class="target-list" {@attach overlayScrollbars({ axis: "both" })}>
           <Table unsorted ariaLabel="Tag results" class="target-table" zebra={false} scroll="page">
             {#snippet header()}<th scope="col">Document</th><th scope="col">Status</th>{/snippet}
             {#snippet children()}

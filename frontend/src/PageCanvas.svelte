@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import { overlayScrollbars } from "@kenn-io/kit-ui";
   let {
     url,
     width,
@@ -26,6 +27,7 @@
   tabindex="0"
   role="region"
   aria-label="Scrollable page image"
+  {@attach overlayScrollbars({ axis: "both" })}
 >
   <div
     class="page-content"

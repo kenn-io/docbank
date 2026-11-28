@@ -1,10 +1,11 @@
 <script lang="ts">
+  import { overlayScrollbars } from "@kenn-io/kit-ui";
   import CopyValue from "./CopyValue.svelte";
 
   let { command, label = "command" }: { command: string; label?: string } = $props();
 </script>
 
-<div class="command">
+<div class="command" {@attach overlayScrollbars({ axis: "x" })}>
   <CopyValue {label} value={command} />
 </div>
 
