@@ -140,7 +140,8 @@ func TestKitMediaProfileValidation(t *testing.T) {
 	}{
 		{"openai", "/v1", "OpenAI-compatible runtime authority is invalid", "", 1 << 20, 2 << 20},
 		{"vertex", "/publishers/google/models", "vertex API is not supported", embedconfig.APIVertex, 1 << 20, 2 << 20},
-		{"kit embeddings route", "/v1/embeddings", "kit base_url must end in /v1", embedconfig.APIKit, 1 << 20, 2 << 20},
+		{"kit embeddings route", "/v1/embeddings", "kit base_url must not end in /embeddings", embedconfig.APIKit, 1 << 20, 2 << 20},
+		{"kit prefixed route", "/api/v1/servers/synthetic", "", embedconfig.APIKit, 1 << 20, 2 << 20},
 		{"small at floor", "/v1", "", embedconfig.APIKit, 1, 4100},
 		{"large below floor", "/v1", "max_request_bytes", embedconfig.APIKit, 64 << 20, 27966123},
 		{"large at floor", "/v1", "", embedconfig.APIKit, 64 << 20, 27966124},
@@ -156,6 +157,11 @@ func TestKitMediaProfileValidation(t *testing.T) {
 				require.ErrorContains(t, c.Validate(), tc.want)
 			} else {
 				require.NoError(t, c.Validate())
+				if tc.name == "kit prefixed route" {
+					resolved, err := c.EmbeddingProfile("semantic")
+					require.NoError(t, err)
+					assert.Equal(t, "https://embedding.example.invalid:443/api/v1/servers/synthetic", resolved.Runtime.Endpoint)
+				}
 			}
 		})
 	}

@@ -297,10 +297,16 @@ func New(profile Profile, secrets SecretResolver, httpClient *http.Client) (*Cli
 	isolate.Timeout = 0
 	normalized.Descriptor = cloneDescriptor(descriptor)
 	client := &Client{profile: normalized, descriptor: cloneDescriptor(descriptor), secrets: secrets, http: &isolate}
+	baseURL := client.profile.Origin + "/v1"
+	if client.profile.API == embedconfig.APIKit {
+		if endpoint, _ := url.Parse(client.profile.Origin); endpoint.Path != "" {
+			baseURL = client.profile.Origin
+		}
+	}
 	client.text, err = embedclient.New(embedclient.Options{
 		Model: embedconfig.Model{Name: client.descriptor.Model, Dimensions: client.descriptor.Dimension,
 			Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone, EncodingFormat: "float"},
-		Deployment: embedconfig.Deployment{API: client.profile.API, BaseURL: client.profile.Origin + "/v1", TrustPrivateNetwork: true},
+		Deployment: embedconfig.Deployment{API: client.profile.API, BaseURL: baseURL, TrustPrivateNetwork: true},
 		Batch:      embedconfig.Batch{Items: client.profile.MaxBatchItems},
 		Transport:  embedconfig.Transport{MaxResponseBytes: int(client.profile.MaxResponseBytes)},
 		HTTP:       &http.Client{Transport: responsePolicy{client: client}, CheckRedirect: providerhttp.RefuseRedirects, Timeout: client.profile.RequestTimeout},
@@ -593,6 +599,21 @@ func normalizeProfile(profile Profile) (Profile, document.EmbeddingDescriptor, e
 	}
 
 	origin, err := validateOrigin(profile.Origin)
+	if profile.API == embedconfig.APIKit {
+		endpoint, parseErr := url.Parse(profile.Origin)
+		if parseErr == nil && endpoint.Path != "" && endpoint.Path != "/" {
+			origin, err = validateOrigin(endpoint.Scheme + "://" + endpoint.Host)
+			if err == nil {
+				_, err = embedconfig.CanonicalEndpoint(profile.Origin, true)
+			}
+			if err == nil && (endpoint.User != nil || endpoint.RawQuery != "" || endpoint.ForceQuery || endpoint.Fragment != "") {
+				err = errors.New("openaicompat: invalid Kit base URL")
+			}
+			if err == nil {
+				origin += strings.TrimRight(endpoint.EscapedPath(), "/")
+			}
+		}
+	}
 	if err != nil {
 		return Profile{}, document.EmbeddingDescriptor{}, err
 	}

@@ -143,6 +143,34 @@ func TestKitMediaIdentity(t *testing.T) {
 	require.NotEqual(t, baseIdentity, identity)
 }
 
+func TestKitPrefixedServer(t *testing.T) {
+	backend := &kitBackend{}
+	server := httptest.NewServer(http.StripPrefix("/api/v1/servers/synthetic", embedserver.Handler(backend, []string{"synthetic-model"})))
+	defer server.Close()
+	profile := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}))
+	profile.API = embedconfig.APIKit
+	profile.Origin = server.URL + "/api/v1/servers/synthetic"
+	profile.Descriptor = descriptorFor(t, profile)
+	client := newTestClient(t, profile, nil, http.DefaultTransport)
+	_, err := client.Embed(t.Context(), []document.EmbeddingInput{{Key: "query", Role: document.EmbeddingRoleQuery, Kind: document.EmbeddingInputQueryText, Text: "receipt"}}, testAuthorization(profile.Descriptor))
+	require.NoError(t, err)
+	require.Len(t, backend.inputs, 1)
+	other := profile
+	other.Origin = server.URL + "/api/v1/servers/other"
+	fingerprint, err := PolicyFingerprint(other)
+	require.NoError(t, err)
+	require.NotEqual(t, profile.Descriptor.PolicyFingerprint, fingerprint)
+	other.API = ""
+	_, err = PolicyFingerprint(other)
+	require.Error(t, err)
+	other.API = embedconfig.APIKit
+	for _, suffix := range []string{"/api/../other", "/api?secret=value", "/api#fragment"} {
+		other.Origin = server.URL + suffix
+		_, err = PolicyFingerprint(other)
+		require.Error(t, err, suffix)
+	}
+}
+
 func TestKitVideoRequestOmitsAudioExtraction(t *testing.T) {
 	var raw []byte
 	vertexServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

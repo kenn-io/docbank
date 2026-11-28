@@ -1495,7 +1495,7 @@ func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix strin
 				}
 			}
 			if (profile.InputKind != string(document.EmbeddingInputRenditionChunk) && (profile.InputKind != string(document.EmbeddingInputOriginalFile) || profile.Embedder == nil || profile.Embedder.API != embedconfig.APIKit)) || runtime.CapabilityManifest != "" ||
-				(parsed.Path != "" && parsed.Path != "/") || (runtime.DeploymentEpoch == "") == (runtime.ProviderRevisionHeader == "") {
+				((parsed.Path != "" && parsed.Path != "/") && (profile.Embedder == nil || profile.Embedder.API != embedconfig.APIKit)) || (runtime.DeploymentEpoch == "") == (runtime.ProviderRevisionHeader == "") {
 				return fmt.Errorf("%s OpenAI-compatible runtime authority is invalid", prefix)
 			}
 			if runtime.DeploymentEpoch != "" && runtime.DeploymentEpoch != runtime.ModelRevision {
