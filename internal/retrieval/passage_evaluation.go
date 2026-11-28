@@ -18,7 +18,6 @@ import (
 type passageEvaluationBackend interface {
 	EvaluationPassageFocus(ctx context.Context, query string, texts []string) ([][2]int, error)
 	SearchEvaluationLexicalPassages(ctx context.Context, query string, fences []store.EvaluationLexicalFence, maxRows int) ([]store.EvaluationLexicalPassage, bool, error)
-	RevalidateEvaluationLexicalFences(ctx context.Context, fences []store.EvaluationLexicalFence) error
 	ResolveEvaluationSemanticPassages(ctx context.Context, profile, binding string, inputKind document.EmbeddingInputKind, space, source string,
 		neighbors []vectorindex.Neighbor, opts store.SearchOptions, selected map[int64]struct{}, perNode int) (store.SemanticSearchResolution, error)
 }
@@ -227,11 +226,7 @@ func (evaluation *PassageEvaluation) Select(ctx context.Context, limit int) ([]e
 				start, end := embeddingeval.BoundedPassageWindow(passage.text, span[0], span[1], 1536)
 				passage.text = string([]rune(passage.text)[start:end])
 				passage.end, passage.start = passage.start+end, passage.start+start
-				if passage.text == "" || overlapsEvaluationPassage(kept, passage) {
-					diagnostics.Excluded++
-					continue
-				}
-				if len(kept) == limit {
+				if passage.text == "" || len(kept) == limit || overlapsEvaluationPassage(kept, passage) {
 					diagnostics.Excluded++
 					continue
 				}
@@ -258,9 +253,6 @@ func (evaluation *PassageEvaluation) Select(ctx context.Context, limit int) ([]e
 		if len(kept) == 0 {
 			diagnostics.Fallbacks++
 		}
-	}
-	if err := evaluation.catalog.RevalidateEvaluationLexicalFences(ctx, fences); err != nil {
-		return nil, diagnostics, err
 	}
 	current, err := evaluation.searcher.revalidateReport(ctx, evaluation.query, report)
 	if err != nil {

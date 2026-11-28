@@ -138,7 +138,7 @@ func runPassageCorpus(ctx context.Context, root, label string, corpus embeddinge
 			observation := passageObservation{Corpus: label, Query: query.ID, Repeat: repeat, Proxy: proxy}
 			runErr := prepareErr
 			if runErr == nil {
-				observation.Comparison, runErr = embeddingeval.EvaluatePassagesWithOptions(ctx, query.Text, prepared.Candidates, runner, embeddingeval.PassageOptions{Deadline: 5 * time.Second, Rotation: repeat, Select: prepared.Select})
+				observation.Comparison, runErr = embeddingeval.EvaluatePassages(ctx, query.Text, prepared.Candidates, runner, embeddingeval.PassageOptions{Deadline: 5 * time.Second, Rotation: repeat, Select: prepared.Select})
 			}
 			metrics, scoreErr := embeddingeval.ScorePassageComparison(observation.Comparison, judgments)
 			observation.Metrics = metrics

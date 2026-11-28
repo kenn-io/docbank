@@ -89,14 +89,10 @@ type PassageComparison struct {
 
 // EvaluatePassages reranks the same frozen candidate order in three arms.
 // Excerpts and passages must already obey the provider's byte limit; silently
-// truncating an excerpt here would change the baseline being measured.
-func EvaluatePassages(ctx context.Context, query string, candidates []PassageCandidate, runner PassageRunner) (PassageComparison, error) {
-	return EvaluatePassagesWithOptions(ctx, query, candidates, runner, PassageOptions{})
-}
-
-// EvaluatePassagesWithOptions retains baseline orders on failed arms and still
-// attempts the other arms. Callers must disclose its error, never drop a query.
-func EvaluatePassagesWithOptions(ctx context.Context, query string, candidates []PassageCandidate, runner PassageRunner, options PassageOptions) (PassageComparison, error) {
+// truncating an excerpt here would change the baseline being measured. Failed
+// arms retain the baseline order while the other arms still run; callers must
+// disclose its error, never drop a query.
+func EvaluatePassages(ctx context.Context, query string, candidates []PassageCandidate, runner PassageRunner, options PassageOptions) (PassageComparison, error) {
 	if ctx == nil || query == "" || runner == nil {
 		return PassageComparison{}, errors.New("query, context and passage runner are required")
 	}

@@ -19,7 +19,7 @@ func TestPairedRerankUsesFrozenCandidatesAndActualExcerpts(t *testing.T) {
 		{DocumentID: "b", Excerpt: "actual snippet b", Passages: []string{"segment b1"}},
 	}
 	runner := &pairedTestRunner{}
-	result, err := EvaluatePassages(context.Background(), "query", candidates, runner)
+	result, err := EvaluatePassages(context.Background(), "query", candidates, runner, PassageOptions{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"a", "b"}, result.Baseline)
 	require.Equal(t, []string{"b", "a"}, result.Current.Ranking)
@@ -55,7 +55,7 @@ func TestPairedRerankRejectsInvalidScores(t *testing.T) {
 		{{DocumentID: "other", Passage: 0, Score: 1}, {DocumentID: "b", Passage: 0, Score: 1}},
 		{{DocumentID: "a", Passage: 0, Score: 1}, {DocumentID: "a", Passage: 0, Score: 2}},
 	} {
-		_, err := EvaluatePassages(context.Background(), "q", []PassageCandidate{{DocumentID: "a", Excerpt: "first"}, {DocumentID: "b", Excerpt: "second"}}, fixedPassageRunner{scores})
+		_, err := EvaluatePassages(context.Background(), "q", []PassageCandidate{{DocumentID: "a", Excerpt: "first"}, {DocumentID: "b", Excerpt: "second"}}, fixedPassageRunner{scores}, PassageOptions{})
 		require.Error(t, err)
 	}
 }
@@ -72,7 +72,7 @@ func FuzzPairedRejectsNonfiniteAndKeepsMax(f *testing.F) {
 	f.Fuzz(func(t *testing.T, a, b, c float64) {
 		candidates := []PassageCandidate{{DocumentID: "a", Excerpt: "x", Passages: []string{"x", "y"}}, {DocumentID: "b", Excerpt: "z", Passages: []string{"z"}}}
 		runner := valuePassageRunner{a, b, c}
-		comparison, err := EvaluatePassages(t.Context(), "q", candidates, runner)
+		comparison, err := EvaluatePassages(t.Context(), "q", candidates, runner, PassageOptions{})
 		if math.IsNaN(a) || math.IsInf(a, 0) || math.IsNaN(b) || math.IsInf(b, 0) || math.IsNaN(c) || math.IsInf(c, 0) {
 			require.Error(t, err)
 			return
@@ -110,12 +110,12 @@ func TestPairedRejectsInvalidCandidateAndPreservesFallback(t *testing.T) {
 		{{DocumentID: "a", Excerpt: "x", Passages: []string{strings.Repeat("界", 1366)}}},
 	} {
 		runner := &pairedTestRunner{}
-		_, err := EvaluatePassages(t.Context(), "q", candidates, runner)
+		_, err := EvaluatePassages(t.Context(), "q", candidates, runner, PassageOptions{})
 		require.Error(t, err)
 		require.Empty(t, runner.inputs, "invalid candidates must be rejected before a provider call")
 	}
 	runner := &pairedTestRunner{}
-	_, err := EvaluatePassages(t.Context(), "q", []PassageCandidate{{DocumentID: "a", Excerpt: "fallback"}}, runner)
+	_, err := EvaluatePassages(t.Context(), "q", []PassageCandidate{{DocumentID: "a", Excerpt: "fallback"}}, runner, PassageOptions{})
 	require.NoError(t, err)
 	require.Equal(t, [][]string{{"fallback"}, {"fallback"}, {"fallback"}}, runner.inputs)
 }
@@ -158,7 +158,7 @@ func TestPairedStagesRotateAndKeepFailuresVisible(t *testing.T) {
 				return selected, PassageSelection{}, nil
 			}
 			runner := &captureEqualRunner{calls: &calls, deadlines: map[string]time.Time{}, done: map[string]<-chan struct{}{}}
-			comparison, err := EvaluatePassagesWithOptions(parent, "q", candidates, runner, PassageOptions{Deadline: time.Second, Rotation: rotation, Select: selectPassages})
+			comparison, err := EvaluatePassages(parent, "q", candidates, runner, PassageOptions{Deadline: time.Second, Rotation: rotation, Select: selectPassages})
 			if capped {
 				require.Error(t, err)
 				order = slices.DeleteFunc(order, func(call string) bool { return call == "provider:passage3" })
@@ -221,7 +221,7 @@ func isClosed(ch <-chan struct{}) bool {
 }
 
 func TestPairedProviderFailureRetainsAttemptAccounting(t *testing.T) {
-	comparison, err := EvaluatePassages(t.Context(), "q", []PassageCandidate{{DocumentID: "a", Excerpt: "sent text"}}, failedPassageRunner{})
+	comparison, err := EvaluatePassages(t.Context(), "q", []PassageCandidate{{DocumentID: "a", Excerpt: "sent text"}}, failedPassageRunner{}, PassageOptions{})
 	require.Error(t, err)
 	require.Equal(t, 9, comparison.Current.InputBytes)
 	require.Equal(t, 31, comparison.Current.RequestBytes)

@@ -292,8 +292,7 @@ func (r *passageGateReport) finish() {
 	}
 	if !complete {
 		s.Decision = "inconclusive"
-		s.Reasons = nil
-		s.Reasons = append(s.Reasons, "missing observations, provider/selection failures, controls or proxy coverage")
+		s.Reasons = []string{"missing observations, provider/selection failures, controls or proxy coverage"}
 	}
 }
 func (r *passageGateReport) markdown() (string, error) {

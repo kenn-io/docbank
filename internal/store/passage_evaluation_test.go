@@ -110,22 +110,6 @@ func TestEvaluationLexicalPassagesUsesCurrentRenditionAndDisclosesCap(t *testing
 	require.ElementsMatch(t, []string{fences[0].BuildID, fences[1].BuildID}, []string{passages[0].BuildID, passages[1].BuildID})
 }
 
-func TestEvaluationLexicalFenceRevalidationDetectsStaleHead(t *testing.T) {
-	t.Parallel()
-	s, _, nodes, profile := collectionCoverageFixture(t, 1)
-	collectionCoveragePublish(t, s, nodes[0], profile, "complete")
-	fence := EvaluationLexicalFence{ContentVersionID: nodes[0].CurrentVersionID, BuildID: testSHA256([]byte(nodes[0].CurrentVersionID + "complete"))}
-	require.NoError(t, s.RevalidateEvaluationLexicalFences(t.Context(), []EvaluationLexicalFence{fence}))
-	collectionCoveragePublish(t, s, nodes[0], catalogProcessingProfile(t, true), "second")
-	fences := []EvaluationLexicalFence{fence, {ContentVersionID: nodes[0].CurrentVersionID, BuildID: testSHA256([]byte(nodes[0].CurrentVersionID + "second"))}}
-	require.NoError(t, s.RevalidateEvaluationLexicalFences(t.Context(), fences))
-	fences[1].BuildID = testSHA256([]byte("unpublished build"))
-	require.ErrorContains(t, s.RevalidateEvaluationLexicalFences(t.Context(), fences), "stale")
-	_, _, err := s.ReplaceContent(t.Context(), nodes[0].ID, nodes[0].Revision, testSHA256([]byte("replacement source")), 20, "application/pdf")
-	require.NoError(t, err)
-	require.Error(t, s.RevalidateEvaluationLexicalFences(t.Context(), []EvaluationLexicalFence{fence}))
-}
-
 func TestEvaluationPassageRejectsPostgres(t *testing.T) {
 	s := &Store{postgresSchema: "synthetic"}
 	for _, tc := range []struct {
@@ -141,7 +125,6 @@ func TestEvaluationPassageRejectsPostgres(t *testing.T) {
 			_, _, err := s.SearchEvaluationLexicalPassages(t.Context(), "", nil, 0)
 			return err
 		}},
-		{"revalidate", func(t *testing.T) error { return s.RevalidateEvaluationLexicalFences(t.Context(), nil) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require.EqualError(t, tc.run(t), "passage evaluation requires SQLite")
