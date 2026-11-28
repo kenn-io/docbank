@@ -232,7 +232,7 @@ func TestLocalTextKeepsOllamaVectors(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, plan.Profile, choice.Profile)
 			ollama.Close()
-			restored, err := localTextCandidate(cfg, choice.Server, choice.Profile)
+			restored, _, err := localTextCandidate(cfg, processing.LocalTextTarget{Server: choice.Server}, choice.Profile)
 			require.NoError(t, err)
 			require.Equal(t, before, search(serviceFor(restored), name))
 			stop = startServe(t)

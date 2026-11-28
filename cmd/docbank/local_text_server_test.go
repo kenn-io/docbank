@@ -34,7 +34,7 @@ import (
 func TestLocalTextServerCandidate(t *testing.T) {
 	cfg := localTextSourceConfig(t, "http://127.0.0.1:12345", "source-revision", "prefix-free", "DOCBANK_TEST_SOURCE_KEY")
 	target := processing.LocalTextTarget{Server: "auto", EmbeddingServer: "http://127.0.0.1:12345/api/v1/servers/example", EmbeddingModel: "gemini-embedding-2", EmbeddingDimensions: 2}
-	candidate, _, err := localTextServerCandidate(cfg, target, "archive")
+	candidate, _, err := localTextCandidate(cfg, target, "archive")
 	require.NoError(t, err)
 	require.NoError(t, candidate.Validate())
 	_, err = configureEmbeddingRuntimeBundle(candidate)
@@ -79,13 +79,13 @@ func TestLocalTextServerPairsMedia(t *testing.T) {
 	recipe.Embeddings = append(recipe.Embeddings, "media")
 	cfg.ProcessingProfiles["archive"] = recipe
 	target := processing.LocalTextTarget{Server: "auto", EmbeddingServer: "http://127.0.0.1:12345/api/v1/servers/example", EmbeddingModel: "gemini-embedding-2", EmbeddingDimensions: 2}
-	candidate, retained, err := localTextServerCandidate(cfg, target, "archive")
+	candidate, retained, err := localTextCandidate(cfg, target, "archive")
 	require.NoError(t, err)
 	require.Contains(t, candidate.ProcessingProfiles["archive"].Embeddings, "media-kit")
 	require.Equal(t, "media", candidate.EmbeddingProfiles["media-kit"].Runtime.MediaFallbackBinding)
 	require.NotEmpty(t, retained)
 	target.EmbeddingModel = "text-model"
-	candidate, retained, err = localTextServerCandidate(cfg, target, "archive")
+	candidate, retained, err = localTextCandidate(cfg, target, "archive")
 	require.NoError(t, err)
 	require.NotContains(t, candidate.ProcessingProfiles["archive"].Embeddings, "media-kit")
 	require.NotEmpty(t, retained)
@@ -179,6 +179,16 @@ func TestLocalTextServerDaemonRestart(t *testing.T) {
 	waitForDaemon(t, root)
 	connection, err := daemonconn.Ensure(t.Context())
 	require.NoError(t, err)
+	layout, err := home.Resolve()
+	require.NoError(t, err)
+	catalog, err := store.Open(t.Context(), layout.DBPath())
+	require.NoError(t, err)
+	rootID := catalog.RootID()
+	require.NoError(t, catalog.Close())
+	beforeData := mediatest.PNG(16, 16, color.White)
+	beforeHash := fmt.Sprintf("%x", sha256.Sum256(beforeData))
+	beforeReceipt, err := connection.Upload(t.Context(), rootID, "before.png", "image/png", beforeHash, int64(len(beforeData)), bytes.NewReader(beforeData))
+	require.NoError(t, err)
 	body := &api.LocalTextPlanRequest{Server: "auto", Target: &processing.LocalTextTarget{EmbeddingServer: server.URL + "/api/v1/servers/example", EmbeddingModel: "gemini-embedding-2", EmbeddingDimensions: 2, EmbeddingAPIKeyEnv: "DOCBANK_TEST_EMBED_KEY"}}
 	plan, err := connection.API().PlanLocalText(t.Context(), &apiclient.PlanLocalTextRequestOptions{Body: body})
 	require.NoError(t, err)
@@ -200,6 +210,18 @@ func TestLocalTextServerDaemonRestart(t *testing.T) {
 	saved, err := os.ReadFile(filepath.Join(root, "local-text.json"))
 	require.NoError(t, err)
 	require.NotContains(t, string(saved), "synthetic-server-secret")
+	candidate, _, err := localTextCandidate(cfg, *body.Target, "photos")
+	require.NoError(t, err)
+	projected, err := candidate.ProcessingProfile("photos")
+	require.NoError(t, err)
+	_, projectedFingerprint, err := document.CanonicalProfile(projected.Document)
+	require.NoError(t, err)
+	catalog, err = store.Open(t.Context(), layout.DBPath())
+	require.NoError(t, err)
+	rebuilt, err := catalog.HasEmbeddingHeads(t.Context(), projectedFingerprint.Profile, "media-kit")
+	require.NoError(t, err)
+	require.True(t, rebuilt, "setup rebuilt the existing image before saving")
+	require.NoError(t, catalog.Close())
 	stop()
 	cfg.ProcessingProfiles["new-recipe"] = cfg.ProcessingProfiles["archive"]
 	original, err := cfg.ProcessingProfile("new-recipe")
@@ -226,26 +248,24 @@ func TestLocalTextServerDaemonRestart(t *testing.T) {
 		}
 	}
 	require.True(t, foundNewRecipe)
+	beforeResults, err := connection.SearchDocuments(t.Context(), api.DocumentSearchRequest{Profile: "photos", Query: "image", Mode: "semantic", Limit: 2, Scope: &api.DocumentSearchScope{Kind: "all_live"}})
+	require.NoError(t, err)
+	require.NotEmpty(t, beforeResults.Results)
+	require.Equal(t, beforeReceipt.Node.ID, beforeResults.Results[0].NodeID)
 	text := "lease renewal document"
 	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(text)))
-	layout, err := home.Resolve()
-	require.NoError(t, err)
-	catalog, err := store.Open(t.Context(), layout.DBPath())
-	require.NoError(t, err)
-	rootID := catalog.RootID()
-	require.NoError(t, catalog.Close())
 	_, err = connection.Upload(t.Context(), rootID, "new.txt", "text/plain", hash, int64(len(text)), strings.NewReader(text))
 	require.NoError(t, err)
 	settleDaemon(t)
-	imageData := mediatest.PNG(16, 16, color.White)
+	imageData := mediatest.PNG(17, 17, color.White)
 	imageHash := fmt.Sprintf("%x", sha256.Sum256(imageData))
 	imageReceipt, err := connection.Upload(t.Context(), rootID, "image.png", "image/png", imageHash, int64(len(imageData)), bytes.NewReader(imageData))
 	require.NoError(t, err)
 	settleDaemon(t)
 	imageResults, err := connection.SearchDocuments(t.Context(), api.DocumentSearchRequest{Profile: "photos", Query: "image", Mode: "semantic", Limit: 2, Scope: &api.DocumentSearchScope{Kind: "all_live"}})
 	require.NoError(t, err)
-	require.NotEmpty(t, imageResults.Results)
-	require.Equal(t, imageReceipt.Node.ID, imageResults.Results[0].NodeID)
+	require.Len(t, imageResults.Results, 2)
+	require.Contains(t, []int64{imageResults.Results[0].NodeID, imageResults.Results[1].NodeID}, imageReceipt.Node.ID)
 	results, err := connection.SearchDocuments(t.Context(), api.DocumentSearchRequest{Profile: "archive", Query: "lease renewal", Mode: "semantic", Limit: 2, Scope: &api.DocumentSearchScope{Kind: "all_live"}})
 	require.NoError(t, err)
 	require.NotEmpty(t, results.Results)
@@ -268,17 +288,17 @@ func TestLocalTextServerFlags(t *testing.T) {
 func TestLocalTextServerDoesNotSelectBuiltInProfile(t *testing.T) {
 	cfg := localTextSourceConfig(t, "http://127.0.0.1:12345", "source-revision", "prefix-free", "DOCBANK_TEST_SOURCE_KEY")
 	target := processing.LocalTextTarget{Server: "auto", EmbeddingServer: "http://127.0.0.1:12345/v1", EmbeddingModel: "model", EmbeddingDimensions: 2}
-	_, _, err := localTextServerCandidate(cfg, target, config.LocalTextProfile)
+	_, _, err := localTextCandidate(cfg, target, config.LocalTextProfile)
 	require.ErrorIs(t, err, processing.ErrProfileNotConfigured)
 }
 
 func TestLocalTextServerIdentitySeparatesModelAndDimensions(t *testing.T) {
 	cfg := localTextSourceConfig(t, "http://127.0.0.1:12345", "source-revision", "prefix-free", "DOCBANK_TEST_SOURCE_KEY")
 	target := processing.LocalTextTarget{Server: "auto", EmbeddingServer: "http://127.0.0.1:12345/v1", EmbeddingModel: "a", EmbeddingDimensions: 12}
-	first, _, err := localTextServerCandidate(cfg, target, "archive")
+	first, _, err := localTextCandidate(cfg, target, "archive")
 	require.NoError(t, err)
 	target.EmbeddingModel, target.EmbeddingDimensions = "a1", 2
-	second, _, err := localTextServerCandidate(cfg, target, "archive")
+	second, _, err := localTextCandidate(cfg, target, "archive")
 	require.NoError(t, err)
 	require.NotEqual(t, first.EmbeddingProfiles["semantic"].DisclosureFingerprint, second.EmbeddingProfiles["semantic"].DisclosureFingerprint)
 }

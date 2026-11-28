@@ -331,7 +331,7 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 				blobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())
 				require.NoError(t, err)
 				defer func() { require.NoError(t, blobs.Close()) }()
-				cfg, err := localTextCandidate(config.Default(), "local", "")
+				cfg, _, err := localTextCandidate(config.Default(), processing.LocalTextTarget{Server: "local"}, "")
 				require.NoError(t, err)
 				bundle, err := configureEmbeddingRuntimeBundle(cfg)
 				require.NoError(t, err)
@@ -481,7 +481,7 @@ func TestLocalTextAutoSendsOnlyToOwnerEndpoint(t *testing.T) {
 	}
 	http.DefaultTransport = transport
 	defer func() { http.DefaultTransport = original; transport.CloseIdleConnections() }()
-	cfg, err := localTextCandidate(config.Default(), "auto", "")
+	cfg, _, err := localTextCandidate(config.Default(), processing.LocalTextTarget{Server: "auto"}, "")
 	require.NoError(t, err)
 	bundle, err := configureEmbeddingRuntimeBundle(cfg)
 	require.NoError(t, err)
@@ -545,10 +545,10 @@ func TestFacesEnableNoninteractively(t *testing.T) {
 func TestLocalTextCandidateRejections(t *testing.T) {
 	cfg := localTextSourceConfig(t, "http://127.0.0.1:12345", "source-revision", "prefix-free", "DOCBANK_TEST_RESERVED_KEY")
 	cfg.ProcessingProfiles = map[string]config.ProcessingProfileConfig{config.LocalTextProfile: cfg.ProcessingProfiles["archive"]}
-	_, err := localTextCandidate(cfg, "local", config.LocalTextProfile)
+	_, _, err := localTextCandidate(cfg, processing.LocalTextTarget{Server: "local"}, config.LocalTextProfile)
 	require.ErrorContains(t, err, "reserved for local text")
 	cfg = localTextSourceConfig(t, "http://127.0.0.1:12345", "source-revision", "revision-header", "DOCBANK_TEST_REVISION_KEY")
-	_, err = localTextCandidate(cfg, "local", "archive")
+	_, _, err = localTextCandidate(cfg, processing.LocalTextTarget{Server: "local"}, "archive")
 	require.ErrorIs(t, err, processing.ErrProfileNotConfigured)
 }
 
@@ -596,7 +596,7 @@ func TestLocalTextStatusProvider(t *testing.T) {
 			profiles, err := executableProcessingProfiles(cfg, bundle)
 			require.NoError(t, err)
 			if tc.moveFirst {
-				candidate, err := localTextCandidate(cfg, "local", "archive")
+				candidate, _, err := localTextCandidate(cfg, processing.LocalTextTarget{Server: "local"}, "archive")
 				require.NoError(t, err)
 				selectedBundle, err := configureEmbeddingRuntimeBundle(candidate)
 				require.NoError(t, err)

@@ -100,67 +100,36 @@ func inheritedLocalText(profiles map[string]processing.ProfileConfig) (config.Lo
 	return config.LocalTextConfig{Profile: config.LocalTextProfile, Server: "local"}, nil
 }
 
-// localTextCandidate moves one compatible recipe, or supplies the plaintext fallback.
-func localTextCandidate(cfg config.Config, mode, name string) (config.Config, error) {
-	if mode != "auto" && mode != "local" {
-		return cfg, processing.ErrProfileNotConfigured
+// localTextCandidate overlays one recipe with the selected embedding target.
+func localTextCandidate(cfg config.Config, target processing.LocalTextTarget, name string) (config.Config, []string, error) {
+	remote := target.EmbeddingServer != ""
+	if !remote && target.Server != "auto" && target.Server != "local" {
+		return cfg, nil, processing.ErrProfileNotConfigured
 	}
-	if name == config.LocalTextProfile {
-		name = ""
+	if remote && name == config.LocalTextProfile {
+		return cfg, nil, processing.ErrProfileNotConfigured
 	}
 	candidate := cfg
+	candidate.EffectiveProfiles = nil
 	candidate.EmbeddingProfiles = maps.Clone(cfg.EmbeddingProfiles)
 	candidate.RenditionProfiles = maps.Clone(cfg.RenditionProfiles)
 	candidate.RetrievalProfiles = maps.Clone(cfg.RetrievalProfiles)
 	candidate.ProcessingProfiles = maps.Clone(cfg.ProcessingProfiles)
-	if name != "" {
-		recipe, ok := cfg.ProcessingProfiles[name]
-		if !ok {
-			return cfg, processing.ErrProfileNotConfigured
+	if !remote && (name == "" || name == config.LocalTextProfile) {
+		var err error
+		candidate, err = candidate.WithLocalText()
+		if err != nil {
+			return cfg, nil, err
 		}
-		textBindings := 0
-		for _, binding := range recipe.Embeddings {
-			p, err := cfg.EmbeddingProfile(binding)
-			if err != nil {
-				return cfg, err
-			}
-			if p.InputKind != string(document.EmbeddingInputRenditionChunk) {
-				continue
-			}
-			p, err = config.LocalTextEmbedding(p, mode)
-			if err != nil {
-				return cfg, processing.ErrProfileNotConfigured
-			}
-			candidate.EmbeddingProfiles[binding] = p
-			textBindings++
-		}
-		if textBindings == 0 {
-			return cfg, processing.ErrProfileNotConfigured
-		}
-		candidate.ProcessingProfiles = map[string]config.ProcessingProfileConfig{name: recipe}
-		return candidate, nil
+		candidate.ProcessingProfiles = map[string]config.ProcessingProfileConfig{config.LocalTextProfile: candidate.ProcessingProfiles[config.LocalTextProfile]}
+		p := candidate.EmbeddingProfiles[config.LocalTextProfile]
+		p.Runtime = new(*p.Runtime)
+		p.Runtime.ServerMode = target.Server
+		candidate.EmbeddingProfiles[config.LocalTextProfile] = p
+		return candidate, nil, nil
 	}
-	var err error
-	candidate, err = candidate.WithLocalText()
-	if err != nil {
-		return cfg, err
-	}
-	candidate.ProcessingProfiles = map[string]config.ProcessingProfileConfig{config.LocalTextProfile: candidate.ProcessingProfiles[config.LocalTextProfile]}
-	p := candidate.EmbeddingProfiles[config.LocalTextProfile]
-	p.Runtime = new(*p.Runtime)
-	p.Runtime.ServerMode = mode
-	candidate.EmbeddingProfiles[config.LocalTextProfile] = p
-	return candidate, nil
-}
-
-// localTextServerCandidate overlays one recipe with the reviewed server target.
-func localTextServerCandidate(cfg config.Config, target processing.LocalTextTarget, name string) (config.Config, []string, error) {
-	candidate := cfg
-	candidate.EffectiveProfiles = nil
-	candidate.EmbeddingProfiles = maps.Clone(cfg.EmbeddingProfiles)
-	candidate.ProcessingProfiles = maps.Clone(cfg.ProcessingProfiles)
 	recipe, ok := cfg.ProcessingProfiles[name]
-	if !ok || name == config.LocalTextProfile {
+	if !ok {
 		return cfg, nil, processing.ErrProfileNotConfigured
 	}
 	recipe.Embeddings = append([]string(nil), recipe.Embeddings...)
@@ -170,6 +139,18 @@ func localTextServerCandidate(cfg config.Config, target processing.LocalTextTarg
 		p, err := cfg.EmbeddingProfile(binding)
 		if err != nil {
 			return cfg, nil, err
+		}
+		if !remote {
+			if p.InputKind != string(document.EmbeddingInputRenditionChunk) {
+				continue
+			}
+			p, err = config.LocalTextEmbedding(p, target.Server)
+			if err != nil {
+				return cfg, nil, processing.ErrProfileNotConfigured
+			}
+			candidate.EmbeddingProfiles[binding] = p
+			moved = true
+			continue
 		}
 		if p.InputKind == string(document.EmbeddingInputRenditionChunk) && strings.HasPrefix(p.Model, "voyage-context-4") {
 			retained = append(retained, name+": contextual text stays with its provider")

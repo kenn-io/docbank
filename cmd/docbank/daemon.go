@@ -337,20 +337,8 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		inherited = choice.Profile != ""
 	}
 	baseConfig := cfg
-	candidateProfiles := func(mode, name string) (map[string]processing.ProfileConfig, config.Config, error) {
-		candidate, err := localTextCandidate(baseConfig, mode, name)
-		if err != nil {
-			return nil, candidate, err
-		}
-		bundle, err := configureEmbeddingRuntimeBundle(candidate)
-		if err != nil {
-			return nil, candidate, err
-		}
-		profiles, err := executableProcessingProfiles(candidate, bundle)
-		return profiles, candidate, err
-	}
-	serverCandidateProfiles := func(target processing.LocalTextTarget, name string) (map[string]processing.ProfileConfig, config.Config, []string, error) {
-		candidate, retained, err := localTextServerCandidate(baseConfig, target, name)
+	candidateProfiles := func(target processing.LocalTextTarget, name string) (map[string]processing.ProfileConfig, config.Config, []string, error) {
+		candidate, retained, err := localTextCandidate(baseConfig, target, name)
 		if err != nil {
 			return nil, candidate, retained, err
 		}
@@ -366,7 +354,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		target := processing.LocalTextTarget{Server: choice.Server, EmbeddingServer: choice.EmbeddingServer, EmbeddingModel: choice.EmbeddingModel, EmbeddingDimensions: choice.EmbeddingDimensions, EmbeddingAPIKeyEnv: choice.EmbeddingAPIKeyEnv}
 		names := choice.Profiles
 		for _, name := range names {
-			selected, candidate, _, err := serverCandidateProfiles(target, name)
+			selected, candidate, _, err := candidateProfiles(target, name)
 
 			if err == nil {
 				cfg, err = projectLocalTextProfile(cfg, processingProfiles, candidate, name, selected[name])
@@ -377,7 +365,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 			selectedProfiles = append(selectedProfiles, name)
 		}
 	} else if choice.Profile != "" {
-		selected, candidate, err := candidateProfiles(choice.Server, choice.Profile)
+		selected, candidate, _, err := candidateProfiles(processing.LocalTextTarget{Server: choice.Server}, choice.Profile)
 		if err == nil && selected[choice.Profile].RenditionProvider == nil {
 			err = processing.ErrProfileNotConfigured
 		}
@@ -471,14 +459,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		},
 	}
 	localText.Candidate = func(target processing.LocalTextTarget, name string) (*processing.Service, []string, error) {
-		var profiles map[string]processing.ProfileConfig
-		var retained []string
-		var err error
-		if target.EmbeddingServer != "" {
-			profiles, _, retained, err = serverCandidateProfiles(target, name)
-		} else {
-			profiles, _, err = candidateProfiles(target.Server, name)
-		}
+		profiles, _, retained, err := candidateProfiles(target, name)
 		if err != nil {
 			return nil, retained, err
 		}

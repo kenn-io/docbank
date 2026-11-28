@@ -858,6 +858,67 @@ func TestLocalTextTargetReviewsEveryProfile(t *testing.T) {
 	require.Equal(t, []string{"alpha", "beta"}, saved)
 }
 
+func TestLocalTextTargetSecondProfileFailureKeepsSavedChoice(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var firstCalls, secondCalls atomic.Int64
+		first := &localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(t), embed: func(context.Context) error {
+			firstCalls.Add(1)
+			return nil
+		}}
+		secondDescriptor := first.descriptor
+		secondDescriptor.ModelRevision = "second-model-revision"
+		secondDescriptor.Fingerprint = ""
+		secondDescriptor, err := document.NewEmbeddingDescriptor(secondDescriptor)
+		require.NoError(t, err)
+		second := &localTextEmbeddingProvider{descriptor: secondDescriptor, embed: func(context.Context) error {
+			secondCalls.Add(1)
+			return errors.New("synthetic server failure")
+		}}
+		fixture, original := newLocalTextBackfillFixture(t, newWorkerProvider(t), first)
+		written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDF()))
+		require.NoError(t, err)
+		_, err = fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "pending.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
+		require.NoError(t, err)
+		source := original.Service.profiles["pdf"]
+		profile := func(name string, provider document.EmbeddingProvider) ProfileConfig {
+			portable := source.portable
+			portable.Rendition = new(*portable.Rendition)
+			portable.Rendition.AuthorizationFingerprint = workerHash(name)
+			var embedding document.ProcessingProfileV1
+			require.NoError(t, json.Unmarshal(embeddingWorkerProfile(t, provider.Descriptor()).CanonicalProfile, &embedding))
+			portable.Embeddings = embedding.Embeddings[:1]
+			return ProfileConfig{Profile: portable, RenditionProvider: source.provider,
+				EmbeddingProviders: map[string]document.EmbeddingProvider{"chunk": provider}, Tokenizers: source.tokenizers}
+		}
+		service := func(profiles map[string]ProfileConfig) *Service {
+			s, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
+				Gate: newWorkerTestGate(), Profiles: profiles, SpoolDirectory: t.TempDir()})
+			require.NoError(t, err)
+			t.Cleanup(s.Stop)
+			return s
+		}
+		setup := &LocalTextSetup{Service: service(map[string]ProfileConfig{"alpha": profile("alpha", first), "beta": profile("beta", first)})}
+		setup.Startup = func(context.Context, bool, LocalTextTarget) error { return nil }
+		setup.Candidate = func(_ LocalTextTarget, name string) (*Service, []string, error) {
+			provider := document.EmbeddingProvider(first)
+			if name == "beta" {
+				provider = second
+			}
+			return service(map[string]ProfileConfig{name: profile(name+"-server", provider)}), nil, nil
+		}
+		saved := []string{"previous"}
+		setup.Save = func(names []string, _ LocalTextTarget) error { saved = names; return nil }
+		target := LocalTextTarget{EmbeddingServer: "https://embedding.example.invalid/v1", EmbeddingModel: "model", EmbeddingDimensions: 2}
+		plan, err := setup.Plan(t.Context(), target)
+		require.NoError(t, err)
+		_, err = setup.Apply(t.Context(), target, plan.Fingerprint)
+		require.ErrorIs(t, err, ErrConsentSaved)
+		require.Positive(t, firstCalls.Load())
+		require.Positive(t, secondCalls.Load())
+		require.Equal(t, []string{"previous"}, saved)
+	})
+}
+
 func TestLocalTextPairedBindingsFinishBackfill(t *testing.T) {
 	_, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t))
 	items, err := setup.pendingTargets(t.Context(), "", 100, false)
