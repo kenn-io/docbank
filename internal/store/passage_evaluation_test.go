@@ -107,17 +107,24 @@ func TestEvaluationLexicalPassagesUsesCurrentRenditionAndDisclosesCap(t *testing
 }
 
 func TestEvaluationPassageRejectsPostgres(t *testing.T) {
+	t.Parallel()
 	s := &Store{postgresSchema: "synthetic"}
 	for _, tc := range []struct {
 		name string
 		run  func(*testing.T) error
 	}{
-		{"focus", func(t *testing.T) error { _, err := s.EvaluationPassageFocus(t.Context(), "", nil); return err }},
+		{"focus", func(t *testing.T) error {
+			t.Helper()
+			_, err := s.EvaluationPassageFocus(t.Context(), "", nil)
+			return err
+		}},
 		{"semantic", func(t *testing.T) error {
+			t.Helper()
 			_, err := s.ResolveEvaluationSemanticPassages(t.Context(), "", "", "", "", "", nil, SearchOptions{}, nil, 0)
 			return err
 		}},
 		{"lexical", func(t *testing.T) error {
+			t.Helper()
 			_, _, err := s.SearchEvaluationLexicalPassages(t.Context(), "", nil, 0)
 			return err
 		}},
