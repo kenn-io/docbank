@@ -14,7 +14,7 @@ The converter verifies compressed corpus/test SHA-256 and qrels Git blob ID befo
 
 ## Download and convert
 
-Run the synthetic tests before downloading. Required User-Agent applies to all downloads.
+Run the synthetic tests before downloading. All three downloads send the neutral `docbank-eval-recipe` User-Agent; the source hash checks below, not the agent string, establish the pinned inputs.
 
 ```sh
 recipe="$(pwd)/scripts/rerank-eval/mldr"
@@ -24,7 +24,7 @@ mkdir -p /tmp/docbank-passage-eval-20261030/input
 cd /tmp/docbank-passage-eval-20261030
 revision=d67138e705d963e346253a80e59676ddb418810a
 base="https://huggingface.co/datasets/Shitao/MLDR/resolve/$revision"
-agent='OpenAI File Downloader, XaiImageApiFetch/1.0'
+agent='docbank-eval-recipe'
 curl -fL --retry 3 -A "$agent" "$base/mldr-v1.0-en/corpus.jsonl.gz" -o input/corpus.jsonl.gz
 curl -fL --retry 3 -A "$agent" "$base/mldr-v1.0-en/test.jsonl.gz" -o input/test.jsonl.gz
 curl -fL --retry 3 -A "$agent" "$base/qrels/qrels.mldr-v1.0-en-test.tsv" -o input/qrels.tsv
