@@ -1335,6 +1335,47 @@ untested. The recipe transports rendition text and text queries only and does
 not advertise original-file image, audio, or video support. Staging this
 fragment does not change any default model or existing generation.
 
+#### Kit media service
+
+A Kit embedding service can index PNG, JPEG, and WebP images, scanned or text
+PDFs of up to six pages, and MP4 videos of up to two minutes. Each file can be
+at most 20 MiB. Other file types receive an `input_rejected` result for this
+profile. The service must support media; Kit's built-in text model returns HTTP
+415 for media. Supply the remaining pinned descriptor, disclosure, credential,
+and runtime settings as described above.
+
+```toml
+[embedding_profiles.media]
+input_kind = "original_file"
+metric = "cosine"
+normalization = "none"
+max_input_bytes = 20971520
+compatibility_id = "gemini-embedding-2/search/v1"
+
+[embedding_profiles.media.embedder]
+api = "kit"
+base_url = "https://embedding.example.invalid/v1"
+model = "gemini-embedding-2"
+dims = 3072
+fingerprint_salt = "deployment-v1"
+timeout_seconds = 120
+
+[embedding_profiles.media.runtime]
+max_request_bytes = 29360128
+
+[embedding_profiles.media.model_input]
+profile = "custom/v1"
+compatibility_id = "gemini-embedding-2/search/v1"
+
+[embedding_profiles.media.model_input.document]
+mode = "text"
+template = "title: none | text: {{content}}"
+
+[embedding_profiles.media.model_input.query]
+mode = "text"
+template = "task: search result | query: {{content}}"
+```
+
 #### Legacy text-service configuration
 
 Existing `model`, `dimensions`, `max_batch_items`, runtime `endpoint`,
@@ -1397,7 +1438,7 @@ and must be supplied separately after you restore a vault.
 
 | Fields | Meaning |
 | --- | --- |
-| `adapter_contract` | `docbank-openai-compatible-embeddings/v1` for rendition chunks, `docbank-voyage-embeddings/v1` for rendition chunks and original files, or `docbank-standard-embedding-bridge/v2` for image inputs and text queries. |
+| `adapter_contract` | `docbank-openai-compatible-embeddings/v1` for rendition chunks and Kit original-file profiles, `docbank-voyage-embeddings/v1` for rendition chunks and original files, or `docbank-standard-embedding-bridge/v2` for image inputs and text queries. |
 | `endpoint`, `model_revision` | Exact provider endpoint and pinned revision. OpenAI-compatible endpoints are origins without a path; Voyage uses `https://api.voyageai.com/v1`. |
 | `deployment_epoch`, `provider_revision_header` | OpenAI-compatible runtimes require exactly one. Voyage text runtimes require an epoch and forbid a revision header. The epoch must equal `model_revision`; an OpenAI-compatible revision header must echo the pinned revision in every response. |
 | `capability_manifest` | Voyage original-file runtimes require an absolute path to a capability manifest matching their model, media policy, and descriptor. Voyage text runtimes forbid this field. |

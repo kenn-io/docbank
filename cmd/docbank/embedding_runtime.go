@@ -152,6 +152,9 @@ func configureEmbeddingRuntimeBundle(cfg config.Config) (embeddingRuntimeBundle,
 				MaxInputBytes: configured.MaxInputBytes, MaxRequestBytes: configured.Runtime.MaxRequestBytes,
 				MaxResponseBytes: configured.MaxResponseBytes,
 				EgressPolicy:     providerEgressPolicy(configured.Runtime.ProviderEgressConfig)}
+			if configured.Embedder != nil {
+				profile.API = configured.Embedder.API
+			}
 			descriptor, profile, err = finalizeOpenAIEmbeddingDescriptor(profile)
 			if err == nil {
 				profile.Descriptor = descriptor

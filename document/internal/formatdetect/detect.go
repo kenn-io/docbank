@@ -408,6 +408,7 @@ var (
 // inspection policy.
 type PDFLimits struct {
 	TextOnly         bool
+	ImageStreams     bool
 	MaxExpandedBytes int64
 	MaxEntryBytes    int64
 	MaxEntries       int64
@@ -874,6 +875,15 @@ func pdfStreamDictionary(object types.Object) (*types.StreamDict, bool) {
 }
 
 func boundedPDFStreamBytes(context *model.Context, stream *types.StreamDict, limits PDFLimits, expanded int64) (int64, error) {
+	if limits.ImageStreams {
+		subtype, err := pdfDictName(context, stream.Dict, "Subtype")
+		if err != nil {
+			return 0, err
+		}
+		if subtype == "Image" {
+			return 0, nil
+		}
+	}
 	for _, pipeline := range stream.FilterPipeline {
 		switch pipeline.Name {
 		case filter.DCT, filter.JBIG2, filter.JPX:

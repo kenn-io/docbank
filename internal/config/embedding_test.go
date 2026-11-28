@@ -122,3 +122,41 @@ api_key = { env = "DOCBANK_TEST_KIT_KEY" }
 	assert.NotEqual(t, string(wantJSON), string(changedJSON))
 	assert.Contains(t, string(changedJSON), "different-model")
 }
+
+func TestKitMediaProfileValidation(t *testing.T) {
+	cfg := validProcessingConfig()
+	profile := cfg.EmbeddingProfiles["semantic"]
+	profile.ModelInput = EmbeddingModelInputConfig{Profile: string(document.ModelInputProfileNomic)}
+	profile.CompatibilityID = "nomic/search/v1"
+	profile.InputKind, profile.Chunk, profile.MaxInputTokens = string(document.EmbeddingInputOriginalFile), EmbeddingChunkConfig{}, 0
+	profile.Embedder = &embedconfig.Embedder{BaseURL: "https://embedding.example.invalid:443/v1", Model: profile.Model, Dims: profile.Dimensions, FingerprintSalt: "deployment-v1", BatchSize: profile.MaxBatchItems, TimeoutSeconds: 1, APIKey: secretref.Ref{Env: "DOCBANK_TEST_KIT_KEY"}}
+	profile.Model, profile.Dimensions, profile.MaxBatchItems = "", 0, 0
+	profile.Runtime = &EmbeddingRuntimeConfig{AdapterContract: "docbank-openai-compatible-embeddings/v1", MaxRequestBytes: 2 << 20, AllowedCIDRs: []string{"192.0.2.0/24"}, ProxyMode: "disabled", ConnectTimeout: Duration(time.Second), KeepAlive: Duration(time.Second), TLSHandshakeTimeout: Duration(time.Second)}
+	cfg.CredentialBindings = map[string]CredentialBindingConfig{"embedding-primary": {EnvironmentVariable: "DOCBANK_TEST_KIT_KEY"}}
+	for _, tc := range []struct {
+		name, endpoint, want string
+		api                  embedconfig.API
+		input, request       int64
+	}{
+		{"openai", "/v1", "OpenAI-compatible runtime authority is invalid", "", 1 << 20, 2 << 20},
+		{"vertex", "/publishers/google/models", "vertex API is not supported", embedconfig.APIVertex, 1 << 20, 2 << 20},
+		{"kit embeddings route", "/v1/embeddings", "kit base_url must end in /v1", embedconfig.APIKit, 1 << 20, 2 << 20},
+		{"small at floor", "/v1", "", embedconfig.APIKit, 1, 4100},
+		{"large below floor", "/v1", "max_request_bytes", embedconfig.APIKit, 64 << 20, 27966123},
+		{"large at floor", "/v1", "", embedconfig.APIKit, 64 << 20, 27966124},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := profile
+			p.Runtime, p.Embedder = new(*profile.Runtime), new(*profile.Embedder)
+			p.Embedder.API, p.Embedder.BaseURL = tc.api, "https://embedding.example.invalid:443"+tc.endpoint
+			p.MaxInputBytes, p.Runtime.MaxRequestBytes = tc.input, tc.request
+			c := cfg
+			c.EmbeddingProfiles = map[string]EmbeddingProfileConfig{"semantic": p}
+			if tc.want != "" {
+				require.ErrorContains(t, c.Validate(), tc.want)
+			} else {
+				require.NoError(t, c.Validate())
+			}
+		})
+	}
+}

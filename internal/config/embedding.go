@@ -68,6 +68,9 @@ func resolveEmbedder(profile *EmbeddingProfileConfig) error {
 	if !e.Enabled() || profile.Runtime == nil {
 		return errors.New("base_url, model, dims and a runtime authority are required")
 	}
+	if e.API == embedconfig.APIVertex {
+		return errors.New("vertex API is not supported")
+	}
 	runtime := *profile.Runtime
 	profile.Runtime = &runtime
 	if runtime.AdapterContract == "" {
@@ -94,6 +97,9 @@ func resolveEmbedder(profile *EmbeddingProfileConfig) error {
 	endpoint, err := url.Parse(strings.TrimRight(strings.TrimSpace(e.BaseURL), "/"))
 	if err != nil {
 		return fmt.Errorf("parse base_url: %w", err)
+	}
+	if e.API == embedconfig.APIKit && endpoint.EscapedPath() != "/v1" {
+		return errors.New("kit base_url must end in /v1")
 	}
 	if endpoint.EscapedPath() != "/v1" && endpoint.EscapedPath() != "/v1/embeddings" {
 		return errors.New("base_url must end in /v1 or /v1/embeddings for this adapter")

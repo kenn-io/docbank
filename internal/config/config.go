@@ -1487,7 +1487,14 @@ func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix strin
 				return fmt.Errorf("%s bridge runtime authority is invalid", prefix)
 			}
 		case "docbank-openai-compatible-embeddings/v1":
-			if profile.InputKind != string(document.EmbeddingInputRenditionChunk) || runtime.CapabilityManifest != "" ||
+			if profile.InputKind == string(document.EmbeddingInputOriginalFile) && profile.Embedder != nil && profile.Embedder.API == embedconfig.APIKit {
+				inputLimit := min(profile.MaxInputBytes, media.MaxBytes)
+				minimumRequest := 4*((inputLimit+2)/3) + 4096
+				if runtime.MaxRequestBytes < minimumRequest {
+					return fmt.Errorf("%s runtime max_request_bytes must accommodate base64 max_input_bytes (at least %d bytes)", prefix, minimumRequest)
+				}
+			}
+			if (profile.InputKind != string(document.EmbeddingInputRenditionChunk) && (profile.InputKind != string(document.EmbeddingInputOriginalFile) || profile.Embedder == nil || profile.Embedder.API != embedconfig.APIKit)) || runtime.CapabilityManifest != "" ||
 				(parsed.Path != "" && parsed.Path != "/") || (runtime.DeploymentEpoch == "") == (runtime.ProviderRevisionHeader == "") {
 				return fmt.Errorf("%s OpenAI-compatible runtime authority is invalid", prefix)
 			}

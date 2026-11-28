@@ -16,7 +16,7 @@ import (
 	"go.kenn.io/docbank/document/media/mediatest"
 )
 
-const pinnedVisualPreviewRecipeFingerprint = "aa987c8f4201d09fe4a20ba06712fa2e445fdf625ed7c8ea1824296c8ae2ae9c"
+const pinnedVisualPreviewRecipeFingerprint = "f35afb2db799e2b3aea2b03ff7b1e0ae0cc9ab51a5d3e57d1a71073d04e150e9"
 
 func TestVisualPreviewRecipeFingerprintIsPinned(t *testing.T) {
 	t.Parallel()
