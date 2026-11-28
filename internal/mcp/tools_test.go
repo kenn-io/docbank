@@ -23,7 +23,7 @@ import (
 
 const (
 	defaultToolCatalogBudget  = 150_000
-	allWriteToolCatalogBudget = 241_000
+	allWriteToolCatalogBudget = 242_000
 )
 
 func listCatalogThroughClient(t *testing.T, server *Server) *sdkmcp.ListToolsResult {
@@ -128,6 +128,7 @@ func TestToolCatalogBudgetRejectsOversize(t *testing.T) {
 func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 	tools := toolCatalog(ServerOptions{})
 	wantNames := []string{
+		"docbank.skills",
 		"read_document_content", "get_original_download_url",
 		"resolve_text_citation", "check_answer", "get_text_outline", "read_text_section",
 		"get_kata_context",

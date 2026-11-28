@@ -16,6 +16,15 @@ discovers or starts that daemon the same way the CLI does and never opens
 `docbank.db`, a blob, a pack, or a rendition directly. There is no MCP-only
 embedded-vault path and no remote-daemon option.
 
+## Read the bundled guides
+
+Call `docbank.skills {}` to list the bundled `workflow`, `search`, and
+`processing` guides, or call `docbank.skills {"name":"workflow"}` to read one.
+The guides combine CLI help with MCP tool guidance. They are available with all
+write options disabled and do not access a vault or start a daemon. Guide reads
+cannot execute actions or grant consent. HTTP authentication still applies.
+Unknown names return a tool error.
+
 ## Server identity
 
 Both stdio and HTTP clients receive Docbank's website and icon in
@@ -277,13 +286,14 @@ content and its JSON text representation, with the complete result, including
 resource links, capped at 1 MiB.
 
 Tests cap the default catalog at 150,000 bytes and the catalog with all write
-flags enabled at 241,000 bytes.
+flags enabled at 242,000 bytes.
 They measure compact JSON of the complete client-decoded `tools/list` result
 with HTML escaping disabled to match the SDK, including output schemas,
 metadata, and cache fields; a larger catalog requires a reviewed budget edit.
 
 | Tool | Contract and important bounds |
 | --- | --- |
+| `docbank.skills` | Lists bundled guides or returns one named guide as Markdown, without daemon or vault access. |
 | `get_report_summary` | Reads an owned frozen report by its 48-character lowercase hexadecimal ID. If the full summary exceeds the result cap, returns `report_limit`; the handle remains usable. |
 | `get_report_dates` | Reads frozen date evidence with an optional opaque cursor and 1–100 members, default 50. Requests a 256 KiB page; candidates can continue on the next page. |
 | `get_export_plan` | Reads the complete frozen plan header by `plan_id`, including its admission deadline. |
