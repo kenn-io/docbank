@@ -120,23 +120,10 @@ func TestPairedRejectsInvalidCandidateAndPreservesFallback(t *testing.T) {
 	require.Equal(t, [][]string{{"fallback"}, {"fallback"}, {"fallback"}}, runner.inputs)
 }
 
-func TestPassageComparisonMetricsUseCriticalCutoffInsideCandidates(t *testing.T) {
-	comparison := PassageComparison{Baseline: []string{"a", "b", "c"}, Current: PassageArm{Ranking: []string{"c", "a", "b"}}, P1: PassageArm{Ranking: []string{"b", "c", "a"}}, P3: PassageArm{Ranking: []string{"c", "b", "a"}}}
-	metrics, err := ScorePassageComparison(comparison, []Judgment{{DocumentID: "c", Grade: 1, Critical: true}}, 2)
-	require.NoError(t, err)
-	require.Equal(t, 1, metrics.Baseline.CriticalMisses)
-	require.Equal(t, 0, metrics.Current.CriticalMisses)
-	require.Equal(t, 0, metrics.P1.CriticalMisses)
-	require.Equal(t, 0, metrics.P3.CriticalMisses)
-	require.InDelta(t, 1.0, metrics.Current.HitAt1, 0.0001)
-	_, err = ScorePassageComparison(comparison, nil, 20)
-	require.Error(t, err)
-}
-
 func TestPassageComparisonMetricsRejectsChangedCandidateSet(t *testing.T) {
 	good := PassageArm{Ranking: []string{"a", "b"}}
 	for _, bad := range [][]string{{"a"}, {"a", "a"}, {"a", "other"}} {
-		_, err := ScorePassageComparison(PassageComparison{Baseline: []string{"a", "b"}, Current: good, P1: PassageArm{Ranking: bad}, P3: good}, []Judgment{{DocumentID: "a", Grade: 1}}, 5)
+		_, err := ScorePassageComparison(PassageComparison{Baseline: []string{"a", "b"}, Current: good, P1: PassageArm{Ranking: bad}, P3: good}, []Judgment{{DocumentID: "a", Grade: 1}})
 		require.Error(t, err)
 	}
 }

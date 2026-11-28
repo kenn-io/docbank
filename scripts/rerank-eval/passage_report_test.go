@@ -146,7 +146,11 @@ func (r *passageGateReport) finish() {
 	s.Observations = len(r.Observations)
 	grouped := map[string][]passageObservation{}
 	controls := map[string]int{}
+	controlFailures := map[string]bool{}
 	for _, o := range r.Observations {
+		if o.Failure != "" || o.Comparison.Current.Failure != "" || o.Comparison.P1.Failure != "" || o.Comparison.P3.Failure != "" || o.Comparison.P1.Selection.Capped || o.Comparison.P3.Selection.Capped {
+			controlFailures[o.Corpus] = true
+		}
 		if o.Query == "" {
 			if o.Failure != "" {
 				s.Failures++
@@ -172,8 +176,22 @@ func (r *passageGateReport) finish() {
 			s.Failures++
 		}
 	}
-	s.availableControls = map[string]bool{"short": controls["short"] > 0, "synthetic": controls["synthetic"] > 0}
-	complete := s.Failures == 0 && s.Queries == 100 && s.ProxyQueries >= 30 && controls["short"] == 2 && controls["synthetic"] == 4 && s.Budget.EstimatedMicros <= 25_000_000
+	s.availableControls = map[string]bool{"short": controls["short"] == 2 && !controlFailures["short"], "synthetic": controls["synthetic"] == 4 && !controlFailures["synthetic"]}
+	for _, rows := range grouped {
+		if rows[0].Corpus != "short" && rows[0].Corpus != "synthetic" {
+			continue
+		}
+		repeats := map[int]bool{}
+		for _, row := range rows {
+			if row.Repeat >= 0 && row.Repeat < 3 {
+				repeats[row.Repeat] = true
+			}
+		}
+		if len(rows) != 3 || len(repeats) != 3 {
+			s.availableControls[rows[0].Corpus] = false
+		}
+	}
+	complete := s.Failures == 0 && s.Queries == 100 && s.ProxyQueries >= 30 && s.availableControls["short"] && s.availableControls["synthetic"] && s.Budget.EstimatedMicros <= 25_000_000
 	keys := slices.Sorted(maps.Keys(grouped))
 	s.Quality = map[string][4]passageQuality{}
 	for _, corpus := range []string{"public", "proxy", "short", "synthetic"} {

@@ -73,6 +73,10 @@ def main():
         parser.error("count must be positive and distractors nonnegative")
     output = pathlib.Path(args.output)
     manifest_path = pathlib.Path(str(output) + ".manifest.json")
+    repo = pathlib.Path(__file__).resolve().parents[3]
+    for path in (output, manifest_path):
+        if path.resolve().is_relative_to(repo):
+            raise ValueError("output and manifest must be outside the repository")
     if output.exists() or manifest_path.exists():
         raise FileExistsError("output or manifest already exists")
     hashes = {key: sha(getattr(args, key)) for key in ("corpus", "queries", "qrels")}

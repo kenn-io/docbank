@@ -68,6 +68,12 @@ func TestEvaluationSemanticPassagesRetainEligibleNeighbors(t *testing.T) {
 	one, _, _ := evaluationSemanticReducer(map[int64]struct{}{2: {}}, 1)("vault", "space", neighbors, 10, eligible, nil)
 	baseline, _, _ := reduceSemanticCandidates("vault", "space", neighbors, 10, eligible, map[int64]struct{}{3: {}})
 	require.Equal(t, baseline, one)
+	eligible[semanticEligibilityKey{"set", "best", "sum"}] = append(eligible[semanticEligibilityKey{"set", "best", "sum"}], SemanticSearchCandidate{NodeID: 3, InputKind: document.EmbeddingInputRenditionChunk})
+	shared := append(neighbors, neighbors[1])
+	passages, _, _ = evaluationSemanticReducer(map[int64]struct{}{2: {}, 3: {}}, 1)("vault", "space", shared, 10, eligible, nil)
+	require.Len(t, passages, 2)
+	require.Equal(t, []int64{2, 3}, []int64{passages[0].NodeID, passages[1].NodeID})
+	require.Equal(t, []string{"best", "best"}, []string{passages[0].InputID, passages[1].InputID})
 }
 
 func TestEvaluationLexicalPassagesUsesCurrentRenditionAndDisclosesCap(t *testing.T) {

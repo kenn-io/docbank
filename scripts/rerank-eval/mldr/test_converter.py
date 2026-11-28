@@ -57,6 +57,23 @@ class ConverterTest(unittest.TestCase):
         self.assertEqual(manifest["output_sha256"], hashlib.sha256((self.root / "one").read_bytes()).hexdigest())
         self.assertNotEqual(self.run_converter("one").returncode, 0)
 
+    def test_reject_repository_outputs_and_symlink_aliases(self):
+        repo = SCRIPT.resolve().parents[3]
+        with tempfile.TemporaryDirectory(dir=repo) as scratch:
+            inside = pathlib.Path(scratch)
+            alias = self.root / "repo-alias"
+            alias.symlink_to(inside, target_is_directory=True)
+            for output in (inside / "direct", alias / "nested" / "alias"):
+                result = self.run_converter(output)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(output.exists())
+                self.assertFalse(pathlib.Path(str(output) + ".manifest.json").exists())
+            output = self.root / "external"
+            pathlib.Path(str(output) + ".manifest.json").symlink_to(inside / "manifest")
+            self.assertNotEqual(self.run_converter(output).returncode, 0)
+            self.assertFalse(output.exists())
+            self.assertFalse((inside / "manifest").exists())
+
     def test_full_multi_qrels_binary(self):
         chosen = sorted([f"q{i}" for i in range(5)], key=rank)[0]
         extra = "d0" if chosen != "q0" else "d1"

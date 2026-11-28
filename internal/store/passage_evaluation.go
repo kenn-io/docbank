@@ -90,16 +90,23 @@ func evaluationSemanticReducer(selected map[int64]struct{}, perNode int) semanti
 		eligible map[semanticEligibilityKey][]SemanticSearchCandidate, _ map[int64]struct{},
 	) ([]SemanticSearchCandidate, bool, int) {
 		counts := make(map[int64]int, len(selected))
-		seen := make(map[semanticEligibilityKey]bool)
+		seen := make(map[struct {
+			key  semanticEligibilityKey
+			node int64
+		}]bool)
 		var result []SemanticSearchCandidate
 		for _, neighbor := range neighbors {
 			key := semanticEligibilityKey{neighbor.SetID, neighbor.InputKey, neighbor.InputChecksum}
 			for _, entry := range eligible[key] {
 				_, wanted := selected[entry.NodeID]
-				if !wanted || seen[key] || counts[entry.NodeID] >= perNode || entry.InputKind != document.EmbeddingInputRenditionChunk {
+				identity := struct {
+					key  semanticEligibilityKey
+					node int64
+				}{key, entry.NodeID}
+				if !wanted || seen[identity] || counts[entry.NodeID] >= perNode || entry.InputKind != document.EmbeddingInputRenditionChunk {
 					continue
 				}
-				seen[key] = true
+				seen[identity] = true
 				counts[entry.NodeID]++
 				entry.VaultID, entry.VectorSpaceID, entry.InputID, entry.Score = vault, space, neighbor.InputKey, neighbor.Score
 				result = append(result, entry)

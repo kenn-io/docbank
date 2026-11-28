@@ -43,12 +43,14 @@ func TestLivePassageGate(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, strings.HasPrefix(rel, ".."+string(filepath.Separator)), "output must be outside the repository")
 	}
-	require.NoError(t, os.Mkdir(absolute, 0700), "output directory must not exist")
+	_, err = os.Lstat(absolute)
+	require.ErrorIs(t, err, os.ErrNotExist, "output directory must not exist")
 	data, err := os.ReadFile(os.Getenv("RERANK_PASSAGE_CORPUS"))
 	require.NoError(t, err)
 	require.Equal(t, "3bf89e1acb201889477235bbc7d587ed514383c853fa2060c00764fade6d8050", sha256String(string(data)), "use the pinned converter output")
 	corpus, err := decodeComparisonCorpus(data)
 	require.NoError(t, err)
+	require.NoError(t, os.Mkdir(absolute, 0700), "output directory must not exist")
 	codec, err := tokenizer.Get(tokenizer.Cl100kBase)
 	require.NoError(t, err)
 	profile, err := passageEmbeddingProfile()
@@ -140,7 +142,7 @@ func runPassageCorpus(ctx context.Context, root, label string, corpus embeddinge
 			if runErr == nil {
 				observation.Comparison, runErr = embeddingeval.EvaluatePassagesWithOptions(ctx, query.Text, prepared.Candidates, runner, embeddingeval.PassageOptions{Deadline: 5 * time.Second, Rotation: repeat, Select: prepared.Select})
 			}
-			metrics, scoreErr := embeddingeval.ScorePassageComparison(observation.Comparison, judgments, 5)
+			metrics, scoreErr := embeddingeval.ScorePassageComparison(observation.Comparison, judgments)
 			observation.Metrics = metrics
 			observation.NDCGAt10 = [4]float64{metrics.Baseline.NDCGAt10, metrics.Current.NDCGAt10, metrics.P1.NDCGAt10, metrics.P3.NDCGAt10}
 			observation.HitAt1 = [4]float64{metrics.Baseline.HitAt1, metrics.Current.HitAt1, metrics.P1.HitAt1, metrics.P3.HitAt1}

@@ -304,7 +304,7 @@ func BenchmarkSemanticMemberships(b *testing.B) {
 								require.Len(b, rows, count)
 							case "resolve":
 								var result SemanticSearchResolution
-								require.NoError(b, s.semanticCandidatesTx(ctx, tx, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, ranked, 20, opts, nil, &result))
+								require.NoError(b, s.semanticCandidatesTx(ctx, tx, profile.Fingerprint, record.BindingID, record.InputKind, record.VectorSpace.ID, ranked, 20, opts, nil, &result, reduceSemanticCandidates))
 								require.Len(b, result.Candidates, 20)
 								require.True(b, result.Truncated)
 							case "similar":

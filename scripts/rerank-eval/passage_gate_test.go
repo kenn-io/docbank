@@ -170,7 +170,7 @@ func TestPassageGateRequiresEveryQueryAndControl(t *testing.T) {
 		return value
 	}
 	score := func(observation *passageObservation) {
-		metrics, err := embeddingeval.ScorePassageComparison(observation.Comparison, []embeddingeval.Judgment{{DocumentID: "0", Grade: 1}}, 5)
+		metrics, err := embeddingeval.ScorePassageComparison(observation.Comparison, []embeddingeval.Judgment{{DocumentID: "0", Grade: 1}})
 		require.NoError(t, err)
 		observation.Metrics = metrics
 		observation.NDCGAt10 = [4]float64{metrics.Baseline.NDCGAt10, metrics.Current.NDCGAt10, metrics.P1.NDCGAt10, metrics.P3.NDCGAt10}
@@ -380,6 +380,17 @@ func TestPassageLiveOutputCollisionPreservesEvidence(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, string(output), test.failure)
 		require.NotContains(t, string(output), "missing-corpus.json")
+	}
+	invalidCorpus := filepath.Join(dir, "invalid-corpus.json")
+	require.NoError(t, os.WriteFile(invalidCorpus, []byte(`{"synthetic":true}`), 0600))
+	for i, corpus := range []string{filepath.Join(dir, "missing-corpus.json"), invalidCorpus} {
+		outputDir := filepath.Join(dir, fmt.Sprintf("rejected-%d", i))
+		cmd := exec.CommandContext(t.Context(), binary, "-test.run=^TestLivePassageGate$", "-test.count=1")
+		cmd.Env = []string{"RERANK_EVAL_LIVE=1", "RERANK_PASSAGE_OUTPUT=" + outputDir, "RERANK_PASSAGE_CORPUS=" + corpus}
+		_, err := cmd.CombinedOutput()
+		require.Error(t, err)
+		_, err = os.Stat(outputDir)
+		require.ErrorIs(t, err, os.ErrNotExist)
 	}
 	for _, name := range []string{"observations.json", "aggregate.json", "report.md"} {
 		got, err := os.ReadFile(filepath.Join(dir, name))

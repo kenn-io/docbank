@@ -1043,12 +1043,8 @@ func (s *Store) resolveSemanticCandidates(ctx context.Context, profileFingerprin
 
 func (s *Store) semanticCandidatesTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
 	inputKind document.EmbeddingInputKind, vectorSpaceID string, neighbors []vectorindex.Neighbor, limit int,
-	normalized SearchOptions, excludedNodes map[int64]struct{}, result *SemanticSearchResolution, reducers ...semanticReducer,
+	normalized SearchOptions, excludedNodes map[int64]struct{}, result *SemanticSearchResolution, reduce semanticReducer,
 ) error {
-	reduce := semanticReducer(reduceSemanticCandidates)
-	if len(reducers) > 0 {
-		reduce = reducers[0]
-	}
 	var err error
 	eligible := make(map[semanticEligibilityKey][]SemanticSearchCandidate)
 	representatives := make(map[string]int64)

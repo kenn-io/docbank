@@ -265,14 +265,12 @@ func runPassageArm(ctx context.Context, query string, candidates []PassageCandid
 }
 
 // PassageMetrics records quality metrics for the shared baseline and each arm.
-// CriticalMisses uses the caller's cutoff, which must be inside the top 20.
 type PassageMetrics struct{ Baseline, Current, P1, P3 MetricSet }
 
-// ScorePassageComparison scores paired orders with a meaningful critical-rank
-// cutoff. Judgments may refer to relevant documents absent from retrieval.
-func ScorePassageComparison(comparison PassageComparison, judgments []Judgment, cutoff int) (PassageMetrics, error) {
-	if cutoff < 1 || cutoff >= 20 || len(judgments) == 0 {
-		return PassageMetrics{}, errors.New("judgments and a critical cutoff between 1 and 19 are required")
+// ScorePassageComparison scores paired orders. Judgments may refer to relevant documents absent from retrieval.
+func ScorePassageComparison(comparison PassageComparison, judgments []Judgment) (PassageMetrics, error) {
+	if len(judgments) == 0 {
+		return PassageMetrics{}, errors.New("judgments are required")
 	}
 	seen := make(map[string]bool, len(judgments))
 	relevant := false
@@ -301,18 +299,5 @@ func ScorePassageComparison(comparison PassageComparison, judgments []Judgment, 
 			return PassageMetrics{}, err
 		}
 	}
-	measure := func(ranking []string) MetricSet {
-		metrics := score(judgments, ranking)
-		metrics.CriticalMisses = 0
-		for _, judgment := range judgments {
-			if judgment.Critical && judgment.Grade > 0 {
-				index := slices.Index(ranking, judgment.DocumentID)
-				if index < 0 || index >= cutoff {
-					metrics.CriticalMisses++
-				}
-			}
-		}
-		return metrics
-	}
-	return PassageMetrics{Baseline: measure(comparison.Baseline), Current: measure(comparison.Current.Ranking), P1: measure(comparison.P1.Ranking), P3: measure(comparison.P3.Ranking)}, nil
+	return PassageMetrics{Baseline: score(judgments, comparison.Baseline), Current: score(judgments, comparison.Current.Ranking), P1: score(judgments, comparison.P1.Ranking), P3: score(judgments, comparison.P3.Ranking)}, nil
 }
