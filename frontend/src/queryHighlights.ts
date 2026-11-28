@@ -1,6 +1,6 @@
 import * as generated from "./generated/docbank.js";
-import { canonicalQuery, parseQuery } from "./query.js";
-import { previewQuery, type QueryPreview } from "./queryPreview.js";
+import { canonicalQuery, parseQuery, queryFingerprint } from "./query.js";
+import type { QueryPreview } from "./queryPreview.js";
 import type { SnapshotPage } from "./snapshots.js";
 
 const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -105,7 +105,9 @@ export async function readSearchQueryHighlights(
   text: string,
   signal: AbortSignal,
 ): Promise<string[]> {
+  // Plain words name no tags, collections or saved queries, so the expected
+  // receipt is the query's own fingerprint with no dependencies.
   const query = parseQuery(JSON.stringify({ text, syntax: "simple" }));
-  const preview = await previewQuery(session, query, signal);
-  return readQueryHighlights(session, preview, signal);
+  const accepted = { query, query_fingerprint: await queryFingerprint(query), dependencies: [] };
+  return readQueryHighlights(session, accepted, signal);
 }

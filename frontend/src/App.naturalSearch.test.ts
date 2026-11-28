@@ -426,6 +426,66 @@ it("opens verified text context for a selected result from a plain top-bar searc
   expect(screen.getByText("Search match 2 of 2")).toBeTruthy();
 });
 
+it.each([
+  ["a different query", "needle evidence"],
+  ["the same query again", "needle"],
+])("returns the selected result from Text to Preview after %s", async (_name, next) => {
+  const file = node(2, "report.txt", baseVersion);
+  const options: HarnessOptions = {
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: ["embed"],
+        reranking_available: true,
+      },
+    ],
+    files: [file],
+    baseReport: report("hybrid", [result(file, 1, "needle excerpt")]),
+  };
+  installHarness(options);
+  vi.mocked(rendition.resolveRenditionText).mockResolvedValue({
+    state: "ready",
+    profile: { name: "private", configuration: "configured", fingerprint: "b".repeat(64) },
+    generationID: "c".repeat(64),
+    attachmentID: "d".repeat(64),
+    buildID: "e".repeat(64),
+    artifact: {
+      id: "synthetic-text",
+      sha256: "f".repeat(64),
+      size: 100,
+      mediaType: "text/markdown; charset=utf-8",
+    },
+  });
+  vi.mocked(rendition.readVerifiedRenditionText).mockResolvedValue(
+    "A synthetic needle with evidence.",
+  );
+  const previewSelected = () =>
+    screen.getByRole("tab", { name: "Preview" }).getAttribute("aria-selected");
+
+  render(App);
+  await screen.findByRole("checkbox", { name: "Rerank results" });
+  await submitSearch("needle");
+  await fireEvent.click((await screen.findByText("needle excerpt")).closest("tr")!);
+  await screen.findByText("Search match 1 of 1");
+  await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
+  expect(previewSelected()).toBe("false");
+
+  // A refresh of the accepted search keeps the reader's tab.
+  options.rerankReport = report("hybrid", [result(file, 1, "reranked needle excerpt")], {
+    outcome: "applied",
+    candidate_count: 1,
+  });
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
+  await screen.findByText("reranked needle excerpt");
+  expect(previewSelected()).toBe("false");
+
+  await submitSearch(next);
+  await waitFor(() => expect(previewSelected()).toBe("true"));
+  expect(await screen.findByText(`Search match 1 of ${next.split(" ").length}`)).toBeTruthy();
+});
+
 it("opens Preview for each newly selected search result after another tab", async () => {
   const first = node(2, "first.txt", baseVersion);
   const second = node(3, "second.txt", rerankedVersion);

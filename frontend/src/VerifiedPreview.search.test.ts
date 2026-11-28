@@ -161,6 +161,39 @@ it("returns to search context when a result is reselected or a new query is acce
   expect(screen.queryByRole("button", { name: "Show search context" })).toBeNull();
 });
 
+it("keeps the original preview choice when the selection's metadata revision changes", async () => {
+  const view = render(VerifiedPreview, { ...props, queryKey: "first" });
+  await screen.findByLabelText("Verified text of synthetic.pdf");
+  await fireEvent.click(screen.getByRole("button", { name: "Show original preview" }));
+  await screen.findByRole("button", { name: "Show search context" });
+  await view.rerender({ ...props, queryKey: "first", authorizationRevision: 4 });
+  expect(screen.getByRole("button", { name: "Show search context" })).toBeTruthy();
+  expect(screen.queryByLabelText("Verified text of synthetic.pdf")).toBeNull();
+});
+
+it("waits for query highlights before saying none are available", async () => {
+  const view = render(VerifiedPreview, { ...props, queryTerms: [], queryHighlightsPending: true });
+  await screen.findByLabelText("Verified text of synthetic.pdf");
+  expect(screen.queryByText(/No literal query highlights/)).toBeNull();
+  expect(screen.queryByText(/No literal search matches/)).toBeNull();
+  await view.rerender({ ...props, queryTerms: [], queryHighlightsPending: false });
+  expect(await screen.findByText(/No literal query highlights/)).toBeTruthy();
+});
+
+it("returns the same result to Preview when a new search is accepted", async () => {
+  const view = render(VerifiedPreview, { ...props, queryKey: "first" });
+  await screen.findByLabelText("Verified text of synthetic.pdf");
+  await fireEvent.click(screen.getByRole("tab", { name: "Duplicates" }));
+  await view.rerender({ ...props, queryKey: "first", queryTerms: ["needle"] });
+  expect(screen.getByRole("tab", { name: "Duplicates" }).getAttribute("aria-selected")).toBe(
+    "true",
+  );
+  await view.rerender({ ...props, queryKey: "second" });
+  await waitFor(() =>
+    expect(screen.getByRole("tab", { name: "Preview" }).getAttribute("aria-selected")).toBe("true"),
+  );
+});
+
 it("clears Find when a new query is accepted for the same document", async () => {
   const view = render(VerifiedPreview, { ...props, queryKey: "first" });
   const input = await screen.findByLabelText<HTMLInputElement>("Find in verified text");

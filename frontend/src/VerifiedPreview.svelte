@@ -35,6 +35,7 @@
     queryKey = "",
     queryTerms = [],
     queryHighlightError = "",
+    queryHighlightsPending = false,
     highlightSets = [],
     snapshotPosition,
     snapshotTotal,
@@ -58,6 +59,7 @@
     queryKey?: string;
     queryTerms?: string[];
     queryHighlightError?: string;
+    queryHighlightsPending?: boolean;
     highlightSets?: HighlightChoice[];
     snapshotPosition?: number;
     snapshotTotal?: number;
@@ -107,7 +109,9 @@
   );
   const contentKey = $derived(`${session}:${displayedSource.key}:${displayedRevision}`);
   const showSearchContext = $derived(searchContext && !duplicateSource && !relatedSource);
-  const showSearchText = $derived(showSearchContext && originalPreviewKey !== contentKey);
+  // The reader's original-preview choice survives metadata edits to the selection.
+  const originalChoiceKey = $derived(`${session}:${displayedSource.key}`);
+  const showSearchText = $derived(showSearchContext && originalPreviewKey !== originalChoiceKey);
   const visitedTabs = $derived(visited.key === contentKey ? visited.tabs : []);
 
   $effect(() => {
@@ -125,10 +129,11 @@
   });
 
   $effect(() => {
-    // A newly accepted query shows its search context again.
+    // A newly accepted search shows its context again, even for the same result.
     if (queryKey === originalQueryKey) return;
     originalQueryKey = queryKey;
     originalPreviewKey = "";
+    if (untrack(() => searchContext)) activeTab = "preview";
   });
 
   $effect(() => {
@@ -299,6 +304,7 @@
                     {queryKey}
                     {queryTerms}
                     {queryHighlightError}
+                    {queryHighlightsPending}
                     searchContext
                     onprocess={onprocess ? () => onprocess?.(displayedSource) : undefined}
                     {onauthfailure}
@@ -388,7 +394,7 @@
     surface="soft"
     onclick={() => {
       if (isEmail) chooseTab("email");
-      else originalPreviewKey = contentKey;
+      else originalPreviewKey = originalChoiceKey;
     }}>{isEmail ? "Show email" : "Show original preview"}</Button
   >
 {/snippet}

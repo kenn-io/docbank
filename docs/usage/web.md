@@ -813,9 +813,10 @@ overlay search highlights; a missing page runtime does not prevent reading an
 available text rendition.
 
 When browsing without a text search, selecting a PDF in the inspector reads its
-retained page images without loading the whole PDF or starting a browser PDF engine. Open the reader to load the
-verified original. PNGs with retained page geometry also use the retained-page
-preview. Choose **Render page** when an image is missing; this needs the
+retained page images without loading the whole PDF or starting a browser PDF
+engine. Open the reader to load the verified original. PNGs with retained page
+geometry also use the retained-page preview. Choose **Render page** when an
+image is missing; this needs the
 [optional local page runtime](../architecture/page-images.md). Other PNGs use
 the verified original-image preview, including when that runtime is
 unavailable.

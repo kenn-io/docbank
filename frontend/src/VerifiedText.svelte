@@ -30,6 +30,7 @@
     alternative,
     queryTerms = [],
     queryHighlightError = "",
+    queryHighlightsPending = false,
     highlightSets = [],
     onprocess,
     onauthfailure,
@@ -47,6 +48,7 @@
     alternative?: Snippet;
     queryTerms?: string[];
     queryHighlightError?: string;
+    queryHighlightsPending?: boolean;
     highlightSets?: HighlightChoice[];
     onprocess?: () => void;
     onauthfailure: (cause: unknown) => void;
@@ -311,7 +313,7 @@
             ariaLabel="Next search match">Next match</Button
           >
         </nav>
-      {:else if !find && !queryHighlightError}
+      {:else if !find && !queryHighlightError && !queryHighlightsPending}
         <p class="notice" role="status">
           {queryTerms.length
             ? "No literal search matches in this text. The result may match metadata or use different word forms."

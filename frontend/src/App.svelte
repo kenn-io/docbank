@@ -1259,10 +1259,12 @@
   let inspectorHighlightSets = $state<
     { id: string; name: string; terms: import("./query.js").HighlightTerm[] }[]
   >([]);
-  let snapshotQueryTerms = $state<string[]>([]);
-  let snapshotQueryHighlightError = $state("");
-  let liveSearchQueryTerms = $state<string[]>([]);
-  let liveSearchQueryHighlightError = $state("");
+  let queryTerms = $state<string[]>([]);
+  let queryHighlightError = $state("");
+  let queryHighlightsPending = $state(false);
+  // Counts searches the reader submitted, so resubmitting the same words still
+  // returns the selected result to its search context. Refreshes do not count.
+  let acceptedSearchRevision = $state(0);
   let inspectorContentTab = $state<"preview" | "text" | "duplicates" | "attachments" | "email">(
     "preview",
   );
@@ -1493,47 +1495,43 @@
     };
   });
 
+  // Frozen results read highlights from their snapshot receipt; live results
+  // compile the accepted plain words.
+  const queryHighlightKey = $derived(
+    snapshotActive
+      ? snapshotQueryHighlightKey
+      : activeQuery
+        ? `${webSession}:live:${activeQuery}`
+        : "",
+  );
   $effect(() => {
-    const key = snapshotQueryHighlightKey;
-    const inputs = untrack(() => ({ session: webSession, snapshot: snapshot.state.firstPage }));
+    const key = queryHighlightKey;
+    const inputs = untrack(() => ({
+      session: webSession,
+      snapshot: snapshotActive ? snapshot.state.firstPage : undefined,
+      query: activeQuery,
+    }));
     const controller = new AbortController();
     let current = true;
-    void key;
-    snapshotQueryTerms = [];
-    snapshotQueryHighlightError = "";
-    if (!inputs.session || !inputs.snapshot) return () => controller.abort();
-    void readQueryHighlights(inputs.session, inputs.snapshot, controller.signal)
+    queryTerms = [];
+    queryHighlightError = "";
+    queryHighlightsPending = !!key && !!inputs.session;
+    if (!key || !inputs.session) return () => controller.abort();
+    void (
+      inputs.snapshot
+        ? readQueryHighlights(inputs.session, inputs.snapshot, controller.signal)
+        : readSearchQueryHighlights(inputs.session, inputs.query, controller.signal)
+    )
       .then((terms) => {
-        if (current) snapshotQueryTerms = terms;
+        if (current) queryTerms = terms;
       })
       .catch((cause: unknown) => {
         if (!current || (cause instanceof DOMException && cause.name === "AbortError")) return;
         if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
-        else snapshotQueryHighlightError = cause instanceof Error ? cause.message : String(cause);
-      });
-    return () => {
-      current = false;
-      controller.abort();
-    };
-  });
-
-  $effect(() => {
-    const query = activeQuery;
-    const session = webSession;
-    const enabled = !snapshotActive && query !== "";
-    const controller = new AbortController();
-    let current = true;
-    liveSearchQueryTerms = [];
-    liveSearchQueryHighlightError = "";
-    if (!session || !enabled) return () => controller.abort();
-    void readSearchQueryHighlights(session, query, controller.signal)
-      .then((terms) => {
-        if (current) liveSearchQueryTerms = terms;
+        else queryHighlightError = cause instanceof Error ? cause.message : String(cause);
       })
-      .catch((cause: unknown) => {
-        if (!current || (cause instanceof DOMException && cause.name === "AbortError")) return;
-        if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
-        else liveSearchQueryHighlightError = cause instanceof Error ? cause.message : String(cause);
+      .finally(() => {
+        if (current) queryHighlightsPending = false;
       });
     return () => {
       current = false;
@@ -2289,6 +2287,7 @@
           profile ? "" : searchByMeaningOff,
         );
         accepted = !!outcome;
+        if (accepted && submitted) acceptedSearchRevision++;
         if (accepted && request === generation && requestedSort) applyResultSort(requestedSort);
         return outcome;
       }
@@ -2347,6 +2346,7 @@
         profile.name,
       );
       accepted = true;
+      if (submitted) acceptedSearchRevision++;
       if (requestedSort) applyResultSort(requestedSort);
       naturalSearchNote =
         baseReport.degradations.length > 0
@@ -2460,6 +2460,7 @@
             note,
           );
           accepted = !!outcome;
+          if (accepted && submitted) acceptedSearchRevision++;
           if (accepted && request === generation && requestedSort) applyResultSort(requestedSort);
           return outcome;
         } catch (fallbackCause) {
@@ -5270,8 +5271,9 @@
                     observed={selectedRenditionObservation}
                     searchContext={!!snapshot.state.firstPage?.query.text.trim()}
                     queryKey={snapshotQueryHighlightKey}
-                    queryTerms={snapshotQueryTerms}
-                    queryHighlightError={snapshotQueryHighlightError}
+                    {queryTerms}
+                    {queryHighlightError}
+                    {queryHighlightsPending}
                     highlightSets={inspectorHighlightSets}
                     snapshotPosition={selectedSnapshotPosition}
                     snapshotTotal={snapshotPage?.total}
@@ -5375,9 +5377,12 @@
                     bind:activeTab={inspectorContentTab}
                     profileName={liveSearchContext ? activeSearchProfileName : ""}
                     searchContext={liveSearchContext}
-                    queryKey={liveSearchContext ? `${activeSearchProfileName}:${activeQuery}` : ""}
-                    queryTerms={liveSearchContext ? liveSearchQueryTerms : []}
-                    queryHighlightError={liveSearchContext ? liveSearchQueryHighlightError : ""}
+                    queryKey={liveSearchContext
+                      ? `${acceptedSearchRevision}:${activeSearchProfileName}:${activeQuery}`
+                      : ""}
+                    queryTerms={liveSearchContext ? queryTerms : []}
+                    queryHighlightError={liveSearchContext ? queryHighlightError : ""}
+                    queryHighlightsPending={liveSearchContext && queryHighlightsPending}
                     highlightSets={inspectorHighlightSets}
                     session={webSession}
                     source={selectedSource!}

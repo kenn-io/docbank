@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { canonicalQuery, parseQuery } from "./query.js";
-import { readQueryHighlights } from "./queryHighlights.js";
+import { readQueryHighlights, readSearchQueryHighlights } from "./queryHighlights.js";
 import type { SnapshotPage } from "./snapshots.js";
 
 afterEach(() => vi.restoreAllMocks());
@@ -75,5 +75,34 @@ it.each([
   vi.spyOn(globalThis, "fetch").mockResolvedValue(receipt(overrides));
   await expect(
     readQueryHighlights("session", snapshot, new AbortController().signal),
+  ).rejects.toThrow(/highlight receipt/i);
+});
+
+it("binds plain-word highlights to the query fingerprint in one request", async () => {
+  const plain = parseQuery(JSON.stringify({ syntax: "simple", text: "alpha beta" }));
+  const plainFingerprint = `sha256:${createHash("sha256").update(canonicalQuery(plain)).digest("hex")}`;
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValue(receipt({ query_fingerprint: plainFingerprint, dependencies: [] }));
+  await expect(
+    readSearchQueryHighlights("session", "alpha beta", new AbortController().signal),
+  ).resolves.toEqual(["alpha", "nested phrase"]);
+  expect(fetchMock).toHaveBeenCalledOnce();
+  const [path, request] = fetchMock.mock.calls[0] ?? [];
+  expect(path).toBe("/api/v1/queries/highlights");
+  expect(request?.body).toBe(canonicalQuery(plain));
+});
+
+it.each([
+  ["another query's fingerprint", { query_fingerprint: fingerprint, dependencies: [] }],
+  ["an unexpected dependency", { dependencies: [dependency] }],
+])("rejects plain-word highlights bound to %s", async (_name, overrides) => {
+  const plain = parseQuery(JSON.stringify({ syntax: "simple", text: "alpha" }));
+  const plainFingerprint = `sha256:${createHash("sha256").update(canonicalQuery(plain)).digest("hex")}`;
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    receipt({ query_fingerprint: plainFingerprint, ...overrides }),
+  );
+  await expect(
+    readSearchQueryHighlights("session", "alpha", new AbortController().signal),
   ).rejects.toThrow(/highlight receipt/i);
 });
