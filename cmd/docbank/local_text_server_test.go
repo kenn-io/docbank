@@ -18,7 +18,9 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/store"
+	kitdaemon "go.kenn.io/kit/daemon"
 	"go.kenn.io/kit/embedclient"
+	"go.kenn.io/kit/embedlocal"
 	"go.kenn.io/kit/embedserver"
 
 	"github.com/stretchr/testify/require"
@@ -153,12 +155,35 @@ func TestLocalTextServerDaemonRestart(t *testing.T) {
 	_, err = connection.API().ApplyLocalText(t.Context(), &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: body.Server, EmbeddingServer: body.EmbeddingServer, EmbeddingModel: body.EmbeddingModel, EmbeddingDimensions: body.EmbeddingDimensions, PlanFingerprint: plan.Fingerprint, Consent: true}})
 	require.NoError(t, err)
 	require.NoError(t, connection.Close())
+	choice, err := readLocalText(root)
+	require.NoError(t, err)
+	require.Equal(t, []string{"archive", "photos"}, choice.Profiles)
 	stop()
+	cfg.ProcessingProfiles["new-recipe"] = cfg.ProcessingProfiles["archive"]
+	original, err := cfg.ProcessingProfile("new-recipe")
+	require.NoError(t, err)
+	_, originalFingerprint, err := document.CanonicalProfile(original.Document)
+	require.NoError(t, err)
+	writeDaemonEmbeddingConfig(t, root, cfg)
+	configData, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	configData = bytes.Replace(configData, []byte("[embedding_profiles.media.runtime]\n"), []byte(fmt.Sprintf("[embedding_profiles.media.runtime]\ncapability_manifest = %q\n", cfg.EmbeddingProfiles["media"].Runtime.CapabilityManifest)), 1)
+	require.NoError(t, os.WriteFile(configPath, configData, 0600))
 	stop = startServe(t)
 	waitForDaemon(t, root)
 	connection, err = daemonconn.Ensure(t.Context())
 	require.NoError(t, err)
 	defer connection.Close()
+	restoredProfiles, err := connection.API().ListDocumentProcessingProfiles(t.Context(), &apiclient.ListDocumentProcessingProfilesRequestOptions{})
+	require.NoError(t, err)
+	foundNewRecipe := false
+	for _, profile := range *restoredProfiles {
+		if profile.Name == "new-recipe" {
+			foundNewRecipe = true
+			require.Equal(t, originalFingerprint.Profile, profile.Fingerprint)
+		}
+	}
+	require.True(t, foundNewRecipe)
 	text := "lease renewal document"
 	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(text)))
 	layout, err := home.Resolve()
@@ -175,7 +200,7 @@ func TestLocalTextServerDaemonRestart(t *testing.T) {
 	imageReceipt, err := connection.Upload(t.Context(), rootID, "image.png", "image/png", imageHash, int64(len(imageData)), bytes.NewReader(imageData))
 	require.NoError(t, err)
 	settleDaemon(t)
-	imageResults, err := connection.SearchDocuments(t.Context(), api.DocumentSearchRequest{Profile: "photos", BindingID: "media-kit", Query: "image", Mode: "semantic", Limit: 2, Scope: &api.DocumentSearchScope{Kind: "all_live"}})
+	imageResults, err := connection.SearchDocuments(t.Context(), api.DocumentSearchRequest{Profile: "photos", Query: "image", Mode: "semantic", Limit: 2, Scope: &api.DocumentSearchScope{Kind: "all_live"}})
 	require.NoError(t, err)
 	require.NotEmpty(t, imageResults.Results)
 	require.Equal(t, imageReceipt.Node.ID, imageResults.Results[0].NodeID)
@@ -196,4 +221,68 @@ func TestLocalTextServerFlags(t *testing.T) {
 		cmd.SetArgs(args)
 		require.Error(t, cmd.Execute())
 	}
+}
+
+func TestLocalTextServerRestoresBuiltInProfile(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME"))
+	t.Setenv("DO_NOT_TRACK", "1")
+	root := t.TempDir()
+	t.Setenv("DOCBANK_HOME", root)
+	server := httptest.NewServer(embedserver.Handler(serverTestBackend{}, []string{"gemini-embedding-2"}))
+	defer server.Close()
+	stop := startServe(t)
+	defer func() { stop() }()
+	waitForDaemon(t, root)
+	conn, err := daemonconn.Ensure(t.Context())
+	require.NoError(t, err)
+	body := &api.LocalTextPlanRequest{Server: "auto", EmbeddingServer: server.URL + "/v1", EmbeddingModel: "gemini-embedding-2", EmbeddingDimensions: 2}
+	plan, err := conn.API().PlanLocalText(t.Context(), &apiclient.PlanLocalTextRequestOptions{Body: body})
+	require.NoError(t, err)
+	require.Len(t, plan.Profiles, 1)
+	require.Equal(t, "local-text", plan.Profiles[0].Name)
+	_, err = conn.API().ApplyLocalText(t.Context(), &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: body.Server, EmbeddingServer: body.EmbeddingServer, EmbeddingModel: body.EmbeddingModel, EmbeddingDimensions: body.EmbeddingDimensions, PlanFingerprint: plan.Fingerprint, Consent: true}})
+	require.NoError(t, err)
+	require.NoError(t, conn.Close())
+	choice, err := readLocalText(root)
+	require.NoError(t, err)
+	require.Equal(t, []string{"local-text"}, choice.Profiles)
+	stop()
+	stop = startServe(t)
+	waitForDaemon(t, root)
+	conn, err = daemonconn.Ensure(t.Context())
+	require.NoError(t, err)
+	defer conn.Close()
+	profiles, err := conn.API().ListDocumentProcessingProfiles(t.Context(), &apiclient.ListDocumentProcessingProfilesRequestOptions{})
+	require.NoError(t, err)
+	require.Contains(t, fmt.Sprint(profiles), "local-text")
+	local := httptest.NewServer(localTextDiscoveryHandler(embedlocal.TextModel))
+	defer local.Close()
+	dir, err := embedlocal.DefaultDir()
+	require.NoError(t, err)
+	endpoint, err := kitdaemon.ParseEndpoint(local.URL, kitdaemon.ParseEndpointOptions{TCPPolicy: kitdaemon.RequireLoopback})
+	require.NoError(t, err)
+	_, err = (kitdaemon.RuntimeStore{Dir: dir, Prefix: embedlocal.Service}).Write(kitdaemon.NewRuntimeRecord(embedlocal.Service, embedlocal.Version, endpoint))
+	require.NoError(t, err)
+	localPlan, err := conn.API().PlanLocalText(t.Context(), &apiclient.PlanLocalTextRequestOptions{Body: &api.LocalTextPlanRequest{Server: "local"}})
+	require.NoError(t, err)
+	_, err = conn.API().ApplyLocalText(t.Context(), &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: "local", PlanFingerprint: localPlan.Fingerprint, Consent: true}})
+	require.NoError(t, err)
+	choice, err = readLocalText(root)
+	require.NoError(t, err)
+	require.Equal(t, "local", choice.Server)
+	require.Empty(t, choice.EmbeddingServer)
+	require.Empty(t, choice.Profiles)
+
+}
+
+func TestLocalTextServerIdentitySeparatesModelAndDimensions(t *testing.T) {
+	cfg := localTextSourceConfig(t, "http://127.0.0.1:12345", "source-revision", "prefix-free", "DOCBANK_TEST_SOURCE_KEY")
+	target := processing.LocalTextTarget{Server: "auto", EmbeddingServer: "http://127.0.0.1:12345/v1", EmbeddingModel: "a", EmbeddingDimensions: 12}
+	first, _, err := localTextServerCandidate(cfg, target, "archive")
+	require.NoError(t, err)
+	target.EmbeddingModel, target.EmbeddingDimensions = "a1", 2
+	second, _, err := localTextServerCandidate(cfg, target, "archive")
+	require.NoError(t, err)
+	require.NotEqual(t, first.EmbeddingProfiles["semantic"].DisclosureFingerprint, second.EmbeddingProfiles["semantic"].DisclosureFingerprint)
 }

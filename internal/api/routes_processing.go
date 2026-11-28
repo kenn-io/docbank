@@ -807,6 +807,9 @@ func fromProcessingPlan(plan processing.Plan) ProcessingPlan {
 }
 
 func fromProcessingError(err error) error {
+	if retained, ok := errors.AsType[*processing.LocalTextRetainedError](err); ok {
+		return NewError(http.StatusUnprocessableEntity, "processing_profile_unavailable", retained.Error())
+	}
 	detailPrefix := ""
 	if errors.Is(err, processing.ErrConsentSaved) {
 		detailPrefix = "processing consent was saved: "

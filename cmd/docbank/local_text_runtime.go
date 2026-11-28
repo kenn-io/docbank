@@ -36,7 +36,7 @@ func readLocalText(root string) (config.LocalTextConfig, error) {
 		if err == nil && choice.Version != 1 {
 			err = fmt.Errorf("unsupported local-text format version %d", choice.Version)
 		}
-		if err == nil && (choice.Profile == "" || (choice.Server != "auto" && choice.Server != "local") || ((choice.EmbeddingServer != "" || choice.EmbeddingModel != "" || choice.EmbeddingDimensions != 0) && (choice.EmbeddingServer == "" || choice.EmbeddingModel == "" || choice.EmbeddingDimensions <= 0))) {
+		if err == nil && (choice.Profile == "" || (choice.Server != "auto" && choice.Server != "local") || ((choice.EmbeddingServer != "" || choice.EmbeddingModel != "" || choice.EmbeddingDimensions != 0) && (choice.EmbeddingServer == "" || choice.EmbeddingModel == "" || choice.EmbeddingDimensions <= 0 || len(choice.Profiles) == 0))) {
 			err = errors.New("local-text selection requires a profile and auto or local server")
 		}
 	}
@@ -67,9 +67,9 @@ func localTextSave(root string, restartPending *atomic.Bool, save func(string, c
 	}
 }
 
-func localTextSaveTarget(root string, restartPending *atomic.Bool, save func(string, config.LocalTextConfig) error, logger *slog.Logger) func(string, processing.LocalTextTarget) error {
-	return func(name string, target processing.LocalTextTarget) error {
-		err := save(root, config.LocalTextConfig{Profile: name, Server: target.Server, EmbeddingServer: target.EmbeddingServer, EmbeddingModel: target.EmbeddingModel, EmbeddingDimensions: target.EmbeddingDimensions})
+func localTextSaveTarget(root string, restartPending *atomic.Bool, save func(string, config.LocalTextConfig) error, logger *slog.Logger) func([]string, processing.LocalTextTarget) error {
+	return func(names []string, target processing.LocalTextTarget) error {
+		err := save(root, config.LocalTextConfig{Profile: names[0], Profiles: names, Server: target.Server, EmbeddingServer: target.EmbeddingServer, EmbeddingModel: target.EmbeddingModel, EmbeddingDimensions: target.EmbeddingDimensions})
 		if err == nil || errors.Is(err, atomicfile.ErrPublished) {
 			restartPending.Store(true)
 		}
@@ -212,7 +212,7 @@ func localTextServerCandidate(cfg config.Config, target processing.LocalTextTarg
 }
 
 func serverEmbedding(p config.EmbeddingProfileConfig, target processing.LocalTextTarget, direct bool, fallback string) (config.EmbeddingProfileConfig, error) {
-	identity := fmt.Sprintf("%x", sha256.Sum256([]byte(target.EmbeddingServer+"\x00"+target.EmbeddingModel+fmt.Sprint(target.EmbeddingDimensions))))
+	identity := fmt.Sprintf("%x", sha256.Sum256([]byte(target.EmbeddingServer+"\x00"+target.EmbeddingModel+"\x00"+fmt.Sprint(target.EmbeddingDimensions))))
 	compatibility := target.EmbeddingModel + "/search/v1"
 	input := config.EmbeddingModelInputConfig{Profile: string(document.ModelInputProfileCustom), CompatibilityID: compatibility,
 		Document: config.EmbeddingModelInputEncoderConfig{Mode: "text", Template: "{{content}}"}, Query: config.EmbeddingModelInputEncoderConfig{Mode: "text", Template: "{{content}}"}}

@@ -1773,6 +1773,17 @@ func (service *Service) prepareSearch(
 			return preparedSearch{}, bindingErr
 		}
 		if bindingErr == nil {
+			if request.BindingID == "" && mode != retrieval.ModeLexical {
+				for kit, fallback := range profile.mediaFallbackBindings {
+					if binding.Name == fallback {
+						binding, bindingErr = selectDocumentSearchBinding(profile.portable, kit, mode)
+						if bindingErr != nil {
+							return preparedSearch{}, bindingErr
+						}
+						break
+					}
+				}
+			}
 			if mode == retrieval.ModeSemantic && !profile.embedders[binding.Name].Descriptor().SupportsTextQuery {
 				return preparedSearch{}, ErrSemanticUnavailable
 			}

@@ -20,12 +20,13 @@ const localTextInputTokens = 2046
 
 // LocalTextConfig selects vault-wide, ongoing text indexing after approval.
 type LocalTextConfig struct {
-	Version             int    `json:"version"`
-	Profile             string `json:"profile"`
-	Server              string `json:"server"`
-	EmbeddingServer     string `json:"embedding_server,omitempty"`
-	EmbeddingModel      string `json:"embedding_model,omitempty"`
-	EmbeddingDimensions int    `json:"embedding_dimensions,omitempty"`
+	Version             int      `json:"version"`
+	Profile             string   `json:"profile"`
+	Profiles            []string `json:"profiles,omitempty"`
+	Server              string   `json:"server"`
+	EmbeddingServer     string   `json:"embedding_server,omitempty"`
+	EmbeddingModel      string   `json:"embedding_model,omitempty"`
+	EmbeddingDimensions int      `json:"embedding_dimensions,omitempty"`
 }
 
 func localTextFingerprint(value string) string {

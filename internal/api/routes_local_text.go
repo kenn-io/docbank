@@ -76,13 +76,7 @@ func registerLocalTextRoutes(api huma.API, d Deps) {
 			if d.LocalText == nil {
 				return nil, processingUnavailable()
 			}
-			var plan processing.LocalTextPlan
-			var err error
-			if input.Body.EmbeddingServer == "" && input.Body.EmbeddingModel == "" && input.Body.EmbeddingDimensions == 0 {
-				plan, err = d.LocalText.Plan(ctx, input.Body.Server)
-			} else {
-				plan, err = d.LocalText.PlanTarget(ctx, processing.LocalTextTarget{Server: input.Body.Server, EmbeddingServer: input.Body.EmbeddingServer, EmbeddingModel: input.Body.EmbeddingModel, EmbeddingDimensions: input.Body.EmbeddingDimensions})
-			}
+			plan, err := d.LocalText.PlanTarget(ctx, processing.LocalTextTarget{Server: input.Body.Server, EmbeddingServer: input.Body.EmbeddingServer, EmbeddingModel: input.Body.EmbeddingModel, EmbeddingDimensions: input.Body.EmbeddingDimensions})
 			if err != nil {
 				return nil, fromProcessingError(err)
 			}
@@ -98,13 +92,7 @@ func registerLocalTextRoutes(api huma.API, d Deps) {
 			if !input.Body.Consent {
 				return nil, fromProcessingError(processing.ErrConsentRequired)
 			}
-			var plan processing.LocalTextPlan
-			var err error
-			if input.Body.EmbeddingServer == "" && input.Body.EmbeddingModel == "" && input.Body.EmbeddingDimensions == 0 {
-				plan, err = d.LocalText.Apply(ctx, input.Body.Server, input.Body.PlanFingerprint)
-			} else {
-				plan, err = d.LocalText.ApplyTarget(ctx, processing.LocalTextTarget{Server: input.Body.Server, EmbeddingServer: input.Body.EmbeddingServer, EmbeddingModel: input.Body.EmbeddingModel, EmbeddingDimensions: input.Body.EmbeddingDimensions}, input.Body.PlanFingerprint)
-			}
+			plan, err := d.LocalText.ApplyTarget(ctx, processing.LocalTextTarget{Server: input.Body.Server, EmbeddingServer: input.Body.EmbeddingServer, EmbeddingModel: input.Body.EmbeddingModel, EmbeddingDimensions: input.Body.EmbeddingDimensions}, input.Body.PlanFingerprint)
 			if err != nil {
 				return nil, fromProcessingError(err)
 			}

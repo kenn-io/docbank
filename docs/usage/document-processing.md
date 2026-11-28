@@ -54,8 +54,9 @@ docbank processing local --embedding-server https://embedding.example.com/api/v1
 
 The preview lists each affected profile and the providers that stay. Setup
 rebuilds the affected indexes, saves the choice, and restarts the daemon.
-New imports use the same selection. The server receives anonymous requests;
-it must accept them at the supplied URL with `/embed` appended. Do not combine
+New imports use the same selection. Docbank sends no bearer token to the supplied URL, which must accept requests
+with `/embed` appended. A local proxy can authenticate its upstream connection
+using its own signed-in session. Do not combine
 these flags with `--server`.
 
 Voyage contextual text stays with Voyage. For models whose name starts with

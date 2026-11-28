@@ -364,15 +364,10 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	var selectedProfiles []string
 	if choice.Profile != "" && choice.EmbeddingServer != "" {
 		target := processing.LocalTextTarget{Server: choice.Server, EmbeddingServer: choice.EmbeddingServer, EmbeddingModel: choice.EmbeddingModel, EmbeddingDimensions: choice.EmbeddingDimensions}
-		names := slices.Sorted(maps.Keys(baseConfig.ProcessingProfiles))
-		if len(names) == 0 {
-			names = []string{config.LocalTextProfile}
-		}
+		names := choice.Profiles
 		for _, name := range names {
 			selected, candidate, _, err := serverCandidateProfiles(target, name)
-			if errors.Is(err, processing.ErrProfileNotConfigured) {
-				continue
-			}
+
 			if err == nil {
 				cfg, err = projectLocalTextProfile(cfg, processingProfiles, candidate, name, selected[name])
 			}
