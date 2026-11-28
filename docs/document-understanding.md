@@ -555,9 +555,12 @@ arms keep the frozen baseline order.
 
 The hooks that reach into processing, retrieval, and the store build only with
 the `rerankeval` tag and support SQLite only. Ordinary CI runs the untagged
-scoring and windowing code in `document/embedding/eval` and the gate report,
-but it does not compile the `rerankeval` hooks. To check the selector and gate
-mechanics on synthetic data without a provider, run this manually:
+scoring and windowing tests in `document/embedding/eval`, plus the
+`scripts/rerank-eval` tests for incomplete-report serialization and Voyage
+attempt accounting. It does not compile the `rerankeval` files, so the gate's
+pass, fail, and threshold decisions and the bootstrap intervals are tested only
+under that tag. To check the selector and gate mechanics on synthetic data
+without a provider, run this manually:
 
 ```sh
 go test -tags 'fts5 rerankeval' ./internal/store ./internal/retrieval \
