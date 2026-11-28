@@ -26,16 +26,10 @@ func newProcessingLocalCommand() *cobra.Command {
 			if server != "auto" && server != "local" {
 				return usageError(errors.New("--server must be auto or local"))
 			}
+			target := processing.LocalTextTarget{EmbeddingServer: embeddingServer, EmbeddingModel: embeddingModel, EmbeddingDimensions: embeddingDimensions, EmbeddingAPIKeyEnv: embeddingAPIKeyEnv}
 			if cmd.Flags().Changed("embedding-server") || cmd.Flags().Changed("embedding-model") || cmd.Flags().Changed("embedding-dimensions") || cmd.Flags().Changed("embedding-api-key-env") {
-				if embeddingServer == "" || embeddingModel == "" || embeddingDimensions <= 0 {
-					return usageError(errors.New("--embedding-server, --embedding-model, and --embedding-dimensions must be provided together"))
-				}
-				if cmd.Flags().Changed("embedding-api-key-env") && embeddingAPIKeyEnv == "" {
-					return usageError(errors.New("--embedding-api-key-env must name an environment variable"))
-				}
-				target := processing.LocalTextTarget{EmbeddingServer: embeddingServer, EmbeddingModel: embeddingModel, EmbeddingDimensions: embeddingDimensions, EmbeddingAPIKeyEnv: embeddingAPIKeyEnv}
 				if err := target.ValidateEmbeddingServer(); err != nil {
-					return usageError(errors.New("invalid embedding server URL, model, or dimensions"))
+					return usageError(err)
 				}
 				if cmd.Flags().Changed("server") {
 					return usageError(errors.New("--server cannot be combined with --embedding-server"))
@@ -49,7 +43,7 @@ func newProcessingLocalCommand() *cobra.Command {
 			defer func() { _ = closeClient() }()
 			request := &api.LocalTextPlanRequest{Server: server}
 			if embeddingServer != "" {
-				request.Target = &processing.LocalTextTarget{EmbeddingServer: embeddingServer, EmbeddingModel: embeddingModel, EmbeddingDimensions: embeddingDimensions, EmbeddingAPIKeyEnv: embeddingAPIKeyEnv}
+				request.Target = &target
 			}
 			plan, err := c.API().PlanLocalText(cmd.Context(), &apiclient.PlanLocalTextRequestOptions{Body: request})
 			if err != nil {
@@ -96,9 +90,7 @@ func applyLocalText(ctx context.Context, plan api.LocalTextPlan) (retErr error) 
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, c.Close()) }()
-	body := &api.LocalTextApplyRequest{Server: plan.Server, PlanFingerprint: plan.Fingerprint, Consent: true}
-	body.Target = plan.Target
-	_, err = c.API().ApplyLocalText(ctx, &apiclient.ApplyLocalTextRequestOptions{Body: body})
+	_, err = c.API().ApplyLocalText(ctx, &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: plan.Server, Target: plan.Target, PlanFingerprint: plan.Fingerprint, Consent: true}})
 	return err
 }
 

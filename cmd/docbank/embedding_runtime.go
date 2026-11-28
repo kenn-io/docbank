@@ -100,7 +100,7 @@ func configureEmbeddingRuntimeBundle(cfg config.Config) (embeddingRuntimeBundle,
 		if configured.Runtime == nil {
 			continue
 		}
-		if _, ok := secrets.variables[configured.CredentialBinding]; !ok && configured.Embedder == nil && !config.ManagedEmbedding(configured) && !configured.Runtime.Anonymous {
+		if _, ok := secrets.variables[configured.CredentialBinding]; !ok && configured.Embedder == nil && !config.ManagedEmbedding(configured) {
 			return embeddingRuntimeBundle{}, errors.New("embedding credential binding is not configured")
 		}
 		modelInput, err := cfg.EmbeddingModelInput(name)

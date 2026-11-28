@@ -40,7 +40,7 @@ func readLocalText(root string) (config.LocalTextConfig, error) {
 		if err == nil && choice.Version != 1 {
 			err = fmt.Errorf("unsupported local-text format version %d", choice.Version)
 		}
-		if err == nil && (choice.Profile == "" || (choice.Server != "auto" && choice.Server != "local") || ((choice.EmbeddingServer != "" || choice.EmbeddingModel != "" || choice.EmbeddingDimensions != 0 || choice.EmbeddingAPIKeyEnv != "") && (choice.EmbeddingServer == "" || choice.EmbeddingModel == "" || choice.EmbeddingDimensions <= 0))) {
+		if err == nil && (choice.Profile == "" || (choice.Server != "auto" && choice.Server != "local")) {
 			err = errors.New("local-text selection requires a profile and auto or local server")
 		}
 	}
@@ -56,24 +56,14 @@ func saveLocalText(root string, choice config.LocalTextConfig) error {
 	return atomicfile.WriteFile(filepath.Join(root, "local-text.json"), data)
 }
 
-func localTextSave(root string, restartPending *atomic.Bool, save func(string, config.LocalTextConfig) error, logger *slog.Logger) func(string, string) error {
-	return func(name, mode string) error {
-		err := save(root, config.LocalTextConfig{Profile: name, Server: mode})
-		if err == nil {
+func localTextSave(root string, restartPending *atomic.Bool, save func(string, config.LocalTextConfig) error, logger *slog.Logger) func(string, processing.LocalTextTarget) error {
+	return func(name string, target processing.LocalTextTarget) error {
+		err := save(root, config.LocalTextConfig{Profile: name, Server: target.Server, EmbeddingServer: target.EmbeddingServer, EmbeddingModel: target.EmbeddingModel, EmbeddingDimensions: target.EmbeddingDimensions, EmbeddingAPIKeyEnv: target.EmbeddingAPIKeyEnv})
+		if err == nil && target.EmbeddingServer == "" {
 			if markerErr := embedlocal.RecordChoice(); markerErr != nil {
 				logger.Warn("record shared search by meaning choice", "error", markerErr)
 			}
 		}
-		if err == nil || errors.Is(err, atomicfile.ErrPublished) {
-			restartPending.Store(true)
-		}
-		return err
-	}
-}
-
-func localTextSaveTarget(root string, restartPending *atomic.Bool, save func(string, config.LocalTextConfig) error) func(string, processing.LocalTextTarget) error {
-	return func(name string, target processing.LocalTextTarget) error {
-		err := save(root, config.LocalTextConfig{Profile: name, Server: target.Server, EmbeddingServer: target.EmbeddingServer, EmbeddingModel: target.EmbeddingModel, EmbeddingDimensions: target.EmbeddingDimensions, EmbeddingAPIKeyEnv: target.EmbeddingAPIKeyEnv})
 		if err == nil || errors.Is(err, atomicfile.ErrPublished) {
 			restartPending.Store(true)
 		}
@@ -185,18 +175,17 @@ func localTextCandidate(cfg config.Config, target processing.LocalTextTarget, na
 	return candidate, retained, nil
 }
 
+const geminiDocumentPrefix = "title: none | text: "
+const geminiQueryPrefix = "task: search result | query: "
+
 func serverEmbedding(p config.EmbeddingProfileConfig, target processing.LocalTextTarget, direct bool, fallback string) (config.EmbeddingProfileConfig, error) {
 	identity := store.LengthPrefixedSHA256(target.EmbeddingServer, target.EmbeddingModel, fmt.Sprint(target.EmbeddingDimensions), target.EmbeddingAPIKeyEnv)
 	compatibility := target.EmbeddingModel + "/search/v1"
 	input := config.EmbeddingModelInputConfig{Profile: string(document.ModelInputProfileCustom), CompatibilityID: compatibility,
 		Document: config.EmbeddingModelInputEncoderConfig{Mode: "text", Template: "{{content}}"}, Query: config.EmbeddingModelInputEncoderConfig{Mode: "text", Template: "{{content}}"}}
 	if strings.HasPrefix(target.EmbeddingModel, "gemini-embedding-2") {
-		input.Document.Template = "title: none | text: {{content}}"
-		input.Query.Template = "task: search result | query: {{content}}"
-	}
-	if target.EmbeddingModel == "nomic-embed-text" {
-		input = config.EmbeddingModelInputConfig{Profile: string(document.ModelInputProfileNomic)}
-		compatibility = "nomic/search/v1"
+		input.Document.Template = geminiDocumentPrefix + "{{content}}"
+		input.Query.Template = geminiQueryPrefix + "{{content}}"
 	}
 	p.Model, p.Dimensions, p.CompatibilityID, p.ModelInput = "", 0, compatibility, input
 	p.DescriptorID, p.DocumentFormatter, p.QueryFormatter = openaicompat.ProviderID, openaicompat.DocumentFormatterV1, openaicompat.QueryFormatterV1
@@ -237,7 +226,10 @@ func serverEmbedding(p config.EmbeddingProfileConfig, target processing.LocalTex
 	return p, nil
 }
 
-func localTextStartup(ctx context.Context, managed bool, _ string) error {
+func localTextStartup(ctx context.Context, managed bool, target processing.LocalTextTarget) error {
+	if target.EmbeddingServer != "" {
+		return localTextServerStartup(ctx, target)
+	}
 	if !managed {
 		return nil
 	}
@@ -249,11 +241,7 @@ func localTextServerStartup(ctx context.Context, target processing.LocalTextTarg
 	e := embedconfig.Embedder{API: embedconfig.APIKit, BaseURL: target.EmbeddingServer, Model: target.EmbeddingModel,
 		Dims: target.EmbeddingDimensions, APIKey: secretref.Ref{Env: target.EmbeddingAPIKeyEnv}, TrustPrivateNetwork: true, TimeoutSeconds: 120}
 	if strings.HasPrefix(target.EmbeddingModel, "gemini-embedding-2") {
-		e.DocumentPrefix = "title: none | text: "
-		e.QueryPrefix = "task: search result | query: "
-	}
-	if err := e.Validate(); err != nil {
-		return err
+		e.DocumentPrefix, e.QueryPrefix = geminiDocumentPrefix, geminiQueryPrefix
 	}
 	parts, err := e.Parts()
 	if err != nil {

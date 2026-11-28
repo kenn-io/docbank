@@ -183,7 +183,7 @@ func TestLocalTextSaveRestartRequired(t *testing.T) {
 				}
 				return tc.failure
 			}, slog.New(slog.NewTextHandler(&logs, nil)))
-			err := save(config.LocalTextProfile, "local")
+			err := save(config.LocalTextProfile, processing.LocalTextTarget{Server: "local"})
 			if tc.failure == nil {
 				require.NoError(t, err)
 			} else {
@@ -219,10 +219,11 @@ func TestLocalTextSelectionFormat(t *testing.T) {
 		})
 	}
 	root := t.TempDir()
-	require.NoError(t, saveLocalText(root, config.LocalTextConfig{Profile: "archive", Server: "local"}))
+	expected := config.LocalTextConfig{Version: 1, Profile: "archive", Server: "auto", EmbeddingServer: "https://example.test/v1", EmbeddingModel: "model", EmbeddingDimensions: 3, EmbeddingAPIKeyEnv: "TEST_EMBED_KEY"}
+	require.NoError(t, saveLocalText(root, expected))
 	choice, err := readLocalText(root)
 	require.NoError(t, err)
-	require.Equal(t, "archive", choice.Profile)
+	require.Equal(t, expected, choice)
 }
 
 func TestLocalTextStaleSelectionLeavesDaemonAvailable(t *testing.T) {

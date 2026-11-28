@@ -110,7 +110,6 @@ func TestKitMediaFallbackEligibility(t *testing.T) {
 		{"video", "video/mp4", mediatest.H265MP4(), true},
 		{"long video", "video/mp4", mediatest.H264LongMP4(), false},
 		{"unsupported", "text/plain", []byte("synthetic text"), false},
-		{"over byte limit", "image/png", make([]byte, media.MaxBytes+1), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			receipt, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(tc.data))

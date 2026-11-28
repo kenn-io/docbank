@@ -337,8 +337,9 @@ type ProviderEgressConfig struct {
 type EmbeddingRuntimeConfig struct {
 	ProviderEgressConfig
 
-	Managed              bool   `toml:"-"`
-	ServerMode           string `toml:"-"`
+	Managed    bool   `toml:"-"`
+	ServerMode string `toml:"-"`
+
 	MediaFallbackBinding string `toml:"-"`
 	Anonymous            bool   `toml:"-"`
 

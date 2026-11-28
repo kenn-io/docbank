@@ -134,17 +134,17 @@ func TestKitMediaProfileValidation(t *testing.T) {
 	profile.Runtime = &EmbeddingRuntimeConfig{AdapterContract: "docbank-openai-compatible-embeddings/v1", MaxRequestBytes: 2 << 20, AllowedCIDRs: []string{"192.0.2.0/24"}, ProxyMode: "disabled", ConnectTimeout: Duration(time.Second), KeepAlive: Duration(time.Second), TLSHandshakeTimeout: Duration(time.Second)}
 	cfg.CredentialBindings = map[string]CredentialBindingConfig{"embedding-primary": {EnvironmentVariable: "DOCBANK_TEST_KIT_KEY"}}
 	for _, tc := range []struct {
-		name, endpoint, want string
-		api                  embedconfig.API
-		input, request       int64
+		name, endpoint, want, resolvedEndpoint string
+		api                                    embedconfig.API
+		input, request                         int64
 	}{
-		{"openai", "/v1", "OpenAI-compatible runtime authority is invalid", "", 1 << 20, 2 << 20},
-		{"vertex", "/publishers/google/models", "vertex API is not supported", embedconfig.APIVertex, 1 << 20, 2 << 20},
-		{"kit embeddings route", "/v1/embeddings", "kit base_url must not end in /embeddings", embedconfig.APIKit, 1 << 20, 2 << 20},
-		{"kit prefixed route", "/api/v1/servers/synthetic", "", embedconfig.APIKit, 1 << 20, 2 << 20},
-		{"small at floor", "/v1", "", embedconfig.APIKit, 1, 4100},
-		{"large below floor", "/v1", "max_request_bytes", embedconfig.APIKit, 64 << 20, 27966123},
-		{"large at floor", "/v1", "", embedconfig.APIKit, 64 << 20, 27966124},
+		{"openai", "/v1", "OpenAI-compatible runtime authority is invalid", "", "", 1 << 20, 2 << 20},
+		{"vertex", "/publishers/google/models", "vertex API is not supported", "", embedconfig.APIVertex, 1 << 20, 2 << 20},
+		{"kit embeddings route", "/v1/embeddings", "kit base_url must not end in /embeddings", "", embedconfig.APIKit, 1 << 20, 2 << 20},
+		{"kit prefixed route", "/api/v1/servers/synthetic", "", "https://embedding.example.invalid:443/api/v1/servers/synthetic", embedconfig.APIKit, 1 << 20, 2 << 20},
+		{"small at floor", "/v1", "", "", embedconfig.APIKit, 1, 4100},
+		{"large below floor", "/v1", "max_request_bytes", "", embedconfig.APIKit, 64 << 20, 27966123},
+		{"large at floor", "/v1", "", "", embedconfig.APIKit, 64 << 20, 27966124},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := profile
@@ -157,10 +157,10 @@ func TestKitMediaProfileValidation(t *testing.T) {
 				require.ErrorContains(t, c.Validate(), tc.want)
 			} else {
 				require.NoError(t, c.Validate())
-				if tc.name == "kit prefixed route" {
+				if tc.resolvedEndpoint != "" {
 					resolved, err := c.EmbeddingProfile("semantic")
 					require.NoError(t, err)
-					assert.Equal(t, "https://embedding.example.invalid:443/api/v1/servers/synthetic", resolved.Runtime.Endpoint)
+					assert.Equal(t, tc.resolvedEndpoint, resolved.Runtime.Endpoint)
 				}
 			}
 		})

@@ -44,26 +44,24 @@ func (target LocalTextTarget) ValidateEmbeddingServer() error {
 	if target.EmbeddingAPIKeyEnv != "" && !embeddingKeyEnvName.MatchString(target.EmbeddingAPIKeyEnv) {
 		return errors.New("embedding API key must name an environment variable")
 	}
-	if target.EmbeddingServer == "" || target.EmbeddingModel == "" || target.EmbeddingDimensions <= 0 || target.EmbeddingDimensions > 1000000 || strings.TrimSpace(target.EmbeddingModel) != target.EmbeddingModel {
-		return errors.New("invalid embedding server URL, model, or dimensions")
-	}
 	return (embedconfig.Embedder{API: embedconfig.APIKit, BaseURL: target.EmbeddingServer, Model: target.EmbeddingModel, Dims: target.EmbeddingDimensions, TrustPrivateNetwork: true}).Validate()
 }
 
 type LocalTextPlan struct {
-	Fingerprint        string           `json:"fingerprint"`
-	VaultUID           string           `json:"vault_uid"`
-	Profile            string           `json:"profile"`
-	Server             string           `json:"server"`
-	ProfileFingerprint string           `json:"profile_fingerprint"`
-	Models             []string         `json:"models"`
-	VectorEffect       string           `json:"vector_effect"`
-	Managed            bool             `json:"managed"`
-	Flow               []FlowHop        `json:"flow"`
-	RetainedClasses    []string         `json:"retained_classes"`
-	Scope              string           `json:"scope"`
-	Target             *LocalTextTarget `json:"target,omitempty"`
-	Retained           []string         `json:"retained,omitempty"`
+	Fingerprint        string    `json:"fingerprint"`
+	VaultUID           string    `json:"vault_uid"`
+	Profile            string    `json:"profile"`
+	Server             string    `json:"server"`
+	ProfileFingerprint string    `json:"profile_fingerprint"`
+	Models             []string  `json:"models"`
+	VectorEffect       string    `json:"vector_effect"`
+	Managed            bool      `json:"managed"`
+	Flow               []FlowHop `json:"flow"`
+	RetainedClasses    []string  `json:"retained_classes"`
+	Scope              string    `json:"scope"`
+
+	Target   *LocalTextTarget `json:"target,omitempty"`
+	Retained []string         `json:"retained,omitempty"`
 }
 
 // LocalTextSetup builds a private service for the reviewed profile. Activation
@@ -125,33 +123,35 @@ func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalText
 			return LocalTextPlan{}, nil, err
 		}
 	}
-	keep := false
-	defer func() {
-		if !keep {
-			service.Stop()
-		}
-	}()
-	profile, ok := service.profiles[name]
-	if !ok {
-		return LocalTextPlan{}, nil, ErrProfileNotConfigured
-	}
-	operation, err := service.planForSource(ctx, Selector{Profile: name}, store.Node{}, store.ContentVersion{}, profile)
+	plan, err := reviewedPlan(ctx, service, LocalTextPlan{Profile: name, Server: mode, Managed: true, VectorEffect: effect})
 	if err != nil {
+		service.Stop()
 		return LocalTextPlan{}, nil, err
 	}
-	plan := LocalTextPlan{VaultUID: service.catalog.VaultID(), Profile: name, Server: mode, ProfileFingerprint: profile.record.Fingerprint,
-		Managed: true, Flow: operation.Flow, RetainedClasses: operation.RetainedClasses, Scope: "this vault and new imports",
-		VectorEffect: effect}
+	return plan, service, nil
+}
+
+// reviewedPlan completes and fingerprints the reviewed choice for one candidate profile.
+func reviewedPlan(ctx context.Context, service *Service, plan LocalTextPlan) (LocalTextPlan, error) {
+	profile, ok := service.profiles[plan.Profile]
+	if !ok {
+		return LocalTextPlan{}, ErrProfileNotConfigured
+	}
+	operation, err := service.planForSource(ctx, Selector{Profile: plan.Profile}, store.Node{}, store.ContentVersion{}, profile)
+	if err != nil {
+		return LocalTextPlan{}, err
+	}
+	plan.VaultUID, plan.ProfileFingerprint, plan.Scope = service.catalog.VaultID(), profile.record.Fingerprint, "this vault and new imports"
+	plan.Flow, plan.RetainedClasses = operation.Flow, operation.RetainedClasses
 	for _, binding := range profile.portable.Embeddings {
 		plan.Models = append(plan.Models, binding.Model)
 	}
 	encoded, err := json.Marshal(plan, json.Deterministic(true))
 	if err != nil {
-		return LocalTextPlan{}, nil, err
+		return LocalTextPlan{}, err
 	}
 	plan.Fingerprint = fmt.Sprintf("%x", sha256.Sum256(encoded))
-	keep = true
-	return plan, service, nil
+	return plan, nil
 }
 
 func (setup *LocalTextSetup) indexedText(ctx context.Context, name string) (bool, error) {
@@ -171,110 +171,82 @@ func (setup *LocalTextSetup) indexedText(ctx context.Context, name string) (bool
 	return false, nil
 }
 
-func remoteLocalTextTarget(target LocalTextTarget) bool {
-	return target.EmbeddingServer != "" || target.EmbeddingModel != "" || target.EmbeddingDimensions != 0 || target.EmbeddingAPIKeyEnv != ""
-}
-
-func (setup *LocalTextSetup) reviewChoice(ctx context.Context, target LocalTextTarget) (plan LocalTextPlan, services map[string]*Service, err error) {
-	if remoteLocalTextTarget(target) {
-		if err := target.ValidateEmbeddingServer(); err != nil {
+func (setup *LocalTextSetup) reviewChoice(ctx context.Context, target LocalTextTarget) (LocalTextPlan, *Service, error) {
+	if target.EmbeddingServer == "" {
+		plan, service, err := setup.review(ctx, target.Server)
+		if err != nil || plan.Profile == config.LocalTextProfile {
+			return plan, service, err
+		}
+		count, err := setup.countTargets(ctx, service, plan.Profile)
+		if err != nil {
+			service.Stop()
 			return plan, nil, err
 		}
-		names := slices.Sorted(maps.Keys(setup.Service.profiles))
-		name := setup.Selected
-		if name == "" {
-			for _, candidate := range names {
-				active := setup.Service.profiles[candidate]
-				for _, binding := range active.portable.Embeddings {
-					indexed, indexErr := setup.Service.catalog.HasEmbeddingHeads(ctx, active.record.Fingerprint, binding.Name)
-					if indexErr != nil {
-						return plan, nil, indexErr
-					}
-					if indexed {
-						name = candidate
-						break
-					}
+		plan.VectorEffect += fmt.Sprintf("; processes %d documents before setup returns; embeds only new content", count)
+		return plan, service, nil
+	}
+	names := slices.Sorted(maps.Keys(setup.Service.profiles))
+	name := setup.Selected
+	if name == "" {
+		for _, candidate := range names {
+			active := setup.Service.profiles[candidate]
+			for _, binding := range active.portable.Embeddings {
+				indexed, err := setup.Service.catalog.HasEmbeddingHeads(ctx, active.record.Fingerprint, binding.Name)
+				if err != nil {
+					return LocalTextPlan{}, nil, err
 				}
-				if name != "" {
-					break
-				}
-			}
-		}
-		// With no active index, choose the first configured candidate.
-		if name == "" {
-			for _, candidate := range names {
-				trial, retained, candidateErr := setup.Candidate(target, candidate)
-				if trial != nil {
-					trial.Stop()
-				}
-				if candidateErr == nil || len(retained) != 0 {
+				if indexed {
 					name = candidate
 					break
 				}
-				if !errors.Is(candidateErr, ErrProfileNotConfigured) {
-					return plan, nil, candidateErr
-				}
+			}
+			if name != "" {
+				break
 			}
 		}
-		if name == "" {
-			name = config.LocalTextProfile
-		}
-		service, retained, candidateErr := setup.Candidate(target, name)
-		if errors.Is(candidateErr, ErrProfileNotConfigured) && len(retained) > 0 {
-			return plan, nil, &LocalTextRetainedError{Reasons: retained}
-		}
-		if candidateErr != nil {
-			return plan, nil, candidateErr
-		}
-		defer func() {
-			if err != nil {
-				service.Stop()
-			}
-		}()
-		profile, ok := service.profiles[name]
-		if !ok {
-			return plan, nil, ErrProfileNotConfigured
-		}
-		operation, err := service.planForSource(ctx, Selector{Profile: name}, store.Node{}, store.ContentVersion{}, profile)
-		if err != nil {
-			return plan, nil, err
-		}
-		count, err := setup.countTargets(ctx, service, name)
-		if err != nil {
-			return plan, nil, err
-		}
-		plan = LocalTextPlan{VaultUID: service.catalog.VaultID(), Profile: name, Server: target.Server, Target: &target,
-			ProfileFingerprint: profile.record.Fingerprint, Flow: operation.Flow, RetainedClasses: operation.RetainedClasses,
-			Retained: retained, Scope: "this vault and new imports", VectorEffect: fmt.Sprintf("Rebuild index; processes %d documents before setup returns", count)}
-		for _, binding := range profile.portable.Embeddings {
-			plan.Models = append(plan.Models, binding.Model)
-		}
-		encoded, err := json.Marshal(plan, json.Deterministic(true))
-		if err != nil {
-			return plan, nil, err
-		}
-		plan.Fingerprint = fmt.Sprintf("%x", sha256.Sum256(encoded))
-		return plan, map[string]*Service{name: service}, nil
 	}
-
-	plan, service, err := setup.review(ctx, target.Server)
+	// With no active index, choose the first configured candidate.
+	if name == "" {
+		for _, candidate := range names {
+			trial, retained, err := setup.Candidate(target, candidate)
+			if trial != nil {
+				trial.Stop()
+			}
+			if err == nil || len(retained) != 0 {
+				name = candidate
+				break
+			}
+			if !errors.Is(err, ErrProfileNotConfigured) {
+				return LocalTextPlan{}, nil, err
+			}
+		}
+	}
+	if name == "" {
+		name = config.LocalTextProfile
+	}
+	service, retained, err := setup.Candidate(target, name)
+	if errors.Is(err, ErrProfileNotConfigured) && len(retained) > 0 {
+		return LocalTextPlan{}, nil, &LocalTextRetainedError{Reasons: retained}
+	}
 	if err != nil {
-		return plan, nil, err
+		return LocalTextPlan{}, nil, err
 	}
-	if plan.Profile != config.LocalTextProfile {
-		count, countErr := setup.countTargets(ctx, service, plan.Profile)
-		if countErr != nil {
-			service.Stop()
-			return plan, nil, countErr
-		}
-		plan.VectorEffect += fmt.Sprintf("; processes %d documents before setup returns; embeds only new content", count)
+	count, err := setup.countTargets(ctx, service, name)
+	var plan LocalTextPlan
+	if err == nil {
+		plan, err = reviewedPlan(ctx, service, LocalTextPlan{Profile: name, Server: target.Server, Target: &target, Retained: retained,
+			VectorEffect: fmt.Sprintf("Rebuild index; processes %d documents before setup returns", count)})
 	}
-	return plan, map[string]*Service{plan.Profile: service}, nil
+	if err != nil {
+		service.Stop()
+		return LocalTextPlan{}, nil, err
+	}
+	return plan, service, nil
 }
 
 func (setup *LocalTextSetup) Plan(ctx context.Context, target LocalTextTarget) (LocalTextPlan, error) {
-	plan, services, err := setup.reviewChoice(ctx, target)
-	for _, service := range services {
+	plan, service, err := setup.reviewChoice(ctx, target)
+	if service != nil {
 		service.Stop()
 	}
 	return plan, err
@@ -283,27 +255,21 @@ func (setup *LocalTextSetup) Plan(ctx context.Context, target LocalTextTarget) (
 func (setup *LocalTextSetup) Apply(ctx context.Context, target LocalTextTarget, fingerprint string) (LocalTextPlan, error) {
 	setup.mu.Lock()
 	defer setup.mu.Unlock()
-	plan, services, err := setup.reviewChoice(ctx, target)
+	plan, service, err := setup.reviewChoice(ctx, target)
 	if err != nil {
 		return LocalTextPlan{}, err
 	}
-	defer func() {
-		for _, service := range services {
-			service.Stop()
-		}
-	}()
+	defer service.Stop()
 	if fingerprint == "" || plan.Fingerprint != fingerprint {
 		return LocalTextPlan{}, ErrPlanChanged
 	}
-	remote := remoteLocalTextTarget(target)
 	if err := setup.Startup(ctx, plan.Managed, target); err != nil {
 		return LocalTextPlan{}, err
 	}
-	service := services[plan.Profile]
 	if err := service.grantProfileConsent(ctx, service.profiles[plan.Profile], nil); err != nil {
 		return LocalTextPlan{}, err
 	}
-	if remote || plan.Profile != config.LocalTextProfile {
+	if target.EmbeddingServer != "" || plan.Profile != config.LocalTextProfile {
 		if err := setup.activate(ctx, service, plan.Profile); err != nil {
 			return LocalTextPlan{}, fmt.Errorf("%w: activate text indexing selection: %w", ErrConsentSaved, err)
 		}

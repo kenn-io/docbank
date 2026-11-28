@@ -431,18 +431,8 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	var restartPending, inheritedReady atomic.Bool
 	localText := &processing.LocalTextSetup{Service: processingService, Selected: choice.Profile,
 		ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
-		Startup: func(ctx context.Context, managed bool, target processing.LocalTextTarget) error {
-			if target.EmbeddingServer != "" {
-				return localTextServerStartup(ctx, target)
-			}
-			return localTextStartup(ctx, managed, target.Server)
-		},
-		Save: func(name string, target processing.LocalTextTarget) error {
-			if target.EmbeddingServer != "" {
-				return localTextSaveTarget(layout.Root, &restartPending, saveLocalText)(name, target)
-			}
-			return localTextSave(layout.Root, &restartPending, saveLocalText, logger)(name, target.Server)
-		},
+		Startup: localTextStartup,
+		Save:    localTextSave(layout.Root, &restartPending, saveLocalText, logger),
 	}
 	localText.Candidate = func(target processing.LocalTextTarget, name string) (*processing.Service, []string, error) {
 		profiles, _, retained, err := candidateProfiles(target, name)

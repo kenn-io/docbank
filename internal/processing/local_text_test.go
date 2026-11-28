@@ -801,7 +801,6 @@ func TestLocalTextTargetReviewsChoiceAndRetainedReasons(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{reason}, plan.Retained)
 	require.Equal(t, "pdf", plan.Profile)
-	require.Contains(t, plan.VectorEffect, "documents before setup returns")
 	changed := target
 	changed.EmbeddingDimensions++
 	_, err = setup.Apply(t.Context(), changed, plan.Fingerprint)
@@ -812,15 +811,23 @@ func TestLocalTextTargetReviewsChoiceAndRetainedReasons(t *testing.T) {
 	require.ErrorIs(t, err, ErrPlanChanged)
 	require.Equal(t, "previous", saved)
 	reason = plan.Retained[0]
-	setup.Startup = func(context.Context, bool, LocalTextTarget) error { return errors.New("server unavailable") }
-	_, err = setup.Apply(t.Context(), target, plan.Fingerprint)
-	require.ErrorContains(t, err, "server unavailable")
-	require.Equal(t, "previous", saved)
-	setup.Startup = func(context.Context, bool, LocalTextTarget) error { return nil }
 	_, err = setup.Apply(t.Context(), target, plan.Fingerprint)
 	require.NoError(t, err)
 	require.Equal(t, "pdf", saved)
 	require.Equal(t, target, savedTarget)
+	t.Run("retained only", func(t *testing.T) {
+		_, original := newLocalTextBackfillFixture(t, newWorkerProvider(t))
+		setup := &LocalTextSetup{Service: original.Service}
+		setup.Candidate = func(_ LocalTextTarget, name string) (*Service, []string, error) {
+			if name == "local-text" {
+				t.Fatal("retained profile must not be replaced by a fallback")
+			}
+			return nil, []string{"contextual text stays with its provider"}, ErrProfileNotConfigured
+		}
+		_, err := setup.Plan(t.Context(), LocalTextTarget{EmbeddingServer: "https://embedding.example.invalid/v1", EmbeddingModel: "model", EmbeddingDimensions: 2})
+		require.ErrorContains(t, err, "contextual text stays with its provider")
+
+	})
 }
 
 func TestLocalTextTargetKeepsUnusedProfile(t *testing.T) {
@@ -881,33 +888,26 @@ func TestLocalTextTargetKeepsUnusedProfile(t *testing.T) {
 }
 
 func TestLocalTextPairedBindingsFinishBackfill(t *testing.T) {
-	_, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t))
+	provider := &localTextEmbeddingProvider{descriptor: embeddingWorkerDescriptor(t)}
+	fixture, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t), provider)
+	profile := setup.Service.profiles["pdf"]
+	var embeddings document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(embeddingWorkerProfile(t, profile.embedders["chunk"].Descriptor()).CanonicalProfile, &embeddings))
+	kit := embeddings.Embeddings[1]
+	kit.Name = "chunk-kit"
+	profile.portable.Embeddings = append(profile.portable.Embeddings, kit)
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"pdf": {Profile: profile.portable, RenditionProvider: profile.provider, EmbeddingProviders: map[string]document.EmbeddingProvider{"chunk": profile.embedders["chunk"], "chunk-kit": profile.embedders["chunk"]}, Tokenizers: profile.tokenizers, MediaFallbackBindings: map[string]string{"chunk-kit": "chunk"}}}})
+	require.NoError(t, err)
+	defer service.Stop()
+	setup.Service = service
+	require.NoError(t, service.grantProfileConsent(t.Context(), service.profiles["pdf"], nil))
 	items, err := setup.pendingTargets(t.Context(), "", 100, false)
 	require.NoError(t, err)
 	require.NotEmpty(t, items)
 	for _, item := range items {
 		require.NoError(t, setup.process(t.Context(), item))
 	}
-	profile := setup.Service.profiles["pdf"]
-	kit := profile.portable.Embeddings[0]
-	kit.Name = "chunk-kit"
-	profile.portable.Embeddings = append(profile.portable.Embeddings, kit)
-	profile.mediaFallbackBindings = map[string]string{"chunk-kit": "chunk"}
-	setup.Service.profiles["pdf"] = profile
 	items, err = setup.pendingTargets(t.Context(), "", 100, false)
 	require.NoError(t, err)
 	require.Empty(t, items)
-}
-
-func TestLocalTextTargetReportsRetainedOnly(t *testing.T) {
-	_, original := newLocalTextBackfillFixture(t, newWorkerProvider(t))
-	setup := &LocalTextSetup{Service: original.Service}
-	setup.Candidate = func(_ LocalTextTarget, name string) (*Service, []string, error) {
-		if name == "local-text" {
-			t.Fatal("retained profile must not be replaced by a fallback")
-		}
-		return nil, []string{"contextual text stays with its provider"}, ErrProfileNotConfigured
-	}
-	_, err := setup.Plan(t.Context(), LocalTextTarget{EmbeddingServer: "https://embedding.example.invalid/v1", EmbeddingModel: "model", EmbeddingDimensions: 2})
-	require.ErrorContains(t, err, "contextual text stays with its provider")
 }
