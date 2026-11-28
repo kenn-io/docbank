@@ -10,10 +10,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"go.kenn.io/docbank/internal/agentguide"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/mcp"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -61,7 +61,7 @@ var searchCmd = &cobra.Command{
   docbank search merger plan --under /cases/acme --json
   docbank search --tag urgent
   docbank search invocie --fuzzy --modified-since 2026-01-01T00:00:00Z`,
-	Long:    agentguide.Search,
+	Long:    mcp.CLISearchHelp,
 	GroupID: groupSearch,
 	Use:     "search [<query>...]",
 	Short:   "Find files and folders by name, text, tag, type, folder, or date",

@@ -9,10 +9,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"go.kenn.io/docbank/internal/agentguide"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/mcp"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -31,7 +31,7 @@ var (
 var processingCmd = &cobra.Command{
 	Example: `  docbank processing profiles
   docbank processing plan id:12 --profile <profile>`,
-	Long:        agentguide.Processing,
+	Long:        mcp.CLIProcessingHelp,
 	GroupID:     groupSearch,
 	Use:         "processing",
 	Short:       "Preview and run document processing",

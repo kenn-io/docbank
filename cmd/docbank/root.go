@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"go.kenn.io/docbank/internal/agentguide"
+	"go.kenn.io/docbank/internal/mcp"
 	"go.kenn.io/docbank/internal/version"
 )
 
@@ -23,7 +23,7 @@ const (
 var rootCmd = &cobra.Command{
 	Use:           "docbank",
 	Short:         "Keep, find, and verify documents in a local vault",
-	Long:          agentguide.Workflow,
+	Long:          mcp.CLIWorkflowHelp,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	// Cobra checks required flags and flag groups after PersistentPreRun, so

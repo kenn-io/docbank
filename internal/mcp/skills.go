@@ -4,12 +4,11 @@ import (
 	"sync"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
-	"go.kenn.io/docbank/internal/agentguide"
 	"go.kenn.io/kit/mcpskills"
 )
 
 var appSkills = sync.OnceValue(func() *mcpskills.Catalog {
-	catalog, err := mcpskills.New(mcpskills.Config{ToolName: "docbank.skills", Guides: agentguide.Guides()})
+	catalog, err := mcpskills.New(mcpskills.Config{ToolName: "docbank.skills", Guides: bundledGuides()})
 	if err != nil {
 		panic(err) // The bundled catalog is a build-time application invariant.
 	}

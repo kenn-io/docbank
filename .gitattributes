@@ -50,5 +50,5 @@ frontend/package-lock.json linguist-generated=true
 internal/mcp/assets/*.png binary
 
 # Embedded guidance keeps canonical bytes across platforms.
-internal/agentguide/*.md text eol=lf
-internal/agentguide/*.txt text eol=lf
+internal/mcp/agentguide/*.md text eol=lf
+internal/mcp/agentguide/*.txt text eol=lf
