@@ -1,12 +1,18 @@
 import * as actions from "./action-events.js";
 import { createHash } from "node:crypto";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { snapshotEnvelope } from "./snapshot-test-fixtures.js";
 import { parseQuery } from "./query.js";
+import * as rendition from "./renditionText.js";
 import type { SnapshotRow } from "./snapshots.js";
 import type { Node } from "./generated/docbank.js";
+
+vi.mock("./renditionText.js", () => ({
+  resolveRenditionText: vi.fn(),
+  readVerifiedRenditionText: vi.fn(),
+}));
 
 const vaultID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const baseVersion = "11111111-1111-4111-8111-111111111111";
@@ -25,8 +31,35 @@ afterEach(() => {
   cleanup();
   history.replaceState(null, "", "/");
   vi.unstubAllGlobals();
+  vi.clearAllMocks();
   vi.restoreAllMocks();
   Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+});
+
+const readyText: rendition.ReadyRenditionText = {
+  state: "ready",
+  profile: { name: "private", configuration: "configured", fingerprint: "b".repeat(64) },
+  generationID: "c".repeat(64),
+  attachmentID: "d".repeat(64),
+  buildID: "e".repeat(64),
+  artifact: {
+    id: "synthetic-text",
+    sha256: "f".repeat(64),
+    size: 100,
+    mediaType: "text/markdown; charset=utf-8",
+  },
+};
+
+beforeEach(() => {
+  // The daemon's shape for a processed version with no readable text.
+  vi.mocked(rendition.resolveRenditionText).mockResolvedValue({
+    state: "verified_empty",
+    profile: { name: "", configuration: "configured", fingerprint: "b".repeat(64) },
+    generationID: "",
+    attachmentID: "",
+    buildID: "",
+  });
+  vi.mocked(rendition.readVerifiedRenditionText).mockResolvedValue("");
 });
 
 function json(value: unknown): Response {
@@ -139,6 +172,8 @@ function installHarness(options: HarnessOptions) {
     path: "/",
   };
   const postBodies: Record<string, unknown>[] = [];
+  const highlightQueries: Record<string, unknown>[] = [];
+  const searchHighlightQueries: string[] = [];
   let rerankResolve: ((response: Response) => void) | undefined;
   let baseResolve: ((response: Response) => void) | undefined;
   let profilesResolve: ((response: Response) => void) | undefined;
@@ -229,6 +264,27 @@ function installHarness(options: HarnessOptions) {
         query_fingerprint: `sha256:${createHash("sha256").update(String(init?.body)).digest("hex")}`,
         dependencies: [],
       });
+    if (url.startsWith("/api/v1/search/highlights?")) {
+      const q = new URL(url, "https://example.com").searchParams.get("q") ?? "";
+      searchHighlightQueries.push(q);
+      // The real endpoint answers from the search analyzer; this stands in for
+      // its quoted-phrase and plain-word terms.
+      return json({
+        terms: [...q.matchAll(/"([^"]+)"|(\S+)/g)].map((match) => match[1] ?? match[2]),
+      });
+    }
+    if (url === "/api/v1/queries/highlights") {
+      const query = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      highlightQueries.push(query);
+      return json({
+        query_fingerprint: `sha256:${createHash("sha256").update(String(init?.body)).digest("hex")}`,
+        dependencies: [],
+        terms: String(query.text ?? "")
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean),
+      });
+    }
     if (url === "/api/v1/processing/profiles") {
       if (options.profilesPending) return profilesPending;
       return options.profilesStatus
@@ -300,6 +356,8 @@ function installHarness(options: HarnessOptions) {
   return {
     fetchMock,
     postBodies,
+    highlightQueries,
+    searchHighlightQueries,
     resolveRerank: (response: Response) => rerankResolve?.(response),
     resolveBase: (response: Response) => baseResolve?.(response),
     resolveProfiles: (response: Response) => profilesResolve?.(response),
@@ -326,6 +384,117 @@ async function submitSearch(value: string): Promise<void> {
   await fireEvent.input(input, { target: { value } });
   await fireEvent.submit(input.closest("form")!);
 }
+
+it("opens verified text context for a selected result from a plain top-bar search", async () => {
+  const file = {
+    ...node(2, "message.eml", baseVersion),
+    mime_type: "message/rfc822; charset=utf-8",
+  };
+  const harness = installHarness({
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: ["embed"],
+        reranking_available: true,
+      },
+    ],
+    files: [file],
+    baseReport: report("hybrid", [result(file, 1, "needle excerpt")]),
+  });
+  vi.mocked(rendition.resolveRenditionText).mockResolvedValue(readyText);
+  vi.mocked(rendition.readVerifiedRenditionText).mockResolvedValue(
+    "Needle appears first. The tax return follows.",
+  );
+
+  render(App);
+  await screen.findByRole("checkbox", { name: "Rerank results" });
+  await submitSearch("needle");
+  await screen.findByText("needle excerpt");
+  await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), {
+    target: { value: "draft only" },
+  });
+  await fireEvent.click((await screen.findByText("needle excerpt")).closest("tr")!);
+
+  const text = await screen.findByLabelText("Verified text of message.eml");
+  const queryMarks = () =>
+    [...text.querySelectorAll('mark[data-source="query"]')].map((mark) => mark.textContent);
+  await waitFor(() => expect(queryMarks()).toEqual(["Needle"]));
+  expect(harness.searchHighlightQueries).toEqual(["needle"]);
+  expect(harness.highlightQueries).toEqual([]);
+  expect(rendition.resolveRenditionText).toHaveBeenCalledWith(
+    "short-lived",
+    expect.objectContaining({ nodeID: file.id, name: file.name }),
+    expect.any(Number),
+    "private",
+    undefined,
+    expect.any(AbortSignal),
+  );
+
+  // A quoted phrase reaches the marks as one term, not split on whitespace.
+  await submitSearch('"tax return"');
+  await waitFor(() => expect(queryMarks()).toEqual(["tax return"]));
+  expect(harness.searchHighlightQueries).toEqual(["needle", '"tax return"']);
+});
+
+it.each([
+  ["returns the selected result from Text to Preview after a different query", "needle evidence"],
+  ["keeps the selected result on Text when the same query runs again", "needle"],
+])("%s", async (_name, next) => {
+  const file = node(2, "report.txt", baseVersion);
+  const options: HarnessOptions = {
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: ["embed"],
+        reranking_available: true,
+      },
+    ],
+    files: [file],
+    baseReport: report("hybrid", [result(file, 1, "needle excerpt")]),
+  };
+  installHarness(options);
+  vi.mocked(rendition.resolveRenditionText).mockResolvedValue(readyText);
+  vi.mocked(rendition.readVerifiedRenditionText).mockResolvedValue(
+    "A synthetic needle with evidence.",
+  );
+  const previewSelected = () =>
+    screen.getByRole("tab", { name: "Preview" }).getAttribute("aria-selected");
+
+  render(App);
+  await screen.findByRole("checkbox", { name: "Rerank results" });
+  await submitSearch("needle");
+  await fireEvent.click((await screen.findByText("needle excerpt")).closest("tr")!);
+  await screen.findByText("Search match 1 of 1");
+  await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
+  expect(previewSelected()).toBe("false");
+
+  // A refresh of the accepted search keeps the reader's tab.
+  options.rerankReport = report("hybrid", [result(file, 1, "reranked needle excerpt")], {
+    outcome: "applied",
+    candidate_count: 1,
+  });
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
+  await screen.findByText("reranked needle excerpt");
+  expect(previewSelected()).toBe("false");
+
+  // New rows prove the search was accepted before the tab is checked.
+  options.rerankReport = report("hybrid", [result(file, 1, "resubmitted needle excerpt")], {
+    outcome: "applied",
+    candidate_count: 1,
+  });
+  await submitSearch(next);
+  await screen.findByText("resubmitted needle excerpt");
+  if (next === "needle") {
+    expect(previewSelected()).toBe("false");
+    return;
+  }
+  expect(previewSelected()).toBe("true");
+  expect(await screen.findByText("Search match 1 of 2")).toBeTruthy();
+});
 
 it.each([
   [true, false],

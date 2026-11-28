@@ -1,3 +1,5 @@
+import { flushSync, mount, tick, unmount } from "svelte";
+import { SvelteMap } from "svelte/reactivity";
 import * as actions from "./action-events.js";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
@@ -280,4 +282,90 @@ it("reports one failed open when alternating documents reaches the navigation li
   await screen.findByText(/Navigation depth limit reached/);
   expect(failure).toHaveBeenCalledExactlyOnceWith("session", "open", expect.any(Error));
   expect(action).toHaveBeenCalledTimes(32);
+});
+
+// Serves the root message, its one attachment, and an unprocessed text rendition.
+function serveAttachment(versionRead?: (route: string, init?: RequestInit) => Promise<Response>) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const route = String(input);
+    if (route === `/api/v1/versions/${child.version_id}` && versionRead)
+      return versionRead(route, init);
+    if (route === `/api/v1/versions/${child.version_id}`) return Response.json(version(child));
+    if (route === `/api/v1/nodes/${child.node_id}`) return Response.json(node(child));
+    if (route.includes(`parent_version_id=${root.version_id}`))
+      return Response.json(page(relation(root, child)));
+    if (route === "/api/v1/renditions/text")
+      return Response.json({ state: "unprocessed", generation_id: "", attachment_id: "" });
+    return Response.json(page());
+  });
+}
+const searching = { session: "session", authorizationRevision: 1, searchContext: true };
+const onauthfailure = vi.fn();
+
+it("returns an attachment to the accepted result when a different query is accepted", async () => {
+  vi.spyOn(actions, "reportAction").mockImplementation(() => {});
+  serveAttachment();
+  const view = render(VerifiedPreview, {
+    ...searching,
+    source: selected,
+    queryKey: "first",
+    onauthfailure,
+  });
+  await fireEvent.click(screen.getByRole("tab", { name: "Attachments" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "nested.eml" }));
+  await screen.findByRole("region", { name: "Verified content of message-2.eml" });
+
+  // Refreshing the same query keeps the attachment the reader opened.
+  await view.rerender({
+    ...searching,
+    source: selected,
+    queryKey: "first",
+    authorizationRevision: 2,
+    onauthfailure,
+  });
+  expect(screen.getByRole("region", { name: "Verified content of message-2.eml" })).toBeTruthy();
+
+  await view.rerender({ queryKey: "second" });
+  await screen.findByRole("region", { name: "Verified content of root.eml" });
+  expect(screen.queryByRole("button", { name: "Return to selected document" })).toBeNull();
+  expect(screen.getByRole("tab", { name: "Preview" }).getAttribute("aria-selected")).toBe("true");
+});
+
+it("drops a pending attachment read when a different query is accepted", async () => {
+  vi.spyOn(actions, "reportAction").mockImplementation(() => {});
+  let release!: (value: Response) => void;
+  let signal: AbortSignal | null | undefined;
+  serveAttachment((_route, init) => {
+    signal = init?.signal;
+    return new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+  });
+  // Only the accepted query changes; render's rerender would replace every prop.
+  const query = new SvelteMap([["key", "first"]]);
+  const view = mount(VerifiedPreview, {
+    target: document.body,
+    props: {
+      ...searching,
+      source: selected,
+      get queryKey() {
+        return query.get("key");
+      },
+      onauthfailure,
+    },
+  });
+  flushSync();
+  await fireEvent.click(screen.getByRole("tab", { name: "Attachments" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "nested.eml" }));
+  await waitFor(() => expect(release).toBeTypeOf("function"));
+
+  query.set("key", "second");
+  flushSync();
+  expect(signal?.aborted).toBe(true);
+  release(Response.json(version(child)));
+  await tick();
+  await tick();
+  expect(screen.queryByRole("region", { name: "Verified content of message-2.eml" })).toBeNull();
+  expect(screen.queryByText("Loading document…")).toBeNull();
+  void unmount(view);
 });

@@ -790,10 +790,33 @@ Unsupported or oversized files stay available through **Download**. Reclicking
 a selected item keeps its preview and metadata, and browsing keeps the preview
 area a consistent height while the next file loads.
 
-Selecting a PDF in the inspector reads its retained page images without loading
-the whole PDF or starting a browser PDF engine. Open the reader to load the
-verified original. PNGs with retained page geometry also use the retained-page
-preview. Choose **Render page** when an image is missing; this needs the
+When you open a result from a text search, **Preview** shows verified text for
+that selected version. It uses the retained text rendition for PDFs, office
+files, scans, email and other processed formats, or an eligible original UTF-8
+file when a rendition is unavailable. The first supported literal query match
+is centered and highlighted. Scroll within the text to read surrounding
+context, or use **Previous match** and **Next match** to move between matches.
+**Find** searches the displayed document instead of the query terms until you
+clear it. **Show original preview** returns to the visual preview; email offers
+**Show email**.
+
+Search highlights are case-insensitive literal occurrences, not exact ranked
+passage locations or semantic matches. Search word forms can differ from the
+original text, and a result can match metadata. The panel says when literal
+highlights are unavailable or no literal matches appear in the displayed text.
+It never substitutes a result excerpt or a newer document version for verified
+content. If readable text is unavailable, the panel says so and shows the
+original preview, or the email, in its place; **Download** stays available.
+Selecting another result, or searching with a different query, returns
+**Preview** to the search context and clears **Find**. A visual preview does not
+overlay search highlights; a missing page runtime does not prevent reading an
+available text rendition.
+
+When browsing without a text search, selecting a PDF in the inspector reads its
+retained page images without loading the whole PDF or starting a browser PDF
+engine. Open the reader to load the verified original. PNGs with retained page
+geometry also use the retained-page preview. Choose **Render page** when an
+image is missing; this needs the
 [optional local page runtime](../architecture/page-images.md). Other PNGs use
 the verified original-image preview, including when that runtime is
 unavailable.

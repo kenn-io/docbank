@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/query"
@@ -51,6 +52,11 @@ type QueryHighlightPreview struct {
 	QueryFingerprint string            `json:"query_fingerprint" pattern:"^sha256:[0-9a-f]{64}$"`
 	Dependencies     []QueryDependency `json:"dependencies" maxItems:"256"`
 	Terms            []string          `json:"terms" maxItems:"64"`
+}
+
+// SearchHighlightPreview holds the bounded terms of a plain-words search.
+type SearchHighlightPreview struct {
+	Terms []string `json:"terms" maxItems:"64"`
 }
 
 func browserRoleSearchScope(ctx context.Context) context.Context {
@@ -133,5 +139,22 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 			})
 		}
 		return &struct{ Body QueryHighlightPreview }{Body: preview}, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "searchHighlights", Method: http.MethodGet,
+		Path: "/api/v1/search/highlights", Summary: "Preview the text terms of a plain-words search",
+		Description: "Returns the bounded terms the plain-words search for q requires, from the " +
+			"analyzer search uses. A quoted phrase is one term without its quotes.",
+	}, func(_ context.Context, in *struct {
+		Q string `query:"q" maxLength:"131072"`
+	}) (*struct{ Body SearchHighlightPreview }, error) {
+		terms := store.SearchRequiredTerms(in.Q)
+		for i, term := range terms {
+			terms[i] = strings.Trim(term, `"“”„`)
+		}
+		return &struct{ Body SearchHighlightPreview }{
+			Body: SearchHighlightPreview{Terms: query.BoundedHighlightTerms(terms)},
+		}, nil
 	})
 }

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { canonicalQuery, parseQuery } from "./query.js";
-import { readQueryHighlights } from "./queryHighlights.js";
+import { readQueryHighlights, readSearchQueryHighlights } from "./queryHighlights.js";
 import type { SnapshotPage } from "./snapshots.js";
 
 afterEach(() => vi.restoreAllMocks());
@@ -75,5 +75,36 @@ it.each([
   vi.spyOn(globalThis, "fetch").mockResolvedValue(receipt(overrides));
   await expect(
     readQueryHighlights("session", snapshot, new AbortController().signal),
+  ).rejects.toThrow(/highlight receipt/i);
+});
+
+it("reads live highlights from the search terms without a query receipt", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify({ terms: ["tax return", "absent"] }), {
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  await expect(
+    readSearchQueryHighlights("session", '"tax return" absent', new AbortController().signal),
+  ).resolves.toEqual(["tax return", "absent"]);
+  expect(fetchMock).toHaveBeenCalledOnce();
+  const [path, request] = fetchMock.mock.calls[0] ?? [];
+  const url = new URL(String(path), "https://example.com");
+  expect(url.pathname).toBe("/api/v1/search/highlights");
+  expect(url.searchParams.get("q")).toBe('"tax return" absent');
+  expect(request?.method ?? "GET").toBe("GET");
+});
+
+it.each([
+  ["unknown fields", { terms: ["alpha"], query_fingerprint: fingerprint }],
+  // Guards that live terms go through the shared term validation at all; its
+  // individual rules are covered by the readQueryHighlights table.
+  ["a duplicated term", { terms: ["alpha", "alpha"] }],
+])("rejects live highlights with %s", async (_name, body) => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } }),
+  );
+  await expect(
+    readSearchQueryHighlights("session", "alpha", new AbortController().signal),
   ).rejects.toThrow(/highlight receipt/i);
 });

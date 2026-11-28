@@ -87,9 +87,13 @@ export async function readQueryHighlights(
       malformed(`dependencies[${index}] does not match the accepted snapshot`);
     }
   });
-  if (!Array.isArray(raw.terms) || raw.terms.length > 64) malformed("terms exceed their bound");
+  return highlightTerms(raw.terms);
+}
+
+function highlightTerms(terms: unknown): string[] {
+  if (!Array.isArray(terms) || terms.length > 64) malformed("terms exceed their bound");
   const seen = new Set<string>();
-  return raw.terms.map((value, index) => {
+  return terms.map((value, index) => {
     const term = unicode(value, `terms[${index}]`);
     const length = [...term].length;
     if (length < 1 || length > 256 || seen.has(term))
@@ -97,4 +101,16 @@ export async function readQueryHighlights(
     seen.add(term);
     return term;
   });
+}
+
+// Live results highlight the terms the search itself required, so a quoted
+// phrase stays one term.
+export async function readSearchQueryHighlights(
+  session: string,
+  text: string,
+  signal: AbortSignal,
+): Promise<string[]> {
+  const raw = object(await generated.searchHighlights({ q: text }, { session, signal }), "terms");
+  exactKeys(raw, ["terms"], ["$schema"], "terms");
+  return highlightTerms(raw.terms);
 }

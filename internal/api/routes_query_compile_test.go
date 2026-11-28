@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -169,4 +170,49 @@ func TestQueryHighlightPreviewIsAvailableToBoundedBrowserSessions(t *testing.T) 
 	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost,
 		queryHighlightsPath+"?unrecognized=1", headers, `{}`)
 	require.Equal(t, http.StatusForbidden, resp.StatusCode, body)
+}
+
+func TestSearchHighlightsUseTheNaturalSearchAnalyzer(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	resp, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var session struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &session))
+	headers := map[string]string{api.WebSessionHeader: session.Token}
+
+	many := make([]string, 70)
+	for i := range many {
+		many[i] = fmt.Sprintf("word%02d", i)
+	}
+	for _, tc := range []struct {
+		name, query string
+		terms       []string
+	}{
+		{"quoted phrase", `"tax return"`, []string{"tax return"}},
+		{"words and phrase", `"tax return" absent`, []string{"absent", "tax return"}},
+		{"unbalanced quote", `"the invoices`, []string{"the", "invoices"}},
+		{"unbalanced opening smart quote", `“the invoices`, []string{"the", "invoices"}},
+		{"unbalanced closing smart quote", `the” invoices`, []string{"the", "invoices"}},
+		{"unbalanced low smart quote", `„the invoices`, []string{"the", "invoices"}},
+		{"balanced smart quote", `“tax return” absent`, []string{"absent", "tax return"}},
+		{"balanced low smart quote", `„tax return”`, []string{"tax return"}},
+		// Equal only once the phrase quotes are trimmed, so the route's dedupe decides.
+		{"repeated term", `"tax" tax`, []string{"tax"}},
+		{"blank", "  ", []string{}},
+		{"term count bound", strings.Join(many, " "), many[:64]},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, body := rawJSONRequest(t, ts.URL, http.MethodGet,
+				"/api/v1/search/highlights?q="+url.QueryEscape(tc.query), headers, "")
+			require.Equal(t, http.StatusOK, resp.StatusCode, body)
+			var got struct {
+				Terms []string `json:"terms"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(body), &got))
+			require.Equal(t, tc.terms, got.Terms)
+		})
+	}
 }

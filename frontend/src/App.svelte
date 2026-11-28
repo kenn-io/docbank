@@ -117,7 +117,7 @@
   import SnapshotActions, { type SnapshotActionChoice } from "./SnapshotActions.svelte";
   import TagRunNotice from "./TagRunNotice.svelte";
   import { canonicalQuery, parseQuery, type Query } from "./query.js";
-  import { readQueryHighlights } from "./queryHighlights.js";
+  import { readQueryHighlights, readSearchQueryHighlights } from "./queryHighlights.js";
   import { queryFromFragment, replaceQueryURL as writeQueryURL } from "./queryURL.js";
   import TagCatalogModal, { type TagDefinitionChange } from "./TagCatalogModal.svelte";
   import TagPicker from "./TagPicker.svelte";
@@ -1134,6 +1134,7 @@
   let bulkSelection = $state<SelectionState>(clearSelection());
   let searchQuery = $state("");
   let activeQuery = $state("");
+  let activeSearchProfileName = $state("");
   let submittedSearchQuery = $state("");
   let tagFilterID = $state("");
   let activeTagID = $state("");
@@ -1258,14 +1259,16 @@
   let inspectorHighlightSets = $state<
     { id: string; name: string; terms: import("./query.js").HighlightTerm[] }[]
   >([]);
-  let snapshotQueryTerms = $state<string[]>([]);
-  let snapshotQueryHighlightError = $state("");
+  let queryTerms = $state<string[]>([]);
+  let queryHighlightError = $state("");
+  let queryHighlightsPending = $state(false);
   let inspectorContentTab = $state<"preview" | "text" | "duplicates" | "attachments" | "email">(
     "preview",
   );
 
   const selected = $derived(rows.find((row) => row.node.id === selectedID));
   const snapshotActive = $derived(snapshot.state.status !== "idle");
+  const liveSearchContext = $derived(!snapshotActive && activeQuery !== "");
   const tagBrowse = $derived(activeTagID !== "" && activeQuery === "");
   const panelScreen = $derived(activePanel ? panelScreens[activePanel.kind] : null);
   // Upload drawers show their own channel notice, so the page banner would repeat it.
@@ -1489,23 +1492,43 @@
     };
   });
 
+  // Frozen results read highlights from their snapshot receipt; live results
+  // compile the accepted plain words.
+  const queryHighlightKey = $derived(
+    snapshotActive
+      ? snapshotQueryHighlightKey
+      : activeQuery
+        ? `${webSession}:live:${activeQuery}`
+        : "",
+  );
   $effect(() => {
-    const key = snapshotQueryHighlightKey;
-    const inputs = untrack(() => ({ session: webSession, snapshot: snapshot.state.firstPage }));
+    const key = queryHighlightKey;
+    const inputs = untrack(() => ({
+      session: webSession,
+      snapshot: snapshotActive ? snapshot.state.firstPage : undefined,
+      query: activeQuery,
+    }));
     const controller = new AbortController();
     let current = true;
-    void key;
-    snapshotQueryTerms = [];
-    snapshotQueryHighlightError = "";
-    if (!inputs.session || !inputs.snapshot) return () => controller.abort();
-    void readQueryHighlights(inputs.session, inputs.snapshot, controller.signal)
+    queryTerms = [];
+    queryHighlightError = "";
+    queryHighlightsPending = !!key && !!inputs.session;
+    if (!key || !inputs.session) return () => controller.abort();
+    void (
+      inputs.snapshot
+        ? readQueryHighlights(inputs.session, inputs.snapshot, controller.signal)
+        : readSearchQueryHighlights(inputs.session, inputs.query, controller.signal)
+    )
       .then((terms) => {
-        if (current) snapshotQueryTerms = terms;
+        if (current) queryTerms = terms;
       })
       .catch((cause: unknown) => {
         if (!current || (cause instanceof DOMException && cause.name === "AbortError")) return;
         if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
-        else snapshotQueryHighlightError = cause instanceof Error ? cause.message : String(cause);
+        else queryHighlightError = cause instanceof Error ? cause.message : String(cause);
+      })
+      .finally(() => {
+        if (current) queryHighlightsPending = false;
       });
     return () => {
       current = false;
@@ -2002,6 +2025,7 @@
     batchTagsTargets = null;
     shortcutHelpOpen = false;
     activeQuery = "";
+    activeSearchProfileName = "";
     activeTagID = "";
     naturalProfiles = [];
     naturalProfilesLoaded = false;
@@ -2185,6 +2209,7 @@
             : undefined,
       );
       activeQuery = "";
+      activeSearchProfileName = "";
       activeTagID = "";
       taggedInspected = 0;
       taggedTotal = 0;
@@ -2313,6 +2338,8 @@
         baseReport.truncated || nameReport.truncated,
         preferredSelectedID,
         refreshing,
+        false,
+        profile.name,
       );
       accepted = true;
       if (requestedSort) applyResultSort(requestedSort);
@@ -2380,6 +2407,7 @@
           preferredSelectedID,
           true,
           true,
+          profile.name,
         );
         naturalSearchNote = rerankingNote("applied");
         outcome = {
@@ -2506,6 +2534,7 @@
     preferredSelectedID: number | undefined,
     refreshing: boolean,
     preserveCurrentSelection = false,
+    profileName = "",
   ): void {
     const selectedBefore = preserveCurrentSelection ? selectedID : preferredSelectedID;
     replaceRows(nextRows, refreshing);
@@ -2518,6 +2547,7 @@
       selectedBefore,
     );
     activeQuery = query;
+    activeSearchProfileName = profileName;
     activeTagID = requestedTagID;
     taggedInspected = 0;
     taggedTotal = 0;
@@ -2595,6 +2625,7 @@
       const liveRows = page.items.map((item) => ({ node: item.node, path: item.path! }));
       replaceRows(liveRows, refreshing);
       activeQuery = "";
+      activeSearchProfileName = "";
       activeTagID = tagID;
       taggedInspected = liveRows.length;
       taggedTotal = page.total;
@@ -3374,6 +3405,7 @@
     replaceRows([], false);
     searchQuery = "";
     activeQuery = "";
+    activeSearchProfileName = "";
     tagFilterID = "";
     activeTagID = "";
     taggedInspected = 0;
@@ -5233,8 +5265,11 @@
                     authorizationRevision={currentInspectorNode!.revision}
                     profileName={snapshot.state.options?.profile ?? ""}
                     observed={selectedRenditionObservation}
-                    queryTerms={snapshotQueryTerms}
-                    queryHighlightError={snapshotQueryHighlightError}
+                    searchContext={!!snapshot.state.firstPage?.query.text.trim()}
+                    queryKey={snapshot.state.firstPage?.query_fingerprint ?? ""}
+                    {queryTerms}
+                    {queryHighlightError}
+                    {queryHighlightsPending}
                     highlightSets={inspectorHighlightSets}
                     snapshotPosition={selectedSnapshotPosition}
                     snapshotTotal={snapshotPage?.total}
@@ -5336,6 +5371,12 @@
                     {processingRevision}
                     onprocess={(source) => void processInspectedSource(source)}
                     bind:activeTab={inspectorContentTab}
+                    profileName={liveSearchContext ? activeSearchProfileName : ""}
+                    searchContext={liveSearchContext}
+                    queryKey={liveSearchContext ? activeQuery : ""}
+                    queryTerms={liveSearchContext ? queryTerms : []}
+                    queryHighlightError={liveSearchContext ? queryHighlightError : ""}
+                    queryHighlightsPending={liveSearchContext && queryHighlightsPending}
                     highlightSets={inspectorHighlightSets}
                     session={webSession}
                     source={selectedSource!}

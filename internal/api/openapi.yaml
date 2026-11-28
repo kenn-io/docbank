@@ -6574,6 +6574,8 @@ components:
           type:
             - string
             - "null"
+        referenced:
+          type: boolean
         state:
           type: string
       required:
@@ -20036,6 +20038,28 @@ components:
           readOnly: true
           type: string
       type: object
+    SearchHighlightPreview:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SearchHighlightPreview.json
+          format: uri
+          readOnly: true
+          type: string
+        terms:
+          items:
+            type: string
+          maxItems: 64
+          type: array
+      required:
+        - terms
+      type: object
+      x-go-type: api.SearchHighlightPreview
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     SearchHit:
       additionalProperties: false
       properties:
@@ -32943,6 +32967,31 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Create an export with reviewed dates
+  /api/v1/search/highlights:
+    get:
+      description: Returns the bounded terms the plain-words search for q requires, from the analyzer search uses. A quoted phrase is one term without its quotes.
+      operationId: searchHighlights
+      parameters:
+        - explode: false
+          in: query
+          name: q
+          schema:
+            maxLength: 131072
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchHighlightPreview"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Preview the text terms of a plain-words search
   /api/v1/search/similar:
     post:
       operationId: findSimilarDocuments

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick, untrack } from "svelte";
+  import { tick, untrack, type Snippet } from "svelte";
   import { Button, FindBar, SelectDropdown, Spinner, overlayScrollbars } from "@kenn-io/kit-ui";
   import AppTooltip from "./AppTooltip.svelte";
   import ShieldCheckIcon from "@lucide/svelte/icons/shield-check";
@@ -24,8 +24,13 @@
     processingRevision = 0,
     profileName = "",
     observed,
+    searchContext = false,
+    queryKey = "",
+    fallback,
+    alternative,
     queryTerms = [],
     queryHighlightError = "",
+    queryHighlightsPending = false,
     highlightSets = [],
     onprocess,
     onauthfailure,
@@ -37,8 +42,13 @@
     processingRevision?: number;
     profileName?: string;
     observed?: RenditionObservation;
+    searchContext?: boolean;
+    queryKey?: string;
+    fallback?: Snippet;
+    alternative?: Snippet;
     queryTerms?: string[];
     queryHighlightError?: string;
+    queryHighlightsPending?: boolean;
     highlightSets?: HighlightChoice[];
     onprocess?: () => void;
     onauthfailure: (cause: unknown) => void;
@@ -72,6 +82,8 @@
     highlightSets.find((item) => item.id === highlightSetID)?.terms ?? [],
   );
   const marked = $derived(markText(text, find ? { find } : { highlightTerms, queryTerms }));
+  // Keyed by the mark terms, so the same query terms arriving again keep the reader's place.
+  const markKey = $derived(JSON.stringify([find, highlightSetID, queryTerms]));
 
   const findMatches = $derived(find ? marked.matches : []);
   const refreshKey = $derived(`${loadKey}:${active}:${processingRevision}`);
@@ -168,9 +180,62 @@
     };
   });
 
+  const searchMatches = $derived(searchContext && !find ? marked.matches : []);
+  // A newly accepted query replaces any Find term left from the previous one.
+  let findQueryKey = "";
+  $effect(() => {
+    if (queryKey === findQueryKey) return;
+    findQueryKey = queryKey;
+    find = "";
+  });
+  // A new query or Find input starts at the first match, even if text loads later.
+  $effect(() => {
+    void markKey;
+    activeMatch = 0;
+  });
+  // Preview's reader also serves the Text tab; keep Preview's position across that switch.
+  let searchScroll = 0;
+  $effect.pre(() => {
+    if (!searchContext) untrack(() => (searchScroll = textBox?.scrollTop ?? 0));
+  });
+  $effect(() => {
+    if (searchContext && textBox) untrack(() => (textBox!.scrollTop = searchScroll));
+  });
+  // Search context opens at the active match. Other views scroll only when the
+  // reader moves between Find matches. Returning to a hidden Preview keeps the
+  // reader's position when the match has not changed. A reload replaces the
+  // reader element, so its text opens at the first match again.
+  const centered = new WeakMap<HTMLElement, string>();
+  $effect(() => {
+    if (!searchContext) return;
+    const index = activeMatch;
+    const matches = find ? findMatches : searchMatches;
+    const enabled = active;
+    const box = textBox;
+    const key = `${markKey}:${index}`;
+    let current = true;
+    void tick().then(() => {
+      if (!current || !enabled || !matches.length || !box) return;
+      const match = box.querySelector<HTMLElement>(`mark[data-match-index="${index}"]`);
+      if (!match || centered.get(box) === key) return;
+      centered.set(box, key);
+      // Keep scrolling inside the text; do not move the results or the inspector.
+      const top =
+        box.scrollTop +
+        match.getBoundingClientRect().top -
+        box.getBoundingClientRect().top -
+        (box.clientHeight - match.offsetHeight) / 2;
+      box.scrollTo?.({ top: Math.max(0, top) });
+    });
+    return () => {
+      current = false;
+    };
+  });
   function moveMatch(delta: number): void {
-    if (findMatches.length === 0) return;
-    activeMatch = (activeMatch + delta + findMatches.length) % findMatches.length;
+    const count = find ? findMatches.length : searchMatches.length;
+    if (count === 0) return;
+    activeMatch = (activeMatch + delta + count) % count;
+    if (searchContext) return;
     void tick().then(() => {
       textBox
         ?.querySelector<HTMLElement>(`mark[data-match-index="${activeMatch}"]`)
@@ -189,7 +254,7 @@
   }
 </script>
 
-<div class="verified-text">
+<div class="verified-text" class:search-context={searchContext}>
   {#if text || resolution?.state === "verified_empty"}
     <div class="text-controls">
       {#if text}
@@ -234,6 +299,7 @@
           ><ShieldCheckIcon size={14} aria-label="Verified" /></AppTooltip
         ></span
       >
+      {#if text && alternative && searchContext}{@render alternative()}{/if}
     </div>
   {/if}
   {#if queryHighlightError}<p class="notice" role="status">
@@ -244,6 +310,31 @@
   {:else if error}
     <p class="notice" role="alert">{error}</p>
   {:else if text}
+    {#if searchContext}
+      {#if !find && searchMatches.length}
+        <nav class="search-matches" aria-label="Search matches">
+          <Button
+            size="sm"
+            surface="soft"
+            onclick={() => moveMatch(-1)}
+            ariaLabel="Previous search match">Previous match</Button
+          >
+          <span aria-live="polite">Search match {activeMatch + 1} of {searchMatches.length}</span>
+          <Button
+            size="sm"
+            surface="soft"
+            onclick={() => moveMatch(1)}
+            ariaLabel="Next search match">Next match</Button
+          >
+        </nav>
+      {:else if !find && !queryHighlightError && !queryHighlightsPending}
+        <p class="notice" role="status">
+          {queryTerms.length
+            ? "No literal search matches in this text. The result may match metadata or use different word forms."
+            : "No literal query highlights are available for this search. Read the context below."}
+        </p>
+      {/if}
+    {/if}
     {#if originalFallback && resolution && ["failed", "historical_unavailable"].includes(resolution.state)}
       <p class="notice" role="status">
         {stateMessage(resolution.state as Exclude<RenditionTextResolution["state"], "ready">)}
@@ -257,7 +348,7 @@
           axis: "both",
           host: textFrame,
         })}>{#each marked.segments as segment}{#if segment.match}<mark
-              class:active={!!find && segment.match.index === activeMatch}
+              class:active={(!!find || searchContext) && segment.match.index === activeMatch}
               data-match-index={segment.match.index}
               data-source={segment.match.source}
               style={`--mark-color:${segment.match.color}`}>{segment.text}</mark
@@ -274,18 +365,51 @@
       >
     </p>
   {:else if resolution?.state === "unprocessed" || resolution?.state === "profile_required"}
+    {#if resolution.state === "profile_required"}<p class="setup">
+        {stateMessage(resolution.state)}
+      </p>{/if}
+    {#if resolution.state === "unprocessed" && (!onprocess || searchContext)}<p class="setup">
+        This version hasn't been processed.
+      </p>{/if}
     {#if onprocess}<div>
         <Button size="sm" surface="soft" onclick={onprocess}>Process…</Button>
-      </div>{:else}<p class="setup">This version hasn't been processed.</p>{/if}
+      </div>{/if}
   {:else if resolution && resolution.state !== "ready"}
     <p class="notice" role="status">{stateMessage(resolution.state)}</p>
   {/if}
+  {#if !loading && !text && fallback && searchContext && (resolution || error)}{@render fallback()}{/if}
 </div>
 
 <style>
   .verified-text {
     display: grid;
     gap: var(--space-5);
+  }
+  /* Search context fills Preview, and its text scrolls within the remaining height. */
+  .verified-text.search-context {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    height: 100%;
+    min-height: 0;
+  }
+  .search-context .verified-text-frame {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 100px;
+  }
+  .search-context pre {
+    flex: 1;
+    min-height: 0;
+  }
+  .search-matches {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    font-size: var(--font-size-xs);
   }
   .text-controls {
     display: flex;
