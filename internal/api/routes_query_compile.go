@@ -151,7 +151,7 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 	}) (*struct{ Body SearchHighlightPreview }, error) {
 		terms := store.SearchRequiredTerms(in.Q)
 		for i, term := range terms {
-			terms[i] = strings.Trim(term, `"`)
+			terms[i] = strings.Trim(term, `"“”„`)
 		}
 		return &struct{ Body SearchHighlightPreview }{
 			Body: SearchHighlightPreview{Terms: query.BoundedHighlightTerms(terms)},

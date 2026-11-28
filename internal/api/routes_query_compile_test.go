@@ -194,6 +194,11 @@ func TestSearchHighlightsUseTheNaturalSearchAnalyzer(t *testing.T) {
 		{"quoted phrase", `"tax return"`, []string{"tax return"}},
 		{"words and phrase", `"tax return" absent`, []string{"absent", "tax return"}},
 		{"unbalanced quote", `"the invoices`, []string{"the", "invoices"}},
+		{"unbalanced opening smart quote", `“the invoices`, []string{"the", "invoices"}},
+		{"unbalanced closing smart quote", `the” invoices`, []string{"the", "invoices"}},
+		{"unbalanced low smart quote", `„the invoices`, []string{"the", "invoices"}},
+		{"balanced smart quote", `“tax return” absent`, []string{"absent", "tax return"}},
+		{"balanced low smart quote", `„tax return”`, []string{"tax return"}},
 		// Equal only once the phrase quotes are trimmed, so the route's dedupe decides.
 		{"repeated term", `"tax" tax`, []string{"tax"}},
 		{"blank", "  ", []string{}},
