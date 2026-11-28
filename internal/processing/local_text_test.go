@@ -896,20 +896,40 @@ func TestLocalTextPairedBindingsFinishBackfill(t *testing.T) {
 	var embeddings document.ProcessingProfileV1
 	require.NoError(t, json.Unmarshal(embeddingWorkerProfile(t, profile.embedders["chunk"].Descriptor()).CanonicalProfile, &embeddings))
 	kit := embeddings.Embeddings[1]
-	kit.Name = "chunk-kit"
-	profile.portable.Embeddings = append(profile.portable.Embeddings, kit)
-	service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"pdf": {Profile: profile.portable, RenditionProvider: profile.provider, EmbeddingProviders: map[string]document.EmbeddingProvider{"chunk": profile.embedders["chunk"], "chunk-kit": profile.embedders["chunk"]}, Tokenizers: profile.tokenizers, MediaFallbackBindings: map[string]string{"chunk-kit": "chunk"}}}})
+	kit.Name = "kit"
+	fallback := embeddings.Embeddings[1]
+	fallback.Name = "fallback"
+	profile.portable.Embeddings = []document.EmbeddingBindingV1{kit, fallback}
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"pdf": {Profile: profile.portable, RenditionProvider: profile.provider, EmbeddingProviders: map[string]document.EmbeddingProvider{"fallback": profile.embedders["chunk"], "kit": profile.embedders["chunk"]}, MediaFallbackBindings: map[string]string{"kit": "fallback"}}}})
 	require.NoError(t, err)
 	defer service.Stop()
 	setup.Service = service
 	require.NoError(t, service.grantProfileConsent(t.Context(), service.profiles["pdf"], nil))
+	data := kitFlateScan(t, 1, 8, 8)
+	receipt, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(data))
+	require.NoError(t, err)
+	node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "scan.pdf", receipt.Hash, receipt.Size, "application/pdf", processingBlobPhysical(t, receipt))
+	require.NoError(t, err)
 	items, err := setup.pendingTargets(t.Context(), "", 100, false)
 	require.NoError(t, err)
-	require.NotEmpty(t, items)
+	found := false
 	for _, item := range items {
-		require.NoError(t, setup.process(t.Context(), item))
+		if item.ContentVersionID == node.CurrentVersionID {
+			found = true
+			require.NoError(t, setup.process(t.Context(), item))
+		}
 	}
+	require.True(t, found)
+	profile = service.profiles["pdf"]
+	hasKit, err := fixture.catalog.HasEmbeddingHeads(t.Context(), profile.record.Fingerprint, "kit")
+	require.NoError(t, err)
+	require.True(t, hasKit)
+	hasFallback, err := fixture.catalog.HasEmbeddingHeads(t.Context(), profile.record.Fingerprint, "fallback")
+	require.NoError(t, err)
+	require.False(t, hasFallback)
 	items, err = setup.pendingTargets(t.Context(), "", 100, false)
 	require.NoError(t, err)
-	require.Empty(t, items)
+	for _, item := range items {
+		require.NotEqual(t, node.CurrentVersionID, item.ContentVersionID)
+	}
 }

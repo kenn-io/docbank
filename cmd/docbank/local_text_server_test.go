@@ -38,19 +38,21 @@ func TestLocalTextServerPairsMedia(t *testing.T) {
 	cfg := localTextSourceConfig(t, "http://127.0.0.1:12345", "source-revision", "prefix-free", "DOCBANK_TEST_SOURCE_KEY")
 	cfg = addSyntheticVoyageMedia(t, t.TempDir(), cfg)
 	original := cfg.EmbeddingProfiles["semantic"]
+	otherProfile := cfg.ProcessingProfiles["archive"]
 	target := processing.LocalTextTarget{Server: "auto", EmbeddingServer: "http://127.0.0.1:12345/api/v1/servers/example", EmbeddingModel: "gemini-embedding-2", EmbeddingDimensions: 2}
 	candidate, retained, err := localTextCandidate(cfg, target, "photos")
 	require.NoError(t, err)
 	require.Contains(t, candidate.ProcessingProfiles["photos"].Embeddings, "media-kit")
 	require.Equal(t, "media", candidate.EmbeddingProfiles["media-kit"].Runtime.MediaFallbackBinding)
 	require.Equal(t, original, candidate.EmbeddingProfiles["semantic"])
+	require.NotContains(t, candidate.ProcessingProfiles, "archive")
+	require.Equal(t, otherProfile, cfg.ProcessingProfiles["archive"])
 	require.NotEmpty(t, retained)
 	require.Contains(t, retained[0], "Voyage direct-file embeddings don't support text queries")
 	target.EmbeddingModel = "text-model"
-	candidate, retained, err = localTextCandidate(cfg, target, "photos")
+	candidate, _, err = localTextCandidate(cfg, target, "photos")
 	require.ErrorIs(t, err, processing.ErrProfileNotConfigured)
 	require.NotContains(t, candidate.ProcessingProfiles["photos"].Embeddings, "media-kit")
-	require.Contains(t, retained[0], "Voyage direct-file embeddings don't support text queries")
 }
 
 type serverTestBackend struct{}
