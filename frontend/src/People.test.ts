@@ -331,6 +331,7 @@ const stubImages = () => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );

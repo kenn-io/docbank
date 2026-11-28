@@ -2,7 +2,14 @@
   import { webURL } from "./web-path.js";
   import { APIError } from "./api-transport.js";
   import { onMount, onDestroy } from "svelte";
-  import { Button, EmptyState, Modal, Spinner, TextInput } from "@kenn-io/kit-ui";
+  import {
+    Button,
+    EmptyState,
+    Modal,
+    Spinner,
+    TextInput,
+    overlayScrollbars,
+  } from "@kenn-io/kit-ui";
   import StarIcon from "@lucide/svelte/icons/star";
   import ImageIcon from "@lucide/svelte/icons/image";
   import { type PhotoAlbums } from "./photoAlbums.svelte.js";
@@ -102,7 +109,7 @@
   }
 </script>
 
-<main class="albums-workspace" aria-label="Albums">
+<main class="albums-workspace" aria-label="Albums" {@attach overlayScrollbars({ axis: "both" })}>
   <div class="browser-toolbar album-toolbar">
     <h1>Albums</h1>
     <Button size="sm" tone="info" onclick={beginCreate}>New album</Button>

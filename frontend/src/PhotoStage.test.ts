@@ -26,6 +26,7 @@ it.each([
       "ResizeObserver",
       class {
         observe() {}
+        unobserve() {}
         disconnect() {}
       },
     );
@@ -93,6 +94,7 @@ it("keeps the large preview when a replaced row loads while zoomed to 1:1", asyn
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );

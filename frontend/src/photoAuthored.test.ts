@@ -51,6 +51,7 @@ function setupPhotoUI() {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );

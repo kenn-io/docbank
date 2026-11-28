@@ -14,6 +14,7 @@
     SelectDropdown,
     Spinner,
     TextInput,
+    overlayScrollbars,
   } from "@kenn-io/kit-ui";
   import "./toolForm.css";
   import { APIError } from "./api-transport.js";
@@ -55,6 +56,8 @@
   let packages = $state<PackageSummary[]>([]);
   let history = $state<BatesExport[]>([]);
   let exportSnapshots = $state<Record<string, string>>({});
+  let labelListFrame = $state<HTMLDivElement>();
+  let labelHeadEl = $state<HTMLDivElement>();
   const productions = $derived([
     ...history.map((receipt) => ({
       id: receipt.allocation_id,
@@ -686,20 +689,31 @@
               The reservation didn't finish. Retry sends the same request, so it can't reserve a
               second range.
             </p>{/if}
-          <div class="label-list" role="table" aria-label="Labels">
-            <div class="label-row label-head" role="row">
-              <span role="columnheader">Label</span><span role="columnheader">Source page</span
-              ><span role="columnheader">Output page</span>
-            </div>
-            {#each plan.labels as label (label.ordinal)}
-              <div class="label-row" role="row">
-                <span role="cell"><code>{label.label}</code></span><span role="cell"
-                  ><span class="kit-sr-only">{"Source page "}</span>{label.source_page}</span
-                ><span role="cell"
-                  ><span class="kit-sr-only">{"Output page "}</span>{label.output_page}</span
-                >
+          <div class="label-list-frame" bind:this={labelListFrame}>
+            <div
+              class="label-list"
+              role="table"
+              aria-label="Labels"
+              {@attach overlayScrollbars({
+                axis: "both",
+                host: labelListFrame,
+                insetTop: labelHeadEl,
+              })}
+            >
+              <div class="label-row label-head" role="row" bind:this={labelHeadEl}>
+                <span role="columnheader">Label</span><span role="columnheader">Source page</span
+                ><span role="columnheader">Output page</span>
               </div>
-            {/each}
+              {#each plan.labels as label (label.ordinal)}
+                <div class="label-row" role="row">
+                  <span role="cell"><code>{label.label}</code></span><span role="cell"
+                    ><span class="kit-sr-only">{"Source page "}</span>{label.source_page}</span
+                  ><span role="cell"
+                    ><span class="kit-sr-only">{"Output page "}</span>{label.output_page}</span
+                  >
+                </div>
+              {/each}
+            </div>
           </div>
           {#if unsaved}<p class="tool-error">
               This browser can't remember the reservation. Keep this drawer open until the export
@@ -829,12 +843,17 @@
     display: grid;
     gap: var(--space-5);
   }
+  .label-list-frame {
+    position: relative;
+    min-width: 0;
+    overflow: clip;
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-md);
+  }
   .label-list {
     display: grid;
     max-height: 240px;
     overflow: auto;
-    border: 1px solid var(--border-muted);
-    border-radius: var(--radius-md);
   }
   .label-row {
     display: grid;

@@ -81,6 +81,7 @@ beforeEach(() => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -1462,6 +1463,7 @@ it("explains the live metadata relevance limit and hides it for complete results
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -1506,6 +1508,7 @@ it("locks Meaning to Relevance sort", async () => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -2091,6 +2094,7 @@ function openMapViewerSetup(mapMode = true, hidden = false) {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -3088,6 +3092,7 @@ it.each(["resolution", "background import"])(
       "ResizeObserver",
       class {
         observe() {}
+        unobserve() {}
         disconnect() {}
       },
     );
@@ -3992,6 +3997,7 @@ it("shows the person filter chip and clears its query filter", async () => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -4028,6 +4034,7 @@ async function facesWorkspaceSetup() {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -4221,6 +4228,7 @@ it("reports an uncertain clear after remount", async () => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -4446,6 +4454,7 @@ it("forwards the accepted photo action scope to export", async () => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -4474,6 +4483,7 @@ it("renders Map search status for a fallback", async () => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );

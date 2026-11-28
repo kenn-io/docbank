@@ -1,7 +1,7 @@
 <script lang="ts">
   import IconAction from "./IconAction.svelte";
   import { onDestroy, tick, untrack } from "svelte";
-  import { Button, Spinner, trapFocus, Notice } from "@kenn-io/kit-ui";
+  import { Button, Spinner, trapFocus, Notice, overlayScrollbars } from "@kenn-io/kit-ui";
   import X from "@lucide/svelte/icons/x";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
@@ -390,6 +390,7 @@
         style:--details-width={detailsWidth === undefined
           ? undefined
           : `min(${detailsWidth}px, 50vw)`}
+        {@attach overlayScrollbars({ axis: "y" })}
       >
         {#if photo}<PhotoDetails
             {photo}

@@ -7,7 +7,15 @@
   import "./photoReview.css";
   import { patchPhotoRows } from "./photoRows.js";
   import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
-  import { Button, Checkbox, Modal, Notice, SelectDropdown, Toggle } from "@kenn-io/kit-ui";
+  import {
+    Button,
+    Checkbox,
+    Modal,
+    Notice,
+    SelectDropdown,
+    Toggle,
+    overlayScrollbars,
+  } from "@kenn-io/kit-ui";
   import BanIcon from "@lucide/svelte/icons/ban";
   import ChevronLeftIcon from "@lucide/svelte/icons/chevron-left";
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
@@ -767,7 +775,10 @@
                   >Retry</Button
                 >{/if}
             </div>{/if}
-          {#if info && photo}<aside aria-label="Photo facts">
+          {#if info && photo}<aside
+              aria-label="Photo facts"
+              {@attach overlayScrollbars({ axis: "both" })}
+            >
               <PhotoDetails
                 {photo}
                 session={photos.session}
@@ -913,7 +924,7 @@
           >
         </div>
         {#if railError}<p role="alert">{railError}</p>{/if}
-        <nav class="filmstrip" aria-label="Cull pass">
+        <nav class="filmstrip" aria-label="Cull pass" {@attach overlayScrollbars({ axis: "both" })}>
           <fieldset disabled={busy} style="display: contents">
             {#each rail as id, index}{@const row =
                 id === currentID ? photo : neighbors.find((item) => item.asset_id === id)}

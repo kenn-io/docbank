@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
-  import { Button, FindBar, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
+  import { Button, FindBar, SelectDropdown, Spinner, overlayScrollbars } from "@kenn-io/kit-ui";
   import AppTooltip from "./AppTooltip.svelte";
   import ShieldCheckIcon from "@lucide/svelte/icons/shield-check";
   import { APIError } from "./api-transport.js";
@@ -53,6 +53,7 @@
   let highlightSetID = $state("");
   let activeMatch = $state(0);
   let textBox: HTMLElement | undefined = $state();
+  let textFrame = $state<HTMLDivElement>();
   const loadKey = $derived(
     [
       session,
@@ -248,14 +249,20 @@
         {stateMessage(resolution.state as Exclude<RenditionTextResolution["state"], "ready">)}
       </p>
     {/if}
-    <pre
-      bind:this={textBox}
-      aria-label={`Verified text of ${source.name}`}>{#each marked.segments as segment}{#if segment.match}<mark
-            class:active={!!find && segment.match.index === activeMatch}
-            data-match-index={segment.match.index}
-            data-source={segment.match.source}
-            style={`--mark-color:${segment.match.color}`}>{segment.text}</mark
-          >{:else}{segment.text}{/if}{/each}</pre>
+    <div class="verified-text-frame" bind:this={textFrame}>
+      <pre
+        bind:this={textBox}
+        aria-label={`Verified text of ${source.name}`}
+        {@attach overlayScrollbars({
+          axis: "both",
+          host: textFrame,
+        })}>{#each marked.segments as segment}{#if segment.match}<mark
+              class:active={!!find && segment.match.index === activeMatch}
+              data-match-index={segment.match.index}
+              data-source={segment.match.source}
+              style={`--mark-color:${segment.match.color}`}>{segment.text}</mark
+            >{:else}{segment.text}{/if}{/each}</pre>
+    </div>
     {#if marked.truncated}<p class="notice" role="status">
         Showing the first 5,000 non-overlapping matches.
       </p>{/if}
@@ -306,6 +313,10 @@
     align-items: center;
     gap: var(--space-2);
     min-height: 96px;
+  }
+  .verified-text-frame {
+    position: relative;
+    min-width: 0;
   }
   pre {
     max-height: 420px;

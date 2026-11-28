@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { Disclosure, Button, FormField, Spinner } from "@kenn-io/kit-ui";
+  import { Disclosure, Button, FormField, Spinner, overlayScrollbars } from "@kenn-io/kit-ui";
   import {
     getPhotoHiddenState,
     unlockPhotoHidden,
@@ -372,7 +372,7 @@
     <header class="hidden-bar browser-toolbar"><h1>Hidden</h1></header>
   {:else if !resolved}
     <header class="hidden-bar browser-toolbar"><h1>Hidden</h1></header>
-    <div class="hidden-gate">
+    <div class="hidden-gate" {@attach overlayScrollbars({ axis: "y" })}>
       {#if reading}<Spinner />{/if}
     </div>
   {:else if workspace && remaining && workspaceVisible}
@@ -410,7 +410,7 @@
     <Spinner />
   {:else}
     <header class="hidden-bar browser-toolbar"><h1>Hidden</h1></header>
-    <div class="hidden-gate">
+    <div class="hidden-gate" {@attach overlayScrollbars({ axis: "y" })}>
       {#if hiddenState.configured}<p>
           Forgotten passcode? Run <code>docbank photos hidden reset</code>.
         </p>{/if}

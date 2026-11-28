@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Disclosure, Button, SelectDropdown } from "@kenn-io/kit-ui";
+  import { Disclosure, Button, SelectDropdown, overlayScrollbars } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import { randomUUID } from "./crypto.js";
   import { formatRawBytes } from "./format.js";
@@ -43,6 +43,8 @@
   let frameReady = $state(false);
   let iframe = $state<HTMLIFrameElement>();
   let escapeButton = $state<HTMLButtonElement>();
+  let rawHeadersFrame = $state<HTMLDivElement>();
+  let plainBodyFrame = $state<HTMLDivElement>();
   const inventory = $derived(metadata?.evidence.inventory);
   const message = $derived(inventory?.messages.find((m) => m.path === inventory.root_path));
   const alternatives = $derived(message?.alternatives ?? []);
@@ -208,7 +210,11 @@
         showRaw = !showRaw;
       }}>{showRaw ? "Hide raw headers" : "Show raw headers"}</Button
     >
-    {#if showRaw}<pre aria-label="Raw email headers">{raw}</pre>{/if}
+    {#if showRaw}<div class="pre-frame" bind:this={rawHeadersFrame}>
+        <pre
+          aria-label="Raw email headers"
+          {@attach overlayScrollbars({ axis: "both", host: rawHeadersFrame })}>{raw}</pre>
+      </div>{/if}
     <p role="status">
       MIME inventory: {inventory?.state}. Body and inline bytes are SHA-256 verified before display.
     </p>
@@ -262,7 +268,13 @@
       {#if !frameReady}<p role="status">Loading isolated email body…</p>{/if}
     {:else if selectedAlternative?.kind === "plain" && !bodyError}
       <!-- svelte-ignore a11y_no_noninteractive_tabindex (keyboard access to the scrollable complete body) -->
-      <pre class="plain-body" aria-label="Plain text email body" tabindex="0">{text}</pre>
+      <div class="pre-frame" bind:this={plainBodyFrame}>
+        <pre
+          class="plain-body"
+          aria-label="Plain text email body"
+          tabindex="0"
+          {@attach overlayScrollbars({ axis: "both", host: plainBodyFrame })}>{text}</pre>
+      </div>
     {/if}
     {#if inlineParts.length}<Disclosure
         variant="plain"
@@ -323,6 +335,10 @@
   dd {
     margin: 0;
     overflow-wrap: anywhere;
+  }
+  .pre-frame {
+    position: relative;
+    min-width: 0;
   }
   pre {
     margin: 0;

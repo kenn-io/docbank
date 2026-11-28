@@ -50,6 +50,7 @@ it("opens folder protection from its actions and copies the command", async () =
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -160,6 +161,7 @@ it.each([
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );

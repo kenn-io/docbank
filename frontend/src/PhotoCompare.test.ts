@@ -65,6 +65,7 @@ function compare(
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );

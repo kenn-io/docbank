@@ -31,6 +31,7 @@
     Chip,
     Spinner,
     Notice,
+    overlayScrollbars,
     type ShortcutManager,
   } from "@kenn-io/kit-ui";
   import StarIcon from "@lucide/svelte/icons/star";
@@ -1165,7 +1166,11 @@
   />
 {/snippet}
 {#snippet vaultReason()}Vault identity unavailable. Reload to retry.{/snippet}
-<main class="photos-workspace" aria-label={albumID ? "Photo album" : "Photo library"}>
+<main
+  class="photos-workspace"
+  aria-label={albumID ? "Photo album" : "Photo library"}
+  {@attach overlayScrollbars({ axis: "both" })}
+>
   {#if mapMode && !tiles.tile_url}
     <EmptyState
       title="Maps are disabled"
@@ -1468,7 +1473,11 @@
           {/if}
           <div class="photo-browser">
             {#if searchable && photos.filtersOpen}
-              <div id={filtersID} class="photo-facets">
+              <div
+                id={filtersID}
+                class="photo-facets"
+                {@attach overlayScrollbars({ axis: "both" })}
+              >
                 {#if photos.facetsLoading && !photos.facets.length}<div
                     class="photo-loading"
                     role="status"
@@ -1490,7 +1499,7 @@
                 />
               </div>
             {/if}
-            <div class="photo-results">
+            <div class="photo-results" {@attach overlayScrollbars({ axis: "both" })}>
               {#if !photoID && editor.error}<Notice tone="error" message={editor.error} />{/if}
               {#if !photoID && editor.receiptID}<Notice
                   tone="success"
@@ -1631,6 +1640,7 @@
                 style:--details-width={detailsWidth === undefined
                   ? undefined
                   : `min(${detailsWidth}px, 50vw)`}
+                {@attach overlayScrollbars({ axis: "both" })}
               >
                 {#if editCount || editor.dirty}<PhotoInspector
                     {cache}

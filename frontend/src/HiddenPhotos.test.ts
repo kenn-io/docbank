@@ -21,6 +21,7 @@ const prepare = () => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );

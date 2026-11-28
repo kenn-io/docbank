@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
+  import { overlayScrollbars } from "@kenn-io/kit-ui";
   import {
     createPhotoChunks,
     chunkAt,
@@ -79,6 +80,7 @@
     ondragend?: () => void;
     scrollTop?: number;
   } = $props();
+  let frame = $state<HTMLDivElement>();
   let container = $state<HTMLDivElement>();
   let width = $state(800);
   let initialized = $state(false);
@@ -240,53 +242,66 @@
 {/snippet}
 
 {#if showTimeline && narrow}{@render dates(true)}{/if}
-<div
-  class="photo-scroll"
-  class:with-years={showTimeline && !narrow}
-  bind:this={container}
-  onscroll={() => {
-    if (initialized && container && container.scrollTop !== scrollTop) {
-      scrollTop = container.scrollTop;
-      seek = "";
-      chosenYear = "";
-    }
-  }}
-  data-testid="photo-scroll"
->
-  {#if showTimeline && !narrow}
-    <div class="year-scrubber" style:--timeline-height={`calc(${viewport}px - 2 * var(--space-5))`}>
-      {@render dates(false)}
-    </div>
-  {/if}
-  <div class="grid" style:height={`${totalHeight}px`}>
-    {#if initialized}
-      <div style:position="relative" style:top={`${windowChunks[0]?.offset ?? 0}px`}>
-        {#each windowChunks as chunk (chunk.group.key)}
-          <PhotoMonthChunk
-            group={chunk.group}
-            layout={chunk.layout}
-            offset={chunk.offset}
-            top={Math.max(0, scrollTop - viewport)}
-            bottom={scrollTop + 2 * viewport}
-            {cache}
-            {selectedIDs}
-            {onselect}
-            {oncheck}
-            {onopen}
-            {expandedStacks}
-            {onexpand}
-            {onhidden}
-            {hidden}
-            {ondragstart}
-            {ondragend}
-          />
-        {/each}
+<div class="photo-scroll-frame" bind:this={frame}>
+  <div
+    class="photo-scroll"
+    class:with-years={showTimeline && !narrow}
+    bind:this={container}
+    {@attach overlayScrollbars({ axis: "both", host: frame })}
+    onscroll={() => {
+      if (initialized && container && container.scrollTop !== scrollTop) {
+        scrollTop = container.scrollTop;
+        seek = "";
+        chosenYear = "";
+      }
+    }}
+    data-testid="photo-scroll"
+  >
+    {#if showTimeline && !narrow}
+      <div
+        class="year-scrubber"
+        style:--timeline-height={`calc(${viewport}px - 2 * var(--space-5))`}
+      >
+        {@render dates(false)}
       </div>
     {/if}
+    <div class="grid" style:height={`${totalHeight}px`}>
+      {#if initialized}
+        <div style:position="relative" style:top={`${windowChunks[0]?.offset ?? 0}px`}>
+          {#each windowChunks as chunk (chunk.group.key)}
+            <PhotoMonthChunk
+              group={chunk.group}
+              layout={chunk.layout}
+              offset={chunk.offset}
+              top={Math.max(0, scrollTop - viewport)}
+              bottom={scrollTop + 2 * viewport}
+              {cache}
+              {selectedIDs}
+              {onselect}
+              {oncheck}
+              {onopen}
+              {expandedStacks}
+              {onexpand}
+              {onhidden}
+              {hidden}
+              {ondragstart}
+              {ondragend}
+            />
+          {/each}
+        </div>
+      {/if}
+    </div>
   </div>
 </div>
 
 <style>
+  .photo-scroll-frame {
+    position: relative;
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+  }
   .photo-scroll {
     position: relative;
     flex: 1;

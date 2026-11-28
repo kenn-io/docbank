@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Modal, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
+  import { Button, Modal, SelectDropdown, Spinner, overlayScrollbars } from "@kenn-io/kit-ui";
   import { type Photos } from "./photos.svelte.js";
 
   let {
@@ -7,6 +7,7 @@
     onclose,
     onmove,
   }: { photos: Photos; onclose: () => void; onmove: () => Promise<void> } = $props();
+  let mixedFrame = $state<HTMLDivElement>();
 </script>
 
 <Modal
@@ -46,16 +47,18 @@
     <p>{photos.rejects.unchanged.toLocaleString()} photos stay in Docbank</p>
     {#if photos.rejects.mixed.length}
       <h3>Mixed flags ({photos.rejects.mixed_count.toLocaleString()})</h3>
-      <ul>
-        {#each photos.rejects.mixed as pair}<li>
-            {pair.members
-              .map(
-                (member) =>
-                  `${member.name}: ${member.flag || "undecided"}${member.in_trash ? " (in Trash)" : ""}`,
-              )
-              .join(" · ")}
-          </li>{/each}
-      </ul>
+      <div class="mixed-list-frame" bind:this={mixedFrame}>
+        <ul {@attach overlayScrollbars({ axis: "both", host: mixedFrame })}>
+          {#each photos.rejects.mixed as pair}<li>
+              {pair.members
+                .map(
+                  (member) =>
+                    `${member.name}: ${member.flag || "undecided"}${member.in_trash ? " (in Trash)" : ""}`,
+                )
+                .join(" · ")}
+            </li>{/each}
+        </ul>
+      </div>
       {#if photos.rejects.mixed_count > photos.rejects.mixed.length}<p>
           And {(photos.rejects.mixed_count - photos.rejects.mixed.length).toLocaleString()} more mixed
           pairs.
@@ -89,6 +92,10 @@
 </Modal>
 
 <style>
+  .mixed-list-frame {
+    position: relative;
+    min-width: 0;
+  }
   ul {
     max-height: 220px;
     overflow: auto;
