@@ -74,6 +74,7 @@ func (s passageGateSummary) MarshalJSON() ([]byte, error) {
 	}
 	return json.Marshal(struct {
 		plain
+
 		Quality map[string]json.RawMessage    `json:"Quality"`
 		Arms    [2]map[string]json.RawMessage `json:"Arms"`
 	}{plain(s), value.Quality, value.Arms})

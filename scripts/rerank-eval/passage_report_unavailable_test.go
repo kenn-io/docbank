@@ -20,12 +20,15 @@ func TestPassageIncompleteReportShowsUnavailable(t *testing.T) {
 	require.Contains(t, markdown, `"public": null`)
 	data, err := json.Marshal(report.Summary)
 	require.NoError(t, err)
-	var result map[string]any
+	var result struct {
+		Quality map[string]json.RawMessage   `json:"Quality"`
+		Arms    []map[string]json.RawMessage `json:"Arms"`
+	}
 	require.NoError(t, json.Unmarshal(data, &result))
-	require.Nil(t, result["Quality"].(map[string]any)["public"])
-	arm := result["Arms"].([]any)[0].(map[string]any)
-	require.Nil(t, arm["MeanBytesRatio"])
-	require.Nil(t, arm["Full"])
+	require.JSONEq(t, "null", string(result.Quality["public"]))
+	require.NotEmpty(t, result.Arms)
+	require.JSONEq(t, "null", string(result.Arms[0]["MeanBytesRatio"]))
+	require.JSONEq(t, "null", string(result.Arms[0]["Full"]))
 }
 
 func TestPassageIncompleteReportControls(t *testing.T) {
@@ -55,16 +58,22 @@ func TestPassageIncompleteReportControls(t *testing.T) {
 			report.finish()
 			data, err := json.Marshal(report.Summary)
 			require.NoError(t, err)
-			var result map[string]any
+			var result struct {
+				Quality map[string]json.RawMessage   `json:"Quality"`
+				Arms    []map[string]json.RawMessage `json:"Arms"`
+			}
 			require.NoError(t, json.Unmarshal(data, &result))
-			quality := result["Quality"].(map[string]any)["short"]
-			delta := result["Arms"].([]any)[0].(map[string]any)["ShortDelta"]
+			require.NotEmpty(t, result.Arms)
+			quality := result.Quality["short"]
+			delta := result.Arms[0]["ShortDelta"]
 			if tc.available {
-				require.NotNil(t, quality)
-				require.NotNil(t, delta)
+				require.NotEmpty(t, quality)
+				require.NotEmpty(t, delta)
+				require.NotEqual(t, "null", string(quality))
+				require.NotEqual(t, "null", string(delta))
 			} else {
-				require.Nil(t, quality)
-				require.Nil(t, delta)
+				require.JSONEq(t, "null", string(quality))
+				require.JSONEq(t, "null", string(delta))
 			}
 		})
 	}

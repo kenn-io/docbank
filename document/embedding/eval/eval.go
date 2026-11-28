@@ -61,12 +61,12 @@ type CostObservation struct {
 // Usage records provider work and observed latency for one query. Nil token
 // usage or cost means the runner did not provide that evidence.
 type Usage struct {
-	ProviderCalls       int
-	ProviderInputRunes  int
-	ProviderOutputUnits int
-	Latency             time.Duration
-	TokenUsage          *float64
-	Cost                *CostObservation
+	ProviderCalls       int              `json:"ProviderCalls"`
+	ProviderInputRunes  int              `json:"ProviderInputRunes"`
+	ProviderOutputUnits int              `json:"ProviderOutputUnits"`
+	Latency             time.Duration    `json:"Latency"`
+	TokenUsage          *float64         `json:"TokenUsage"`
+	Cost                *CostObservation `json:"Cost"`
 }
 
 // SearchResult is one ranked retrieval result.
