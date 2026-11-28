@@ -427,9 +427,9 @@ it("opens verified text context for a selected result from a plain top-bar searc
 });
 
 it.each([
-  ["a different query", "needle evidence"],
-  ["the same query again", "needle"],
-])("returns the selected result from Text to Preview after %s", async (_name, next) => {
+  ["returns the selected result from Text to Preview after a different query", "needle evidence"],
+  ["keeps the selected result on Text when the same query runs again", "needle"],
+])("%s", async (_name, next) => {
   const file = node(2, "report.txt", baseVersion);
   const options: HarnessOptions = {
     profiles: [
@@ -444,7 +444,7 @@ it.each([
     files: [file],
     baseReport: report("hybrid", [result(file, 1, "needle excerpt")]),
   };
-  installHarness(options);
+  const harness = installHarness(options);
   vi.mocked(rendition.resolveRenditionText).mockResolvedValue({
     state: "ready",
     profile: { name: "private", configuration: "configured", fingerprint: "b".repeat(64) },
@@ -481,9 +481,16 @@ it.each([
   await screen.findByText("reranked needle excerpt");
   expect(previewSelected()).toBe("false");
 
+  const searches = harness.postBodies.length;
   await submitSearch(next);
+  await waitFor(() => expect(harness.postBodies.length).toBeGreaterThan(searches));
+  if (next === "needle") {
+    await screen.findByText("reranked needle excerpt");
+    expect(previewSelected()).toBe("false");
+    return;
+  }
   await waitFor(() => expect(previewSelected()).toBe("true"));
-  expect(await screen.findByText(`Search match 1 of ${next.split(" ").length}`)).toBeTruthy();
+  expect(await screen.findByText("Search match 1 of 2")).toBeTruthy();
 });
 
 it("opens Preview for each newly selected search result after another tab", async () => {

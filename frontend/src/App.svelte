@@ -1262,9 +1262,6 @@
   let queryTerms = $state<string[]>([]);
   let queryHighlightError = $state("");
   let queryHighlightsPending = $state(false);
-  // Counts searches the reader submitted, so resubmitting the same words still
-  // returns the selected result to its search context. Refreshes do not count.
-  let acceptedSearchRevision = $state(0);
   let inspectorContentTab = $state<"preview" | "text" | "duplicates" | "attachments" | "email">(
     "preview",
   );
@@ -2287,7 +2284,6 @@
           profile ? "" : searchByMeaningOff,
         );
         accepted = !!outcome;
-        if (accepted && submitted) acceptedSearchRevision++;
         if (accepted && request === generation && requestedSort) applyResultSort(requestedSort);
         return outcome;
       }
@@ -2346,7 +2342,6 @@
         profile.name,
       );
       accepted = true;
-      if (submitted) acceptedSearchRevision++;
       if (requestedSort) applyResultSort(requestedSort);
       naturalSearchNote =
         baseReport.degradations.length > 0
@@ -2460,8 +2455,7 @@
             note,
           );
           accepted = !!outcome;
-          if (accepted && submitted) acceptedSearchRevision++;
-          if (accepted && request === generation && requestedSort) applyResultSort(requestedSort);
+            if (accepted && request === generation && requestedSort) applyResultSort(requestedSort);
           return outcome;
         } catch (fallbackCause) {
           if (request === generation && session === webSession && !controller.signal.aborted) {
@@ -2631,6 +2625,7 @@
       const liveRows = page.items.map((item) => ({ node: item.node, path: item.path! }));
       replaceRows(liveRows, refreshing);
       activeQuery = "";
+      activeSearchProfileName = "";
       activeTagID = tagID;
       taggedInspected = liveRows.length;
       taggedTotal = page.total;
@@ -3410,6 +3405,7 @@
     replaceRows([], false);
     searchQuery = "";
     activeQuery = "";
+    activeSearchProfileName = "";
     tagFilterID = "";
     activeTagID = "";
     taggedInspected = 0;
@@ -5270,7 +5266,7 @@
                     profileName={snapshot.state.options?.profile ?? ""}
                     observed={selectedRenditionObservation}
                     searchContext={!!snapshot.state.firstPage?.query.text.trim()}
-                    queryKey={snapshotQueryHighlightKey}
+                    queryKey={snapshot.state.firstPage?.query_fingerprint ?? ""}
                     {queryTerms}
                     {queryHighlightError}
                     {queryHighlightsPending}
@@ -5377,9 +5373,7 @@
                     bind:activeTab={inspectorContentTab}
                     profileName={liveSearchContext ? activeSearchProfileName : ""}
                     searchContext={liveSearchContext}
-                    queryKey={liveSearchContext
-                      ? `${acceptedSearchRevision}:${activeSearchProfileName}:${activeQuery}`
-                      : ""}
+                    queryKey={liveSearchContext ? activeQuery : ""}
                     queryTerms={liveSearchContext ? queryTerms : []}
                     queryHighlightError={liveSearchContext ? queryHighlightError : ""}
                     queryHighlightsPending={liveSearchContext && queryHighlightsPending}

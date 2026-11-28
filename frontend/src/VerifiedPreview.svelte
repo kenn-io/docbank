@@ -129,7 +129,7 @@
   });
 
   $effect(() => {
-    // A newly accepted search shows its context again, even for the same result.
+    // A changed accepted query shows its context again, even for the same result.
     if (queryKey === originalQueryKey) return;
     originalQueryKey = queryKey;
     originalPreviewKey = "";
@@ -311,9 +311,6 @@
                   >
                     {#snippet alternative()}{@render showOriginal()}{/snippet}
                     {#snippet fallback()}
-                      <p class="expired">
-                        Search context is unavailable for this version. Showing the original.
-                      </p>
                       {#if isEmail}
                         <EmailViewer
                           {session}

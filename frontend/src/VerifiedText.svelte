@@ -192,7 +192,10 @@
     activeMatch = 0;
   });
   // Search context opens at the active match. Other views scroll only when the
-  // reader moves between Find matches.
+  // reader moves between Find matches. Returning to a hidden Preview keeps the
+  // reader's position when the match has not changed.
+  let centeredMarks: typeof marked | undefined;
+  let centeredMatch = -1;
   $effect(() => {
     if (!searchContext) return;
     const index = activeMatch;
@@ -203,8 +206,11 @@
     let current = true;
     void tick().then(() => {
       if (!current || !enabled || !matches.length || !box) return;
+      if (centeredMarks === marked && centeredMatch === index) return;
       const match = box.querySelector<HTMLElement>(`mark[data-match-index="${index}"]`);
       if (!match) return;
+      centeredMarks = marked;
+      centeredMatch = index;
       // Keep scrolling inside the text; do not move the results or the inspector.
       const top =
         box.scrollTop +
@@ -354,11 +360,12 @@
     {#if resolution.state === "profile_required"}<p class="setup">
         {stateMessage(resolution.state)}
       </p>{/if}
-    {#if onprocess}<div>
-        <Button size="sm" surface="soft" onclick={onprocess}>Process…</Button>
-      </div>{:else if resolution.state === "unprocessed"}<p class="setup">
+    {#if resolution.state === "unprocessed" && (!onprocess || searchContext)}<p class="setup">
         This version hasn't been processed.
       </p>{/if}
+    {#if onprocess}<div>
+        <Button size="sm" surface="soft" onclick={onprocess}>Process…</Button>
+      </div>{/if}
   {:else if resolution && resolution.state !== "ready"}
     <p class="notice" role="status">{stateMessage(resolution.state)}</p>
   {/if}

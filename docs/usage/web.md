@@ -807,8 +807,8 @@ highlights are unavailable or no literal matches appear in the displayed text.
 It never substitutes a result excerpt or a newer document version for verified
 content. If readable text is unavailable, the panel says so and shows the
 original preview, or the email, in its place; **Download** stays available.
-Selecting another result, or running a new search, returns **Preview** to the
-search context and clears **Find**. A visual preview does not
+Selecting another result, or searching with a different query, returns
+**Preview** to the search context and clears **Find**. A visual preview does not
 overlay search highlights; a missing page runtime does not prevent reading an
 available text rendition.
 

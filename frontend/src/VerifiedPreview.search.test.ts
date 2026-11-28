@@ -117,19 +117,50 @@ it("keeps Find separate from query navigation and reports absent literal matches
 });
 
 it.each([
-  "unconfigured",
-  "unprocessed",
-  "verified_empty",
-  "failed",
-  "historical_unavailable",
-] as const)("shows the original preview without a click for %s text", async (state) => {
+  ["unconfigured", "Text extraction isn't set up."],
+  ["unprocessed", "This version hasn't been processed."],
+  ["verified_empty", "Processing verified that this document has no readable text."],
+  ["failed", "Text processing failed for this selected version."],
+  [
+    "historical_unavailable",
+    "The rendition recorded for this historical selection is no longer available.",
+  ],
+] as const)("shows the original preview without a click for %s text", async (state, reason) => {
   vi.mocked(rendition.resolveRenditionText).mockResolvedValue({ ...ready, state });
   render(VerifiedPreview, { ...props, source: { ...source, mimeType: "image/svg+xml" } });
   expect(await screen.findByText(/This file has no preview/i)).toBeTruthy();
-  expect(screen.getByText(/Search context is unavailable/)).toBeTruthy();
+  expect(screen.getByText(reason)).toBeTruthy();
   expect(rendition.readVerifiedRenditionText).not.toHaveBeenCalled();
   expect(screen.queryByLabelText("Verified text of synthetic.pdf")).toBeNull();
   expect(globalThis.fetch).not.toHaveBeenCalled();
+});
+
+it("explains unprocessed text beside Process and the original preview", async () => {
+  vi.mocked(rendition.resolveRenditionText).mockResolvedValue({ ...ready, state: "unprocessed" });
+  render(VerifiedPreview, {
+    ...props,
+    source: { ...source, mimeType: "image/svg+xml" },
+    onprocess: vi.fn(),
+  });
+  expect(await screen.findByText(/This file has no preview/i)).toBeTruthy();
+  expect(screen.getByText("This version hasn't been processed.")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Process…" })).toBeTruthy();
+});
+
+it("keeps the reader's scroll position when returning to Preview", async () => {
+  render(VerifiedPreview, props);
+  await screen.findByText("Search match 1 of 2");
+  const scrollTo = vi.mocked(HTMLElement.prototype.scrollTo);
+  await waitFor(() => expect(scrollTo).toHaveBeenCalled());
+  scrollTo.mockClear();
+  await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
+  await screen.findAllByLabelText("Verified text of synthetic.pdf");
+  await fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(scrollTo).not.toHaveBeenCalled();
+  await fireEvent.click(screen.getByRole("button", { name: "Next search match" }));
+  await waitFor(() => expect(scrollTo).toHaveBeenCalled());
 });
 
 it("requests the original image for a name-only match without extracted text", async () => {
