@@ -356,10 +356,8 @@
                     {profileName}
                     observed={displayedObservation}
                     {queryKey}
-                    queryTerms={!duplicateSource && !relatedSource ? queryTerms : []}
-                    queryHighlightError={!duplicateSource && !relatedSource
-                      ? queryHighlightError
-                      : ""}
+                    {queryTerms}
+                    {queryHighlightError}
                     {highlightSets}
                     onprocess={onprocess ? () => onprocess?.(displayedSource) : undefined}
                     {onauthfailure}

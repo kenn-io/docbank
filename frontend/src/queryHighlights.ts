@@ -1,6 +1,5 @@
 import * as generated from "./generated/docbank.js";
 import { canonicalQuery } from "./query.js";
-import type { QueryPreview } from "./queryPreview.js";
 import type { SnapshotPage } from "./snapshots.js";
 
 const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -41,11 +40,11 @@ function unicode(value: unknown, field: string): string {
 
 export async function readQueryHighlights(
   session: string,
-  acceptedQuery: Pick<SnapshotPage, "query" | "query_fingerprint" | "dependencies"> | QueryPreview,
+  snapshot: SnapshotPage,
   signal: AbortSignal,
 ): Promise<string[]> {
   const raw = object(
-    await generated.previewQueryHighlights(JSON.parse(canonicalQuery(acceptedQuery.query)), {
+    await generated.previewQueryHighlights(JSON.parse(canonicalQuery(snapshot.query)), {
       session,
       signal,
     }),
@@ -58,21 +57,21 @@ export async function readQueryHighlights(
   if (
     typeof raw.query_fingerprint !== "string" ||
     !fingerprint.test(raw.query_fingerprint) ||
-    raw.query_fingerprint !== acceptedQuery.query_fingerprint
+    raw.query_fingerprint !== snapshot.query_fingerprint
   ) {
-    malformed("fingerprint does not match the accepted query");
+    malformed("fingerprint does not match the accepted snapshot");
   }
   if (
     !Array.isArray(raw.dependencies) ||
     raw.dependencies.length > 256 ||
-    raw.dependencies.length !== acceptedQuery.dependencies.length
+    raw.dependencies.length !== snapshot.dependencies.length
   ) {
-    malformed("dependencies do not match the accepted query");
+    malformed("dependencies do not match the accepted snapshot");
   }
   raw.dependencies.forEach((value, index) => {
     const dependency = object(value, `dependencies[${index}]`);
     exactKeys(dependency, ["kind", "id", "revision"], [], `dependencies[${index}]`);
-    const accepted = acceptedQuery.dependencies[index];
+    const accepted = snapshot.dependencies[index];
     if (
       typeof dependency.kind !== "string" ||
       !dependencyKinds.has(dependency.kind) ||

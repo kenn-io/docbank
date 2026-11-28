@@ -66,29 +66,6 @@ func browserRoleSearchScope(ctx context.Context) context.Context {
 	return ctx
 }
 
-// compileQueryProblem reports a positioned expression error to the caller and
-// hides any other compile failure behind the given message.
-func compileQueryProblem(err error, internal string) error {
-	if positioned, ok := errors.AsType[*query.ExpressionError](err); ok {
-		problem := NewError(http.StatusUnprocessableEntity, "invalid_query", positioned.Message)
-		if positioned.End > positioned.Offset {
-			problem.Position = &ErrorPosition{Offset: positioned.Offset, End: positioned.End}
-		}
-		return problem
-	}
-	return NewError(http.StatusInternalServerError, "internal", internal)
-}
-
-func queryDependencies(compiled []query.Dependency) []QueryDependency {
-	dependencies := make([]QueryDependency, 0, len(compiled))
-	for _, dependency := range compiled {
-		dependencies = append(dependencies, QueryDependency{
-			Kind: string(dependency.Kind), ID: dependency.ID, Revision: dependency.Revision,
-		})
-	}
-	return dependencies
-}
-
 func registerQueryCompileRoutes(api huma.API, d Deps) {
 	huma.Register(api, huma.Operation{
 		OperationID: "parseQuery", Method: http.MethodPost, Path: "/api/v1/queries/parse",
@@ -103,14 +80,25 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 		}
 		compiled, err := d.Store.CompileQuery(ctx, value)
 		if err != nil {
-			return nil, compileQueryProblem(err, "Could not compile query")
+			if positioned, ok := errors.AsType[*query.ExpressionError](err); ok {
+				problem := NewError(http.StatusUnprocessableEntity, "invalid_query", positioned.Message)
+				if positioned.End > positioned.Offset {
+					problem.Position = &ErrorPosition{Offset: positioned.Offset, End: positioned.End}
+				}
+				return nil, problem
+			}
+			return nil, NewError(http.StatusInternalServerError, "internal", "Could not compile query")
 		}
 		canonical, fingerprint, err := query.CanonicalWithFingerprint(compiled.Query)
 		if err != nil {
 			return nil, NewError(http.StatusInternalServerError, "internal", "Could not encode query")
 		}
-		preview := QueryPreview{Query: QueryPayload(canonical), QueryFingerprint: fingerprint,
-			Dependencies: queryDependencies(compiled.Dependencies)}
+		preview := QueryPreview{Query: QueryPayload(canonical), QueryFingerprint: fingerprint, Dependencies: []QueryDependency{}}
+		for _, dependency := range compiled.Dependencies {
+			preview.Dependencies = append(preview.Dependencies, QueryDependency{
+				Kind: string(dependency.Kind), ID: dependency.ID, Revision: dependency.Revision,
+			})
+		}
 		return &struct{ Body QueryPreview }{Body: preview}, nil
 	})
 
@@ -127,14 +115,29 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 		}
 		compiled, err := d.Store.CompileQuery(ctx, value)
 		if err != nil {
-			return nil, compileQueryProblem(err, "Could not compile query highlights")
+			if positioned, ok := errors.AsType[*query.ExpressionError](err); ok {
+				problem := NewError(http.StatusUnprocessableEntity, "invalid_query", positioned.Message)
+				if positioned.End > positioned.Offset {
+					problem.Position = &ErrorPosition{Offset: positioned.Offset, End: positioned.End}
+				}
+				return nil, problem
+			}
+			return nil, NewError(http.StatusInternalServerError, "internal", "Could not compile query highlights")
 		}
 		fingerprint, err := query.Fingerprint(compiled.Query)
 		if err != nil {
 			return nil, NewError(http.StatusInternalServerError, "internal", "Could not fingerprint query highlights")
 		}
-		preview := QueryHighlightPreview{QueryFingerprint: fingerprint,
-			Dependencies: queryDependencies(compiled.Dependencies), Terms: compiled.PositiveTextTerms()}
+		preview := QueryHighlightPreview{
+			QueryFingerprint: fingerprint,
+			Dependencies:     make([]QueryDependency, 0, len(compiled.Dependencies)),
+			Terms:            compiled.PositiveTextTerms(),
+		}
+		for _, dependency := range compiled.Dependencies {
+			preview.Dependencies = append(preview.Dependencies, QueryDependency{
+				Kind: string(dependency.Kind), ID: dependency.ID, Revision: dependency.Revision,
+			})
+		}
 		return &struct{ Body QueryHighlightPreview }{Body: preview}, nil
 	})
 

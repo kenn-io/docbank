@@ -13,7 +13,7 @@
     type RenditionTextResolution,
   } from "./renditionText.js";
   import type { SelectedSource } from "./selectedSource.js";
-  import { markText, nextTextMatch } from "./textMarks.js";
+  import { markText } from "./textMarks.js";
 
   type HighlightChoice = { id: string; name: string; terms: HighlightTerm[] };
   let {
@@ -230,9 +230,10 @@
       current = false;
     };
   });
-  function moveMatch(delta: -1 | 1): void {
+  function moveMatch(delta: number): void {
     const count = find ? findMatches.length : searchMatches.length;
-    activeMatch = nextTextMatch(activeMatch, delta, count);
+    if (count === 0) return;
+    activeMatch = (activeMatch + delta + count) % count;
     if (searchContext) return;
     void tick().then(() => {
       textBox
@@ -309,7 +310,6 @@
     <p class="notice" role="alert">{error}</p>
   {:else if text}
     {#if searchContext}
-      <p class="text-origin">{originalFallback ? "Original text" : "Extracted text"}</p>
       {#if !find && searchMatches.length}
         <nav class="search-matches" aria-label="Search matches">
           <Button
@@ -401,11 +401,6 @@
   .search-context pre {
     flex: 1;
     min-height: 0;
-  }
-  .text-origin {
-    margin: 0;
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
   }
   .search-matches {
     display: flex;
