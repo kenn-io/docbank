@@ -140,13 +140,11 @@ func TestPairedStagesRotateAndKeepFailuresVisible(t *testing.T) {
 			{"select:3", "provider:passage3", "provider:current", "select:1", "provider:passage1"},
 		} {
 			var calls []string
-			stages := map[int]context.Context{}
 			done := map[int]<-chan struct{}{}
 			selectPassages := func(ctx context.Context, limit int) ([]PassageCandidate, PassageSelection, error) {
 				_, ok := ctx.Deadline()
 				require.True(t, ok)
 				require.NoError(t, ctx.Err())
-				stages[limit] = ctx
 				// Capture Done while live; canceled contexts may share a closed channel.
 				done[limit] = ctx.Done()
 				calls = append(calls, fmt.Sprint("select:", limit))
@@ -159,7 +157,7 @@ func TestPairedStagesRotateAndKeepFailuresVisible(t *testing.T) {
 				}
 				return selected, PassageSelection{}, nil
 			}
-			runner := &captureEqualRunner{calls: &calls, contexts: map[string]context.Context{}, done: map[string]<-chan struct{}{}}
+			runner := &captureEqualRunner{calls: &calls, deadlines: map[string]time.Time{}, done: map[string]<-chan struct{}{}}
 			comparison, err := EvaluatePassagesWithOptions(parent, "q", candidates, runner, PassageOptions{Deadline: time.Second, Rotation: rotation, Select: selectPassages})
 			if capped {
 				require.Error(t, err)
@@ -169,23 +167,21 @@ func TestPairedStagesRotateAndKeepFailuresVisible(t *testing.T) {
 				require.True(t, comparison.P3.Selection.Capped)
 			} else {
 				require.NoError(t, err)
-				require.Same(t, stages[3], runner.contexts["passage3"])
+				require.Equal(t, done[3], runner.done["passage3"])
 				require.Equal(t, []string{"a", "b"}, comparison.P3.Ranking)
 			}
 			require.Equal(t, order, calls)
-			require.Same(t, stages[1], runner.contexts["passage1"])
+			require.Equal(t, done[1], runner.done["passage1"])
 			require.NotEqual(t, done[1], done[3])
-			for name, stage := range runner.contexts {
-				deadline, ok := stage.Deadline()
-				require.True(t, ok, name)
+			for name, deadline := range runner.deadlines {
 				require.NotEqual(t, parentDeadline, deadline, "each provider must have its fresh stage deadline")
 				require.NotEqual(t, parent.Done(), runner.done[name])
-				require.ErrorIs(t, stage.Err(), context.Canceled)
+				require.True(t, isClosed(runner.done[name]))
 			}
 			require.NotEqual(t, runner.done["current"], done[1])
 			require.NotEqual(t, runner.done["current"], done[3])
-			for _, stage := range stages {
-				require.ErrorIs(t, stage.Err(), context.Canceled)
+			for _, stageDone := range done {
+				require.True(t, isClosed(stageDone))
 			}
 			require.Equal(t, []string{"a", "b"}, comparison.Current.Ranking, "ties follow serving identity order")
 		}
@@ -193,14 +189,18 @@ func TestPairedStagesRotateAndKeepFailuresVisible(t *testing.T) {
 }
 
 type captureEqualRunner struct {
-	calls    *[]string
-	contexts map[string]context.Context
-	done     map[string]<-chan struct{}
+	calls     *[]string
+	deadlines map[string]time.Time
+	done      map[string]<-chan struct{}
 }
 
 func (r *captureEqualRunner) RerankPassages(ctx context.Context, _ string, inputs []PassageInput) (PassageScores, error) {
 	*r.calls = append(*r.calls, "provider:"+inputs[0].Text)
-	r.contexts[inputs[0].Text], r.done[inputs[0].Text] = ctx, ctx.Done()
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return PassageScores{}, errors.New("missing stage deadline")
+	}
+	r.deadlines[inputs[0].Text], r.done[inputs[0].Text] = deadline, ctx.Done()
 	if err := ctx.Err(); err != nil {
 		return PassageScores{}, err
 	}
@@ -209,6 +209,15 @@ func (r *captureEqualRunner) RerankPassages(ctx context.Context, _ string, input
 		scores = append(scores, PassageScore{DocumentID: input.DocumentID, Passage: input.Passage, Score: 1})
 	}
 	return PassageScores{Scores: scores}, nil
+}
+
+func isClosed(ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
 }
 
 func TestPairedProviderFailureRetainsAttemptAccounting(t *testing.T) {

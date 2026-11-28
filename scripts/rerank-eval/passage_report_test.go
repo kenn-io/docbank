@@ -47,30 +47,36 @@ func (s passageGateSummary) MarshalJSON() ([]byte, error) {
 	if err != nil || s.Decision != "inconclusive" {
 		return data, err
 	}
-	var value map[string]any
+	var value struct {
+		Quality map[string]json.RawMessage    `json:"Quality"`
+		Arms    [2]map[string]json.RawMessage `json:"Arms"`
+	}
 	if err := json.Unmarshal(data, &value); err != nil {
 		return nil, err
 	}
-	quality := value["Quality"].(map[string]any)
-	quality["public"], quality["proxy"] = nil, nil
+	null := json.RawMessage("null")
+	value.Quality["public"], value.Quality["proxy"] = null, null
 	for _, corpus := range []string{"short", "synthetic"} {
 		if !s.availableControls[corpus] {
-			quality[corpus] = nil
+			value.Quality[corpus] = null
 		}
 	}
-	for _, arm := range value["Arms"].([]any) {
-		fields := arm.(map[string]any)
+	for _, fields := range value.Arms {
 		if !s.availableControls["short"] {
-			fields["ShortDelta"] = nil
+			fields["ShortDelta"] = null
 		}
 		if !s.availableControls["synthetic"] {
-			fields["SyntheticDelta"] = nil
+			fields["SyntheticDelta"] = null
 		}
 		for _, key := range []string{"Full", "Proxy", "MeanBytesRatio", "MeanTokensRatio", "P95BytesRatio", "WorstBytesRatio", "P95TokensRatio", "WorstTokensRatio", "MeanJSONBytes", "P95Latency", "P3MinusP1", "HitAt1", "Selection"} {
-			fields[key] = nil
+			fields[key] = null
 		}
 	}
-	return json.Marshal(value)
+	return json.Marshal(struct {
+		plain
+		Quality map[string]json.RawMessage    `json:"Quality"`
+		Arms    [2]map[string]json.RawMessage `json:"Arms"`
+	}{plain(s), value.Quality, value.Arms})
 }
 
 type passageQuality struct {

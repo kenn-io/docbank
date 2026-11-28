@@ -9,8 +9,12 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/http/httptest"
+	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tiktoken-go/tokenizer"
 	embeddingeval "go.kenn.io/docbank/document/embedding/eval"
 )
@@ -122,4 +126,48 @@ func (b *passageBudget) reserve(tokens int, rate float64) error {
 	}
 	b.EstimatedMicros += cost
 	return nil
+}
+
+func TestPassageVoyageAccountsAttemptAndRejectsMalformedScores(t *testing.T) {
+	codec, err := tokenizer.Get(tokenizer.Cl100kBase)
+	require.NoError(t, err)
+	body := `{"data":[{"index":1,"relevance_score":0.8},{"index":0,"relevance_score":0.5}],"usage":{"total_tokens":7}}`
+	var received int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Documents  []string `json:"documents"`
+			Truncation *bool    `json:"truncation"`
+		}
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&request)) {
+			return
+		}
+		assert.Equal(t, []string{"first", "second"}, request.Documents)
+		if assert.NotNil(t, request.Truncation) {
+			assert.False(t, *request.Truncation)
+		}
+		received++
+		_, _ = w.Write([]byte(body))
+	}))
+	defer server.Close()
+	runner := &passageVoyageRunner{endpoint: server.URL, client: server.Client(), secret: func() string { return "synthetic" }, codec: codec, budget: &passageBudget{started: time.Now()}}
+	inputs := []embeddingeval.PassageInput{{DocumentID: "a", Text: "first"}, {DocumentID: "b", Passage: 1, Text: "second"}}
+	got, err := runner.RerankPassages(t.Context(), "query", inputs)
+	require.NoError(t, err)
+	require.Len(t, got.Scores, 2)
+	require.Equal(t, []string{"b", "a"}, []string{got.Scores[0].DocumentID, got.Scores[1].DocumentID})
+	require.Equal(t, []int{1, 0}, []int{got.Scores[0].Passage, got.Scores[1].Passage})
+	require.InDeltaSlice(t, []float64{.8, .5}, []float64{got.Scores[0].Score, got.Scores[1].Score}, 1e-12)
+	require.InDelta(t, 7.0, *got.Usage.TokenUsage, 1e-12)
+	require.Equal(t, 4, got.LocalTokens)
+	require.Greater(t, got.RequestBytes, len("firstsecond"))
+	body = `{"data":[{"index":0},{"index":1,"relevance_score":2}]}`
+	got, err = runner.RerankPassages(t.Context(), "query", inputs)
+	require.Error(t, err, "missing score cannot silently become zero")
+	require.Positive(t, got.RequestBytes)
+	require.Equal(t, 2, received)
+	before := received
+	runner.budget.EstimatedMicros = 25_000_000
+	_, err = runner.RerankPassages(t.Context(), "query", inputs)
+	require.Error(t, err)
+	require.Equal(t, before, received, "budget rejects before sending")
 }

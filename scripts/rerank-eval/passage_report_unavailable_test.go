@@ -2,7 +2,7 @@ package rerankeval_test
 
 import (
 	"encoding/json"
-	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -14,6 +14,10 @@ func TestPassageIncompleteReportShowsUnavailable(t *testing.T) {
 	require.Equal(t, "inconclusive", report.Summary.Decision)
 	require.Zero(t, report.Summary.Queries)
 	require.NotContains(t, report.Summary.Reasons, "p1 exceeds a preregistered threshold")
+	markdown, err := report.markdown()
+	require.NoError(t, err)
+	require.Contains(t, markdown, "Decision: **inconclusive**")
+	require.Contains(t, markdown, `"public": null`)
 	data, err := json.Marshal(report.Summary)
 	require.NoError(t, err)
 	var result map[string]any
@@ -38,7 +42,7 @@ func TestPassageIncompleteReportControls(t *testing.T) {
 			var report passageGateReport
 			for q := range tc.count {
 				for repeat := range 3 {
-					o := passageObservation{Corpus: "short", Query: fmt.Sprint(q), Repeat: repeat}
+					o := passageObservation{Corpus: "short", Query: strconv.Itoa(q), Repeat: repeat}
 					if tc.failed && q == 0 && repeat == 0 {
 						o.Failure = "failed"
 					}
