@@ -30,7 +30,7 @@ var (
 func bundledGuides() []mcpskills.Guide {
 	return []mcpskills.Guide{
 		{Name: "workflow", Title: "Docbank agent workflow", Summary: "Select exact document identities, find evidence and read verified content.", Markdown: withCLI(workflowMCP, CLIWorkflowHelp)},
-		{Name: "search", Title: "Find document evidence", Summary: "CLISearchHelp an explicit scope and interpret coverage before drawing conclusions.", Markdown: withCLI(searchMCP, CLISearchHelp)},
+		{Name: "search", Title: "Find document evidence", Summary: "Search an explicit scope and interpret coverage before drawing conclusions.", Markdown: withCLI(searchMCP, CLISearchHelp)},
 		{Name: "processing", Title: "Review document processing", Summary: "Inspect provider disclosure and use existing consent for an exact reviewed plan.", Markdown: withCLI(processingMCP, CLIProcessingHelp)},
 	}
 }
