@@ -13,16 +13,30 @@ import (
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/kit/embedconfig"
 	"go.kenn.io/kit/embedlocal"
 )
 
 func newProcessingLocalCommand() *cobra.Command {
-	var server string
+	var server, embeddingServer, embeddingModel string
+	var embeddingDimensions int
 	cmd := &cobra.Command{Use: "local", Short: "Set up vault-wide text indexing", Args: cobra.NoArgs,
 		Example: "  docbank processing local --server local",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if server != "auto" && server != "local" {
 				return usageError(errors.New("--server must be auto or local"))
+			}
+			if cmd.Flags().Changed("embedding-server") || cmd.Flags().Changed("embedding-model") || cmd.Flags().Changed("embedding-dimensions") {
+				if embeddingServer == "" || embeddingModel == "" || embeddingDimensions <= 0 {
+					return usageError(errors.New("--embedding-server, --embedding-model, and --embedding-dimensions must be provided together"))
+				}
+				target := embedconfig.Embedder{API: embedconfig.APIKit, BaseURL: embeddingServer, Model: embeddingModel, Dims: embeddingDimensions, TrustPrivateNetwork: true}
+				if err := target.Validate(); err != nil || strings.TrimSpace(embeddingModel) != embeddingModel || embeddingDimensions > 1000000 {
+					return usageError(errors.New("invalid embedding server URL, model, or dimensions"))
+				}
+				if cmd.Flags().Changed("server") {
+					return usageError(errors.New("--server cannot be combined with --embedding-server"))
+				}
 			}
 			c, err := daemonconn.Ensure(cmd.Context())
 			if err != nil {
@@ -30,7 +44,7 @@ func newProcessingLocalCommand() *cobra.Command {
 			}
 			closeClient := sync.OnceValue(c.Close)
 			defer func() { _ = closeClient() }()
-			plan, err := c.API().PlanLocalText(cmd.Context(), &apiclient.PlanLocalTextRequestOptions{Body: &api.LocalTextPlanRequest{Server: server}})
+			plan, err := c.API().PlanLocalText(cmd.Context(), &apiclient.PlanLocalTextRequestOptions{Body: &api.LocalTextPlanRequest{Server: server, EmbeddingServer: embeddingServer, EmbeddingModel: embeddingModel, EmbeddingDimensions: embeddingDimensions}})
 			if err != nil {
 				return err
 			}
@@ -61,6 +75,9 @@ func newProcessingLocalCommand() *cobra.Command {
 			return nil
 		}}
 	cmd.Flags().StringVar(&server, "server", "auto", "embedding server: auto or local")
+	cmd.Flags().StringVar(&embeddingServer, "embedding-server", "", "embedding server URL")
+	cmd.Flags().StringVar(&embeddingModel, "embedding-model", "", "embedding model")
+	cmd.Flags().IntVar(&embeddingDimensions, "embedding-dimensions", 0, "embedding dimensions")
 	return cmd
 }
 
@@ -71,14 +88,26 @@ func applyLocalText(ctx context.Context, plan api.LocalTextPlan) (retErr error) 
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, c.Close()) }()
-	_, err = c.API().ApplyLocalText(ctx, &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: plan.Server, PlanFingerprint: plan.Fingerprint, Consent: true}})
+	body := &api.LocalTextApplyRequest{Server: plan.Server, PlanFingerprint: plan.Fingerprint, Consent: true}
+	if plan.Target != nil {
+		body.EmbeddingServer, body.EmbeddingModel, body.EmbeddingDimensions = plan.Target.EmbeddingServer, plan.Target.EmbeddingModel, plan.Target.EmbeddingDimensions
+	}
+	_, err = c.API().ApplyLocalText(ctx, &apiclient.ApplyLocalTextRequestOptions{Body: body})
 	return err
 }
 
 func writeLocalTextPlan(cmd *cobra.Command, p api.LocalTextPlan) error {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintf(w, "profile:\t%s\nserver:\t%s\nindex:\t%s\nscope:\t%s\n", p.Profile, p.Server, p.VectorEffect, p.Scope)
-	_, _ = fmt.Fprintf(w, "retained:\t%s\n", strings.Join(p.RetainedClasses, ", "))
+	if p.Target != nil {
+		for _, profile := range p.Profiles {
+			_, _ = fmt.Fprintf(w, "profile:\t%s\n", profile.Name)
+		}
+		_, _ = fmt.Fprintf(w, "server:\t%s\nmodel:\t%s\ndimensions:\t%d\n", p.Target.EmbeddingServer, p.Target.EmbeddingModel, p.Target.EmbeddingDimensions)
+	} else {
+		_, _ = fmt.Fprintf(w, "profile:\t%s\nserver:\t%s\n", p.Profile, p.Server)
+	}
+	_, _ = fmt.Fprintf(w, "index:\t%s\nscope:\t%s\n", p.VectorEffect, p.Scope)
+	_, _ = fmt.Fprintf(w, "retained:\t%s\n", strings.Join(append(p.RetainedClasses, p.Retained...), ", "))
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("write local text plan: %w", err)
 	}

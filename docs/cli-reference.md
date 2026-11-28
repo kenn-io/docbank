@@ -1396,6 +1396,7 @@ the version 1 request format, date choices, counts, and retention limits.
 ```
 docbank processing vision-fingerprints [--task <descriptor-id>] --model <model> --trust-boundary <boundary> --endpoint <origin> --deployment-fingerprint <sha256>
 docbank processing local [--server auto|local]
+docbank processing local --embedding-server <url> --embedding-model <model> --embedding-dimensions <width>
 docbank processing faces
 docbank processing profiles [--json]
 docbank processing probe --profile <name> --seeds <dir> [--overwrite]
@@ -1429,6 +1430,12 @@ previews a rebuild when another model requires a new built-in index. It saves
 the selected profile and server outside `config.toml`, then restarts and
 reconnects the daemon. Both `auto` and `local` select Kit's shared per-user
 server. See [Local text search](usage/document-processing.md#set-up-local-text-search).
+
+To use a Kit embedding server, pass all three `--embedding-*` flags without
+`--server`. The preview lists affected profiles and retained providers. Setup
+rebuilds their indexes, saves the selection, and restarts the daemon. See
+[Document processing](usage/document-processing.md#set-up-local-text-search)
+for media limits and retained Voyage bindings.
 
 `faces` previews local face suggestions, downloads any missing runtime and
 model assets, and enables suggestions without a prompt, including faces in

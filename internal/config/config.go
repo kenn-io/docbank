@@ -337,8 +337,10 @@ type ProviderEgressConfig struct {
 type EmbeddingRuntimeConfig struct {
 	ProviderEgressConfig
 
-	Managed    bool   `toml:"-"`
-	ServerMode string `toml:"-"`
+	Managed              bool   `toml:"-"`
+	ServerMode           string `toml:"-"`
+	MediaFallbackBinding string `toml:"-"`
+	Anonymous            bool   `toml:"-"`
 
 	AdapterContract        string   `toml:"adapter_contract"`
 	ModelRevision          string   `toml:"model_revision"`
@@ -1022,7 +1024,7 @@ func validateProcessingProfiles(c Config) error {
 		if err := validateEmbeddingProfileConfig(profile, prefix); err != nil {
 			return err
 		}
-		if profile.Runtime != nil && (profile.Embedder == nil || profile.Embedder.APIKey.IsZero()) {
+		if profile.Runtime != nil && !profile.Runtime.Anonymous && (profile.Embedder == nil || profile.Embedder.APIKey.IsZero()) {
 			credentialName := strings.TrimPrefix(profile.CredentialBinding, "credential:")
 			if _, ok := c.CredentialBindings[credentialName]; !ok {
 				return fmt.Errorf("%s runtime credential binding %q is not defined", prefix, profile.CredentialBinding)

@@ -1213,7 +1213,8 @@ api_key = { env = "DOCBANK_EMBEDDING_PRIMARY_KEY" }
 # when embedder is present.
 ```
 
-`base_url` must end in `/v1` or `/v1/embeddings`. Docbank rejects public-IP
+For OpenAI-compatible APIs, `base_url` must end in `/v1` or `/v1/embeddings`.
+Kit accepts a path prefix and appends `/embed` to the supplied base. Docbank rejects public-IP
 HTTP endpoints, and plaintext private-network endpoints require
 `trust_private_network = true`. The existing CIDR and proxy controls still
 apply. `fingerprint_salt` records the configured model revision and, unless a
@@ -1418,6 +1419,13 @@ it builds a separate `local-text` index with Nomic v1.5 and the plaintext
 extractor. Both `auto` and `local` select Kit's shared per-user server, while
 other processing profiles keep their configured providers.
 
+To select an existing Kit server for eligible text and media bindings, use
+`docbank processing local --embedding-server <url> --embedding-model <model> --embedding-dimensions <width>`.
+The command previews retained providers, rebuilds affected indexes, and saves
+the server selection in `local-text.json`. The server receives anonymous requests.
+See [document processing](usage/document-processing.md#set-up-local-text-search)
+for the supported media and retained-provider rules.
+
 The managed provider uses anonymous loopback requests. Consent identifies the
 shared service and selection mode, so a new port after a restart keeps the
 grant. Revoking consent stops indexing and query provider calls, and a server
@@ -1439,7 +1447,7 @@ and must be supplied separately after you restore a vault.
 | Fields | Meaning |
 | --- | --- |
 | `adapter_contract` | `docbank-openai-compatible-embeddings/v1` for rendition chunks and Kit original-file profiles, `docbank-voyage-embeddings/v1` for rendition chunks and original files, or `docbank-standard-embedding-bridge/v2` for image inputs and text queries. |
-| `endpoint`, `model_revision` | Exact provider endpoint and pinned revision. OpenAI-compatible endpoints are origins without a path; Voyage uses `https://api.voyageai.com/v1`. |
+| `endpoint`, `model_revision` | Exact provider endpoint and pinned revision. OpenAI-compatible endpoints are origins without a path, except Kit endpoints, which can include a path prefix; Voyage uses `https://api.voyageai.com/v1`. |
 | `deployment_epoch`, `provider_revision_header` | OpenAI-compatible runtimes require exactly one. Voyage text runtimes require an epoch and forbid a revision header. The epoch must equal `model_revision`; an OpenAI-compatible revision header must echo the pinned revision in every response. |
 | `capability_manifest` | Voyage original-file runtimes require an absolute path to a capability manifest matching their model, media policy, and descriptor. Voyage text runtimes forbid this field. |
 | `request_timeout`, `max_request_bytes` | Bound each provider request. The profile's `max_batch_items`, `max_input_bytes`, and `max_response_bytes` supply the other request/response limits. |

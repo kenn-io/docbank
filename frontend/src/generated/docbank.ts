@@ -3026,6 +3026,7 @@ export interface EmailResourceV1 {
   candidates: string[];
   /** @nullable */
   cid: string | null;
+  referenced?: boolean;
   state: string;
 }
 
@@ -3917,6 +3918,9 @@ export interface LocalTextApplyRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   consent: boolean;
+  embedding_dimensions?: number;
+  embedding_model?: string;
+  embedding_server?: string;
   /** @pattern ^[0-9a-f]{64}$ */
   plan_fingerprint: string;
   server: LocalTextApplyRequestServer;
@@ -3965,6 +3969,18 @@ export interface ProcessingFlowHop {
   trust_boundary: string;
 }
 
+export interface LocalTextProfilePlan {
+  fingerprint: string;
+  name: string;
+}
+
+export interface LocalTextTarget {
+  embedding_dimensions: number;
+  embedding_model: string;
+  embedding_server: string;
+  server: string;
+}
+
 export interface LocalTextPlan {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -3974,9 +3990,12 @@ export interface LocalTextPlan {
   models: string[];
   profile: string;
   profile_fingerprint: string;
+  profiles?: LocalTextProfilePlan[];
+  retained?: string[];
   retained_classes: string[];
   scope: string;
   server: string;
+  target?: LocalTextTarget;
   vault_uid: string;
   vector_effect: string;
 }
@@ -3992,6 +4011,9 @@ export const LocalTextPlanRequestServer = {
 export interface LocalTextPlanRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  embedding_dimensions?: number;
+  embedding_model?: string;
+  embedding_server?: string;
   server: LocalTextPlanRequestServer;
 }
 

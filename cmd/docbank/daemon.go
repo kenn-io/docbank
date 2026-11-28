@@ -349,7 +349,39 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		profiles, err := executableProcessingProfiles(candidate, bundle)
 		return profiles, candidate, err
 	}
-	if choice.Profile != "" {
+	serverCandidateProfiles := func(target processing.LocalTextTarget, name string) (map[string]processing.ProfileConfig, config.Config, []string, error) {
+		candidate, retained, err := localTextServerCandidate(baseConfig, target, name)
+		if err != nil {
+			return nil, candidate, retained, err
+		}
+		bundle, err := configureEmbeddingRuntimeBundle(candidate)
+		if err != nil {
+			return nil, candidate, retained, err
+		}
+		profiles, err := executableProcessingProfiles(candidate, bundle)
+		return profiles, candidate, retained, err
+	}
+	var selectedProfiles []string
+	if choice.Profile != "" && choice.EmbeddingServer != "" {
+		target := processing.LocalTextTarget{Server: choice.Server, EmbeddingServer: choice.EmbeddingServer, EmbeddingModel: choice.EmbeddingModel, EmbeddingDimensions: choice.EmbeddingDimensions}
+		names := slices.Sorted(maps.Keys(baseConfig.ProcessingProfiles))
+		if len(names) == 0 {
+			names = []string{config.LocalTextProfile}
+		}
+		for _, name := range names {
+			selected, candidate, _, err := serverCandidateProfiles(target, name)
+			if errors.Is(err, processing.ErrProfileNotConfigured) {
+				continue
+			}
+			if err == nil {
+				cfg, err = projectLocalTextProfile(cfg, processingProfiles, candidate, name, selected[name])
+			}
+			if err != nil {
+				return fmt.Errorf("restore embedding server selection for %s: %w", name, err)
+			}
+			selectedProfiles = append(selectedProfiles, name)
+		}
+	} else if choice.Profile != "" {
 		selected, candidate, err := candidateProfiles(choice.Server, choice.Profile)
 		if err == nil && selected[choice.Profile].RenditionProvider == nil {
 			err = processing.ErrProfileNotConfigured
@@ -428,7 +460,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 
 	tracker := api.NewActivityTracker()
 	var restartPending, inheritedReady atomic.Bool
-	localText := &processing.LocalTextSetup{Service: processingService, Selected: choice.Profile,
+	localText := &processing.LocalTextSetup{Service: processingService, Selected: choice.Profile, SelectedProfiles: selectedProfiles,
 		ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
 		Startup: localTextStartup,
 		Save:    localTextSave(layout.Root, &restartPending, saveLocalText, logger),
@@ -442,6 +474,16 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 			MediaMaxBytes: cfg.Media.MaxSourceBytes,
 			Principal:     "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(), Lifecycle: sigCtx})
 		return service, err
+	}
+	localText.SaveTarget = localTextSaveTarget(layout.Root, &restartPending, saveLocalText, logger)
+	localText.CandidateTarget = func(target processing.LocalTextTarget, name string) (*processing.Service, []string, error) {
+		profiles, _, retained, err := serverCandidateProfiles(target, name)
+		if err != nil {
+			return nil, retained, err
+		}
+		service, err := processing.NewService(sigCtx, processing.ServiceConfig{Catalog: s, Blobs: blobs, Gate: operationGate, Profiles: profiles,
+			MediaMaxBytes: cfg.Media.MaxSourceBytes, Principal: "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(), Lifecycle: sigCtx})
+		return service, retained, err
 	}
 	pdfText := &processing.PDFTextRunner{Service: processingService}
 	if err := pdfText.Initialize(sigCtx); err != nil {

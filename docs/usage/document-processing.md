@@ -45,6 +45,26 @@ on their configured providers. Setup moves one profile; other configured
 profiles still need their providers. Restarting the daemon restores the saved
 profile, including existing watches.
 
+To use an existing Kit embedding server, supply its URL, model, and vector
+width together:
+
+```bash
+docbank processing local --embedding-server https://embedding.example.com/api/v1/servers/example --embedding-model gemini-embedding-2 --embedding-dimensions 3072
+```
+
+The preview lists each affected profile and the providers that stay. Setup
+rebuilds the affected indexes, saves the choice, and restarts the daemon.
+New imports use the same selection. The server receives anonymous requests;
+it must accept them at the supplied URL with `/embed` appended. Do not combine
+these flags with `--server`.
+
+Voyage contextual text stays with Voyage. For models whose name starts with
+`gemini-embedding-2`, supported Voyage media moves to the server: PNG, JPEG,
+and WebP images, PDFs up to six pages, and MP4 videos up to two minutes, each
+up to 20 MiB. Other media stays with Voyage. A text-only model leaves media
+with its existing provider. The preview explains these retained providers.
+If the rebuild fails, the saved selection stays unchanged.
+
 To return to your configured providers, delete `local-text.json` beside the
 vault's `config.toml` and run `docbank daemon restart`. Any documents added or
 changed while local indexing was selected need processing under the configured

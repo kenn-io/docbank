@@ -100,7 +100,7 @@ func configureEmbeddingRuntimeBundle(cfg config.Config) (embeddingRuntimeBundle,
 		if configured.Runtime == nil {
 			continue
 		}
-		if _, ok := secrets.variables[configured.CredentialBinding]; !ok && configured.Embedder == nil && !config.ManagedEmbedding(configured) {
+		if _, ok := secrets.variables[configured.CredentialBinding]; !ok && configured.Embedder == nil && !config.ManagedEmbedding(configured) && !configured.Runtime.Anonymous {
 			return embeddingRuntimeBundle{}, errors.New("embedding credential binding is not configured")
 		}
 		modelInput, err := cfg.EmbeddingModelInput(name)
@@ -140,9 +140,13 @@ func configureEmbeddingRuntimeBundle(cfg config.Config) (embeddingRuntimeBundle,
 			if configured.Embedder != nil {
 				if !configured.Embedder.APIKey.IsZero() {
 					resolver = embeddingCredentialSecret{binding: binding, ref: configured.Embedder.APIKey}
-				} else if _, exists := secrets.variables[binding]; !exists {
+				} else if _, exists := secrets.variables[binding]; !exists && !configured.Runtime.Anonymous {
 					return embeddingRuntimeBundle{}, fmt.Errorf("configuring embedding runtime %q: credential source is not configured", name)
 				}
+			}
+			if configured.Runtime.Anonymous {
+				binding = ""
+				resolver = nil
 			}
 			profile := openaicompat.Profile{Origin: configured.Runtime.Endpoint, Descriptor: descriptor,
 				ModelInput: modelInput, SecretBinding: binding,
@@ -220,7 +224,8 @@ func executableProcessingProfiles(cfg config.Config,
 			EmbeddingProviders:        make(map[string]document.EmbeddingProvider),
 			EmbeddingDisclosures:      make(map[string]processing.RuntimeDisclosure),
 			EmbeddingClassifiers:      make(map[string]func(error) (processing.EmbeddingProviderFailure, time.Duration)),
-			Tokenizers:                make(map[string]document.Tokenizer)}
+			Tokenizers:                make(map[string]document.Tokenizer),
+			MediaFallbackBindings:     make(map[string]string)}
 		if runtime, ok := rerankingRuntimes[name]; ok {
 			configured = applyRerankingRuntime(configured, runtime)
 		}
@@ -245,6 +250,9 @@ func executableProcessingProfiles(cfg config.Config,
 				return nil, err
 			}
 			if runtime := bindingConfig.Runtime; runtime != nil {
+				if runtime.MediaFallbackBinding != "" {
+					configured.MediaFallbackBindings[binding.Name] = runtime.MediaFallbackBinding
+				}
 				if runtime.MinQuerySimilarity != nil {
 					configured.EmbeddingSimilarityFloors[binding.Name] = *runtime.MinQuerySimilarity
 				}
