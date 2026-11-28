@@ -1,6 +1,8 @@
 # MLDR English preregistered sample (2026-10-30 v1)
 
-This recipe prepares the pinned public sample for Docbank's passage-rerank gate. It makes no provider calls, runs no retrieval, and does not score quality. Corpus text and downloads stay outside Git in an owner-private temporary directory. Do not publish the converted text.
+This recipe records how the public sample for Docbank's 2026-10-30 passage-rerank gate was prepared, so the sample can be reproduced and checked. It does not authorize another gate run: that gate is inconclusive and closed, and a new experiment needs a new preregistration. The [document understanding guide](https://github.com/kenn-io/docbank/blob/main/docs/document-understanding.md#outcome-of-the-2026-10-30-gate) records the outcome.
+
+The recipe makes no provider calls, runs no retrieval, and does not score quality. Corpus text and downloads stay outside Git in an owner-private temporary directory. Do not publish the converted text.
 
 ## Fixed sample and labels
 
@@ -29,7 +31,7 @@ curl -fL --retry 3 -A "$agent" "$base/qrels/qrels.mldr-v1.0-en-test.tsv" -o inpu
 uv run python "$recipe/convert.py" --corpus input/corpus.jsonl.gz --queries input/test.jsonl.gz --qrels input/qrels.tsv --output corpus.json
 ```
 
-The compressed corpus SHA-256 is `3fe3c8473eccf8a35deda63981ac838f6a866319d3568e7472ba1a873c9e0341`; compressed test SHA-256 is `e3d79c5cb2c5c635aa9b7908e636cdbc99bb76db5ebe65cbff96acd4a10204c0`; qrels Git blob is `e5c564552e638d4f27ce7cd6c825d3b401aa00dc`.
+The compressed corpus SHA-256 is `3fe3c8473eccf8a35deda63981ac838f6a866319d3568e7472ba1a873c9e0341`; compressed test SHA-256 is `e3d79c5cb2c5c635aa9b7908e636cdbc99bb76db5ebe65cbff96acd4a10204c0`; qrels Git blob is `e5c564552e638d4f27ce7cd6c825d3b401aa00dc`. The gate accepted only converter output whose SHA-256 is `3bf89e1acb201889477235bbc7d587ed514383c853fa2060c00764fade6d8050`.
 
 ## Attribution and source limitations
 
