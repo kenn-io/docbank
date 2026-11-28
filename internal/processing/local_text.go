@@ -23,31 +23,48 @@ const localTextSkipLimit = 262_144
 type localTextSkipKey struct{ version, name string }
 type localTextSkip struct{ seen bool }
 
+type LocalTextTarget struct {
+	Server              string `json:"server"`
+	EmbeddingServer     string `json:"embedding_server"`
+	EmbeddingModel      string `json:"embedding_model"`
+	EmbeddingDimensions int    `json:"embedding_dimensions"`
+}
+
+type LocalTextProfilePlan struct {
+	Name        string `json:"name"`
+	Fingerprint string `json:"fingerprint"`
+}
+
 type LocalTextPlan struct {
-	Fingerprint        string    `json:"fingerprint"`
-	VaultUID           string    `json:"vault_uid"`
-	Profile            string    `json:"profile"`
-	Server             string    `json:"server"`
-	ProfileFingerprint string    `json:"profile_fingerprint"`
-	Models             []string  `json:"models"`
-	VectorEffect       string    `json:"vector_effect"`
-	Managed            bool      `json:"managed"`
-	Flow               []FlowHop `json:"flow"`
-	RetainedClasses    []string  `json:"retained_classes"`
-	Scope              string    `json:"scope"`
+	Fingerprint        string                 `json:"fingerprint"`
+	VaultUID           string                 `json:"vault_uid"`
+	Profile            string                 `json:"profile"`
+	Server             string                 `json:"server"`
+	ProfileFingerprint string                 `json:"profile_fingerprint"`
+	Models             []string               `json:"models"`
+	VectorEffect       string                 `json:"vector_effect"`
+	Managed            bool                   `json:"managed"`
+	Flow               []FlowHop              `json:"flow"`
+	RetainedClasses    []string               `json:"retained_classes"`
+	Scope              string                 `json:"scope"`
+	Target             *LocalTextTarget       `json:"target,omitempty"`
+	Profiles           []LocalTextProfilePlan `json:"profiles,omitempty"`
+	Retained           []string               `json:"retained,omitempty"`
 }
 
 // LocalTextSetup builds a private service for the reviewed profile. Activation
 // happens on daemon restart, so all consumers keep one effective identity.
 type LocalTextSetup struct {
-	Service       *Service
-	Candidate     func(mode, name string) (*Service, error)
-	Selected      string
-	Startup       func(context.Context, bool, string) error
-	Save          func(string, string) error
-	ActivityBegin func()
-	ActivityEnd   func()
-	mu            sync.Mutex
+	Service         *Service
+	Candidate       func(mode, name string) (*Service, error)
+	CandidateTarget func(LocalTextTarget, string) (*Service, []string, error)
+	Selected        string
+	Startup         func(context.Context, bool, string) error
+	Save            func(string, string) error
+	SaveTarget      func(string, LocalTextTarget) error
+	ActivityBegin   func()
+	ActivityEnd     func()
+	mu              sync.Mutex
 	// mu also guards the skip cache during the daemon's final idle check.
 	skips      map[localTextSkipKey]*localTextSkip
 	skipWarned bool
@@ -140,6 +157,116 @@ func (setup *LocalTextSetup) indexedText(ctx context.Context, name string) (bool
 		}
 	}
 	return false, nil
+}
+
+// reviewTarget prepares each affected recipe before approving or saving the choice.
+func (setup *LocalTextSetup) reviewTarget(ctx context.Context, target LocalTextTarget) (plan LocalTextPlan, services map[string]*Service, err error) {
+	if target.EmbeddingServer == "" || target.EmbeddingModel == "" || target.EmbeddingDimensions <= 0 || setup.CandidateTarget == nil {
+		return plan, nil, ErrProfileNotConfigured
+	}
+	services = make(map[string]*Service)
+	defer func() {
+		if err != nil {
+			for _, service := range services {
+				service.Stop()
+			}
+			services = nil
+		}
+	}()
+	plan = LocalTextPlan{VaultUID: setup.Service.catalog.VaultID(), Server: target.Server, Target: &target,
+		Scope: "this vault and new imports", VectorEffect: "Rebuild affected indexes"}
+	names := slices.Sorted(maps.Keys(setup.Service.profiles))
+	if len(names) == 0 {
+		names = []string{config.LocalTextProfile}
+	}
+	for _, name := range names {
+		service, retained, candidateErr := setup.CandidateTarget(target, name)
+		plan.Retained = append(plan.Retained, retained...)
+		if errors.Is(candidateErr, ErrProfileNotConfigured) {
+			continue
+		}
+		if candidateErr != nil {
+			return plan, services, candidateErr
+		}
+		if service == nil {
+			return plan, services, ErrProfileNotConfigured
+		}
+		services[name] = service
+		profile, ok := service.profiles[name]
+		if !ok {
+			return plan, services, ErrProfileNotConfigured
+		}
+		operation, operationErr := service.planForSource(ctx, Selector{Profile: name}, store.Node{}, store.ContentVersion{}, profile)
+		if operationErr != nil {
+			return plan, services, operationErr
+		}
+		if plan.Profile == "" {
+			plan.Profile, plan.ProfileFingerprint = name, profile.record.Fingerprint
+		}
+		plan.Profiles = append(plan.Profiles, LocalTextProfilePlan{Name: name, Fingerprint: profile.record.Fingerprint})
+		plan.Flow = append(plan.Flow, operation.Flow...)
+		plan.RetainedClasses = append(plan.RetainedClasses, operation.RetainedClasses...)
+		for _, binding := range profile.portable.Embeddings {
+			plan.Models = append(plan.Models, binding.Model)
+		}
+	}
+	if len(services) == 0 {
+		return plan, services, ErrProfileNotConfigured
+	}
+	encoded, err := json.Marshal(plan, json.Deterministic(true))
+	if err != nil {
+		return plan, services, err
+	}
+	plan.Fingerprint = fmt.Sprintf("%x", sha256.Sum256(encoded))
+	return plan, services, nil
+}
+
+func (setup *LocalTextSetup) PlanTarget(ctx context.Context, target LocalTextTarget) (LocalTextPlan, error) {
+	plan, services, err := setup.reviewTarget(ctx, target)
+	for _, service := range services {
+		service.Stop()
+	}
+	return plan, err
+}
+
+func (setup *LocalTextSetup) ApplyTarget(ctx context.Context, target LocalTextTarget, fingerprint string) (LocalTextPlan, error) {
+	setup.mu.Lock()
+	defer setup.mu.Unlock()
+	plan, services, err := setup.reviewTarget(ctx, target)
+	if err != nil {
+		return LocalTextPlan{}, err
+	}
+	defer func() {
+		for _, service := range services {
+			service.Stop()
+		}
+	}()
+	if fingerprint == "" || plan.Fingerprint != fingerprint {
+		return LocalTextPlan{}, ErrPlanChanged
+	}
+	if setup.SaveTarget == nil {
+		return LocalTextPlan{}, ErrProfileNotConfigured
+	}
+	for _, profile := range plan.Profiles {
+		service := services[profile.Name]
+		if err := service.grantProfileConsent(ctx, service.profiles[profile.Name], nil); err != nil {
+			return LocalTextPlan{}, err
+		}
+		if err := setup.rebuildTarget(ctx, service, profile.Name); err != nil {
+			return LocalTextPlan{}, fmt.Errorf("%w: activate embedding server selection: %w", ErrConsentSaved, err)
+		}
+	}
+	if err := setup.Service.gate.MutateContext(ctx, func() error { return setup.SaveTarget(plan.Profile, target) }); err != nil {
+		return LocalTextPlan{}, fmt.Errorf("%w: save embedding server selection: %w", ErrConsentSaved, err)
+	}
+	return plan, nil
+}
+
+func (setup *LocalTextSetup) rebuildTarget(ctx context.Context, service *Service, name string) error {
+	fill := &LocalTextSetup{Service: service, Selected: name, logger: setup.logger}
+	pass := Backfill[store.DocumentSummary]{Name: "local-text-move", Page: 50, IdleDelay: time.Second, DrainOnce: true,
+		List: fill.targets, Key: func(item store.DocumentSummary) string { return item.ContentVersionID }, Process: fill.process}
+	return errors.Join(pass.Run(ctx), service.rebuildVectorSpaces(ctx, slices.Collect(maps.Values(service.profiles[name].vectorSpaces))))
 }
 
 func (setup *LocalTextSetup) Plan(ctx context.Context, mode string) (LocalTextPlan, error) {
@@ -316,6 +443,8 @@ func (setup *LocalTextSetup) pendingTargets(ctx context.Context, after string, l
 			bindings++
 		}
 	}
+	// Each pair routes a source to exactly one binding.
+	bindings -= len(profile.mediaFallbackBindings)
 	var result []store.DocumentSummary
 	for len(result) < limit {
 		items, err := setup.Service.catalog.MissingProcessingTargetsAfter(ctx, profile.record.Fingerprint, after, bindings, 1000)
