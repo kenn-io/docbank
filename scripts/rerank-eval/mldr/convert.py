@@ -20,7 +20,7 @@ EXPECTED = {
     "queries": "e3d79c5cb2c5c635aa9b7908e636cdbc99bb76db5ebe65cbff96acd4a10204c0",
 }
 QRELS_BLOB = "e5c564552e638d4f27ce7cd6c825d3b401aa00dc"
-USER_AGENT = "OpenAI File Downloader, XaiImageApiFetch/1.0"
+USER_AGENT = "docbank-eval-recipe"
 
 
 def sha(path):
@@ -61,6 +61,12 @@ class WorstFirst:
         return self.key > other.key
 
 
+def inside_repository(path, repo):
+    """True when path or an existing ancestor is the repository, even via a case alias."""
+    resolved = path.resolve()
+    return any(candidate.exists() and candidate.samefile(repo) for candidate in (resolved, *resolved.parents))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("corpus", "queries", "qrels", "output"):
@@ -75,7 +81,7 @@ def main():
     manifest_path = pathlib.Path(str(output) + ".manifest.json")
     repo = pathlib.Path(__file__).resolve().parents[3]
     for path in (output, manifest_path):
-        if path.resolve().is_relative_to(repo):
+        if inside_repository(path, repo):
             raise ValueError("output and manifest must be outside the repository")
     if output.exists() or manifest_path.exists():
         raise FileExistsError("output or manifest already exists")

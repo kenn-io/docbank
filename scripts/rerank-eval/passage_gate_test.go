@@ -350,3 +350,26 @@ func TestPassageLiveOutputCollisionPreservesEvidence(t *testing.T) {
 		require.Equal(t, "retained complete evidence", string(got))
 	}
 }
+
+func TestPassageLiveOutputRejectsCaseAlias(t *testing.T) {
+	repo, err := filepath.Abs("../..")
+	require.NoError(t, err)
+	repo, err = filepath.EvalSymlinks(repo)
+	require.NoError(t, err)
+	alias := filepath.Join(filepath.Dir(repo), strings.ToUpper(filepath.Base(repo)))
+	original, err := os.Stat(repo)
+	require.NoError(t, err)
+	alternate, err := os.Stat(alias)
+	if err != nil || alias == repo || !os.SameFile(original, alternate) {
+		t.Skip("repository volume does not provide this case alias")
+	}
+	dir := t.TempDir()
+	binary, err := os.Executable()
+	require.NoError(t, err)
+	cmd := exec.CommandContext(t.Context(), binary, "-test.run=^TestLivePassageGate$", "-test.count=1")
+	cmd.Env = []string{"RERANK_EVAL_LIVE=1", "RERANK_PASSAGE_OUTPUT=" + filepath.Join(alias, "missing", "output"), "RERANK_PASSAGE_CORPUS=" + filepath.Join(dir, "missing-corpus.json")}
+	output, err := cmd.CombinedOutput()
+	require.Error(t, err)
+	require.Contains(t, string(output), "output must be outside the repository")
+	require.NotContains(t, string(output), "missing-corpus.json")
+}

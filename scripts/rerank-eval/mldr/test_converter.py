@@ -46,6 +46,7 @@ class ConverterTest(unittest.TestCase):
         self.assertEqual((self.root / "one.manifest.json").read_bytes(), (self.root / "two.manifest.json").read_bytes())
         result = json.loads((self.root / "one").read_text())
         manifest = json.loads((self.root / "one.manifest.json").read_text())
+        self.assertEqual(manifest["download_user_agent"], "docbank-eval-recipe")
         expected_queries = sorted(sorted([f"q{i}" for i in range(5)], key=rank)[:2])
         expected_distractors = sorted(sorted([f"d{i}" for i in range(5, 16)], key=rank)[:3])
         self.assertEqual([query["id"] for query in result["queries"]], expected_queries)
@@ -73,6 +74,18 @@ class ConverterTest(unittest.TestCase):
             self.assertNotEqual(self.run_converter(output).returncode, 0)
             self.assertFalse(output.exists())
             self.assertFalse((inside / "manifest").exists())
+
+    def test_reject_repository_case_alias(self):
+        repo = SCRIPT.resolve().parents[3]
+        alias = repo.with_name(repo.name.upper())
+        if alias == repo or not alias.exists() or not alias.samefile(repo):
+            self.skipTest("repository volume does not provide this case alias")
+        with tempfile.TemporaryDirectory(dir=repo) as scratch:
+            output = alias / pathlib.Path(scratch).name / "synthetic-output"
+            result = self.run_converter(output)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("output and manifest must be outside the repository", result.stderr)
+            self.assertFalse(output.exists())
 
     def test_full_multi_qrels_binary(self):
         chosen = sorted([f"q{i}" for i in range(5)], key=rank)[0]

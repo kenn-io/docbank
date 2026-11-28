@@ -38,11 +38,9 @@ func TestLivePassageGate(t *testing.T) {
 	parent, err := canonicalPassageParent(filepath.Dir(absolute))
 	require.NoError(t, err)
 	absolute = filepath.Join(parent, filepath.Base(absolute))
-	if strings.EqualFold(filepath.VolumeName(repo), filepath.VolumeName(absolute)) {
-		rel, err := filepath.Rel(repo, absolute)
-		require.NoError(t, err)
-		require.True(t, strings.HasPrefix(rel, ".."+string(filepath.Separator)), "output must be outside the repository")
-	}
+	inside, err := passageInsideRepository(repo, absolute)
+	require.NoError(t, err)
+	require.False(t, inside, "output must be outside the repository")
 	_, err = os.Lstat(absolute)
 	require.ErrorIs(t, err, os.ErrNotExist, "output directory must not exist")
 	data, err := os.ReadFile(os.Getenv("RERANK_PASSAGE_CORPUS"))
@@ -200,6 +198,30 @@ func canonicalPassageParent(path string) (string, error) {
 			return "", err
 		}
 		missing = append(missing, filepath.Base(path))
+		path = parent
+	}
+}
+
+// passageInsideRepository reports whether path or any existing ancestor is the
+// repository directory, so case aliases are caught without string folding and
+// nonexistent output parents are still checked.
+func passageInsideRepository(repo, path string) (bool, error) {
+	root, err := os.Stat(repo)
+	if err != nil {
+		return false, err
+	}
+	for {
+		info, err := os.Stat(path)
+		if err == nil && os.SameFile(root, info) {
+			return true, nil
+		}
+		if err != nil && !os.IsNotExist(err) {
+			return false, err
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return false, nil
+		}
 		path = parent
 	}
 }
