@@ -1,7 +1,3 @@
----
-last_edited: 2026-11-28
----
-
 # Find document evidence
 
 ## MCP search
@@ -19,8 +15,9 @@ Use the tool schema for supported filters. The result `limit` is at most 100.
 
 `profile` is optional. When you omit it, the server selects a profile the same
 way `answer_question` does, and the result's `profile` names the one it used.
-An unknown `profile` returns `processing_profile_unavailable` with the available
-names. `binding_id` requires `profile`. The operator configures profiles through
+An unknown `profile` returns `processing_profile_unavailable` with available
+names. The list fits the error size limit, so it may omit names; ask the
+operator for any profile it does not show. `binding_id` requires `profile`. The operator configures profiles through
 the CLI.
 
 `mode` defaults to `auto`; explicit modes are `lexical`, `semantic` and `hybrid`.

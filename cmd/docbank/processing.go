@@ -4,12 +4,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"go.kenn.io/docbank/internal/agentguide"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
+	"go.kenn.io/docbank/internal/agentguide"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"

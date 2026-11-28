@@ -1,7 +1,3 @@
----
-last_edited: 2026-11-28
----
-
 # Review document processing
 
 ## MCP processing
@@ -36,7 +32,7 @@ fingerprint silently.
 
 | CLI command | MCP tool | Difference |
 | --- | --- | --- |
-| `docbank processing profiles` | Operator CLI action | No profile-listing tool; an unknown `search_documents` profile returns the available names. |
+| `docbank processing profiles` | Operator CLI action | No profile-listing tool; an unknown `search_documents` profile returns available names, but the list may omit some; ask the operator for missing names. |
 | `docbank processing plan` | `get_processing_plan` | Exact node/version/profile; the MCP process remembers the disclosed plan. |
 | `docbank processing build` | `start_processing` | Startup opt-in and existing consent required; no MCP `--consent`. |
 | `docbank processing status` | `get_processing_status` | Uses the returned job identity. |

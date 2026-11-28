@@ -33,7 +33,8 @@ func skillsCall(t *testing.T, server *Server, arguments map[string]any) map[stri
 func TestSkillsCatalogAndGuidesWithoutDaemon(t *testing.T) {
 	server := skillsTestServer(t, ServerOptions{})
 	catalog := skillsCall(t, server, map[string]any{})
-	entries := objectField(t, catalog, "structuredContent")["skills"].([]any)
+	entries, ok := objectField(t, catalog, "structuredContent")["skills"].([]any)
+	require.True(t, ok)
 	require.Len(t, entries, 3)
 	for index, name := range []string{"workflow", "search", "processing"} {
 		entry := entries[index].(map[string]any)

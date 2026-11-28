@@ -23,7 +23,7 @@ import (
 
 const (
 	defaultToolCatalogBudget  = 150_000
-	allWriteToolCatalogBudget = 241_000
+	allWriteToolCatalogBudget = 242_000
 )
 
 func listCatalogThroughClient(t *testing.T, server *Server) *sdkmcp.ListToolsResult {

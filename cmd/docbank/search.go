@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"go.kenn.io/docbank/internal/agentguide"
 	"log/slog"
 	"slices"
 	"strings"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"go.kenn.io/docbank/internal/agentguide"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"

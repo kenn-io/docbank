@@ -2,11 +2,11 @@ package main
 
 import (
 	"fmt"
-	"go.kenn.io/docbank/internal/agentguide"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"go.kenn.io/docbank/internal/agentguide"
 	"go.kenn.io/docbank/internal/version"
 )
 

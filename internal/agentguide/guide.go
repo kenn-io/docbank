@@ -30,9 +30,9 @@ var (
 // CLI reference so command examples cannot be mistaken for tool arguments.
 func Guides() []mcpskills.Guide {
 	return []mcpskills.Guide{
-		{Entry: mcpskills.Entry{Name: "workflow", Title: "Docbank agent workflow", Summary: "Select exact document identities, find evidence and read verified content."}, Markdown: withCLI(workflowMCP, Workflow)},
-		{Entry: mcpskills.Entry{Name: "search", Title: "Find document evidence", Summary: "Search an explicit scope and interpret coverage before drawing conclusions."}, Markdown: withCLI(searchMCP, Search)},
-		{Entry: mcpskills.Entry{Name: "processing", Title: "Review document processing", Summary: "Inspect provider disclosure and use existing consent for an exact reviewed plan."}, Markdown: withCLI(processingMCP, Processing)},
+		{Name: "workflow", Title: "Docbank agent workflow", Summary: "Select exact document identities, find evidence and read verified content.", Markdown: withCLI(workflowMCP, Workflow)},
+		{Name: "search", Title: "Find document evidence", Summary: "Search an explicit scope and interpret coverage before drawing conclusions.", Markdown: withCLI(searchMCP, Search)},
+		{Name: "processing", Title: "Review document processing", Summary: "Inspect provider disclosure and use existing consent for an exact reviewed plan.", Markdown: withCLI(processingMCP, Processing)},
 	}
 }
 

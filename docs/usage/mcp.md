@@ -286,7 +286,7 @@ content and its JSON text representation, with the complete result, including
 resource links, capped at 1 MiB.
 
 Tests cap the default catalog at 150,000 bytes and the catalog with all write
-flags enabled at 241,000 bytes.
+flags enabled at 242,000 bytes.
 They measure compact JSON of the complete client-decoded `tools/list` result
 with HTML escaping disabled to match the SDK, including output schemas,
 metadata, and cache fields; a larger catalog requires a reviewed budget edit.

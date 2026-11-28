@@ -20,8 +20,13 @@ func skillsTool() *sdkmcp.Tool {
 	tool := appSkills().Tool()
 	// Kit supplies independent JSON schema objects. Keep Docbank's dialect and
 	// response bounds on this application's copy without changing shared policy.
-	tool.InputSchema.(map[string]any)["$schema"] = jsonSchemaDraft
-	tool.OutputSchema.(map[string]any)["$schema"] = jsonSchemaDraft
+	input, inputOK := tool.InputSchema.(map[string]any)
+	output, outputOK := tool.OutputSchema.(map[string]any)
+	if !inputOK || !outputOK {
+		panic("Kit skills schemas must be JSON objects")
+	}
+	input["$schema"] = jsonSchemaDraft
+	output["$schema"] = jsonSchemaDraft
 	tool.Annotations.DestructiveHint = new(false)
 	tool.Meta = sdkmcp.Meta{"io.docbank/bounds": map[string]any{"maxResponseBytes": maxToolResponseBytes}}
 	return tool

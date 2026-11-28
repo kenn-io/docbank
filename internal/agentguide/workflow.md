@@ -1,7 +1,3 @@
----
-last_edited: 2026-11-28
----
-
 # Docbank agent workflow
 
 ## MCP workflow
