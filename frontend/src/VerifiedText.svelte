@@ -82,8 +82,8 @@
     highlightSets.find((item) => item.id === highlightSetID)?.terms ?? [],
   );
   const marked = $derived(markText(text, find ? { find } : { highlightTerms, queryTerms }));
-  // Identifies the marks by content, so reloading the same query terms keeps the reader's place.
-  const markKey = $derived(JSON.stringify([text.length, find, highlightSetID, queryTerms]));
+  // Keyed by the mark terms, so the same query terms arriving again keep the reader's place.
+  const markKey = $derived(JSON.stringify([find, highlightSetID, queryTerms]));
 
   const findMatches = $derived(find ? marked.matches : []);
   const refreshKey = $derived(`${loadKey}:${active}:${processingRevision}`);
@@ -203,8 +203,9 @@
   });
   // Search context opens at the active match. Other views scroll only when the
   // reader moves between Find matches. Returning to a hidden Preview keeps the
-  // reader's position when the match has not changed.
-  let centered = "";
+  // reader's position when the match has not changed. A reload replaces the
+  // reader element, so its text opens at the first match again.
+  const centered = new WeakMap<HTMLElement, string>();
   $effect(() => {
     if (!searchContext) return;
     const index = activeMatch;
@@ -216,8 +217,8 @@
     void tick().then(() => {
       if (!current || !enabled || !matches.length || !box) return;
       const match = box.querySelector<HTMLElement>(`mark[data-match-index="${index}"]`);
-      if (!match || centered === key) return;
-      centered = key;
+      if (!match || centered.get(box) === key) return;
+      centered.set(box, key);
       // Keep scrolling inside the text; do not move the results or the inspector.
       const top =
         box.scrollTop +

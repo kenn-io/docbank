@@ -225,6 +225,26 @@ it("keeps the active match when the same query terms arrive again", async () => 
   expect(scrollTo).not.toHaveBeenCalled();
 });
 
+it("centers the first match of a reloaded rendition with the same terms", async () => {
+  const view = render(VerifiedPreview, { ...props, queryKey: "same" });
+  await screen.findByText("Search match 1 of 2");
+  const scrollTo = vi.mocked(HTMLElement.prototype.scrollTo);
+  await waitFor(() => expect(scrollTo).toHaveBeenCalled());
+  scrollTo.mockClear();
+  // Processing replaces the rendition with different text of the same length.
+  vi.mocked(rendition.resolveRenditionText).mockResolvedValue({
+    ...ready,
+    buildID: "9".repeat(64),
+  });
+  vi.mocked(rendition.readVerifiedRenditionText).mockResolvedValue(
+    context.replace("Later", "later"),
+  );
+  await view.rerender({ ...props, queryKey: "same", processingRevision: 1 });
+  await waitFor(() => expect(rendition.readVerifiedRenditionText).toHaveBeenCalledTimes(2));
+  await screen.findByText("Search match 1 of 2");
+  await waitFor(() => expect(scrollTo).toHaveBeenCalled());
+});
+
 it("requests the original image for a name-only match without extracted text", async () => {
   vi.mocked(rendition.resolveRenditionText).mockResolvedValue(textState("unprocessed"));
   render(VerifiedPreview, { ...props, source: { ...source, mimeType: "image/jpeg" } });
