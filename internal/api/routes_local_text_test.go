@@ -32,8 +32,8 @@ func TestLocalTextSetupRouteReviewsConsentAndMapsErrors(t *testing.T) {
 				}
 				return nil
 			},
-			Save: func(names []string, target processing.LocalTextTarget) error {
-				assert.Equal(t, "local-text", names[0])
+			Save: func(name string, target processing.LocalTextTarget) error {
+				assert.Equal(t, "local-text", name)
 				assert.Equal(t, "local", target.Server)
 				if saveFailure.Load() {
 					return errors.New("synthetic selection path failure")

@@ -105,9 +105,7 @@ func applyLocalText(ctx context.Context, plan api.LocalTextPlan) (retErr error) 
 func writeLocalTextPlan(cmd *cobra.Command, p api.LocalTextPlan) error {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
 	if p.Target != nil {
-		for _, profile := range p.Profiles {
-			_, _ = fmt.Fprintf(w, "profile:\t%s\n", profile)
-		}
+		_, _ = fmt.Fprintf(w, "profile:\t%s\n", p.Profile)
 		_, _ = fmt.Fprintf(w, "server:\t%s\nmodel:\t%s\ndimensions:\t%d\n", p.Target.EmbeddingServer, p.Target.EmbeddingModel, p.Target.EmbeddingDimensions)
 	} else {
 		_, _ = fmt.Fprintf(w, "profile:\t%s\nserver:\t%s\n", p.Profile, p.Server)

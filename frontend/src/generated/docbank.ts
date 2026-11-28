@@ -3984,7 +3984,6 @@ export interface LocalTextPlan {
   models: string[];
   profile: string;
   profile_fingerprint: string;
-  profiles?: string[];
   retained?: string[];
   retained_classes: string[];
   scope: string;

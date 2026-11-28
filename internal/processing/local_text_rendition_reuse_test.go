@@ -56,7 +56,7 @@ func TestLocalTextMoveReusesHostedRendition(t *testing.T) {
 			t.Cleanup(moved.Stop)
 		}
 		return moved, nil, err
-	}, Startup: func(context.Context, bool, LocalTextTarget) error { return nil }, Save: func([]string, LocalTextTarget) error { return nil }}
+	}, Startup: func(context.Context, bool, LocalTextTarget) error { return nil }, Save: func(string, LocalTextTarget) error { return nil }}
 	move, err := setup.Plan(t.Context(), LocalTextTarget{Server: "local"})
 	require.NoError(t, err)
 	_, err = setup.Apply(t.Context(), LocalTextTarget{Server: "local"}, move.Fingerprint)

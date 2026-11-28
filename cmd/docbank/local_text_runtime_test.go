@@ -229,6 +229,7 @@ func TestLocalTextStaleSelectionLeavesDaemonAvailable(t *testing.T) {
 	for _, tc := range []struct{ name, data string }{
 		{"malformed", `{"version":1`},
 		{"missing_profile", `{"version":1,"profile":"missing-profile","server":"auto"}`},
+		{"missing_server_profile", `{"version":1,"profile":"missing-profile","server":"auto","embedding_server":"http://127.0.0.1:12345/v1","embedding_model":"model","embedding_dimensions":2}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()

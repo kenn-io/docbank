@@ -1432,8 +1432,8 @@ reconnects the daemon. Both `auto` and `local` select Kit's shared per-user
 server. See [Local text search](usage/document-processing.md#set-up-local-text-search).
 
 To use a Kit embedding server, pass all three `--embedding-*` flags without
-`--server`. The preview lists affected profiles and retained providers. Setup
-checks the server, rebuilds their indexes, saves the selection, and restarts the daemon. The optional key variable must be available to the daemon. See
+`--server`. The preview lists the active profile and retained providers. Setup
+checks the server, rebuilds the profile's index, saves the selection, and restarts the daemon. The optional key variable must be available to the daemon. See
 [Document processing](usage/document-processing.md#set-up-local-text-search)
 for media limits and retained Voyage bindings.
 

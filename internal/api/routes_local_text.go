@@ -49,14 +49,13 @@ type LocalTextPlan struct {
 	RetainedClasses    []string                    `json:"retained_classes"`
 	Scope              string                      `json:"scope"`
 	Retained           []string                    `json:"retained,omitempty"`
-	Profiles           []string                    `json:"profiles,omitempty"`
 	Target             *processing.LocalTextTarget `json:"target,omitempty"`
 }
 
 func fromLocalTextPlan(p processing.LocalTextPlan) LocalTextPlan {
 	return LocalTextPlan{Fingerprint: p.Fingerprint, VaultUID: p.VaultUID, Profile: p.Profile, Server: p.Server,
 		ProfileFingerprint: p.ProfileFingerprint, Models: p.Models, VectorEffect: p.VectorEffect,
-		Retained: p.Retained, Target: p.Target, Profiles: p.Profiles, RetainedClasses: p.RetainedClasses, Scope: p.Scope, Managed: p.Managed, Flow: fromProcessingPlan(processing.Plan{Flow: p.Flow}).Flow}
+		Retained: p.Retained, Target: p.Target, RetainedClasses: p.RetainedClasses, Scope: p.Scope, Managed: p.Managed, Flow: fromProcessingPlan(processing.Plan{Flow: p.Flow}).Flow}
 }
 
 func registerLocalTextRoutes(api huma.API, d Deps) {

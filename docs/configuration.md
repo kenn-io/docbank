@@ -1421,7 +1421,7 @@ other processing profiles keep their configured providers.
 
 To select an existing Kit server for eligible text and media bindings, use
 `docbank processing local --embedding-server <url> --embedding-model <model> --embedding-dimensions <width>`.
-The command previews retained providers, checks the server, rebuilds affected indexes, and saves
+The command previews retained providers, checks the server, rebuilds the active profile's index, and saves
 the server selection in `local-text.json`. Requests are anonymous unless `--embedding-api-key-env NAME` names an environment variable available to the daemon.
 See [document processing](usage/document-processing.md#set-up-local-text-search)
 for the supported media and retained-provider rules.

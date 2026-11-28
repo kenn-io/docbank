@@ -40,7 +40,7 @@ func readLocalText(root string) (config.LocalTextConfig, error) {
 		if err == nil && choice.Version != 1 {
 			err = fmt.Errorf("unsupported local-text format version %d", choice.Version)
 		}
-		if err == nil && (choice.Profile == "" || (choice.Server != "auto" && choice.Server != "local") || ((choice.EmbeddingServer != "" || choice.EmbeddingModel != "" || choice.EmbeddingDimensions != 0) && (choice.EmbeddingServer == "" || choice.EmbeddingModel == "" || choice.EmbeddingDimensions <= 0 || len(choice.Profiles) == 0))) {
+		if err == nil && (choice.Profile == "" || (choice.Server != "auto" && choice.Server != "local") || ((choice.EmbeddingServer != "" || choice.EmbeddingModel != "" || choice.EmbeddingDimensions != 0 || choice.EmbeddingAPIKeyEnv != "") && (choice.EmbeddingServer == "" || choice.EmbeddingModel == "" || choice.EmbeddingDimensions <= 0))) {
 			err = errors.New("local-text selection requires a profile and auto or local server")
 		}
 	}
@@ -71,9 +71,9 @@ func localTextSave(root string, restartPending *atomic.Bool, save func(string, c
 	}
 }
 
-func localTextSaveTarget(root string, restartPending *atomic.Bool, save func(string, config.LocalTextConfig) error, logger *slog.Logger) func([]string, processing.LocalTextTarget) error {
-	return func(names []string, target processing.LocalTextTarget) error {
-		err := save(root, config.LocalTextConfig{Profile: names[0], Profiles: names, Server: target.Server, EmbeddingServer: target.EmbeddingServer, EmbeddingModel: target.EmbeddingModel, EmbeddingDimensions: target.EmbeddingDimensions, EmbeddingAPIKeyEnv: target.EmbeddingAPIKeyEnv})
+func localTextSaveTarget(root string, restartPending *atomic.Bool, save func(string, config.LocalTextConfig) error) func(string, processing.LocalTextTarget) error {
+	return func(name string, target processing.LocalTextTarget) error {
+		err := save(root, config.LocalTextConfig{Profile: name, Server: target.Server, EmbeddingServer: target.EmbeddingServer, EmbeddingModel: target.EmbeddingModel, EmbeddingDimensions: target.EmbeddingDimensions, EmbeddingAPIKeyEnv: target.EmbeddingAPIKeyEnv})
 		if err == nil || errors.Is(err, atomicfile.ErrPublished) {
 			restartPending.Store(true)
 		}
@@ -106,16 +106,13 @@ func localTextCandidate(cfg config.Config, target processing.LocalTextTarget, na
 	if !remote && target.Server != "auto" && target.Server != "local" {
 		return cfg, nil, processing.ErrProfileNotConfigured
 	}
-	if remote && name == config.LocalTextProfile {
-		return cfg, nil, processing.ErrProfileNotConfigured
-	}
 	candidate := cfg
 	candidate.EffectiveProfiles = nil
 	candidate.EmbeddingProfiles = maps.Clone(cfg.EmbeddingProfiles)
 	candidate.RenditionProfiles = maps.Clone(cfg.RenditionProfiles)
 	candidate.RetrievalProfiles = maps.Clone(cfg.RetrievalProfiles)
 	candidate.ProcessingProfiles = maps.Clone(cfg.ProcessingProfiles)
-	if !remote && (name == "" || name == config.LocalTextProfile) {
+	if name == "" || name == config.LocalTextProfile {
 		var err error
 		candidate, err = candidate.WithLocalText()
 		if err != nil {
@@ -126,7 +123,11 @@ func localTextCandidate(cfg config.Config, target processing.LocalTextTarget, na
 		p.Runtime = new(*p.Runtime)
 		p.Runtime.ServerMode = target.Server
 		candidate.EmbeddingProfiles[config.LocalTextProfile] = p
-		return candidate, nil, nil
+		if !remote {
+			return candidate, nil, nil
+		}
+		cfg = candidate
+		name = config.LocalTextProfile
 	}
 	recipe, ok := cfg.ProcessingProfiles[name]
 	if !ok {
@@ -158,7 +159,7 @@ func localTextCandidate(cfg config.Config, target processing.LocalTextTarget, na
 		}
 		direct := p.InputKind == string(document.EmbeddingInputOriginalFile) && p.Runtime != nil && p.Runtime.AdapterContract == voyageEmbeddingAdapter
 		if direct && !strings.HasPrefix(target.EmbeddingModel, "gemini-embedding-2") {
-			retained = append(retained, name+": media stays with its provider for this text-only model")
+			retained = append(retained, name+": Voyage media stays with its provider for this text-only model; retained media is export-only and excluded from semantic text search")
 			continue
 		}
 		if !direct && p.InputKind != string(document.EmbeddingInputRenditionChunk) {
@@ -168,7 +169,7 @@ func localTextCandidate(cfg config.Config, target processing.LocalTextTarget, na
 		if direct {
 			outputName += "-kit"
 			recipe.Embeddings = append(recipe.Embeddings, outputName)
-			retained = append(retained, name+": media outside 20 MiB, six PDF pages, or two minutes stays with its provider")
+			retained = append(retained, name+": Voyage media outside 20 MiB, six PDF pages, or two minutes stays with its provider; retained media is export-only and excluded from semantic text search")
 		}
 		p, err = serverEmbedding(p, target, direct, binding)
 		if err != nil {

@@ -8670,10 +8670,6 @@ components:
           type: string
         profile_fingerprint:
           type: string
-        profiles:
-          items:
-            type: string
-          type: array
         retained:
           items:
             type: string

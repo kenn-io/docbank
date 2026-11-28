@@ -52,9 +52,10 @@ width together:
 docbank processing local --embedding-server https://embedding.example.com/api/v1/servers/example --embedding-model gemini-embedding-2 --embedding-dimensions 3072
 ```
 
-The preview lists each affected profile and the providers that stay. Setup
-rebuilds the affected indexes, saves the choice, and restarts the daemon.
-New imports use the same selection. The URL must accept requests with `/embed` appended.
+The preview lists the active profile and the providers that stay. Setup
+rebuilds its index, saves the choice, and restarts the daemon. Other profiles
+keep their providers. New imports for the active profile use the same selection.
+The URL must accept requests with `/embed` appended.
 Requests are anonymous by default. For a protected server, add `--embedding-api-key-env NAME` and make that variable available to the daemon. Docbank saves the variable name, not its value.
 Use `--server local` to switch back to the local server.
 
@@ -62,7 +63,8 @@ Voyage contextual text stays with Voyage. For models whose name starts with
 `gemini-embedding-2`, supported Voyage media moves to the server: PNG, JPEG,
 and WebP images, PDFs up to six pages, and MP4 videos up to two minutes, each
 up to 20 MiB. Other media stays with Voyage. A text-only model leaves media
-with its existing provider. Retained Voyage media remains export-only for semantic search. The preview explains these retained providers.
+with its existing provider. Retained Voyage media is export-only and excluded
+from semantic text search. The preview explains these retained providers.
 If the rebuild fails, the saved selection stays unchanged.
 
 To return to your configured providers, delete `local-text.json` beside the
