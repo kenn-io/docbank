@@ -64,9 +64,12 @@ func TestSkillsDefinitionIsIndependent(t *testing.T) {
 	tool, err := ReadTool("docbank.skills")
 	require.NoError(t, err)
 	schemaMap(t, tool.InputSchema) // Also exercises the public JSON representation.
-	input := schemaMap(t, tool.InputSchema)
+	input, ok := tool.InputSchema.(map[string]any)
+	require.True(t, ok)
 	objectField(t, input, "properties")["name"] = "changed"
-	schemaMap(t, tool.OutputSchema)["required"] = []string{"changed"}
+	output, ok := tool.OutputSchema.(map[string]any)
+	require.True(t, ok)
+	output["required"] = []string{"changed"}
 	objectField(t, tool.Meta, "io.docbank/bounds")["maxResponseBytes"] = 1
 	tool.Annotations.ReadOnlyHint = false
 	clean, err := ReadTool("docbank.skills")
