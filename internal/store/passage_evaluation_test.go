@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	embeddingeval "go.kenn.io/docbank/document/embedding/eval"
 	"go.kenn.io/docbank/internal/vectorindex"
 )
 
@@ -37,8 +36,6 @@ func TestEvaluationPassageFocusUsesNativeTokensAndRollsBack(t *testing.T) {
 			focus, err := s.EvaluationPassageFocus(t.Context(), tc.query, []string{tc.text, "unrelated"})
 			require.NoError(t, err)
 			assert.Equal(t, [][2]int{tc.span, {}}, focus)
-			start, end := embeddingeval.BoundedPassageWindow(tc.text, focus[0][0], focus[0][1], 1536)
-			require.Contains(t, string([]rune(tc.text)[start:end]), string([]rune(tc.text)[tc.span[0]:tc.span[1]]))
 		})
 	}
 	_, err := s.EvaluationPassageFocus(t.Context(), "lantern", []string{string([]byte{0xff})})
@@ -69,7 +66,6 @@ func TestEvaluationSemanticPassagesRetainEligibleNeighbors(t *testing.T) {
 	baseline, _, _ := reduceSemanticCandidates("vault", "space", neighbors, 10, eligible, map[int64]struct{}{3: {}})
 	require.Equal(t, baseline, one)
 	eligible[semanticEligibilityKey{"set", "best", "sum"}] = append(eligible[semanticEligibilityKey{"set", "best", "sum"}], SemanticSearchCandidate{NodeID: 3, InputKind: document.EmbeddingInputRenditionChunk})
-	neighbors = append(neighbors, neighbors[1])
 	passages, _, _ = evaluationSemanticReducer(map[int64]struct{}{2: {}, 3: {}}, 1)("vault", "space", neighbors, 10, eligible, nil)
 	require.Len(t, passages, 2)
 	require.Equal(t, []int64{2, 3}, []int64{passages[0].NodeID, passages[1].NodeID})

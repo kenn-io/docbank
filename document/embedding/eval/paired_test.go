@@ -25,6 +25,12 @@ func TestPairedRerankUsesFrozenCandidatesAndActualExcerpts(t *testing.T) {
 	require.Equal(t, []string{"b", "a"}, result.Current.Ranking)
 	require.Equal(t, []string{"b", "a"}, result.P1.Ranking)
 	require.Equal(t, []string{"a", "b"}, result.P3.Ranking)
+	tied, err := EvaluatePassages(t.Context(), "query", candidates, valuePassageRunner{0.5, 0.5, 0.5}, PassageOptions{})
+	require.NoError(t, err)
+	require.Equal(t, []string{"a", "b"}, tied.P3.Ranking)
+	negative, err := EvaluatePassages(t.Context(), "query", candidates, valuePassageRunner{-1, -2, -1.5}, PassageOptions{})
+	require.NoError(t, err)
+	require.Equal(t, []string{"a", "b"}, negative.P3.Ranking)
 	require.Equal(t, [][]string{{"actual snippet a", "actual snippet b"}, {"segment a1", "segment b1"}, {"segment a1", "segment a2", "segment b1"}}, runner.inputs)
 }
 
@@ -52,6 +58,8 @@ func TestPairedRerankRejectsInvalidScores(t *testing.T) {
 	for _, scores := range [][]PassageScore{
 		nil,
 		{{DocumentID: "a", Passage: 0, Score: math.NaN()}, {DocumentID: "b", Passage: 0, Score: 1}},
+		{{DocumentID: "a", Passage: 0, Score: math.Inf(1)}, {DocumentID: "b", Passage: 0, Score: 1}},
+		{{DocumentID: "a", Passage: 0, Score: math.Inf(-1)}, {DocumentID: "b", Passage: 0, Score: 1}},
 		{{DocumentID: "other", Passage: 0, Score: 1}, {DocumentID: "b", Passage: 0, Score: 1}},
 		{{DocumentID: "a", Passage: 0, Score: 1}, {DocumentID: "a", Passage: 0, Score: 2}},
 	} {
@@ -64,26 +72,6 @@ type fixedPassageRunner struct{ scores []PassageScore }
 
 func (r fixedPassageRunner) RerankPassages(context.Context, string, []PassageInput) (PassageScores, error) {
 	return PassageScores{Scores: r.scores}, nil
-}
-
-func FuzzPairedRejectsNonfiniteAndKeepsMax(f *testing.F) {
-	f.Add(0.2, 0.9, 0.5)
-	f.Add(-1.0, -2.0, -1.5)
-	f.Fuzz(func(t *testing.T, a, b, c float64) {
-		candidates := []PassageCandidate{{DocumentID: "a", Excerpt: "x", Passages: []string{"x", "y"}}, {DocumentID: "b", Excerpt: "z", Passages: []string{"z"}}}
-		runner := valuePassageRunner{a, b, c}
-		comparison, err := EvaluatePassages(t.Context(), "q", candidates, runner, PassageOptions{})
-		if math.IsNaN(a) || math.IsInf(a, 0) || math.IsNaN(b) || math.IsInf(b, 0) || math.IsNaN(c) || math.IsInf(c, 0) {
-			require.Error(t, err)
-			return
-		}
-		require.NoError(t, err)
-		want := []string{"a", "b"}
-		if c > max(a, b) {
-			want = []string{"b", "a"}
-		}
-		require.Equal(t, want, comparison.P3.Ranking)
-	})
 }
 
 type valuePassageRunner struct{ a, b, c float64 }

@@ -159,6 +159,11 @@ func TestPassageVoyageAccountsAttemptAndRejectsMalformedScores(t *testing.T) {
 	require.InDeltaSlice(t, []float64{.8, .5}, []float64{got.Scores[0].Score, got.Scores[1].Score}, 1e-12)
 	require.InDelta(t, 7.0, *got.Usage.TokenUsage, 1e-12)
 	require.Equal(t, 4, got.LocalTokens)
+	require.NotNil(t, got.Usage.Cost)
+	require.EqualValues(t, 1, got.Usage.Cost.Micros)
+	require.Equal(t, "2026-10-30 list price; observed Voyage tokens; $0.05/million", got.Usage.Cost.Basis)
+	require.InDelta(t, 7, runner.budget.ObservedRerankTokens, 1e-12)
+	require.InDelta(t, .35, runner.budget.EstimatedMicros, 1e-12)
 	require.Greater(t, got.RequestBytes, len("firstsecond"))
 	body = `{"data":[{"index":0},{"index":1,"relevance_score":2}]}`
 	got, err = runner.RerankPassages(t.Context(), "query", inputs)

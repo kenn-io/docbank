@@ -19,6 +19,8 @@ func TestBoundedPassageWindowCentersMatchAndReturnsRuneOffsets(t *testing.T) {
 	require.True(t, utf8.ValidString(got))
 	start, end = BoundedPassageWindow("front remainder", 0, 0, 5)
 	require.Equal(t, []int{0, 5}, []int{start, end})
+	start, end = BoundedPassageWindow("xxx xx", 5, 6, 3)
+	require.Equal(t, " xx", string([]rune("xxx xx")[start:end]))
 	text = strings.Repeat("x", 100) + "needle" + strings.Repeat("x", 100)
 	start, end = BoundedPassageWindow(text, 100, 106, 6)
 	require.Equal(t, "needle", string([]rune(text)[start:end]))

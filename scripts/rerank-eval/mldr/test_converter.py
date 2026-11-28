@@ -56,7 +56,9 @@ class ConverterTest(unittest.TestCase):
         for query in result["queries"]:
             self.assertEqual(query["judgments"], [{"document_id": "d" + query["id"][1:], "grade": 1, "critical": False}])
         self.assertEqual(manifest["output_sha256"], hashlib.sha256((self.root / "one").read_bytes()).hexdigest())
-        self.assertNotEqual(self.run_converter("one").returncode, 0)
+        collision = self.run_converter("one")
+        self.assertNotEqual(collision.returncode, 0)
+        self.assertIn("output or manifest already exists", collision.stderr)
 
     def test_reject_repository_outputs_and_symlink_aliases(self):
         repo = SCRIPT.resolve().parents[3]
@@ -67,11 +69,14 @@ class ConverterTest(unittest.TestCase):
             for output in (inside / "direct", alias / "nested" / "alias"):
                 result = self.run_converter(output)
                 self.assertNotEqual(result.returncode, 0)
+                self.assertIn("output and manifest must be outside the repository", result.stderr)
                 self.assertFalse(output.exists())
                 self.assertFalse(pathlib.Path(str(output) + ".manifest.json").exists())
             output = self.root / "external"
             pathlib.Path(str(output) + ".manifest.json").symlink_to(inside / "manifest")
-            self.assertNotEqual(self.run_converter(output).returncode, 0)
+            result = self.run_converter(output)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("output and manifest must be outside the repository", result.stderr)
             self.assertFalse(output.exists())
             self.assertFalse((inside / "manifest").exists())
 
@@ -99,8 +104,10 @@ class ConverterTest(unittest.TestCase):
         self.assertTrue(all(item["grade"] == 1 for item in result["queries"][0]["judgments"]))
 
     def test_reject_missing_positive_even_unselected(self):
-        self.write_gzip("corpus.gz", self.documents[1:])
-        self.assertNotEqual(self.run_converter("missing").returncode, 0)
+        self.write_gzip("corpus.gz", [doc for doc in self.documents if doc["docid"] != "d1"])
+        result = self.run_converter("missing")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("test positives reference missing corpus documents", result.stderr)
         self.assertFalse((self.root / "missing").exists())
 
     def test_source_pins_and_exact_sizes_enforced(self):
@@ -108,15 +115,21 @@ class ConverterTest(unittest.TestCase):
         self.assertNotEqual(public.returncode, 0)
         self.assertIn("corpus does not match pinned source", public.stderr)
         self.assertFalse((self.root / "public").exists())
-        self.assertNotEqual(self.run_converter("count", count=6).returncode, 0)
-        self.assertNotEqual(self.run_converter("distractors", distractors=30).returncode, 0)
+        for name, count, distractors in (("count", 99, 2000), ("distractors", 100, 1999)):
+            result = self.run_converter(name, count=count, distractors=distractors, fixture=False)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("public sample requires exactly 100 queries and 2000 distractors", result.stderr)
 
     def test_duplicate_and_disagreement_rejected(self):
         self.write_gzip("corpus.gz", self.documents + self.documents[:1])
-        self.assertNotEqual(self.run_converter("duplicate").returncode, 0)
+        duplicate = self.run_converter("duplicate")
+        self.assertNotEqual(duplicate.returncode, 0)
+        self.assertIn("invalid or duplicate corpus document", duplicate.stderr)
         self.write_gzip("corpus.gz", self.documents)
         (self.root / "qrels").write_text(self.qrels.replace("q0 Q0 d0 2", "q0 Q0 d1 2"))
-        self.assertNotEqual(self.run_converter("disagree").returncode, 0)
+        disagree = self.run_converter("disagree")
+        self.assertNotEqual(disagree.returncode, 0)
+        self.assertIn("test positive_passages disagree with positive qrels", disagree.stderr)
 
 
 if __name__ == "__main__":

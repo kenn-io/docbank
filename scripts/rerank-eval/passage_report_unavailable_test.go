@@ -84,7 +84,7 @@ func TestPassageIncompleteReportControls(t *testing.T) {
 func TestPassageIncompleteReportDisclosesObservedCap(t *testing.T) {
 	report := passageGateReport{Observations: []passageObservation{{
 		Corpus: "public", Query: "synthetic",
-		Comparison: embeddingeval.PassageComparison{P1: embeddingeval.PassageArm{Selection: embeddingeval.PassageSelection{Capped: true}}},
+		Comparison: embeddingeval.PassageComparison{Baseline: []string{"synthetic"}, P1: embeddingeval.PassageArm{Ranking: []string{"synthetic"}, Failure: "selection capped", Selection: embeddingeval.PassageSelection{Capped: true}}},
 	}}}
 	report.finish()
 	require.Equal(t, "inconclusive", report.Summary.Decision)
