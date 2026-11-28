@@ -554,9 +554,10 @@ caps, provider failures, or missing scores make a run inconclusive, and failed
 arms keep the frozen baseline order.
 
 The hooks that reach into processing, retrieval, and the store build only with
-the `rerankeval` tag and support SQLite only. Scoring and windowing in
-`document/embedding/eval` and the gate report run in ordinary tests. To check
-the selector and gate mechanics on synthetic data without a provider, run:
+the `rerankeval` tag and support SQLite only. Ordinary CI runs the untagged
+scoring and windowing code in `document/embedding/eval` and the gate report,
+but it does not compile the `rerankeval` hooks. To check the selector and gate
+mechanics on synthetic data without a provider, run this manually:
 
 ```sh
 go test -tags 'fts5 rerankeval' ./internal/store ./internal/retrieval \
@@ -590,9 +591,9 @@ passages, and any default change from
 this result. A new experiment, including a smaller sample or longer budget,
 needs a new preregistration.
 
-Source edits made after the third attempt, such as moving the hooks behind the
-build tag and showing missing measurements as unavailable, change no
-measurement.
+The recorded result is pinned to commit
+`95b705931077e22479272baeeae6ecebe8ad93e4`. Later source edits were not used
+for any of the three attempts.
 
 For reference, each of P1 and P3 had to meet every bound below against the
 current-excerpt arm:
@@ -601,7 +602,7 @@ current-excerpt arm:
 | --- | --- |
 | Proxy nDCG@10 difference | Lower 95% confidence bound > 0 |
 | Full-set nDCG@10 difference | Lower bound ≥ -0.01 and upper bound ≥ 0 |
-| Short corpus and four deterministic long controls | Mean nDCG@10 loss ≤ 0.01 on each |
+| Existing short corpus and four deterministic long controls | Mean nDCG@10 loss ≤ 0.01 on each corpus |
 | p95 selection plus provider time | ≤ 5 seconds and ≤ 1.5 times current |
 | Mean input text bytes and local token estimate | Each ≤ 4 times current |
 
