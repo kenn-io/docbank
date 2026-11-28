@@ -1,0 +1,224 @@
+package eval
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"math"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestPairedRerankUsesFrozenCandidatesAndActualExcerpts(t *testing.T) {
+	candidates := []PassageCandidate{
+		{DocumentID: "a", Excerpt: "actual snippet a", Passages: []string{"segment a1", "segment a2"}},
+		{DocumentID: "b", Excerpt: "actual snippet b", Passages: []string{"segment b1"}},
+	}
+	runner := &pairedTestRunner{}
+	result, err := EvaluatePassages(context.Background(), "query", candidates, runner, PassageOptions{})
+	require.NoError(t, err)
+	require.Equal(t, []string{"a", "b"}, result.Baseline)
+	require.Equal(t, []string{"b", "a"}, result.Current.Ranking)
+	require.Equal(t, []string{"b", "a"}, result.P1.Ranking)
+	require.Equal(t, []string{"a", "b"}, result.P3.Ranking)
+	tied, err := EvaluatePassages(t.Context(), "query", candidates, valuePassageRunner{0.5, 0.5, 0.5}, PassageOptions{})
+	require.NoError(t, err)
+	require.Equal(t, []string{"a", "b"}, tied.P3.Ranking)
+	negative, err := EvaluatePassages(t.Context(), "query", candidates, valuePassageRunner{-1, -2, -1.5}, PassageOptions{})
+	require.NoError(t, err)
+	require.Equal(t, []string{"a", "b"}, negative.P3.Ranking)
+	require.Equal(t, [][]string{{"actual snippet a", "actual snippet b"}, {"segment a1", "segment b1"}, {"segment a1", "segment a2", "segment b1"}}, runner.inputs)
+}
+
+type pairedTestRunner struct{ inputs [][]string }
+
+func (r *pairedTestRunner) RerankPassages(_ context.Context, _ string, candidates []PassageInput) (PassageScores, error) {
+	texts := make([]string, len(candidates))
+	scores := make([]PassageScore, len(candidates))
+	for i, c := range candidates {
+		texts[i] = c.Text
+		value := 0.1
+		switch c.Text {
+		case "actual snippet b", "segment a2":
+			value = 0.9
+		case "segment b1":
+			value = 0.5
+		}
+		scores[i] = PassageScore{DocumentID: c.DocumentID, Passage: c.Passage, Score: value}
+	}
+	r.inputs = append(r.inputs, texts)
+	return PassageScores{Scores: scores}, nil
+}
+
+func TestPairedRerankRejectsInvalidScores(t *testing.T) {
+	for _, scores := range [][]PassageScore{
+		nil,
+		{{DocumentID: "a", Passage: 0, Score: math.NaN()}, {DocumentID: "b", Passage: 0, Score: 1}},
+		{{DocumentID: "a", Passage: 0, Score: math.Inf(1)}, {DocumentID: "b", Passage: 0, Score: 1}},
+		{{DocumentID: "a", Passage: 0, Score: math.Inf(-1)}, {DocumentID: "b", Passage: 0, Score: 1}},
+		{{DocumentID: "other", Passage: 0, Score: 1}, {DocumentID: "b", Passage: 0, Score: 1}},
+		{{DocumentID: "a", Passage: 0, Score: 1}, {DocumentID: "a", Passage: 0, Score: 2}},
+	} {
+		_, err := EvaluatePassages(context.Background(), "q", []PassageCandidate{{DocumentID: "a", Excerpt: "first"}, {DocumentID: "b", Excerpt: "second"}}, fixedPassageRunner{scores}, PassageOptions{})
+		require.Error(t, err)
+	}
+}
+
+type fixedPassageRunner struct{ scores []PassageScore }
+
+func (r fixedPassageRunner) RerankPassages(context.Context, string, []PassageInput) (PassageScores, error) {
+	return PassageScores{Scores: r.scores}, nil
+}
+
+type valuePassageRunner struct{ a, b, c float64 }
+
+func (r valuePassageRunner) RerankPassages(_ context.Context, _ string, inputs []PassageInput) (PassageScores, error) {
+	var scores []PassageScore
+	for _, input := range inputs {
+		value := r.a
+		if input.DocumentID == "b" {
+			value = r.c
+		} else if input.Passage == 1 {
+			value = r.b
+		}
+		scores = append(scores, PassageScore{DocumentID: input.DocumentID, Passage: input.Passage, Score: value})
+	}
+	return PassageScores{Scores: scores}, nil
+}
+
+func TestPairedRejectsInvalidCandidateAndPreservesFallback(t *testing.T) {
+	for _, candidates := range [][]PassageCandidate{
+		{{DocumentID: "a", Excerpt: "x"}, {DocumentID: "a", Excerpt: "y"}},
+		{{DocumentID: "a", Excerpt: string([]byte{0xff})}},
+		{{DocumentID: "a", Excerpt: strings.Repeat("x", 4097)}},
+		{{DocumentID: "a", Excerpt: "x", Passages: []string{strings.Repeat("界", 1366)}}},
+	} {
+		runner := &pairedTestRunner{}
+		_, err := EvaluatePassages(t.Context(), "q", candidates, runner, PassageOptions{})
+		require.Error(t, err)
+		require.Empty(t, runner.inputs, "invalid candidates must be rejected before a provider call")
+	}
+	runner := &pairedTestRunner{}
+	_, err := EvaluatePassages(t.Context(), "q", []PassageCandidate{{DocumentID: "a", Excerpt: "fallback"}}, runner, PassageOptions{})
+	require.NoError(t, err)
+	require.Equal(t, [][]string{{"fallback"}, {"fallback"}, {"fallback"}}, runner.inputs)
+}
+
+func TestPassageComparisonMetricsRejectsChangedCandidateSet(t *testing.T) {
+	good := PassageArm{Ranking: []string{"a", "b"}}
+	for _, bad := range [][]string{{"a"}, {"a", "a"}, {"a", "other"}} {
+		_, err := ScorePassageComparison(PassageComparison{Baseline: []string{"a", "b"}, Current: good, P1: PassageArm{Ranking: bad}, P3: good}, []Judgment{{DocumentID: "a", Grade: 1}})
+		require.Error(t, err)
+	}
+}
+
+func TestPairedStagesRotateAndKeepFailuresVisible(t *testing.T) {
+	parent, cancel := context.WithTimeout(t.Context(), time.Hour)
+	defer cancel()
+	parentDeadline, _ := parent.Deadline()
+	candidates := []PassageCandidate{{DocumentID: "b", Excerpt: "current", Passages: []string{"passage"}, TieBreak: 2}, {DocumentID: "a", Excerpt: "current", Passages: []string{"passage"}, TieBreak: 1}}
+	for _, capped := range []bool{true, false} {
+		for rotation, order := range [][]string{
+			{"provider:current", "select:1", "provider:passage1", "select:3", "provider:passage3"},
+			{"select:1", "provider:passage1", "select:3", "provider:passage3", "provider:current"},
+			{"select:3", "provider:passage3", "provider:current", "select:1", "provider:passage1"},
+		} {
+			var calls []string
+			done := map[int]<-chan struct{}{}
+			selectPassages := func(ctx context.Context, limit int) ([]PassageCandidate, PassageSelection, error) {
+				_, ok := ctx.Deadline()
+				require.True(t, ok)
+				require.NoError(t, ctx.Err())
+				// Capture Done while live; canceled contexts may share a closed channel.
+				done[limit] = ctx.Done()
+				calls = append(calls, fmt.Sprint("select:", limit))
+				if capped && limit == 3 {
+					return nil, PassageSelection{Capped: true}, errors.New("selection capped")
+				}
+				selected := slices.Clone(candidates)
+				for i := range selected {
+					selected[i].Passages = []string{fmt.Sprint("passage", limit)}
+				}
+				return selected, PassageSelection{}, nil
+			}
+			runner := &captureEqualRunner{calls: &calls, deadlines: map[string]time.Time{}, done: map[string]<-chan struct{}{}}
+			comparison, err := EvaluatePassages(parent, "q", candidates, runner, PassageOptions{Deadline: time.Second, Rotation: rotation, Select: selectPassages})
+			if capped {
+				require.Error(t, err)
+				order = slices.DeleteFunc(order, func(call string) bool { return call == "provider:passage3" })
+				require.Equal(t, []string{"b", "a"}, comparison.P3.Ranking, "a failed arm retains its baseline")
+				require.NotEmpty(t, comparison.P3.Failure)
+				require.True(t, comparison.P3.Selection.Capped)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, done[3], runner.done["passage3"])
+				require.Equal(t, []string{"a", "b"}, comparison.P3.Ranking)
+			}
+			require.Equal(t, order, calls)
+			require.Equal(t, done[1], runner.done["passage1"])
+			require.NotEqual(t, done[1], done[3])
+			for name, deadline := range runner.deadlines {
+				require.NotEqual(t, parentDeadline, deadline, "each provider must have its fresh stage deadline")
+				require.NotEqual(t, parent.Done(), runner.done[name])
+				require.True(t, isClosed(runner.done[name]))
+			}
+			require.NotEqual(t, runner.done["current"], done[1])
+			require.NotEqual(t, runner.done["current"], done[3])
+			for _, stageDone := range done {
+				require.True(t, isClosed(stageDone))
+			}
+			require.Equal(t, []string{"a", "b"}, comparison.Current.Ranking, "ties follow serving identity order")
+		}
+	}
+}
+
+type captureEqualRunner struct {
+	calls     *[]string
+	deadlines map[string]time.Time
+	done      map[string]<-chan struct{}
+}
+
+func (r *captureEqualRunner) RerankPassages(ctx context.Context, _ string, inputs []PassageInput) (PassageScores, error) {
+	*r.calls = append(*r.calls, "provider:"+inputs[0].Text)
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return PassageScores{}, errors.New("missing stage deadline")
+	}
+	r.deadlines[inputs[0].Text], r.done[inputs[0].Text] = deadline, ctx.Done()
+	if err := ctx.Err(); err != nil {
+		return PassageScores{}, err
+	}
+	var scores []PassageScore
+	for _, input := range inputs {
+		scores = append(scores, PassageScore{DocumentID: input.DocumentID, Passage: input.Passage, Score: 1})
+	}
+	return PassageScores{Scores: scores}, nil
+}
+
+func isClosed(ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
+
+func TestPairedProviderFailureRetainsAttemptAccounting(t *testing.T) {
+	comparison, err := EvaluatePassages(t.Context(), "q", []PassageCandidate{{DocumentID: "a", Excerpt: "sent text"}}, failedPassageRunner{}, PassageOptions{})
+	require.Error(t, err)
+	require.Equal(t, 9, comparison.Current.InputBytes)
+	require.Equal(t, 31, comparison.Current.RequestBytes)
+	require.Equal(t, 4, comparison.Current.LocalTokens)
+	require.Equal(t, 1, comparison.Current.Usage.ProviderCalls)
+}
+
+type failedPassageRunner struct{}
+
+func (failedPassageRunner) RerankPassages(context.Context, string, []PassageInput) (PassageScores, error) {
+	return PassageScores{RequestBytes: 31, LocalTokens: 4, Usage: Usage{ProviderCalls: 1}}, errors.New("synthetic timeout")
+}

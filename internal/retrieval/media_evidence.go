@@ -49,8 +49,9 @@ const (
 )
 
 type mediaEvidenceInput struct {
-	excerpt string
-	span    *MediaTimeSpan
+	excerpt    string
+	span       *MediaTimeSpan
+	sourceSpan document.ChunkSpan
 }
 
 func NewMediaEvidenceResolver(blobs MediaEvidenceBlobReader) *MediaEvidenceResolver {
@@ -152,7 +153,7 @@ func (resolver *MediaEvidenceResolver) load(ctx context.Context, artifacts store
 		if generation.Version == document.EmbeddingInputGenerationHeadingsVersion {
 			excerpt = document.FormatRenditionHeadingContext(input.HeadingPath, excerpt)
 		}
-		inputs[input.Key] = mediaEvidenceInput{excerpt: excerpt, span: span}
+		inputs[input.Key] = mediaEvidenceInput{excerpt: excerpt, span: span, sourceSpan: input.SourceSpan}
 	}
 	return inputs, nil
 }

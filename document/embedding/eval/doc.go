@@ -4,5 +4,7 @@
 // retain hit rates, per-query latency and usage observations, and keep missing
 // provider token or cost evidence unavailable instead of treating it as zero.
 // A comparison built from synthetic vectors or provider fixtures is a wiring
-// check and does not support a quality recommendation.
+// check and does not support a quality recommendation. EvaluatePassages compares
+// caller-supplied excerpts and passages against a shared candidate order; it
+// does not retrieve candidates or establish equivalence with a production selector.
 package eval

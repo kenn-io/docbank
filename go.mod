@@ -39,6 +39,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/tdewolff/parse/v2 v2.8.20
 	github.com/tetratelabs/wazero v1.12.0
+	github.com/tiktoken-go/tokenizer v0.10.0
 	github.com/xdg-go/stringprep v1.0.4
 	github.com/yuin/goldmark/v2 v2.1.15
 	go.kenn.io/kata v0.23.0
@@ -88,6 +89,7 @@ require (
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/creachadair/tomledit v0.0.29 // indirect
+	github.com/dlclark/regexp2/v2 v2.5.1 // indirect
 	github.com/dnephin/pflag v1.0.7 // indirect
 	github.com/dunglas/httpsfv v1.1.2 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect

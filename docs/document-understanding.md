@@ -528,6 +528,94 @@ tests compile the live adapter setup and check pricing inputs without making
 live calls. To include costs, also set `RERANK_PRICING_DATE` (`YYYY-MM-DD`),
 `TYPESAFE_MICROS_PER_TOKEN`, and `COHERE_MICROS_PER_SEARCH_UNIT` together.
 
+### Passage reranking evaluation
+
+The offline passage evaluation compares four reranking arms on the same frozen
+hybrid candidates: no rerank, today's exact reranker excerpts, and up to one or
+three selected passages per candidate (P1 and P3). It exists to decide whether
+matched passages should replace document-head excerpts. It does not change
+serving search, processing configuration, or defaults.
+
+The selector draws passages from two lanes and interleaves their ranks:
+
+- **Lexical segments.** A segment is eligible only when it matches the native
+  lexical query, which requires every query term as a prefix (AND-of-prefix),
+  the same rule normal lexical search uses.
+- **Semantic chunks.** Eligible chunk neighbors come from the serving
+  eligibility rules, with 1,536-rune chunks and 128-rune overlap.
+
+Each passage becomes a 1,536-byte UTF-8 window. The window centers on the
+first native prefix match of any query term in the passage's own text, with
+the same punctuation and accent folding; text without a match starts at its
+head. Overlapping passages from the same source, build, and unit are removed.
+Reports disclose excluded matches, fallbacks, unknown coordinates, late
+segments, and the 4,096-row lexical selection cap. Stale artifacts, selection
+caps, provider failures, or missing scores make a run inconclusive, and failed
+arms keep the frozen baseline order.
+
+The hooks that reach into processing, retrieval, and the store build only with
+the `rerankeval` tag and support SQLite only. Ordinary CI runs the untagged
+scoring and windowing tests in `document/embedding/eval`, plus the
+`scripts/rerank-eval` tests for incomplete-report serialization and Voyage
+attempt accounting. It does not compile the `rerankeval` files, so the gate's
+pass, fail, and threshold decisions and the bootstrap intervals are tested only
+under that tag. To check the selector and gate mechanics on synthetic data
+without a provider, run this manually:
+
+```sh
+go test -tags 'fts5 rerankeval' ./internal/store ./internal/retrieval \
+  ./scripts/rerank-eval -run '^Test(Passage|Evaluation)' -count=1
+```
+
+These checks validate mechanics only and supply no quality evidence.
+
+#### Outcome of the 2026-10-30 gate
+
+The `2026-10-30v1` gate was preregistered in
+[pull request #1171](https://github.com/kenn-io/docbank/pull/1171), with fixed
+sample, models, seed, thresholds, and a two-hour, $25 budget. Its result is
+**inconclusive**. Three attempts ran on 2026-10-30:
+
+1. The first stopped during control preparation, before any reranker call.
+2. The second was interrupted before public ranking after review found a
+   window-focus defect.
+3. The third, at commit `95b705931077e22479272baeeae6ecebe8ad93e4`, reached
+   its fixed cutoff during corpus preparation with 2,105 of 2,800 public
+   documents ready. It ranked 0 of 100 public queries and no long-positive
+   proxy queries; the gate required at least 30.
+
+Public quality, latency, and input-cost measurements are unavailable. The
+short and synthetic long controls completed, but they are diagnostics and
+cannot stand in for the public gate. The evaluation therefore provides no
+evidence for changing passage selection. Production defaults are unchanged.
+Under the preregistered rule, lexical passage selection, semantic chunk
+passages, and any default change from
+[issue #1100](https://github.com/kenn-io/docbank/issues/1100) do not proceed on
+this result. A new experiment, including a smaller sample or longer budget,
+needs a new preregistration.
+
+The recorded result is pinned to commit
+`95b705931077e22479272baeeae6ecebe8ad93e4`. Later source edits were not used
+for any of the three attempts.
+
+For reference, each of P1 and P3 had to meet every bound below against the
+current-excerpt arm:
+
+| Measure | Required result |
+| --- | --- |
+| Proxy nDCG@10 difference | Lower 95% confidence bound > 0 |
+| Full-set nDCG@10 difference | Lower bound ≥ -0.01 and upper bound ≥ 0 |
+| Existing short corpus and four deterministic long controls | Mean nDCG@10 loss ≤ 0.01 on each corpus |
+| p95 selection plus provider time | ≤ 5 seconds and ≤ 1.5 times current |
+| Mean input text bytes and local token estimate | Each ≤ 4 times current |
+
+The public sample came from MLDR English test, prepared by the
+[pinned conversion recipe](https://github.com/kenn-io/docbank/tree/main/scripts/rerank-eval/mldr).
+MLDR labels whole articles without answer offsets, so the gate used a
+**long-positive visibility proxy**: queries with a positive article of at least
+8,192 UTF-8 bytes whose full text is absent from its current excerpt.
+Critical-span evidence is unavailable.
+
 ## Choose an embedding provider
 
 The adapters below implement `document.EmbeddingProvider`, and their
