@@ -61,7 +61,7 @@ func (s passageGateSummary) MarshalJSON() ([]byte, error) {
 			value.Quality[corpus] = null
 		}
 	}
-	for _, fields := range value.Arms {
+	for i, fields := range value.Arms {
 		if !s.availableControls["short"] {
 			fields["ShortDelta"] = null
 		}
@@ -70,6 +70,9 @@ func (s passageGateSummary) MarshalJSON() ([]byte, error) {
 		}
 		for _, key := range []string{"Full", "Proxy", "MeanBytesRatio", "MeanTokensRatio", "P95BytesRatio", "WorstBytesRatio", "P95TokensRatio", "WorstTokensRatio", "MeanJSONBytes", "P95Latency", "P3MinusP1", "HitAt1", "Selection"} {
 			fields[key] = null
+		}
+		if s.Arms[i].Selection.Capped {
+			fields["Selection"] = json.RawMessage(`{"Capped":true}`)
 		}
 	}
 	return json.Marshal(struct {

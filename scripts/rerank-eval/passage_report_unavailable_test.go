@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	embeddingeval "go.kenn.io/docbank/document/embedding/eval"
 )
 
 func TestPassageIncompleteReportShowsUnavailable(t *testing.T) {
@@ -29,6 +30,7 @@ func TestPassageIncompleteReportShowsUnavailable(t *testing.T) {
 	require.NotEmpty(t, result.Arms)
 	require.JSONEq(t, "null", string(result.Arms[0]["MeanBytesRatio"]))
 	require.JSONEq(t, "null", string(result.Arms[0]["Full"]))
+	require.JSONEq(t, "null", string(result.Arms[0]["Selection"]))
 }
 
 func TestPassageIncompleteReportControls(t *testing.T) {
@@ -77,4 +79,26 @@ func TestPassageIncompleteReportControls(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPassageIncompleteReportDisclosesObservedCap(t *testing.T) {
+	report := passageGateReport{Observations: []passageObservation{{
+		Corpus: "public", Query: "synthetic",
+		Comparison: embeddingeval.PassageComparison{P1: embeddingeval.PassageArm{Selection: embeddingeval.PassageSelection{Capped: true}}},
+	}}}
+	report.finish()
+	require.Equal(t, "inconclusive", report.Summary.Decision)
+	data, err := json.Marshal(report.Summary)
+	require.NoError(t, err)
+	var result struct {
+		Arms []map[string]json.RawMessage `json:"Arms"`
+	}
+	require.NoError(t, json.Unmarshal(data, &result))
+	require.Len(t, result.Arms, 2)
+	require.JSONEq(t, `{"Capped":true}`, string(result.Arms[0]["Selection"]))
+	require.JSONEq(t, "null", string(result.Arms[1]["Selection"]))
+	require.JSONEq(t, "null", string(result.Arms[0]["Full"]))
+	markdown, err := report.markdown()
+	require.NoError(t, err)
+	require.Contains(t, markdown, `"Capped": true`)
 }
