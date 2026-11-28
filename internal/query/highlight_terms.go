@@ -54,3 +54,21 @@ func collectPositiveTextTerms(
 		}
 	}
 }
+
+// BoundedHighlightTerms keeps the first distinct candidates that fit a
+// highlight receipt's count and length limits.
+func BoundedHighlightTerms(candidates []string) []string {
+	terms := make([]string, 0, min(len(candidates), maxHighlightTerms))
+	seen := make(map[string]struct{}, maxHighlightTerms)
+	for _, term := range candidates {
+		if len(terms) == maxHighlightTerms {
+			break
+		}
+		if _, duplicate := seen[term]; duplicate || term == "" || utf8.RuneCountInString(term) > maxHighlightTermRunes {
+			continue
+		}
+		seen[term] = struct{}{}
+		terms = append(terms, term)
+	}
+	return terms
+}

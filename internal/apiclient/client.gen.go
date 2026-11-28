@@ -14539,6 +14539,57 @@ func (c *Client) ReviseTermReport(ctx context.Context, options *ReviseTermReport
 	return responseParser(ctx, resp)
 }
 
+// SearchHighlights Preview the text terms of a plain-words search
+func (c *Client) SearchHighlights(ctx context.Context, options *SearchHighlightsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchHighlightsResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"q": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/search/highlights",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*SearchHighlightsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(SearchHighlightsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "SearchHighlightsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[SearchHighlightsErrorResponse](resp, "SearchHighlightsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search/highlights")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // FindSimilarDocuments Find similar documents using stored embeddings
 func (c *Client) FindSimilarDocuments(ctx context.Context, options *FindSimilarDocumentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FindSimilarDocumentsResponse, error) {
 	var err error
@@ -26194,6 +26245,37 @@ func (o *ReviseTermReportRequestOptions) GetHeader() (map[string]string, error) 
 	return nil, nil
 }
 
+// SearchHighlightsRequestOptions is the options needed to make a request to SearchHighlights.
+type SearchHighlightsRequestOptions struct {
+	Query *SearchHighlightsQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SearchHighlightsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *SearchHighlightsRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SearchHighlightsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *SearchHighlightsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // FindSimilarDocumentsRequestOptions is the options needed to make a request to FindSimilarDocuments.
 type FindSimilarDocumentsRequestOptions struct {
 	Body *FindSimilarDocumentsBody
@@ -29389,6 +29471,10 @@ type ListTermReportHistoryQuery struct {
 	Limit  *int64 `json:"limit,omitempty"`
 }
 
+type SearchHighlightsQuery struct {
+	Q *string `json:"q,omitempty"`
+}
+
 type SearchTextCoverageQuery struct {
 	PdfFilter      *string `json:"pdf_filter,omitempty"`
 	SourcePresent  *bool   `json:"source_present,omitempty"`
@@ -30852,6 +30938,10 @@ type IssueTermReportDownloadErrorResponse = Error
 type ReviseTermReportResponse = report.Summary
 
 type ReviseTermReportErrorResponse = Error
+
+type SearchHighlightsResponse = api.SearchHighlightPreview
+
+type SearchHighlightsErrorResponse = Error
 
 type FindSimilarDocumentsResponse = api.DocumentSimilarReport
 
@@ -32658,6 +32748,8 @@ type SealExportSourceRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string `json:"$schema,omitempty"`
 }
+
+type SearchHighlightPreview = api.SearchHighlightPreview
 
 type SearchHit = api.SearchHit
 

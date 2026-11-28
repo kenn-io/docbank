@@ -158,6 +158,7 @@ function installHarness(options: HarnessOptions) {
   };
   const postBodies: Record<string, unknown>[] = [];
   const highlightQueries: Record<string, unknown>[] = [];
+  const searchHighlightQueries: string[] = [];
   let rerankResolve: ((response: Response) => void) | undefined;
   let baseResolve: ((response: Response) => void) | undefined;
   let profilesResolve: ((response: Response) => void) | undefined;
@@ -248,6 +249,15 @@ function installHarness(options: HarnessOptions) {
         query_fingerprint: `sha256:${createHash("sha256").update(String(init?.body)).digest("hex")}`,
         dependencies: [],
       });
+    if (url.startsWith("/api/v1/search/highlights?")) {
+      const q = new URL(url, "https://example.com").searchParams.get("q") ?? "";
+      searchHighlightQueries.push(q);
+      // The real endpoint answers from the search analyzer; this stands in for
+      // its quoted-phrase and plain-word terms.
+      return json({
+        terms: [...q.matchAll(/"([^"]+)"|(\S+)/g)].map((match) => match[1] ?? match[2]),
+      });
+    }
     if (url === "/api/v1/queries/highlights") {
       const query = JSON.parse(String(init?.body)) as Record<string, unknown>;
       highlightQueries.push(query);
@@ -332,6 +342,7 @@ function installHarness(options: HarnessOptions) {
     fetchMock,
     postBodies,
     highlightQueries,
+    searchHighlightQueries,
     resolveRerank: (response: Response) => rerankResolve?.(response),
     resolveBase: (response: Response) => baseResolve?.(response),
     resolveProfiles: (response: Response) => profilesResolve?.(response),
@@ -410,9 +421,8 @@ it("opens verified text context for a selected result from a plain top-bar searc
       .getByLabelText("Verified text of message.eml")
       .querySelectorAll('mark[data-source="query"]'),
   ).toHaveLength(2);
-  expect(harness.highlightQueries).toEqual([
-    expect.objectContaining({ text: "needle", syntax: "simple" }),
-  ]);
+  expect(harness.searchHighlightQueries).toEqual(["needle"]);
+  expect(harness.highlightQueries).toEqual([]);
   expect(rendition.resolveRenditionText).toHaveBeenCalledWith(
     "short-lived",
     expect.objectContaining({ nodeID: file.id, name: file.name }),
@@ -2301,3 +2311,46 @@ it.each(["names", "meaning", "frozen"])(
     }
   },
 );
+
+it("highlights the phrase of a quoted plain-words search in verified text", async () => {
+  const file = node(2, "report.txt", baseVersion);
+  installHarness({
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: ["embed"],
+        reranking_available: true,
+      },
+    ],
+    files: [file],
+    baseReport: report("hybrid", [result(file, 1, "tax return excerpt")]),
+  });
+  vi.mocked(rendition.resolveRenditionText).mockResolvedValue({
+    state: "ready",
+    profile: { name: "private", configuration: "configured", fingerprint: "b".repeat(64) },
+    generationID: "c".repeat(64),
+    attachmentID: "d".repeat(64),
+    buildID: "e".repeat(64),
+    artifact: {
+      id: "synthetic-text",
+      sha256: "f".repeat(64),
+      size: 100,
+      mediaType: "text/markdown; charset=utf-8",
+    },
+  });
+  vi.mocked(rendition.readVerifiedRenditionText).mockResolvedValue("The tax return is here.");
+
+  render(App);
+  await screen.findByRole("checkbox", { name: "Rerank results" });
+  await submitSearch('"tax return"');
+  await fireEvent.click((await screen.findByText("tax return excerpt")).closest("tr")!);
+
+  const preview = await screen.findByLabelText("Verified text of report.txt");
+  await waitFor(() =>
+    expect(
+      [...preview.querySelectorAll('mark[data-source="query"]')].map((mark) => mark.textContent),
+    ).toEqual(["tax return"]),
+  );
+});

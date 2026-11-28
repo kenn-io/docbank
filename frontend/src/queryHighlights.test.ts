@@ -78,29 +78,30 @@ it.each([
   ).rejects.toThrow(/highlight receipt/i);
 });
 
-it("binds plain-word highlights to the query fingerprint in one request", async () => {
-  const plain = parseQuery(JSON.stringify({ syntax: "simple", text: "alpha beta" }));
-  const plainFingerprint = `sha256:${createHash("sha256").update(canonicalQuery(plain)).digest("hex")}`;
-  const fetchMock = vi
-    .spyOn(globalThis, "fetch")
-    .mockResolvedValue(receipt({ query_fingerprint: plainFingerprint, dependencies: [] }));
+it("reads live highlights from the search terms without a query receipt", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify({ terms: ["tax return", "absent"] }), {
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
   await expect(
-    readSearchQueryHighlights("session", "alpha beta", new AbortController().signal),
-  ).resolves.toEqual(["alpha", "nested phrase"]);
+    readSearchQueryHighlights("session", '"tax return" absent', new AbortController().signal),
+  ).resolves.toEqual(["tax return", "absent"]);
   expect(fetchMock).toHaveBeenCalledOnce();
   const [path, request] = fetchMock.mock.calls[0] ?? [];
-  expect(path).toBe("/api/v1/queries/highlights");
-  expect(request?.body).toBe(canonicalQuery(plain));
+  const url = new URL(String(path), "https://example.com");
+  expect(url.pathname).toBe("/api/v1/search/highlights");
+  expect(url.searchParams.get("q")).toBe('"tax return" absent');
+  expect(request?.method ?? "GET").toBe("GET");
 });
 
 it.each([
-  ["another query's fingerprint", { query_fingerprint: fingerprint, dependencies: [] }],
-  ["an unexpected dependency", { dependencies: [dependency] }],
-])("rejects plain-word highlights bound to %s", async (_name, overrides) => {
-  const plain = parseQuery(JSON.stringify({ syntax: "simple", text: "alpha" }));
-  const plainFingerprint = `sha256:${createHash("sha256").update(canonicalQuery(plain)).digest("hex")}`;
+  ["unknown fields", { terms: ["alpha"], query_fingerprint: fingerprint }],
+  ["a duplicated term", { terms: ["alpha", "alpha"] }],
+  ["an empty term", { terms: [""] }],
+])("rejects live highlights with %s", async (_name, body) => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    receipt({ query_fingerprint: plainFingerprint, ...overrides }),
+    new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } }),
   );
   await expect(
     readSearchQueryHighlights("session", "alpha", new AbortController().signal),

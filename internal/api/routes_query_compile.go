@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/query"
@@ -53,11 +54,39 @@ type QueryHighlightPreview struct {
 	Terms            []string          `json:"terms" maxItems:"64"`
 }
 
+// SearchHighlightPreview holds the bounded terms of a plain-words search.
+type SearchHighlightPreview struct {
+	Terms []string `json:"terms" maxItems:"64"`
+}
+
 func browserRoleSearchScope(ctx context.Context) context.Context {
 	if browserSessionRequest(ctx) {
 		return store.WithSafeRoleSearch(ctx)
 	}
 	return ctx
+}
+
+// compileQueryProblem reports a positioned expression error to the caller and
+// hides any other compile failure behind the given message.
+func compileQueryProblem(err error, internal string) error {
+	if positioned, ok := errors.AsType[*query.ExpressionError](err); ok {
+		problem := NewError(http.StatusUnprocessableEntity, "invalid_query", positioned.Message)
+		if positioned.End > positioned.Offset {
+			problem.Position = &ErrorPosition{Offset: positioned.Offset, End: positioned.End}
+		}
+		return problem
+	}
+	return NewError(http.StatusInternalServerError, "internal", internal)
+}
+
+func queryDependencies(compiled []query.Dependency) []QueryDependency {
+	dependencies := make([]QueryDependency, 0, len(compiled))
+	for _, dependency := range compiled {
+		dependencies = append(dependencies, QueryDependency{
+			Kind: string(dependency.Kind), ID: dependency.ID, Revision: dependency.Revision,
+		})
+	}
+	return dependencies
 }
 
 func registerQueryCompileRoutes(api huma.API, d Deps) {
@@ -74,25 +103,14 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 		}
 		compiled, err := d.Store.CompileQuery(ctx, value)
 		if err != nil {
-			if positioned, ok := errors.AsType[*query.ExpressionError](err); ok {
-				problem := NewError(http.StatusUnprocessableEntity, "invalid_query", positioned.Message)
-				if positioned.End > positioned.Offset {
-					problem.Position = &ErrorPosition{Offset: positioned.Offset, End: positioned.End}
-				}
-				return nil, problem
-			}
-			return nil, NewError(http.StatusInternalServerError, "internal", "Could not compile query")
+			return nil, compileQueryProblem(err, "Could not compile query")
 		}
 		canonical, fingerprint, err := query.CanonicalWithFingerprint(compiled.Query)
 		if err != nil {
 			return nil, NewError(http.StatusInternalServerError, "internal", "Could not encode query")
 		}
-		preview := QueryPreview{Query: QueryPayload(canonical), QueryFingerprint: fingerprint, Dependencies: []QueryDependency{}}
-		for _, dependency := range compiled.Dependencies {
-			preview.Dependencies = append(preview.Dependencies, QueryDependency{
-				Kind: string(dependency.Kind), ID: dependency.ID, Revision: dependency.Revision,
-			})
-		}
+		preview := QueryPreview{Query: QueryPayload(canonical), QueryFingerprint: fingerprint,
+			Dependencies: queryDependencies(compiled.Dependencies)}
 		return &struct{ Body QueryPreview }{Body: preview}, nil
 	})
 
@@ -109,29 +127,31 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 		}
 		compiled, err := d.Store.CompileQuery(ctx, value)
 		if err != nil {
-			if positioned, ok := errors.AsType[*query.ExpressionError](err); ok {
-				problem := NewError(http.StatusUnprocessableEntity, "invalid_query", positioned.Message)
-				if positioned.End > positioned.Offset {
-					problem.Position = &ErrorPosition{Offset: positioned.Offset, End: positioned.End}
-				}
-				return nil, problem
-			}
-			return nil, NewError(http.StatusInternalServerError, "internal", "Could not compile query highlights")
+			return nil, compileQueryProblem(err, "Could not compile query highlights")
 		}
 		fingerprint, err := query.Fingerprint(compiled.Query)
 		if err != nil {
 			return nil, NewError(http.StatusInternalServerError, "internal", "Could not fingerprint query highlights")
 		}
-		preview := QueryHighlightPreview{
-			QueryFingerprint: fingerprint,
-			Dependencies:     make([]QueryDependency, 0, len(compiled.Dependencies)),
-			Terms:            compiled.PositiveTextTerms(),
-		}
-		for _, dependency := range compiled.Dependencies {
-			preview.Dependencies = append(preview.Dependencies, QueryDependency{
-				Kind: string(dependency.Kind), ID: dependency.ID, Revision: dependency.Revision,
-			})
-		}
+		preview := QueryHighlightPreview{QueryFingerprint: fingerprint,
+			Dependencies: queryDependencies(compiled.Dependencies), Terms: compiled.PositiveTextTerms()}
 		return &struct{ Body QueryHighlightPreview }{Body: preview}, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "searchHighlights", Method: http.MethodGet,
+		Path: "/api/v1/search/highlights", Summary: "Preview the text terms of a plain-words search",
+		Description: "Returns the bounded terms the plain-words search for q requires, from the " +
+			"analyzer search uses. A quoted phrase is one term without its quotes.",
+	}, func(_ context.Context, in *struct {
+		Q string `query:"q" maxLength:"131072"`
+	}) (*struct{ Body SearchHighlightPreview }, error) {
+		terms := store.SearchRequiredTerms(in.Q)
+		for i, term := range terms {
+			terms[i] = strings.Trim(term, `"`)
+		}
+		return &struct{ Body SearchHighlightPreview }{
+			Body: SearchHighlightPreview{Terms: query.BoundedHighlightTerms(terms)},
+		}, nil
 	})
 }

@@ -3026,6 +3026,7 @@ export interface EmailResourceV1 {
   candidates: string[];
   /** @nullable */
   cid: string | null;
+  referenced?: boolean;
   state: string;
 }
 
@@ -8530,6 +8531,13 @@ export interface SealExportSourceRequest {
   readonly $schema?: string;
 }
 
+export interface SearchHighlightPreview {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxItems 64 */
+  terms: string[];
+}
+
 export type SearchHitMatch = typeof SearchHitMatch[keyof typeof SearchHitMatch];
 
 
@@ -10544,6 +10552,13 @@ offset?: number;
  * @maximum 50
  */
 limit?: number;
+};
+
+export type SearchHighlightsParams = {
+/**
+ * @maxLength 131072
+ */
+q?: string;
 };
 
 export type SearchTextCoverageParams = {
@@ -21238,6 +21253,38 @@ return sessionJSON<Summary>(getReviseTermReportUrl(id),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(reviseTermReportRequest)
+  }
+);}
+
+
+
+export const getSearchHighlightsUrl = (params?: SearchHighlightsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/search/highlights?${stringifiedParams}` : `/api/v1/search/highlights`
+}
+
+/**
+ * Returns the bounded terms the plain-words search for q requires, from the analyzer search uses. A quoted phrase is one term without its quotes.
+ * @summary Preview the text terms of a plain-words search
+ */
+export const searchHighlights = async (params?: SearchHighlightsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<SearchHighlightPreview> => {
+
+  return sessionJSON<SearchHighlightPreview>(getSearchHighlightsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 

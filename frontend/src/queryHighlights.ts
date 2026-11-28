@@ -1,5 +1,5 @@
 import * as generated from "./generated/docbank.js";
-import { canonicalQuery, parseQuery, queryFingerprint } from "./query.js";
+import { canonicalQuery } from "./query.js";
 import type { QueryPreview } from "./queryPreview.js";
 import type { SnapshotPage } from "./snapshots.js";
 
@@ -88,9 +88,13 @@ export async function readQueryHighlights(
       malformed(`dependencies[${index}] does not match the accepted snapshot`);
     }
   });
-  if (!Array.isArray(raw.terms) || raw.terms.length > 64) malformed("terms exceed their bound");
+  return highlightTerms(raw.terms);
+}
+
+function highlightTerms(terms: unknown): string[] {
+  if (!Array.isArray(terms) || terms.length > 64) malformed("terms exceed their bound");
   const seen = new Set<string>();
-  return raw.terms.map((value, index) => {
+  return terms.map((value, index) => {
     const term = unicode(value, `terms[${index}]`);
     const length = [...term].length;
     if (length < 1 || length > 256 || seen.has(term))
@@ -100,14 +104,14 @@ export async function readQueryHighlights(
   });
 }
 
+// Live results highlight the terms the search itself required, so a quoted
+// phrase stays one term.
 export async function readSearchQueryHighlights(
   session: string,
   text: string,
   signal: AbortSignal,
 ): Promise<string[]> {
-  // Plain words name no tags, collections or saved queries, so the expected
-  // receipt is the query's own fingerprint with no dependencies.
-  const query = parseQuery(JSON.stringify({ text, syntax: "simple" }));
-  const accepted = { query, query_fingerprint: await queryFingerprint(query), dependencies: [] };
-  return readQueryHighlights(session, accepted, signal);
+  const raw = object(await generated.searchHighlights({ q: text }, { session, signal }), "terms");
+  exactKeys(raw, ["terms"], ["$schema"], "terms");
+  return highlightTerms(raw.terms);
 }
