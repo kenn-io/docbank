@@ -120,12 +120,7 @@
     const key = `${session}:${source.key}`;
     if (key !== frozenKey) {
       frozenKey = key;
-      duplicateSource = undefined;
-      relatedSources = [];
-      navigationError = "";
-      originalPreviewKey = "";
-      // A newly selected search result opens at its match, not the last tab used.
-      if (untrack(() => searchContext)) activeTab = "preview";
+      untrack(showResult);
     }
     return cancelNavigation;
   });
@@ -134,14 +129,23 @@
     // A changed accepted query shows its context again, even for the same result.
     if (queryKey === originalQueryKey) return;
     originalQueryKey = queryKey;
-    originalPreviewKey = "";
-    if (untrack(() => searchContext)) activeTab = "preview";
+    untrack(showResult);
   });
 
   $effect(() => {
     ondisplay?.(displayedSource, displayedRevision);
   });
 
+  // A newly selected result or accepted query opens at its match, not the last
+  // tab used or a document opened from the previous one.
+  function showResult(): void {
+    cancelNavigation();
+    duplicateSource = undefined;
+    relatedSources = [];
+    navigationError = "";
+    originalPreviewKey = "";
+    if (searchContext) activeTab = "preview";
+  }
   function cancelNavigation(): void {
     ++navigationEpoch;
     navigationController?.abort();
